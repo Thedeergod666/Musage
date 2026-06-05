@@ -14,6 +14,7 @@
         font-size: 13px;
       }
       h1 { font-size: 16px; margin-bottom: 16px; font-weight: 600; }
+      h2 { font-size: 12px; margin-bottom: 10px; color: #aaa; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
       .field { margin-bottom: 14px; }
       label { display: block; margin-bottom: 6px; color: #aaa; font-size: 12px; }
       input, select {
@@ -27,6 +28,9 @@
         font-family: inherit;
       }
       input:focus, select:focus { outline: none; border-color: #4a90e2; }
+      .input-row { display: flex; gap: 6px; align-items: stretch; }
+      .input-row input { flex: 1; }
+      .input-row button { flex: 0 0 auto; padding: 0 12px; }
       .row { display: flex; gap: 8px; margin-top: 6px; }
       button {
         flex: 1;
@@ -40,47 +44,140 @@
         font-family: inherit;
       }
       button:hover { background: #353840; }
-      button.primary { background: #4a90e2; border-color: #4a90e2; }
+      button.primary { background: #4a90e2; border-color: #4a90e2; color: #fff; }
       button.primary:hover { background: #5aa0f2; }
-      button.danger { background: #c0392b; border-color: #c0392b; }
+      button.danger { background: #c0392b; border-color: #c0392b; color: #fff; }
       button.danger:hover { background: #d35400; }
       .status { font-size: 11px; color: #888; margin-top: 4px; }
+      .status.ok { color: #4caf50; }
+      .status.alert { color: #f44336; }
       .flash { margin-top: 12px; min-height: 18px; font-size: 12px; }
       .check { display: flex; align-items: center; gap: 8px; }
       .check input { width: auto; }
       .help { font-size: 11px; color: #888; margin-top: 4px; line-height: 1.5; }
       code { background: #2a2d35; padding: 1px 4px; border-radius: 3px; font-size: 11px; }
+
+      /* Provider tabs */
+      .tabs { display: flex; gap: 4px; background: #15171c; padding: 3px; border-radius: 8px; }
+      .tab {
+        flex: 1;
+        padding: 8px 12px;
+        background: transparent;
+        border: none;
+        color: #888;
+        font-size: 12px;
+        font-weight: 500;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: background 0.2s, color 0.2s;
+      }
+      .tab:hover { color: #ccc; }
+      .tab.active { background: #2a2d35; color: #fff; }
+      .tab .tab-dot {
+        display: inline-block;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        margin-right: 6px;
+        vertical-align: middle;
+      }
+      .tab[data-p="minimax"] .tab-dot  { background: #9b59ff; }
+      .tab[data-p="deepseek"] .tab-dot { background: #4a90e2; }
+
+      .provider-panel { display: none; margin-top: 12px; }
+      .provider-panel.active { display: block; }
+
+      .provider-section {
+        background: #15171c;
+        border: 1px solid #2a2d35;
+        border-radius: 8px;
+        padding: 14px;
+        margin-bottom: 14px;
+      }
+      .provider-section h2 { color: #ccc; margin-bottom: 12px; }
+
+      .divider {
+        height: 1px;
+        background: rgba(255, 255, 255, 0.05);
+        margin: 16px 0;
+      }
     </style>
   </head>
   <body>
     <h1>⚙ Musage · 设置</h1>
 
+    <!-- Provider Tab 切换 -->
     <div class="field">
-      <label>API Key</label>
-      <input id="api-key" type="password" placeholder="sk-cp-..." autocomplete="off" />
-      <div class="status" id="api-key-status">—</div>
-      <div class="row">
-        <button id="save-key">保存</button>
-        <button id="del-key" class="danger">删除</button>
-      </div>
-      <div class="help">
-        🔒 密钥加密存到 <strong>Windows 凭据管理器</strong>（macOS Keychain / Linux Secret Service），不写任何文件。
-        <br/>从 <a href="https://platform.minimaxi.com/user-center/basic-information/interface-key" target="_blank" style="color:#4a90e2">platform.minimaxi.com</a> 获取。
+      <label>Provider</label>
+      <div class="tabs">
+        <button class="tab active" data-p="minimax">
+          <span class="tab-dot"></span>MiniMax
+        </button>
+        <button class="tab" data-p="deepseek">
+          <span class="tab-dot"></span>DeepSeek
+        </button>
       </div>
     </div>
 
-    <div class="field">
-      <label>区域</label>
-      <select id="region">
-        <option value="cn">🌐 国内 (api.minimaxi.com)</option>
-        <option value="en">🌐 国际 (api.minimax.io)</option>
-      </select>
+    <!-- MiniMax Panel -->
+    <div class="provider-panel active" data-p="minimax">
+      <div class="provider-section">
+        <h2>🟪 MiniMax API Key</h2>
+        <div class="field">
+          <div class="input-row">
+            <input id="api-key-minimax" type="password" placeholder="sk-cp-..." autocomplete="off" />
+            <button id="copy-key-minimax" title="复制到剪贴板">📋</button>
+          </div>
+          <div class="status" id="api-key-status-minimax">—</div>
+        </div>
+        <div class="row">
+          <button id="save-key-minimax" class="primary">保存</button>
+          <button id="del-key-minimax" class="danger">删除</button>
+        </div>
+        <div class="help">
+          🔒 密钥加密存到 <strong>Windows 凭据管理器</strong>。
+          <br/>从 <a href="https://platform.minimaxi.com/user-center/basic-information/interface-key" target="_blank" style="color:#4a90e2">platform.minimaxi.com</a> 获取。
+        </div>
+      </div>
+
+      <div class="field">
+        <label>MiniMax 区域</label>
+        <select id="region">
+          <option value="cn">🌐 国内 (api.minimaxi.com)</option>
+          <option value="en">🌐 国际 (api.minimax.io)</option>
+        </select>
+      </div>
     </div>
 
+    <!-- DeepSeek Panel -->
+    <div class="provider-panel" data-p="deepseek">
+      <div class="provider-section">
+        <h2>🟦 DeepSeek API Key</h2>
+        <div class="field">
+          <div class="input-row">
+            <input id="api-key-deepseek" type="password" placeholder="sk-..." autocomplete="off" />
+            <button id="copy-key-deepseek" title="复制到剪贴板">📋</button>
+          </div>
+          <div class="status" id="api-key-status-deepseek">—</div>
+        </div>
+        <div class="row">
+          <button id="save-key-deepseek" class="primary">保存</button>
+          <button id="del-key-deepseek" class="danger">删除</button>
+        </div>
+        <div class="help">
+          🔒 密钥加密存到 <strong>Windows 凭据管理器</strong>，与 MiniMax 的 key 互不影响。
+          <br/>从 <a href="https://platform.deepseek.com/api_keys" target="_blank" style="color:#4a90e2">platform.deepseek.com</a> 获取。
+        </div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- 全局设置 -->
     <div class="field">
       <label>刷新间隔（秒）</label>
       <input id="interval" type="number" min="10" max="3600" value="60" />
-      <div class="help">最少 10 秒，默认 60</div>
+      <div class="help">最少 10 秒，默认 60。对所有 provider 同时生效。</div>
     </div>
 
     <div class="field">

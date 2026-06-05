@@ -161,6 +161,9 @@ async function init() {
     render(e.payload);
   }).then((fn) => (unlisten = fn));
 
+  // 启动时立即 render loading 占位，避免空白窗口
+  app.innerHTML = `<div class="err"><div class="err-title">⏳ 加载中…</div></div>`;
+
   // 初次拉取
   try {
     const snap = await invoke<QuotaSnapshot>("get_snapshot");
@@ -172,7 +175,14 @@ async function init() {
       render(fresh);
     }
   } catch (e) {
-    app.innerHTML = `<div class="err"><div class="err-title">⚠ 错误</div><div class="err-msg">${escapeHtml(String(e))}</div></div>`;
+    app.innerHTML = `<div class="err"><div class="err-title">⚠ 错误</div><div class="err-msg">${escapeHtml(String(e))}</div><button class="err-btn" id="open-settings">打开设置</button><div class="hint">托盘右键 → 设置 亦可</div></div>`;
+    const btn = document.getElementById("open-settings");
+    if (btn) {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        invoke("open_settings_window").catch((e) => console.error(e));
+      });
+    }
   }
 
   window.addEventListener("beforeunload", () => {

@@ -82,6 +82,7 @@ pub async fn fetch_quota(api_key: &str, region: Region) -> Result<(serde_json::V
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
+        .connect_timeout(Duration::from_secs(5))
         .user_agent(concat!("Musage/", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|e| format!("build client: {e}"))?;
@@ -93,7 +94,7 @@ pub async fn fetch_quota(api_key: &str, region: Region) -> Result<(serde_json::V
         .header("Content-Type", "application/json")
         .send()
         .await
-        .map_err(|e| format!("网络错误: {e}"))?;
+        .map_err(|e| format!("网络错误 [{}]: {e}", region.api_url()))?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {

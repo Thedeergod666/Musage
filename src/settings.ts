@@ -49,6 +49,20 @@ async function saveKey() {
     ($("#api-key") as HTMLInputElement).value = "";
     await load();
     flash("✓ API key 已保存到 Windows 凭据");
+    // 立即拉一次：避免等 60s 轮询周期
+    try {
+      const snap = await invoke("refresh_now");
+      const s = snap as { success: boolean; error?: string };
+      if (s.success) {
+        flash("✓ API key 已保存并测试通过");
+        // 测试成功：关闭 settings 窗口
+        setTimeout(() => invoke("hide_settings_window").catch(() => {}), 800);
+      } else {
+        flash(`✗ key 已存但拉取失败: ${s.error ?? "?"}`, true);
+      }
+    } catch (e) {
+      flash(`✗ key 已存但拉取异常: ${e}`, true);
+    }
   } catch (e) {
     flash(`✗ 保存失败: ${e}`, true);
   }

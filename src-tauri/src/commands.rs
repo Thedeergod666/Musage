@@ -124,6 +124,14 @@ pub async fn show_floating_window(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn hide_settings_window(app: AppHandle) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("settings") {
+        let _ = w.hide();
+    }
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn quit_app(app: AppHandle) {
     app.exit(0);
 }

@@ -28,9 +28,17 @@ function render(snap: QuotaSnapshot) {
       <div class="err">
         <div class="err-title">⚠ 拉取失败</div>
         <div class="err-msg">${escapeHtml(snap.error ?? "未知错误")}</div>
-        <div class="hint">右键托盘 → 设置</div>
+        <button class="err-btn" id="open-settings">打开设置</button>
+        <div class="hint">托盘右键 → 设置 亦可</div>
       </div>
     `;
+    const btn = document.getElementById("open-settings");
+    if (btn) {
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        invoke("open_settings_window").catch((e) => console.error(e));
+      });
+    }
     return;
   }
 

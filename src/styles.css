@@ -95,8 +95,20 @@ html, body {
   align-items: center;
   text-align: center;
   padding: 8px;
-  gap: 4px;
+  gap: 6px;
 }
 .err-title { font-size: 13px; color: #f44336; font-weight: 600; }
 .err-msg { font-size: 11px; color: #ccc; word-break: break-all; }
-.hint { font-size: 10px; color: #666; margin-top: 4px; }
+.err-btn {
+  margin-top: 4px;
+  padding: 4px 10px;
+  background: #4a90e2;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.err-btn:hover { background: #5aa0f2; }
+.hint { font-size: 10px; color: #666; margin-top: 2px; }

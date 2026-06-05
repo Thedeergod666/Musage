@@ -76,6 +76,26 @@ pub fn run() {
                 let _ = win.set_focus();
             }
 
+            // 首次启动引导：未配置 API key → 自动弹设置窗口
+            let has_key = config::load_api_key_from_keyring()
+                .ok()
+                .flatten()
+                .is_some();
+            if !has_key {
+                let _ = tauri::WebviewWindowBuilder::new(
+                    app.handle(),
+                    "settings",
+                    tauri::WebviewUrl::App("settings.html".into()),
+                )
+                .title("Musage · 设置")
+                .inner_size(480.0, 520.0)
+                .min_inner_size(400.0, 400.0)
+                .resizable(true)
+                .decorations(true)
+                .center()
+                .build();
+            }
+
             Ok(())
         })
         .manage(AppState {
@@ -93,6 +113,7 @@ pub fn run() {
             commands::open_settings_window,
             commands::hide_floating_window,
             commands::show_floating_window,
+            commands::hide_settings_window,
             commands::quit_app,
         ])
         .on_window_event(|window, event| {

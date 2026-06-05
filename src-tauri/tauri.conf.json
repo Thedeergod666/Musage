@@ -24,7 +24,7 @@
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
-        "skipTaskbar": false,
+        "skipTaskbar": true,
         "visible": true,
         "shadow": false,
         "url": "index.html"

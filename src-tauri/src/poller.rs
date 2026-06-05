@@ -2,7 +2,6 @@
 
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::time::{interval, MissedTickBehavior};
 
 use crate::api::fetch_quota;
 use crate::config;
@@ -17,14 +16,14 @@ pub fn start(app: AppHandle) {
         }
 
         loop {
+            // sleep 优先于 interval：interval 的首次 tick 立即 fire，
+            // tick() 失败时循环会空转刷日志（实测 ~15ms 一次）。
             let secs = {
                 let state = app.state::<AppState>();
                 let cfg = state.config.read().await;
                 cfg.refresh_interval_secs.max(10)
             };
-            let mut ticker = interval(Duration::from_secs(secs));
-            ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
-            ticker.tick().await;
+            tokio::time::sleep(Duration::from_secs(secs)).await;
             if let Err(e) = tick(&app).await {
                 tracing::warn!(error = %e, "轮询拉取失败");
             }

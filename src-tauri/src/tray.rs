@@ -10,7 +10,7 @@ use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Emitter, Manager,
+    AppHandle, Manager,
 };
 
 // 字体加载（如果 assets/font.ttf 缺失则跳过文字，纯色圆点）
@@ -52,8 +52,12 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                 }
             }
             "settings" => {
-                let _ = app.emit_to("settings", "musage://open", ());
-                // 后续可在这里显式创建 settings 窗口
+                let app2 = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = crate::commands::open_settings_window(app2).await {
+                        tracing::warn!(error = %e, "打开设置失败");
+                    }
+                });
             }
             "refresh" => {
                 let app2 = app.clone();

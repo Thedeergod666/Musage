@@ -138,12 +138,12 @@ function escapeHtml(s: string): string {
 // 启动时拉一次 + 订阅实时事件
 async function init() {
   const w = getCurrentWindow();
-  // 拖动：左键按住空白处 → start_dragging
+  // 拖动：左键按住任意非按钮区域 → start_dragging
   app.addEventListener("mousedown", (e) => {
-    if (e.target === app || (e.target as HTMLElement).classList.contains("row-foot")) {
-      e.preventDefault();
-      w.startDragging();
-    }
+    const target = e.target as HTMLElement;
+    if (target.closest("button, input, select, a")) return; // 交互元素不拖
+    e.preventDefault();
+    w.startDragging();
   });
   // 双击 → 立即刷新
   app.addEventListener("dblclick", async () => {

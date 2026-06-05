@@ -1,0 +1,102 @@
+/* 悬浮窗样式 */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+  background: rgba(20, 22, 28, 0.92);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  color: #e6e6e6;
+  padding: 12px 14px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  cursor: grab;
+}
+#app:active { cursor: grabbing; }
+
+.row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.row-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+}
+.row-label > span:first-child {
+  color: #aaa;
+  font-weight: 500;
+}
+
+.pct {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+.pct.ok    { color: #4caf50; }
+.pct.warn  { color: #ff9800; }
+.pct.alert { color: #f44336; }
+
+.bar {
+  height: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.4s ease, background-color 0.3s ease;
+}
+.bar-fill.ok    { background: linear-gradient(90deg, #4caf50, #66bb6a); }
+.bar-fill.warn  { background: linear-gradient(90deg, #ff9800, #ffa726); }
+.bar-fill.alert { background: linear-gradient(90deg, #f44336, #ef5350); }
+
+.row-foot {
+  font-size: 10.5px;
+  color: #888;
+  font-variant-numeric: tabular-nums;
+}
+
+.foot {
+  margin-top: auto;
+  font-size: 10px;
+  color: #666;
+  text-align: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 6px;
+}
+
+.err {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 8px;
+  gap: 4px;
+}
+.err-title { font-size: 13px; color: #f44336; font-weight: 600; }
+.err-msg { font-size: 11px; color: #ccc; word-break: break-all; }
+.hint { font-size: 10px; color: #666; margin-top: 4px; }

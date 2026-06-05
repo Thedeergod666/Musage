@@ -1,0 +1,48 @@
+[package]
+name = "musage"
+version = "0.1.0"
+description = "MiniMax Token Plan 实时用量监控"
+authors = ["you"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "musage_lib"
+# Windows 上只用 staticlib 就够（main.rs 静态链接 musage_lib）。
+# 删 cdylib 是为了绕过 MinGW ld 16-bit ordinal 表上限 —— Tauri 2 + GNU 工具链的已知坑
+# （cargo 给 cdylib 自动生成的 .def 含 14 万+ 符号，ld 不让过）。
+crate-type = ["staticlib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-autostart = "2"
+tauri-plugin-os = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+keyring = { version = "3", features = ["windows-native", "apple-native", "linux-native"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+imageproc = { version = "0.25", default-features = false }
+ab_glyph = "0.2"
+chrono = "0.4"
+anyhow = "1"
+thiserror = "1"
+clap = { version = "4", features = ["derive"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+dirs = "5"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Musage · 设置</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        background: #1a1c22;
+        color: #e0e0e0;
+        padding: 20px;
+        font-size: 13px;
+      }
+      h1 { font-size: 16px; margin-bottom: 16px; font-weight: 600; }
+      .field { margin-bottom: 14px; }
+      label { display: block; margin-bottom: 6px; color: #aaa; font-size: 12px; }
+      input, select {
+        width: 100%;
+        padding: 8px 10px;
+        background: #2a2d35;
+        border: 1px solid #3a3d45;
+        border-radius: 6px;
+        color: #e0e0e0;
+        font-size: 13px;
+        font-family: inherit;
+      }
+      input:focus, select:focus { outline: none; border-color: #4a90e2; }
+      .row { display: flex; gap: 8px; margin-top: 6px; }
+      button {
+        flex: 1;
+        padding: 8px 12px;
+        background: #2a2d35;
+        border: 1px solid #3a3d45;
+        color: #e0e0e0;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 12px;
+        font-family: inherit;
+      }
+      button:hover { background: #353840; }
+      button.primary { background: #4a90e2; border-color: #4a90e2; }
+      button.primary:hover { background: #5aa0f2; }
+      button.danger { background: #c0392b; border-color: #c0392b; }
+      button.danger:hover { background: #d35400; }
+      .status { font-size: 11px; color: #888; margin-top: 4px; }
+      .flash { margin-top: 12px; min-height: 18px; font-size: 12px; }
+      .check { display: flex; align-items: center; gap: 8px; }
+      .check input { width: auto; }
+      .help { font-size: 11px; color: #888; margin-top: 4px; line-height: 1.5; }
+      code { background: #2a2d35; padding: 1px 4px; border-radius: 3px; font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <h1>⚙ Musage · 设置</h1>
+
+    <div class="field">
+      <label>API Key</label>
+      <input id="api-key" type="password" placeholder="sk-cp-..." autocomplete="off" />
+      <div class="status" id="api-key-status">—</div>
+      <div class="row">
+        <button id="save-key">保存</button>
+        <button id="del-key" class="danger">删除</button>
+      </div>
+      <div class="help">
+        🔒 密钥加密存到 <strong>Windows 凭据管理器</strong>（macOS Keychain / Linux Secret Service），不写任何文件。
+        <br/>从 <a href="https://platform.minimaxi.com/user-center/basic-information/interface-key" target="_blank" style="color:#4a90e2">platform.minimaxi.com</a> 获取。
+      </div>
+    </div>
+
+    <div class="field">
+      <label>区域</label>
+      <select id="region">
+        <option value="cn">🇨🇳 国内 (api.minimaxi.com)</option>
+        <option value="en">🌐 国际 (api.minimax.io)</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>刷新间隔（秒）</label>
+      <input id="interval" type="number" min="10" max="3600" value="60" />
+      <div class="help">最少 10 秒，默认 60</div>
+    </div>
+
+    <div class="field">
+      <div class="check">
+        <input id="autostart" type="checkbox" />
+        <label for="autostart" style="margin:0">开机自启</label>
+      </div>
+    </div>
+
+    <div class="row">
+      <button id="test" class="primary">测试连接</button>
+      <button id="save">保存配置</button>
+    </div>
+
+    <div class="flash" id="flash"></div>
+
+    <script type="module" src="/src/settings.ts"></script>
+  </body>
+</html>

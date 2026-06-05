@@ -1,11 +1,15 @@
 //! 系统托盘动态图标生成
 //!
 //! 渲染规则：
-//! - 16x16 RGBA
-//! - 圆形背景：颜色随 5h utilization 变化（绿/橙/红）
-//! - 中心文字：5h 已用百分比（缩写）
-//! - 托盘 tooltip：完整状态
+//! - 32x32 RGBA
+//! - 圆形背景：颜色 = 所有 provider 中**最差**的 health（绿/橙/红/灰）
+//! - 中心文字：仅 MiniMax 5h utilization（DeepSeek 不显示数字，因 32x32 装不下金额）
+//! - 托盘 tooltip：所有 provider 的核心状态，逗号分隔
 
+use ab_glyph::{Font, FontVec, PxScale, ScaleFont};
+use image::Rgba;
+use imageproc::drawing::draw_text_mut;
+use std::sync::OnceLock;
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
@@ -13,24 +17,22 @@ use tauri::{
     AppHandle, Manager,
 };
 
-// 字体加载（如果 assets/font.ttf 缺失则跳过文字，纯色圆点）
-use ab_glyph::{Font, FontVec, PxScale, ScaleFont};
-use image::Rgba;
-use imageproc::drawing::draw_text_mut;
-use std::sync::OnceLock;
+use crate::providers::{Provider, ProviderSnapshot, QuotaSnapshot};
 
+// 字体加载（如果 assets/font.ttf 缺失则跳过文字，纯色圆点）
 static FONT: OnceLock<Option<FontVec>> = OnceLock::new();
 
 fn load_font() -> Option<&'static FontVec> {
     FONT.get_or_init(|| {
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/font.ttf");
-        std::fs::read(&path).ok().and_then(|bytes| FontVec::try_from_vec(bytes).ok())
-    }).as_ref()
+        std::fs::read(&path)
+            .ok()
+            .and_then(|bytes| FontVec::try_from_vec(bytes).ok())
+    })
+    .as_ref()
 }
 
-use crate::api::QuotaSnapshot;
-
-const ICON_SIZE: u32 = 32; // tray 标准 32x32，更清晰
+const ICON_SIZE: u32 = 32;
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let show_i = MenuItem::with_id(app, "show", "显示悬浮窗", true, None::<&str>)?;
@@ -80,7 +82,12 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         })
         .on_tray_icon_event(|tray, event| {
             // 左键单击切换悬浮窗显隐
-            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
                 let app = tray.app_handle();
                 if let Some(w) = app.get_webview_window("floating") {
                     if w.is_visible().unwrap_or(false) {
@@ -107,15 +114,12 @@ pub fn update_tray_from_snapshot(app: &AppHandle, snap: &QuotaSnapshot) -> tauri
 }
 
 fn make_placeholder_icon() -> Image<'static> {
-    // 从 icons/tray-base.png 加载（紫色 M 风格，跟窗口图标统一）
-    // 失败 fallback 到内存里的纯色方块
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("icons/tray-base.png");
     if let Ok(img) = image::open(&path) {
         let rgba = img.to_rgba8();
         let (w, h) = rgba.dimensions();
         return Image::new_owned(rgba.into_raw(), w, h);
     }
-    // Fallback: 透明占位
     let img: image::ImageBuffer<Rgba<u8>, Vec<u8>> =
         image::ImageBuffer::from_fn(ICON_SIZE, ICON_SIZE, |_x, _y| Rgba([0, 0, 0, 0]));
     let (w, h) = img.dimensions();
@@ -129,7 +133,9 @@ fn render_icon(snap: &QuotaSnapshot) -> Image<'static> {
     let radius = center - 1;
     let r2 = radius * radius;
 
-    let color = match snap.to_health_label() {
+    // 颜色：所有 provider 中最差
+    let health = snap.worst_health();
+    let color = match health {
         "ok" => Rgba([76u8, 175, 80, 255]),    // 绿
         "warn" => Rgba([255u8, 152, 0, 255]),  // 橙
         "alert" => Rgba([244u8, 67, 54, 255]), // 红
@@ -146,12 +152,33 @@ fn render_icon(snap: &QuotaSnapshot) -> Image<'static> {
         }
     }
 
-    // 中心文字：百分比
-    let text_opt = if snap.success {
-        snap.five_hour.as_ref().map(|t| format_pct_short(t.utilization))
-    } else {
+    // 中心文字：只取 MiniMax 的 5h utilization（DeepSeek 装不下金额）
+    let text_opt: Option<String> = if snap.providers.is_empty() {
         Some("?".to_string())
+    } else if let Some(minimax) = snap
+        .providers
+        .iter()
+        .find(|p| p.provider == Provider::Minimax && p.success)
+    {
+        minimax
+            .rows
+            .first()
+            .and_then(|r| r.utilization)
+            .map(format_pct_short)
+            .or(Some("?".to_string()))
+    } else if let Some(p) = snap.providers.iter().find(|p| p.success) {
+        // 只有 DeepSeek 成功时显示货币首字符
+        let c = p
+            .rows
+            .first()
+            .and_then(|r| r.unit.as_ref())
+            .and_then(|s| s.chars().next())
+            .map(|c| c.to_string());
+        c.or(Some("✓".to_string()))
+    } else {
+        Some("!".to_string())
     };
+
     if let Some(t) = text_opt {
         draw_centered_text(&mut img, &t, Rgba([255, 255, 255, 255]));
     }
@@ -163,7 +190,6 @@ fn render_icon(snap: &QuotaSnapshot) -> Image<'static> {
 fn format_pct_short(v: f64) -> String {
     let r = v.round() as i64;
     if r >= 100 {
-        // 超过 100 简化为 "1+"（如 144% → "1+", 280% → "2+"）
         format!("{}x", (r / 100).max(1))
     } else if r < 0 {
         "0".to_string()
@@ -177,10 +203,13 @@ fn draw_centered_text(
     text: &str,
     color: Rgba<u8>,
 ) {
-    let Some(font) = load_font() else { return; };
+    let Some(font) = load_font() else { return };
     let scale = PxScale::from(20.0);
     let scaled = font.as_scaled(scale);
-    let text_w: f32 = text.chars().map(|c| scaled.h_advance(font.glyph_id(c))).sum();
+    let text_w: f32 = text
+        .chars()
+        .map(|c| scaled.h_advance(font.glyph_id(c)))
+        .sum();
     let w = ICON_SIZE as f32;
     let h = ICON_SIZE as f32;
     let x = ((w - text_w) / 2.0).max(2.0) as i32;
@@ -189,15 +218,19 @@ fn draw_centered_text(
 }
 
 fn tooltip(snap: &QuotaSnapshot) -> String {
-    if !snap.success {
-        return format!("Musage · {}", snap.error.as_deref().unwrap_or("未知错误"));
+    if snap.providers.is_empty() {
+        return "Musage · 加载中…".to_string();
     }
     let mut parts = vec!["Musage".to_string()];
-    if let Some(t) = &snap.five_hour {
-        parts.push(format!("5h: {}%", t.utilization.round() as i64));
-    }
-    if let Some(t) = &snap.weekly {
-        parts.push(format!("周: {}%", t.utilization.round() as i64));
+    for p in &snap.providers {
+        let dot = match p.health_label() {
+            "ok" => "🟢",
+            "warn" => "🟡",
+            "alert" => "🔴",
+            _ => "⚪",
+        };
+        let body = provider_short_body(p);
+        parts.push(format!("{dot} {body}"));
     }
     if let Some(ms) = snap.fetched_at {
         let dt = chrono::DateTime::from_timestamp_millis(ms)
@@ -206,4 +239,63 @@ fn tooltip(snap: &QuotaSnapshot) -> String {
         parts.push(format!("更新于 {dt}"));
     }
     parts.join(" · ")
+}
+
+fn provider_short_body(p: &ProviderSnapshot) -> String {
+    if !p.success {
+        let err = p.error.as_deref().unwrap_or("未知错误");
+        // 截短避免 tooltip 太长
+        return format!("{}: {}", p.provider.display_name(), truncate(err, 30));
+    }
+    match p.provider {
+        Provider::Minimax => {
+            // "5h 45% / 周 72%"
+            let mut parts = Vec::new();
+            for r in &p.rows {
+                if let Some(u) = r.utilization {
+                    parts.push(format!("{} {}%", r.label, u.round() as i64));
+                }
+            }
+            if parts.is_empty() {
+                p.provider.display_name().to_string()
+            } else {
+                format!("{} {}", p.provider.display_name(), parts.join(" / "))
+            }
+        }
+        Provider::Deepseek => {
+            // "DeepSeek ¥128.50"
+            if let Some(r) = p.rows.iter().find(|r| r.remaining.is_some()) {
+                let amount = r
+                    .remaining
+                    .map(format_amount_short)
+                    .unwrap_or_else(|| "?".to_string());
+                let unit = r.unit.as_deref().unwrap_or("");
+                format!("{} {}{}", p.provider.display_name(), amount, unit)
+            } else {
+                p.provider.display_name().to_string()
+            }
+        }
+    }
+}
+
+fn format_amount_short(v: f64) -> String {
+    let r = v.round() as i64;
+    if r >= 100_000 {
+        // 大数字用 k 简写
+        format!("{}k", r / 1000)
+    } else if v >= 1000.0 {
+        format!("{:.1}k", v / 1000.0)
+    } else {
+        format!("{:.2}", v)
+    }
+}
+
+fn truncate(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max).collect();
+        out.push('…');
+        out
+    }
 }

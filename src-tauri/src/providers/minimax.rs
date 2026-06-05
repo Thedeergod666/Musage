@@ -1,0 +1,267 @@
+//! MiniMax Token Plan 用量查询
+//!
+//! 端点：GET /v1/api/openplatform/coding_plan/remains
+//! 鉴权：Bearer <api_key>
+//!
+//! 响应 schema 2026-06-01 更新前/后可能不同，本模块用**字段名宽容解析**：
+//! - 先尝试旧字段（ccswitch 用的）
+//! - 找不到时打印原始 JSON 让人能定位新字段
+//!
+//! 关键事实（从 ccswitch coding_plan.rs 推得）：
+//! - `current_interval_usage_count` 字段名虽然带 "usage"，**实际语义是"剩余"**（满=total，用完=0）
+//! - 已用百分比 = ((total - remaining) / total) * 100
+
+use std::pin::Pin;
+use std::time::Duration;
+
+use serde::{Deserialize, Serialize};
+
+use super::{Provider, ProviderImpl, ProviderSnapshot, QuotaRow};
+
+const URL_CN: &str = "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains";
+const URL_EN: &str = "https://api.minimax.io/v1/api/openplatform/coding_plan/remains";
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Region {
+    #[default]
+    Cn,
+    En,
+}
+
+impl Region {
+    pub fn api_url(&self) -> &'static str {
+        match self {
+            Region::Cn => URL_CN,
+            Region::En => URL_EN,
+        }
+    }
+    pub fn label(&self) -> &'static str {
+        match self {
+            Region::Cn => "国内 (api.minimaxi.com)",
+            Region::En => "国际 (api.minimax.io)",
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct Minimax {
+    /// 默认 CN；commands 层在调 fetch 前先从 config 复制一份给 Minimax
+    pub region: Region,
+}
+
+impl Minimax {
+    /// 真正的拉取实现（接受 region 参数）
+    pub async fn do_fetch(
+        api_key: &str,
+        region: Region,
+    ) -> Result<(serde_json::Value, ProviderSnapshot), String> {
+        if api_key.trim().is_empty() {
+            return Err("API key 为空".to_string());
+        }
+
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .connect_timeout(Duration::from_secs(5))
+            .user_agent(concat!("Musage/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .map_err(|e| format!("build client: {e}"))?;
+
+        let resp = client
+            .get(region.api_url())
+            .header("Authorization", format!("Bearer {api_key}"))
+            .header("Accept", "application/json")
+            .header("Content-Type", "application/json")
+            .send()
+            .await
+            .map_err(|e| format!("网络错误 [{}]: {e}", region.api_url()))?;
+
+        let status = resp.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err("鉴权失败，请检查 MiniMax API key".to_string());
+        }
+        if status == reqwest::StatusCode::FORBIDDEN {
+            return Err("无权限访问 MiniMax 用量接口（HTTP 403）".to_string());
+        }
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!(
+                "MiniMax 服务异常 (HTTP {status}): {}",
+                body.chars().take(200).collect::<String>()
+            ));
+        }
+
+        let raw: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| format!("响应不是 JSON: {e}"))?;
+
+        let snap = parse(&raw, region);
+        Ok((raw, snap))
+    }
+}
+
+impl ProviderImpl for Minimax {
+    fn id(&self) -> Provider {
+        Provider::Minimax
+    }
+    fn display_name(&self) -> &'static str {
+        "MiniMax"
+    }
+
+    fn fetch<'a>(
+        &'a self,
+        api_key: &'a str,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, String>> + Send + 'a>> {
+        let region = self.region;
+        Box::pin(async move {
+            let (_, snap) = Self::do_fetch(api_key, region).await?;
+            Ok(snap)
+        })
+    }
+}
+
+/// 灵活解析：兼容 6/1 前后的 schema
+#[allow(dead_code)] // region 参数为未来多区域 provider 准备
+fn parse(raw: &serde_json::Value, _region: Region) -> ProviderSnapshot {
+    let now_ms = chrono::Utc::now().timestamp_millis();
+
+    // 业务级错误（ccswitch 也这么做）
+    if let Some(base_resp) = raw.get("base_resp") {
+        let code = base_resp.get("status_code").and_then(|v| v.as_i64()).unwrap_or(-1);
+        if code != 0 {
+            let msg = base_resp
+                .get("status_msg")
+                .and_then(|v| v.as_str())
+                .unwrap_or("未知错误");
+            return ProviderSnapshot {
+                provider: Provider::Minimax,
+                success: false,
+                rows: vec![],
+                error: Some(format!("MiniMax API code {code}: {msg}")),
+                fetched_at: Some(now_ms),
+                raw: Some(raw.clone()),
+                is_healthy: false,
+            };
+        }
+    }
+
+    // 取第一个 model 记录
+    let item = raw
+        .get("model_remains")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first());
+
+    let Some(item) = item else {
+        return ProviderSnapshot {
+            provider: Provider::Minimax,
+            success: false,
+            rows: vec![],
+            error: Some("响应缺少 model_remains[0]".to_string()),
+            fetched_at: Some(now_ms),
+            raw: Some(raw.clone()),
+            is_healthy: false,
+        };
+    };
+
+    let five_hour = parse_tier(
+        item,
+        &[
+            // 旧 schema（ccswitch 用的）
+            ("current_interval_total_count", "current_interval_usage_count", "end_time"),
+            // 候选新 schema（如果 6/1 改名了）
+            ("interval_total", "interval_remaining", "interval_end"),
+            ("window_total", "window_remaining", "window_end"),
+            ("total_5h", "used_5h", "reset_5h"),
+        ],
+        "five_hour",
+    );
+
+    let weekly = parse_tier(
+        item,
+        &[
+            ("current_weekly_total_count", "current_weekly_usage_count", "weekly_end_time"),
+            ("weekly_total", "weekly_remaining", "weekly_end"),
+            ("total_week", "used_week", "reset_week"),
+        ],
+        "weekly_limit",
+    );
+
+    // 转成 QuotaRow
+    let mut rows = Vec::new();
+    if let Some(t) = five_hour {
+        rows.push(QuotaRow {
+            label: "5h".to_string(),
+            utilization: Some(t.utilization),
+            remaining: None,
+            total: None,
+            resets_at: t.resets_at,
+            unit: Some("%".to_string()),
+            extra: None,
+        });
+    }
+    if let Some(t) = weekly {
+        rows.push(QuotaRow {
+            label: "周".to_string(),
+            utilization: Some(t.utilization),
+            remaining: None,
+            total: None,
+            resets_at: t.resets_at,
+            unit: Some("%".to_string()),
+            extra: None,
+        });
+    }
+
+    let success = !rows.is_empty();
+    let is_healthy = success; // MiniMax 拉到数据就认为可用
+
+    ProviderSnapshot {
+        provider: Provider::Minimax,
+        success,
+        rows,
+        error: if success {
+            None
+        } else {
+            Some("未识别 schema，请把 raw 字段贴给开发者".to_string())
+        },
+        fetched_at: Some(now_ms),
+        raw: Some(raw.clone()),
+        is_healthy,
+    }
+}
+
+#[derive(Debug, Clone)]
+struct TierInternal {
+    utilization: f64,
+    resets_at: Option<i64>,
+}
+
+/// 尝试多组字段名，返回首个能解析的 TierInternal
+fn parse_tier(
+    item: &serde_json::Value,
+    candidates: &[(&str, &str, &str)],
+    _name: &str,
+) -> Option<TierInternal> {
+    for (k_total, k_remain, k_reset) in candidates {
+        let total = item.get(*k_total).and_then(num_to_f64);
+        let remain = item.get(*k_remain).and_then(num_to_f64);
+        if let (Some(t), Some(r)) = (total, remain) {
+            if t > 0.0 {
+                let utilization = ((t - r) / t) * 100.0;
+                let resets_at = item.get(*k_reset).and_then(|v| {
+                    v.as_i64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                });
+                return Some(TierInternal {
+                    utilization,
+                    resets_at,
+                });
+            }
+        }
+    }
+    None
+}
+
+fn num_to_f64(v: &serde_json::Value) -> Option<f64> {
+    v.as_f64().or_else(|| v.as_i64().map(|i| i as f64))
+}

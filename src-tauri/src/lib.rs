@@ -1,28 +1,29 @@
-//! Musage - MiniMax Token Plan 实时用量监控
+//! Musage - 多 Provider 实时用量监控
 //!
 //! 架构：
-//! - `api`    : 拉取用量数据，灵活 schema 解析
-//! - `config` : 配置 + keyring 存取
-//! - `poller` : tokio 后台定时拉取
-//! - `tray`   : 系统托盘 + 动态图标
-//! - `commands` : tauri::command 暴露给前端
+//! - `providers` : 多 provider 抽象（trait + minimax/deepseek 实现）
+//! - `config`    : 多 provider 配置 + keyring 存取
+//! - `poller`    : tokio 后台定时拉取
+//! - `commands`  : tauri::command 暴露给前端
+//! - `tray`      : 系统托盘 + 动态图标
 //!
 //! CLI 子命令：
-//! - (无)   : 启动 GUI（Tauri 默认行为）
-//! - `dump` : 拉一次并打印原始 JSON + 解析结果（用于探查 schema）
+//! - (无)           : 启动 GUI（Tauri 默认行为）
+//! - `dump`         : 拉一次全部 provider 并打印原始 JSON + 解析结果
+//! - `dump <id>`    : 只拉某个 provider（`minimax` / `deepseek`）
 
-mod api;
 mod commands;
 mod config;
 mod poller;
+mod providers;
 mod tray;
 
 use std::sync::Arc;
 use tauri::Manager;
 use tokio::sync::RwLock;
 
-use crate::api::QuotaSnapshot;
 use crate::config::AppConfig;
+use crate::providers::QuotaSnapshot;
 
 pub struct AppState {
     pub snapshot: Arc<RwLock<QuotaSnapshot>>,
@@ -44,7 +45,7 @@ pub fn run() {
     // CLI 分流：dump 子命令不进 GUI
     let args: Vec<String> = std::env::args().collect();
     if args.len() > 1 && args[1] == "dump" {
-        std::process::exit(run_dump_subcommand());
+        std::process::exit(run_dump_subcommand(args.get(2).map(|s| s.as_str())));
     }
 
     tauri::Builder::default()
@@ -76,20 +77,22 @@ pub fn run() {
                 let _ = win.set_focus();
             }
 
-            // 首次启动引导：未配置 API key → 自动弹设置窗口
-            let has_key = config::load_api_key_from_keyring()
-                .ok()
-                .flatten()
-                .is_some();
-            if !has_key {
+            // 首次启动引导：所有 provider 都没配 key → 自动弹设置窗口
+            let any_key = providers::Provider::all().iter().any(|p| {
+                config::load_api_key_for(*p)
+                    .ok()
+                    .flatten()
+                    .is_some()
+            });
+            if !any_key {
                 let _ = tauri::WebviewWindowBuilder::new(
                     app.handle(),
                     "settings",
                     tauri::WebviewUrl::App("settings.html".into()),
                 )
                 .title("Musage · 设置")
-                .inner_size(480.0, 520.0)
-                .min_inner_size(400.0, 400.0)
+                .inner_size(540.0, 620.0)
+                .min_inner_size(440.0, 500.0)
                 .resizable(true)
                 .decorations(true)
                 .skip_taskbar(true)
@@ -108,9 +111,10 @@ pub fn run() {
             commands::refresh_now,
             commands::get_config,
             commands::save_config,
-            commands::has_api_key,
-            commands::set_api_key,
-            commands::delete_api_key,
+            commands::has_api_key_for,
+            commands::set_api_key_for,
+            commands::delete_api_key_for,
+            commands::get_api_key_for,
             commands::open_settings_window,
             commands::hide_floating_window,
             commands::show_floating_window,
@@ -130,40 +134,77 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-/// `musage dump` 子命令：拉一次用量并打印
-fn run_dump_subcommand() -> i32 {
-    // 简易 runtime（不进 tauri）
+/// `musage dump [provider]` 子命令：拉一次用量并打印
+///
+/// `provider`：可选，`minimax` / `deepseek`，不传则跑全部。
+fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
     let rt = tokio::runtime::Runtime::new().expect("create tokio runtime");
     rt.block_on(async {
-        // 从 keyring 读 api key
-        let api_key = match config::load_api_key_from_keyring() {
-            Ok(Some(k)) => k,
-            Ok(None) => {
-                eprintln!("[dump] keyring 里没找到 api key。请先运行 GUI 配置一次。");
-                return 2;
-            }
-            Err(e) => {
-                eprintln!("[dump] keyring 读 key 失败: {e}");
+        let cfg = AppConfig::load_from_disk().unwrap_or_default();
+
+        // 决定要 dump 哪些 provider
+        let targets: Vec<providers::Provider> = match provider_filter {
+            None => cfg.enabled_providers(),
+            Some("minimax") => vec![providers::Provider::Minimax],
+            Some("deepseek") => vec![providers::Provider::Deepseek],
+            Some(other) => {
+                eprintln!("[dump] 未知 provider: {other}（可用: minimax / deepseek）");
                 return 2;
             }
         };
 
-        let cfg = AppConfig::load_from_disk().unwrap_or_default();
-        println!("[dump] region: {:?}", cfg.region);
-        println!("[dump] api key 前缀: {}…", &api_key[..api_key.len().min(8)]);
+        if targets.is_empty() {
+            eprintln!("[dump] 没有启用的 provider");
+            return 2;
+        }
 
-        match api::fetch_quota(&api_key, cfg.region).await {
-            Ok((raw, snap)) => {
-                println!("\n========== 原始响应 ==========");
-                println!("{}", serde_json::to_string_pretty(&raw).unwrap_or_default());
-                println!("\n========== 解析结果 ==========");
-                println!("{}", serde_json::to_string_pretty(&snap).unwrap_or_default());
-                0
-            }
-            Err(e) => {
-                eprintln!("[dump] 拉取失败: {e}");
-                1
+        for provider in targets {
+            println!("\n========== {} ==========", provider.display_name());
+
+            let key = match config::load_api_key_for(provider) {
+                Ok(Some(k)) => k,
+                Ok(None) => {
+                    eprintln!("[dump] keyring 里没找到 {} 的 key。请先在 GUI 设置面板配置。", provider.display_name());
+                    continue;
+                }
+                Err(e) => {
+                    eprintln!("[dump] keyring 读 key 失败: {e}");
+                    continue;
+                }
+            };
+
+            let prefix = if key.len() >= 8 { &key[..8] } else { &key };
+            println!("[dump] api key 前缀: {prefix}…");
+
+            // 直接调对应的 provider 实现（不经过 poller）
+            let result: Result<providers::ProviderSnapshot, String> = match provider {
+                providers::Provider::Minimax => {
+                    let region = cfg.region();
+                    let r = providers::minimax::Minimax::do_fetch(&key, region).await;
+                    r.map(|(_, snap)| snap)
+                }
+                providers::Provider::Deepseek => {
+                    let p = providers::deepseek::Deepseek;
+                    <providers::deepseek::Deepseek as providers::ProviderImpl>::fetch(&p, &key)
+                        .await
+                }
+            };
+
+            match result {
+                Ok(snap) => {
+                    println!("\n--- 原始响应 ---");
+                    if let Some(raw) = &snap.raw {
+                        println!("{}", serde_json::to_string_pretty(raw).unwrap_or_default());
+                    }
+                    println!("\n--- 解析结果 ---");
+                    println!("{}", serde_json::to_string_pretty(&snap).unwrap_or_default());
+                }
+                Err(e) => {
+                    eprintln!("[dump] 拉取失败: {e}");
+                }
             }
         }
+
+        0
     })
 }

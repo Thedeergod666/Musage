@@ -1,4 +1,4 @@
-/* 悬浮窗样式 */
+/* 悬浮窗样式 —— 多 provider 卡片堆叠 */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -24,10 +24,50 @@ html, body {
   padding: 12px 14px 8px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   cursor: grab;
 }
 #app:active { cursor: grabbing; }
+
+/* ── Provider 卡片 ── */
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+.card:last-of-type {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: #888;
+  text-transform: uppercase;
+}
+
+.card-title {
+  font-size: 11px;
+}
+
+.card-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.card-dot.ok    { background: #4caf50; box-shadow: 0 0 6px rgba(76, 175, 80, 0.6); }
+.card-dot.alert { background: #f44336; box-shadow: 0 0 6px rgba(244, 67, 54, 0.6); }
+
+/* ── 行 ── */
 
 .row {
   display: flex;
@@ -56,6 +96,7 @@ html, body {
 .pct.ok    { color: #4caf50; }
 .pct.warn  { color: #ff9800; }
 .pct.alert { color: #f44336; }
+.pct.balance { color: #4a90e2; }
 
 .bar {
   height: 4px;
@@ -78,13 +119,42 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
-.foot {
-  margin-top: auto;
-  font-size: 10px;
-  color: #666;
+/* DeepSeek 余额行（无 bar） */
+.balance-row .pct {
+  font-size: 16px;
+  letter-spacing: -0.3px;
+}
+
+/* DeepSeek 状态行 */
+.status-row {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+}
+.status {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+.status.ok    { color: #4caf50; background: rgba(76, 175, 80, 0.12); }
+.status.alert { color: #f44336; background: rgba(244, 67, 54, 0.12); }
+
+/* ── 错误卡片 ── */
+
+.err-card {
   text-align: center;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
-  padding-top: 6px;
+  padding: 6px 4px;
+}
+.err-card .err-msg {
+  font-size: 11px;
+  color: #ccc;
+  word-break: break-all;
+  margin: 4px 0;
+}
+.err-dot {
+  color: #f44336;
+  font-size: 12px;
 }
 
 .err {
@@ -112,3 +182,14 @@ html, body {
 }
 .err-btn:hover { background: #5aa0f2; }
 .hint { font-size: 10px; color: #666; margin-top: 2px; }
+
+/* ── 底部 ── */
+
+.foot {
+  margin-top: auto;
+  font-size: 10px;
+  color: #666;
+  text-align: center;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 6px;
+}

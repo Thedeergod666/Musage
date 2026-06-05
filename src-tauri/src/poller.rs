@@ -1,11 +1,9 @@
 //! 后台轮询：tokio interval，定期拉取并广播到前端 + 刷新托盘
 
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Manager};
 
-use crate::api::fetch_quota;
-use crate::config;
-use crate::tray;
+use crate::commands::refresh_inner;
 use crate::AppState;
 
 pub fn start(app: AppHandle) {
@@ -37,29 +35,19 @@ pub async fn tick_now(app: &AppHandle) -> Result<(), String> {
 }
 
 pub async fn tick(app: &AppHandle) -> Result<(), String> {
-    let (api_key, region) = {
+    let cfg = {
         let state = app.state::<AppState>();
-        let cfg = state.config.read().await;
-        let key = config::load_api_key_from_keyring()
-            .map_err(|e| format!("keyring: {e}"))?
-            .ok_or_else(|| "未配置 API key".to_string())?;
-        (key, cfg.region)
+        let cfg = state.config.read().await.clone();
+        cfg
     };
 
-    let (_, snap) = fetch_quota(&api_key, region).await?;
+    let snap = refresh_inner(app, &cfg).await?;
+
     // 写回 state
     {
         let state = app.state::<AppState>();
         let mut guard = state.snapshot.blocking_write();
-        *guard = snap.clone();
-    }
-
-    // 通知前端
-    let _ = app.emit("musage://snapshot", &snap);
-
-    // 刷新托盘
-    if let Err(e) = tray::update_tray_from_snapshot(app, &snap) {
-        tracing::warn!(error = %e, "刷新托盘失败");
+        *guard = snap;
     }
 
     Ok(())

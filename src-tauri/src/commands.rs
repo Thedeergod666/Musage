@@ -148,47 +148,67 @@ pub async fn quit_app(app: AppHandle) {
 
 // ── 核心实现 ──────────────────────────────────────────────
 
-/// 刷新所有 enabled provider。失败不阻断其他。
+/// 刷新所有 enabled provider。**并发**跑，互不拖累。
 ///
 /// 被 [`refresh_now`] 和 [`crate::poller::tick`] 共用。
 pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnapshot, String> {
-    let mut snap = QuotaSnapshot::default();
     let now_ms = chrono::Utc::now().timestamp_millis();
     let region = cfg.region();
+    let enabled = cfg.enabled_providers();
 
-    for provider in cfg.enabled_providers() {
-        let key = match config::load_api_key_for(provider) {
-            Ok(Some(k)) => k,
+    // 准备每个 provider 的 fetch 任务（keyring 读 key 同步，main 里完成避免 spawn 阻塞）
+    let mut tasks: Vec<(Provider, tokio::task::JoinHandle<Result<ProviderSnapshot, String>>)> =
+        Vec::new();
+    for provider in enabled {
+        let key_res = config::load_api_key_for(provider);
+        match key_res {
+            Ok(Some(k)) => {
+                let task: tokio::task::JoinHandle<Result<ProviderSnapshot, String>> =
+                    tokio::spawn(async move {
+                        match provider {
+                            Provider::Minimax => {
+                                minimax::Minimax::do_fetch(&k, region)
+                                    .await
+                                    .map(|(_, snap)| snap)
+                            }
+                            Provider::Deepseek => {
+                                let p = deepseek::Deepseek;
+                                <deepseek::Deepseek as ProviderImpl>::fetch(&p, &k).await
+                            }
+                        }
+                    });
+                tasks.push((provider, task));
+            }
             Ok(None) => {
-                snap.providers.push(ProviderSnapshot::empty_error(
+                // key 没配 → 直接给错误快照，不入 task
+                tasks.push((
                     provider,
-                    "未配置 API key（设置面板填入）".to_string(),
+                    tokio::spawn(async move {
+                        Err("未配置 API key（设置面板填入）".to_string())
+                    }),
                 ));
-                continue;
             }
             Err(e) => {
+                tasks.push((
+                    provider,
+                    tokio::spawn(async move { Err(format!("读 keyring 失败: {e}")) }),
+                ));
+            }
+        }
+    }
+
+    // 收集所有结果（保持按 cfg.enabled_providers() 顺序）
+    let mut snap = QuotaSnapshot::default();
+    for (provider, task) in tasks {
+        match task.await {
+            Ok(Ok(s)) => snap.providers.push(s),
+            Ok(Err(e)) => snap.providers.push(ProviderSnapshot::empty_error(provider, e)),
+            Err(join_err) => {
                 snap.providers.push(ProviderSnapshot::empty_error(
                     provider,
-                    format!("读 keyring 失败: {e}"),
+                    format!("task join 失败: {join_err}"),
                 ));
-                continue;
             }
-        };
-
-        let result: Result<ProviderSnapshot, String> = match provider {
-            Provider::Minimax => {
-                let r = minimax::Minimax::do_fetch(&key, region).await;
-                r.map(|(_, snap)| snap)
-            }
-            Provider::Deepseek => {
-                let p = deepseek::Deepseek;
-                <deepseek::Deepseek as ProviderImpl>::fetch(&p, &key).await
-            }
-        };
-
-        match result {
-            Ok(s) => snap.providers.push(s),
-            Err(e) => snap.providers.push(ProviderSnapshot::empty_error(provider, e)),
         }
     }
 

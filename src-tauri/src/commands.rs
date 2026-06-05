@@ -99,6 +99,7 @@ pub async fn open_settings_window(app: AppHandle) -> Result<(), String> {
             .min_inner_size(400.0, 400.0)
             .resizable(true)
             .decorations(true)
+            .skip_taskbar(true)
             .center()
             .build()
             .map_err(|e| format!("create settings: {e}"))?;

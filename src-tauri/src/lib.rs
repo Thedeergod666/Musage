@@ -92,6 +92,7 @@ pub fn run() {
                 .min_inner_size(400.0, 400.0)
                 .resizable(true)
                 .decorations(true)
+                .skip_taskbar(true)
                 .center()
                 .build();
             }

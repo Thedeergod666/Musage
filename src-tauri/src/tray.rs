@@ -34,10 +34,11 @@ const ICON_SIZE: u32 = 32; // tray 标准 32x32，更清晰
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let show_i = MenuItem::with_id(app, "show", "显示悬浮窗", true, None::<&str>)?;
+    let hide_i = MenuItem::with_id(app, "hide", "隐藏悬浮窗", true, None::<&str>)?;
     let settings_i = MenuItem::with_id(app, "settings", "设置...", true, None::<&str>)?;
     let refresh_i = MenuItem::with_id(app, "refresh", "立即刷新", true, None::<&str>)?;
     let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_i, &settings_i, &refresh_i, &quit_i])?;
+    let menu = Menu::with_items(app, &[&show_i, &hide_i, &settings_i, &refresh_i, &quit_i])?;
 
     let _tray = TrayIconBuilder::with_id("main-tray")
         .tooltip("Musage - 加载中…")
@@ -49,6 +50,11 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                 if let Some(w) = app.get_webview_window("floating") {
                     let _ = w.show();
                     let _ = w.set_focus();
+                }
+            }
+            "hide" => {
+                if let Some(w) = app.get_webview_window("floating") {
+                    let _ = w.hide();
                 }
             }
             "settings" => {

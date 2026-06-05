@@ -10,7 +10,7 @@ use crate::tray;
 use crate::AppState;
 
 pub fn start(app: AppHandle) {
-    tokio::spawn(async move {
+    tauri::async_runtime::spawn(async move {
         // 启动后立即拉一次
         if let Err(e) = tick(&app).await {
             tracing::warn!(error = %e, "初次拉取失败");

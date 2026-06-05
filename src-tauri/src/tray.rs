@@ -57,7 +57,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             }
             "refresh" => {
                 let app2 = app.clone();
-                tokio::spawn(async move {
+                tauri::async_runtime::spawn(async move {
                     if let Err(e) = crate::poller::tick_now(&app2).await {
                         tracing::warn!(error = %e, "手动刷新失败");
                     }

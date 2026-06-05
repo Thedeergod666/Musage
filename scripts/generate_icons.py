@@ -59,14 +59,14 @@ for size, name in [(32, "32x32.png"), (128, "128x128.png"), (256, "128x128@2x.pn
 make_icon(32).save(os.path.join(OUT, "tray-base.png"))
 print("[ok] tray-base.png")
 
-# icon.ico (multi-size)
+# icon.ico (multi-size) —— PIL 已知问题：append_images+不同 size 不会真的
+# 写出多尺寸。直接传 sizes 列表给第一张图就行（PIL 会从那张图 resize）。
 ico_sizes = [(16, 16), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
-ico_imgs = [make_icon(s[0]) for s in ico_sizes]
-ico_imgs[0].save(
+ico_base = make_icon(256)  # 用最大那张作基础，PIL 内部 resize 到各 size
+ico_base.save(
     os.path.join(OUT, "icon.ico"),
     format="ICO",
     sizes=ico_sizes,
-    append_images=ico_imgs[1:],
 )
 print("[ok] icon.ico")
 

@@ -107,19 +107,17 @@ pub fn update_tray_from_snapshot(app: &AppHandle, snap: &QuotaSnapshot) -> tauri
 }
 
 fn make_placeholder_icon() -> Image<'static> {
-    let mut img: image::ImageBuffer<Rgba<u8>, Vec<u8>> =
-        image::ImageBuffer::from_fn(ICON_SIZE, ICON_SIZE, |_x, _y| Rgba([0, 0, 0, 0]));
-    let center = ICON_SIZE as i32 / 2;
-    let r2 = (center - 2).pow(2);
-    for y in 0..ICON_SIZE {
-        for x in 0..ICON_SIZE {
-            let dx = x as i32 - center;
-            let dy = y as i32 - center;
-            if dx * dx + dy * dy <= r2 {
-                img.put_pixel(x, y, Rgba([128, 128, 128, 255]));
-            }
-        }
+    // 从 icons/tray-base.png 加载（紫色 M 风格，跟窗口图标统一）
+    // 失败 fallback 到内存里的纯色方块
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("icons/tray-base.png");
+    if let Ok(img) = image::open(&path) {
+        let rgba = img.to_rgba8();
+        let (w, h) = rgba.dimensions();
+        return Image::new_owned(rgba.into_raw(), w, h);
     }
+    // Fallback: 透明占位
+    let img: image::ImageBuffer<Rgba<u8>, Vec<u8>> =
+        image::ImageBuffer::from_fn(ICON_SIZE, ICON_SIZE, |_x, _y| Rgba([0, 0, 0, 0]));
     let (w, h) = img.dimensions();
     Image::new_owned(img.into_raw(), w, h)
 }

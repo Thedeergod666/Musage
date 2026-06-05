@@ -78,11 +78,21 @@ async function deleteKey() {
 async function testConn() {
   flash("测试中…");
   try {
-    const snap = await invoke("refresh_now");
+    const snap = await withTimeout(invoke("refresh_now"), 12000, "请求超时（12s）");
     flash(`✓ 成功: 5h ${(snap as any).five_hour?.utilization ?? "?"}% / 周 ${(snap as any).weekly?.utilization ?? "?"}%`);
   } catch (e) {
     flash(`✗ 失败: ${e}`, true);
   }
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(msg)), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
 }
 
 let flashTimer: number | null = null;

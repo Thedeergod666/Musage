@@ -18,14 +18,15 @@ FG = (0, 0, 0, 255)            # 黑色 M
 
 
 def find_font(size: int):
-    """返回 (font, is_bold)。优先找 bold 字体，失败兜底 regular + stroke 加粗。"""
+    """返回 (font, is_bold, is_heavy)。优先 Arial Black / Heavy 类粗体，失败兜底 regular + 多层 stroke。"""
     bold_paths = [
-        # Windows
-        "C:/Windows/Fonts/arialbd.ttf",
-        "C:/Windows/Fonts/segoeuib.ttf",
-        "C:/Windows/Fonts/calibrib.ttf",
-        # macOS
-        "/System/Library/Fonts/Helvetica.ttc",
+        # Windows —— Black/Heavy 最重
+        "C:/Windows/Fonts/ariblk.ttf",     # Arial Black
+        "C:/Windows/Fonts/arialbd.ttf",    # Arial Bold
+        "C:/Windows/Fonts/segoeuib.ttf",   # Segoe UI Bold
+        "C:/Windows/Fonts/calibrib.ttf",   # Calibri Bold
+        # macOS —— Black/Heavy 最重
+        "/System/Library/Fonts/Supplemental/Arial Black.ttf",
         "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
         "/Library/Fonts/Arial Bold.ttf",
         # Linux
@@ -76,7 +77,7 @@ def make_icon(size: int) -> Image.Image:
 
     # 中心 "M" 字 —— 加粗 + 居中略下移
     if size >= 16:
-        font, is_bold = find_font(int(size * 0.55))
+        font, is_bold = find_font(int(size * 0.58))
         if font is not None:
             bbox = d.textbbox((0, 0), "M", font=font)
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
@@ -86,9 +87,10 @@ def make_icon(size: int) -> Image.Image:
             if is_bold:
                 d.text((cx, cy), "M", font=font, fill=FG)
             else:
-                # 兜底：用 stroke 模拟加粗
-                sw = max(1, int(size * 0.05))
+                # 兜底：用更厚的 stroke + 重复画两次模拟 Black 粗体
+                sw = max(1, int(size * 0.08))
                 d.text((cx, cy), "M", font=font, fill=FG, stroke_width=sw, stroke_fill=FG)
+                d.text((cx, cy), "M", font=font, fill=FG)
     return img
 
 

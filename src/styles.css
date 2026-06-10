@@ -62,6 +62,7 @@ html, body {
 
   /* 语义色（idle：全部统一为白，对齐 macOS 26 widget） */
   --c-data-ok:    rgba(255, 255, 255, 0.96);
+  --c-data-cyan:  rgba(255, 255, 255, 0.96);
   --c-data-warn:  rgba(255, 255, 255, 0.96);
   --c-data-alert: rgba(255, 255, 255, 0.96);
   --c-data-info:  rgba(255, 255, 255, 0.96);
@@ -88,6 +89,7 @@ body[data-hover] #app {
 
   /* 语义色：iOS 系统色 */
   --c-data-ok:    #30d158;
+  --c-data-cyan:  #5ac8fa;
   --c-data-warn:  #ff9f0a;
   --c-data-alert: #ff453a;
   --c-data-info:  #0a84ff;
@@ -207,6 +209,7 @@ body[data-hover] #app {
   transition: color 0.28s, text-shadow 0.28s;
 }
 .pct.ok      { color: var(--c-data-ok); }
+.pct.cyan    { color: var(--c-data-cyan); }
 .pct.warn    { color: var(--c-data-warn); }
 .pct.alert   { color: var(--c-data-alert); }
 .pct.balance { color: var(--c-data-info); }
@@ -232,22 +235,20 @@ body[data-hover] #app {
   position: absolute;
   inset: 0;
   border-radius: 2px;
-  /* iOS 26 风格位置性多段渐变：沿 0%→33%→66%→100% 位置铺绿→青→黄→红。
-   * 渐变是铺满整个 bar 的位置性色带（positional），fill 宽度 = 利用率，渐变
-   * 相应被截取到当前位置：
-   *   50% 利用 → 只看到绿→青段（黄/红在 66% 之外，看不见）
-   *   100% 利用 → 看到全部 4 色
-   * 这比原来"统一绿"信息密度高，是真正的色阶。 */
-  background: linear-gradient(90deg,
-    #30d158 0%,     /* iOS green  */
-    #5ac8fa 33%,    /* iOS cyan   */
-    #ff9f0a 66%,    /* iOS yellow */
-    #ff453a 100%    /* iOS red    */
-  );
+  /* 颜色由 .bar-fill.ok/.cyan/.warn/.alert 设的 --bar-grad 决定 —— 整条单色。
+   * 上次做的"位置性绿→青→黄→红 4 段渐变"在 50% 这种"中间态"会同时显 3 色，
+   * 喧宾夺主。改成阈值化：到哪档就整条换哪档的色，简洁不抢眼。 */
+  background: var(--bar-grad, transparent);
   opacity: 0;
   transition: opacity 0.28s;
 }
 body[data-hover] #app .bar-fill::after { opacity: 1; }
+
+/* 4 档单色（4-stop positional gradient 太花，回归阈值化） */
+.bar-fill.ok    { --bar-grad: linear-gradient(90deg, #30d158, #5cd673); }
+.bar-fill.cyan  { --bar-grad: linear-gradient(90deg, #5ac8fa, #87d8ff); }
+.bar-fill.warn  { --bar-grad: linear-gradient(90deg, #ff9f0a, #ffb43a); }
+.bar-fill.alert { --bar-grad: linear-gradient(90deg, #ff453a, #ff6c63); }
 
 .row-foot {
   font-size: 10.5px;

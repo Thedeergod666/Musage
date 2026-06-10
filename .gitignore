@@ -31,4 +31,18 @@ src-tauri/gen/
 # User data
 *.tmp
 
+# macOS resource forks & Finder metadata
+._*
+.AppleDouble
+.LSOverride
+Icon?
+.Spotlight-V100
+.Trashes
+.DocumentRevisions-V100*
+.TemporaryItems
+.fseventsd
+.Network Trash Folder
+
+# Local-only docs / project notes
+MIGRATION.html
 CLAUDE.md

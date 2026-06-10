@@ -46,7 +46,7 @@ pub async fn tick(app: &AppHandle) -> Result<(), String> {
     // 写回 state
     {
         let state = app.state::<AppState>();
-        let mut guard = state.snapshot.blocking_write();
+        let mut guard = state.snapshot.write().await;
         *guard = snap;
     }
 

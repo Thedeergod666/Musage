@@ -24,7 +24,7 @@ pub async fn refresh_now(
     let cfg = state.config.read().await.clone();
     let snap = refresh_inner(&app, &cfg).await?;
     {
-        let mut guard = state.snapshot.blocking_write();
+        let mut guard = state.snapshot.write().await;
         *guard = snap.clone();
     }
     let _ = app.emit("musage://snapshot", &snap);
@@ -60,7 +60,7 @@ pub async fn save_config(
     }
 
     {
-        let mut guard = state.config.blocking_write();
+        let mut guard = state.config.write().await;
         *guard = cfg;
     }
     Ok(())

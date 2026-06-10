@@ -3,13 +3,30 @@
 //! 端点：GET /v1/api/openplatform/coding_plan/remains
 //! 鉴权：Bearer <api_key>
 //!
-//! 响应 schema 2026-06-01 更新前/后可能不同，本模块用**字段名宽容解析**：
-//! - 先尝试旧字段（ccswitch 用的）
-//! - 找不到时打印原始 JSON 让人能定位新字段
+//! ## Schema 历史
 //!
-//! 关键事实（从 ccswitch coding_plan.rs 推得）：
-//! - `current_interval_usage_count` 字段名虽然带 "usage"，**实际语义是"剩余"**（满=total，用完=0）
-//! - 已用百分比 = ((total - remaining) / total) * 100
+//! **2026-06-01 之前（count-based 旧 schema）**：
+//! - `current_interval_total_count` / `current_interval_usage_count`（5h）
+//! - `current_weekly_total_count` / `current_weekly_usage_count`（周）
+//! - 字段名虽带 "usage" 但**实际是"剩余"**；已用% = (total - remaining) / total * 100
+//!
+//! **2026-06-01 之后（percent-based 新 schema）** — 参考 ccswitch PR #3518：
+//! - `current_interval_remaining_percent`（5h 剩余%, 0-100）
+//! - `current_interval_status`（5h 状态门控，== 1 才有效）
+//! - `end_time`（5h 距离重置的**秒数**，不是 epoch ms）
+//! - `current_weekly_remaining_percent`（周剩余%）
+//! - `current_weekly_status`（周状态，== 1 才有效；2/3 = 不在套餐内）
+//! - `weekly_end_time`（周距离重置的秒数）
+//! - 已用% = 100 - `*_remaining_percent`
+//! - **重要**：Plus 订阅者的 `*_total_count` 旧字段全为 0，count 路径会得到空快照
+//! - **重要**：`*_remaining_percent=100` 不代表"还有 100%"，可能是 status=2/3（不在套餐内）
+//!
+//! ## 解析策略
+//!
+//! 1. 从 `model_remains[]` 优先选 `model_name == "general"`，找不到则取第一条
+//! 2. 先尝试 percent-based 路径（新 schema，5h/周独立 gate）
+//! 3. 失败则回退到 count-based 路径（旧 schema）
+//! 4. reset 字段智能识别：> 10^12 当 epoch ms，否则当 duration-seconds 加到 now
 
 use std::pin::Pin;
 use std::time::Duration;
@@ -146,11 +163,21 @@ fn parse(raw: &serde_json::Value, _region: Region) -> ProviderSnapshot {
         }
     }
 
-    // 取第一个 model 记录
+    // 选 model_remains[] 中 model_name == "general" 的那条（ccswitch 3.16.2 行为），
+    // 找不到则取第一条
     let item = raw
         .get("model_remains")
         .and_then(|v| v.as_array())
-        .and_then(|arr| arr.first());
+        .and_then(|arr| {
+            arr.iter()
+                .find(|v| {
+                    v.get("model_name")
+                        .and_then(|n| n.as_str())
+                        .map(|s| s == "general")
+                        .unwrap_or(false)
+                })
+                .or_else(|| arr.first())
+        });
 
     let Some(item) = item else {
         return ProviderSnapshot {
@@ -164,28 +191,25 @@ fn parse(raw: &serde_json::Value, _region: Region) -> ProviderSnapshot {
         };
     };
 
-    let five_hour = parse_tier(
-        item,
-        &[
-            // 旧 schema（ccswitch 用的）
+    // 先试新 schema（percent-based），任一 tier 解不出时回退到旧 schema（count-based）
+    let five_hour = parse_tier_percent(item, "current_interval_remaining_percent",
+                                          "current_interval_status", "end_time")
+        .or_else(|| parse_tier_count(item, &[
+            // 旧 schema（ccswitch 老版本用的）
             ("current_interval_total_count", "current_interval_usage_count", "end_time"),
             // 候选新 schema（如果 6/1 改名了）
             ("interval_total", "interval_remaining", "interval_end"),
             ("window_total", "window_remaining", "window_end"),
             ("total_5h", "used_5h", "reset_5h"),
-        ],
-        "five_hour",
-    );
+        ]));
 
-    let weekly = parse_tier(
-        item,
-        &[
+    let weekly = parse_tier_percent(item, "current_weekly_remaining_percent",
+                                       "current_weekly_status", "weekly_end_time")
+        .or_else(|| parse_tier_count(item, &[
             ("current_weekly_total_count", "current_weekly_usage_count", "weekly_end_time"),
             ("weekly_total", "weekly_remaining", "weekly_end"),
             ("total_week", "used_week", "reset_week"),
-        ],
-        "weekly_limit",
-    );
+        ]));
 
     // 转成 QuotaRow
     let mut rows = Vec::new();
@@ -236,11 +260,41 @@ struct TierInternal {
     resets_at: Option<i64>,
 }
 
-/// 尝试多组字段名，返回首个能解析的 TierInternal
-fn parse_tier(
+/// 新 schema 解析（ccswitch 3.16.2+ / MiniMax 2026-06-01 之后）
+///
+/// - `k_percent`：剩余百分比字段（0-100）
+/// - `k_status`：状态门控字段（必须 == 1 才算数；2/3 = 不在套餐内）
+/// - `k_reset`：距离重置的**秒数**（不是 epoch ms）
+///
+/// 返回已用百分比 = 100 - remain%。如 status != 1 或字段缺失返回 None。
+fn parse_tier_percent(
+    item: &serde_json::Value,
+    k_percent: &str,
+    k_status: &str,
+    k_reset: &str,
+) -> Option<TierInternal> {
+    // 1. status 必须 == 1
+    let status = item.get(k_status).and_then(|v| v.as_i64())?;
+    if status != 1 {
+        return None;
+    }
+    // 2. 读取剩余百分比
+    let remain_pct = item.get(k_percent).and_then(num_to_f64)?;
+    if !(0.0..=100.0).contains(&remain_pct) {
+        return None;
+    }
+    let utilization = 100.0 - remain_pct;
+    // 3. reset：智能识别（duration-seconds vs epoch-ms）
+    let resets_at = item.get(k_reset).and_then(|v| v.as_i64()).map(smart_reset_to_ms);
+    Some(TierInternal { utilization, resets_at })
+}
+
+/// 旧 schema 解析（count-based，已知 2026-06-01 后对 Plus 订阅者已不可靠）
+///
+/// 字段名带 "usage" 实际语义是"剩余"。已用% = (total - remaining) / total * 100。
+fn parse_tier_count(
     item: &serde_json::Value,
     candidates: &[(&str, &str, &str)],
-    _name: &str,
 ) -> Option<TierInternal> {
     for (k_total, k_remain, k_reset) in candidates {
         let total = item.get(*k_total).and_then(num_to_f64);
@@ -248,10 +302,9 @@ fn parse_tier(
         if let (Some(t), Some(r)) = (total, remain) {
             if t > 0.0 {
                 let utilization = ((t - r) / t) * 100.0;
-                let resets_at = item.get(*k_reset).and_then(|v| {
-                    v.as_i64()
-                        .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-                });
+                let resets_at = item.get(*k_reset)
+                    .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                    .map(smart_reset_to_ms);
                 return Some(TierInternal {
                     utilization,
                     resets_at,
@@ -260,6 +313,23 @@ fn parse_tier(
         }
     }
     None
+}
+
+/// 把 reset 字段智能转成 epoch ms。
+///
+/// - 旧 schema：`end_time` 是 epoch ms（> 10^12）
+/// - 新 schema：`end_time` 是距离重置的秒数（< 10^10，绝大多数情况）
+/// - 边界 10^12：2001-09-09 之后才合法为 epoch ms
+/// - 边界 4*10^12：2100-01-01 上限（防止异常值）
+fn smart_reset_to_ms(raw: i64) -> i64 {
+    const EPOCH_MS_MIN: i64 = 1_000_000_000_000; // 2001-09-09
+    const EPOCH_MS_MAX: i64 = 4_102_444_800_000; // 2100-01-01
+    if (EPOCH_MS_MIN..=EPOCH_MS_MAX).contains(&raw) {
+        raw
+    } else {
+        // 当作 duration-seconds，加到当前时间
+        chrono::Utc::now().timestamp_millis() + raw * 1000
+    }
 }
 
 fn num_to_f64(v: &serde_json::Value) -> Option<f64> {

@@ -10,6 +10,7 @@
 - 形态：**小悬浮窗 + 系统托盘**（始终置顶、可拖动、双行数据：5h 限额 / 周限额 + 重置时间）
 - 鉴权：仅需 API Key（Bearer Token），不依赖浏览器 session
 - 用户原始问题：[platform.minimaxi.com](https://platform.minimaxi.com/console/usage) 上的"套餐用量"页有数据，但 ccswitch 挂了
+- **2026-06-10**：参考 ccswitch [PR #3518](https://github.com/farion1231/cc-switch/pull/3518) 实现了 percent-based 新 schema 解析
 
 ## 技术栈（已拍板）
 
@@ -33,7 +34,7 @@
 
 **请求**：`GET`，`Authorization: Bearer <api_key>`
 
-**响应 schema（2026-06-01 之前的版本，已用 ccswitch 源码验证）**：
+**响应 schema（2026-06-01 之前的 count-based 版本，已对 Plus 订阅者失效）**：
 ```json
 {
   "base_resp": { "status_code": 0, "status_msg": "success" },
@@ -48,9 +49,35 @@
 }
 ```
 
-**新 schema 未明**：`api.rs::parse_tier` 已写宽容解析（多组字段名候选），并通过 `dump` CLI 子命令打印原始 JSON。
+**响应 schema（2026-06-01 之后的 percent-based 新版本，参考 ccswitch PR #3518）**：
+```json
+{
+  "base_resp": { "status_code": 0, "status_msg": "success" },
+  "model_remains": [{
+    "model_name": "general",                       // 选这一条
+    "current_interval_remaining_percent": 72,      // 5h 剩余%
+    "current_interval_status": 1,                  // 5h 状态（==1 有效；2/3 = 不在套餐）
+    "end_time": 14523,                             // ⚠ 距离重置的**秒数**（不是 epoch ms）
+    "current_weekly_remaining_percent": 86,        // 周剩余%
+    "current_weekly_status": 1,                    // 周状态
+    "weekly_end_time": 803245                      // ⚠ 同上，秒数
+  }]
+}
+```
 
-**已用百分比公式**：`((total - remaining) / total) * 100`
+**已用百分比公式**：
+- 新：`100 - *_remaining_percent`
+- 旧：`((total - remaining) / total) * 100`
+
+**解析策略**（见 [`src-tauri/src/providers/minimax.rs`](src-tauri/src/providers/minimax.rs)）：
+1. 从 `model_remains[]` 优先选 `model_name == "general"`，找不到则取第一条
+2. 先试 percent-based 路径（5h/周各自独立 gate on `status == 1`）
+3. 失败回退到 count-based 路径
+4. `resets_at` 智能识别：值在 `[10^12, 4*10^12]` 范围当 epoch ms，否则当 duration-seconds 加到 now
+
+**已知坑**（参考 MiniMax-M2 #99, cli #165, cli #173）：
+- `*_remaining_percent=100` 不代表"还有 100%"，可能是 `status=2/3`（不在套餐内）
+- 旧字段对 Plus 订阅者全为 0
 
 ## 当前进度
 

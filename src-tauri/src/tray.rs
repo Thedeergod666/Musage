@@ -1,14 +1,12 @@
 //! 系统托盘动态图标生成
 //!
 //! 渲染规则：
-//! - 32x32 RGBA
-//! - **无背景填充**（透明），只画两行文字
-//! - 文字 = health 色（绿/橙/红/灰，对应 worst_health）+ 1px 黑色描边，
-//!   任意 tray 背景色下都可读
-//! - 中心两行文字（font 加载失败时退化为全透明空白图标）：
-//!   - 优先 MiniMax：上 `h<5h%>`、下 `w<周%>`（h=hour, w=week）
-//!   - 其次 DeepSeek：上 余额数字、下 货币单位
-//!   - 都没有：上 `!`、下 `!`
+//! - 32x32 RGBA，**透明底**（无背景填充）
+//! - MiniMax：两条水平迷你进度条，上 = 5h utilization，下 = 周 utilization
+//!   - 轨道 = 暗灰圆角矩形
+//!   - 填充 = 白色实心（按已用% 决定填充宽度）
+//! - DeepSeek：保留单大数字 + 货币单位（钱包余额没有"已用/总量"，进度条不适用）
+//! - 都没有数据：留空（font 缺失同样留空）
 //! - 托盘 tooltip：所有 provider 的核心状态，逗号分隔
 
 use ab_glyph::{Font, FontVec, PxScale, ScaleFont};
@@ -183,29 +181,41 @@ fn make_placeholder_icon() -> Image<'static> {
 }
 
 fn render_icon(snap: &QuotaSnapshot) -> Image<'static> {
-    // 透明背景 —— 模仿监控 LCD 两行显示
+    // 透明背景 —— MiniMax 走双进度条，DeepSeek 走单大数字
     let mut img: image::ImageBuffer<Rgba<u8>, Vec<u8>> =
         image::ImageBuffer::from_fn(ICON_SIZE, ICON_SIZE, |_x, _y| Rgba([0, 0, 0, 0]));
 
-    // 纯白文字（macOS 菜单栏深底白字最清晰；不再按 health 染色）
-    let text_color = Rgba([255u8, 255, 255, 255]);
-
-    let (line1, line2) = pick_two_lines(snap);
-    draw_two_line_text(&mut img, &line1, &line2, text_color);
+    match pick_content(snap) {
+        Some(TrayContent::MinimaxBars { five_h, weekly }) => {
+            draw_mini_bars(&mut img, five_h, weekly);
+        }
+        Some(TrayContent::DeepseekText { amount, currency }) => {
+            // 单大数字 + 小字货币
+            draw_deepseek_text(&mut img, amount, &currency);
+        }
+        None => {
+            // 全失败：留空（font 缺失也留空）
+        }
+    }
 
     let (w, h) = img.dimensions();
     Image::new_owned(img.into_raw(), w, h)
 }
 
-/// 选 primary provider 并返回 (line1, line2)。
+/// Tray 渲染内容选择结果
+enum TrayContent {
+    /// MiniMax：上 5h utilization（0-100），下 周 utilization（0-100）
+    MinimaxBars { five_h: f64, weekly: f64 },
+    /// DeepSeek：余额数字 + 货币单位（如 128.5 / "CNY"）
+    DeepseekText { amount: f64, currency: String },
+}
+
+/// 选 primary provider 并返回对应渲染内容。
 ///
-/// 优先级：MiniMax 成功 > DeepSeek 成功 > 失败态。
-/// MiniMax 用 `h<5h%>` / `w<周%>`（h=hour, w=week，方便一眼区分）。
-/// DeepSeek 用余额数字 / 货币单位（如 "128" / "CNY"）。
-/// 缺失行用 `"—"` 占位。
-fn pick_two_lines(snap: &QuotaSnapshot) -> (String, String) {
+/// 优先级：MiniMax 成功 > DeepSeek 成功 > None（失败/空）。
+fn pick_content(snap: &QuotaSnapshot) -> Option<TrayContent> {
     if snap.providers.is_empty() {
-        return ("…".to_string(), "".to_string());
+        return None;
     }
 
     if let Some(minimax) = snap
@@ -218,16 +228,14 @@ fn pick_two_lines(snap: &QuotaSnapshot) -> (String, String) {
             .iter()
             .find(|r| r.label == "5h")
             .and_then(|r| r.utilization)
-            .map(format_pct_with_h_prefix)
-            .unwrap_or_else(|| "h—".to_string());
+            .unwrap_or(0.0);
         let weekly = minimax
             .rows
             .iter()
             .find(|r| r.label == "周")
             .and_then(|r| r.utilization)
-            .map(format_pct_with_w_prefix)
-            .unwrap_or_else(|| "w—".to_string());
-        return (five_h, weekly);
+            .unwrap_or(0.0);
+        return Some(TrayContent::MinimaxBars { five_h, weekly });
     }
 
     if let Some(deepseek) = snap
@@ -238,75 +246,187 @@ fn pick_two_lines(snap: &QuotaSnapshot) -> (String, String) {
         let amount = deepseek
             .rows
             .iter()
-            .find(|r| r.remaining.is_some())
-            .and_then(|r| r.remaining)
-            .map(format_amount_compact)
-            .unwrap_or_else(|| "—".to_string());
+            .find_map(|r| r.remaining)
+            .unwrap_or(0.0);
         let currency = deepseek
             .rows
             .iter()
-            .find(|r| r.remaining.is_some())
-            .and_then(|r| r.unit.clone())
+            .find_map(|r| r.unit.clone())
             .unwrap_or_else(|| "CNY".to_string());
-        return (amount, currency);
+        return Some(TrayContent::DeepseekText { amount, currency });
     }
 
-    ("!".to_string(), "×".to_string())
+    None
 }
 
-/// "h<已用%>" —— 例如 "h10%"。32x32 装得下 4 字符。
-fn format_pct_with_h_prefix(v: f64) -> String {
-    let n = v.round().clamp(0.0, 999.0) as i64;
-    format!("h{}%", n)
+/// 画两条水平迷你进度条。
+///
+/// 布局（32x32）：
+/// ```
+/// ┌──────────────────────────┐
+/// │                          │  ← 6px 顶 padding
+/// │   ████████░░░░░░░░░░░░   │  ← 5h 进度条 (高 9px)
+/// │   ██░░░░░░░░░░░░░░░░░░   │  ← 周 进度条 (高 9px)
+/// │                          │  ← 6px 底 padding
+/// └──────────────────────────┘
+///     ↑ 3px                  ↑ 3px
+/// ```
+fn draw_mini_bars(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64, util_bot: f64) {
+    const PAD_X: i32 = 3;
+    const BAR_W: i32 = ICON_SIZE as i32 - PAD_X * 2; // 26
+    const BAR_H: i32 = 9;
+    const GAP: i32 = 2;
+    const TOP: i32 = 6;
+    const RADIUS: i32 = 2;
+    let track = Rgba([60u8, 60, 60, 255]);
+    let fill = Rgba([255u8, 255, 255, 255]);
+
+    let pct = |u: f64| -> u32 { (u.clamp(0.0, 100.0)).round() as u32 };
+
+    draw_rounded_bar(
+        img,
+        PAD_X,
+        TOP,
+        BAR_W,
+        BAR_H,
+        pct(util_top),
+        track,
+        fill,
+        RADIUS,
+    );
+    draw_rounded_bar(
+        img,
+        PAD_X,
+        TOP + BAR_H + GAP,
+        BAR_W,
+        BAR_H,
+        pct(util_bot),
+        track,
+        fill,
+        RADIUS,
+    );
 }
 
-/// "w<已用%>" —— 例如 "w5%"。
-fn format_pct_with_w_prefix(v: f64) -> String {
-    let n = v.round().clamp(0.0, 999.0) as i64;
-    format!("w{}%", n)
+/// 单条圆角水平进度条。先画整个轨道，再叠加按 % 裁宽的填充。
+fn draw_rounded_bar(
+    img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    fill_pct: u32,
+    track: Rgba<u8>,
+    fill: Rgba<u8>,
+    radius: i32,
+) {
+    // 轨道
+    fill_rounded_rect(img, x, y, w, h, radius, track);
+    // 填充（至少 1px 让 0% 和 "没数据" 视觉上区分开 —— 0% 也是有一截小白条）
+    let fill_w = ((w as u32).saturating_mul(fill_pct.min(100)) / 100).max(1) as i32;
+    fill_rounded_rect(img, x, y, fill_w, h, radius, fill);
 }
 
-/// 紧凑金额格式：<1000 整数；<10000 1 位小数 k；<1M 整数 k；否则 1 位小数 M。
+/// 填充一个圆角矩形。逐像素判断是否在圆角内。
+fn fill_rounded_rect(
+    img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    radius: i32,
+    color: Rgba<u8>,
+) {
+    let r = radius.min(w / 2).min(h / 2).max(0);
+    for py in y..(y + h) {
+        for px in x..(x + w) {
+            if px < 0 || py < 0 || px >= ICON_SIZE as i32 || py >= ICON_SIZE as i32 {
+                continue;
+            }
+            // 4 个圆角：若 (px, py) 落在任一圆角外接矩形内，要算到圆心距离
+            let in_left = (x..x + r).contains(&px);
+            let in_right = (x + w - r..x + w).contains(&px);
+            let in_top = (y..y + r).contains(&py);
+            let in_bot = (y + h - r..y + h).contains(&py);
+
+            let in_corner_zone = (in_left || in_right) && (in_top || in_bot);
+
+            if !in_corner_zone {
+                img.put_pixel(px as u32, py as u32, color);
+            } else {
+                // 计算到对应角圆心的距离
+                let (cx, cy) = if in_left && in_top {
+                    (x + r, y + r)
+                } else if in_right && in_top {
+                    (x + w - r - 1, y + r)
+                } else if in_left && in_bot {
+                    (x + r, y + h - r - 1)
+                } else {
+                    (x + w - r - 1, y + h - r - 1)
+                };
+                let dx = px - cx;
+                let dy = py - cy;
+                if dx * dx + dy * dy <= r * r {
+                    img.put_pixel(px as u32, py as u32, color);
+                }
+            }
+        }
+    }
+}
+
+/// DeepSeek 用：大号余额数字 + 小号货币单位
+fn draw_deepseek_text(
+    img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>,
+    amount: f64,
+    currency: &str,
+) {
+    let Some(font) = load_font() else { return };
+
+    // 大数字：scale 16，居中放上半部分
+    let big_scale = PxScale::from(16.0);
+    let big_text = format_amount_tray(amount);
+    let big_scaled = font.as_scaled(big_scale);
+    let big_w: f32 = big_text
+        .chars()
+        .map(|c| big_scaled.h_advance(font.glyph_id(c)))
+        .sum();
+    let big_x = ((ICON_SIZE as f32 - big_w) / 2.0).max(1.0) as i32;
+    draw_text_mut(img, Rgba([255, 255, 255, 255]), big_x, 2, big_scale, font, &big_text);
+
+    // 小货币：scale 9，居中放下半部分
+    let small_scale = PxScale::from(9.0);
+    let small_scaled = font.as_scaled(small_scale);
+    let small_w: f32 = currency
+        .chars()
+        .map(|c| small_scaled.h_advance(font.glyph_id(c)))
+        .sum();
+    let small_x = ((ICON_SIZE as f32 - small_w) / 2.0).max(1.0) as i32;
+    draw_text_mut(
+        img,
+        Rgba([180, 180, 180, 255]),
+        small_x,
+        22,
+        small_scale,
+        font,
+        currency,
+    );
+}
+
+/// 紧凑金额（tray 用）：<100 整数；<1000 1 位小数 k；<1M 整数 k；否则 1 位小数 M。
 /// 32x32 限制字符数 ≤ 5。
-fn format_amount_compact(v: f64) -> String {
+fn format_amount_tray(v: f64) -> String {
     let abs = v.abs();
     if abs >= 1_000_000.0 {
-        // 转 f32 走 f32 的 Display 格式化（f64 没有 {:#.1} 那种 trait）
         format!("{:.1}M", (v / 1_000_000.0) as f32)
     } else if abs >= 10_000.0 {
         format!("{}k", (v / 1000.0).round() as i64)
     } else if abs >= 1000.0 {
         format!("{:.1}k", (v / 1000.0) as f32)
-    } else {
+    } else if abs >= 100.0 {
         format!("{}", v.round() as i64)
+    } else {
+        // 小数余额（<100）：保留 1 位小数
+        format!("{:.1}", v)
     }
-}
-
-/// 在 32x32 上画两行居中纯白文字。font 缺失则 noop —— 整个图标就是空白透明。
-fn draw_two_line_text(
-    img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>,
-    top: &str,
-    bottom: &str,
-    color: Rgba<u8>,
-) {
-    let Some(font) = load_font() else { return };
-    let scale = PxScale::from(13.0);
-    let scaled = font.as_scaled(scale);
-    let w = ICON_SIZE as f32;
-
-    let measure = |text: &str| -> f32 {
-        text.chars().map(|c| scaled.h_advance(font.glyph_id(c))).sum()
-    };
-
-    // 上行 baseline = 12
-    let top_w = measure(top);
-    let top_x = ((w - top_w) / 2.0).max(1.0) as i32;
-    draw_text_mut(img, color, top_x, 12, scale, font, top);
-
-    // 下行 baseline = 26
-    let bot_w = measure(bottom);
-    let bot_x = ((w - bot_w) / 2.0).max(1.0) as i32;
-    draw_text_mut(img, color, bot_x, 26, scale, font, bottom);
 }
 
 fn tooltip(snap: &QuotaSnapshot) -> String {

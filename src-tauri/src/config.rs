@@ -1,17 +1,21 @@
-//! 应用配置 + keyring 集成
+//! 应用配置 + 本地密钥存储
 //!
 //! 配置文件路径（%APPDATA%\com.musage.app\config.json）：
 //! - providers: `{ minimax: { enabled, region }, deepseek: { enabled } }`
 //! - refresh_interval_secs: 拉取间隔
 //! - floating_x, floating_y: 悬浮窗位置
 //!
-//! API key 存到 OS keyring，user 按 provider 命名（`api_key:minimax` / `api_key:deepseek`），
-//! 不写文件。
+//! API key 存到独立文件 `keys.json`（同目录），按 provider id 命名（`minimax` / `deepseek`）。
+//! Unix 上文件权限强制 `0600`（仅当前用户可读写）；Windows 靠 NTFS 默认 ACL。
+//!
+//! 之前用 OS keyring（`keyring` crate），macOS 上每次启动会弹 Keychain 访问窗 + 解锁
+//! 登录钥匙串的密码框，体验很糟。改成纯文件后启动零弹窗。
 //!
 //! ## 向后兼容
 //!
 //! 旧 config.json 顶层有 `region: "cn"` 字段（v0.1 格式），加载时自动迁到
-//! `providers.minimax.region`；用户需要重新输入 key（旧 `api_key` credential 不复用）。
+//! `providers.minimax.region`。`keys.json` 没有历史包袱，直接从空开始。
+//! 升级到本版本后用户需要重新输入一次 API key（keyring 的旧条目不再被读取）。
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -22,8 +26,8 @@ use tauri::AppHandle;
 use crate::providers::minimax::Region;
 use crate::providers::Provider;
 
-const KEYRING_SERVICE: &str = "com.musage.app";
 const CONFIG_FILE: &str = "config.json";
+const KEYS_FILE: &str = "keys.json";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
@@ -255,41 +259,80 @@ impl AppConfig {
     }
 }
 
-fn config_path() -> Result<PathBuf, String> {
-    let dir = dirs::config_dir().ok_or_else(|| "无法定位配置目录".to_string())?;
-    Ok(dir.join("com.musage.app").join(CONFIG_FILE))
+fn config_dir() -> Result<PathBuf, String> {
+    dirs::config_dir().ok_or_else(|| "无法定位配置目录".to_string())
 }
 
-// ── Keyring ──────────────────────────────────────────────
+fn config_path() -> Result<PathBuf, String> {
+    Ok(config_dir()?.join("com.musage.app").join(CONFIG_FILE))
+}
 
-fn keyring_user(provider: Provider) -> String {
-    format!("api_key:{}", provider.id_str())
+// ── 本地文件存 key（替代 OS keyring）─────────────────────
+
+/// `keys.json` 存储格式：`{ "minimax": "sk-cp-...", "deepseek": "sk-..." }`
+type KeysMap = BTreeMap<String, String>;
+
+fn keys_path() -> Result<PathBuf, String> {
+    let dir = config_dir()?;
+    Ok(dir.join("com.musage.app").join(KEYS_FILE))
+}
+
+/// 原子写：先写 .tmp 文件 + 设 0600 权限，再 rename 覆盖。
+/// 避免半写状态把 key 写坏 / 漏权限。
+fn write_keys_atomic(map: &KeysMap) -> Result<(), String> {
+    let path = keys_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    let s = serde_json::to_string_pretty(map).map_err(|e| format!("serialize keys: {e}"))?;
+    std::fs::write(&tmp, &s).map_err(|e| format!("write tmp: {e}"))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("chmod 0600: {e}"))?;
+    }
+
+    std::fs::rename(&tmp, &path).map_err(|e| format!("rename keys: {e}"))?;
+    Ok(())
+}
+
+fn read_keys() -> Result<KeysMap, String> {
+    let path = keys_path()?;
+    if !path.exists() {
+        return Ok(BTreeMap::new());
+    }
+    let s = std::fs::read_to_string(&path).map_err(|e| format!("read keys: {e}"))?;
+    if s.trim().is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    serde_json::from_str::<KeysMap>(&s).map_err(|e| format!("parse keys.json: {e}"))
 }
 
 pub fn load_api_key_for(provider: Provider) -> Result<Option<String>, String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, &keyring_user(provider))
-        .map_err(|e| format!("keyring entry: {e}"))?;
-    match entry.get_password() {
-        Ok(p) => Ok(Some(p)),
-        Err(keyring::Error::NoEntry) => Ok(None),
-        Err(e) => Err(format!("keyring read: {e}")),
-    }
+    let map = read_keys()?;
+    Ok(map.get(provider.id_str()).cloned())
 }
 
 pub fn save_api_key_for(provider: Provider, key: &str) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, &keyring_user(provider))
-        .map_err(|e| format!("keyring entry: {e}"))?;
-    entry
-        .set_password(key)
-        .map_err(|e| format!("keyring write: {e}"))
+    let mut map = read_keys().unwrap_or_default();
+    map.insert(provider.id_str().to_string(), key.to_string());
+    write_keys_atomic(&map)
 }
 
 pub fn delete_api_key_for(provider: Provider) -> Result<(), String> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, &keyring_user(provider))
-        .map_err(|e| format!("keyring entry: {e}"))?;
-    match entry.delete_credential() {
-        Ok(()) => Ok(()),
-        Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(format!("keyring delete: {e}")),
+    let mut map = read_keys().unwrap_or_default();
+    map.remove(provider.id_str());
+    if map.is_empty() {
+        // 全部删完就连文件一起删，避免空文件 + 0 字节文件混在目录里
+        let path = keys_path()?;
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|e| format!("remove empty keys: {e}"))?;
+        }
+    } else {
+        write_keys_atomic(&map)?;
     }
+    Ok(())
 }

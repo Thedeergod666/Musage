@@ -85,7 +85,7 @@ function setupTabs() {
 async function loadKeyStatus(provider: ProviderId) {
   const has = await invoke<boolean>("has_api_key_for", { provider });
   const el = $(`#api-key-status-${provider}`);
-  el.textContent = has ? "✓ 已保存到 Windows 凭据" : "未设置";
+  el.textContent = has ? "✓ 已保存到本机" : "未设置";
   el.className = `status ${has ? "ok" : ""}`;
   $(`#api-key-${provider}` as keyof HTMLElementTagNameMap as string) as HTMLInputElement;
 }
@@ -101,7 +101,7 @@ async function saveKey(provider: ProviderId) {
     await invoke("set_api_key_for", { provider, key });
     input.value = "";
     await loadKeyStatus(provider);
-    flash(`✓ ${providerDisplay(provider)} key 已保存到 Windows 凭据`);
+    flash(`✓ ${providerDisplay(provider)} key 已保存`);
     // 立即拉一次
     await testConn();
   } catch (e) {
@@ -116,7 +116,7 @@ async function deleteKey(provider: ProviderId) {
   flash("✓ 已删除");
 }
 
-// 从 keyring 读明文 → 写剪贴板。用完即弃，不在 JS 侧长期保存。
+// 从 keys.json 读明文 → 写剪贴板。用完即弃，不在 JS 侧长期保存。
 async function copyKey(provider: ProviderId) {
   try {
     const key = await invoke<string | null>("get_api_key_for", { provider });

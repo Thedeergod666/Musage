@@ -84,6 +84,7 @@
       .tab[data-p="minimax"] .tab-dot  { background: #9b59ff; }
       .tab[data-p="deepseek"] .tab-dot { background: #4a90e2; }
       .tab[data-p="xiaomimimo"] .tab-dot { background: #ff6a00; }
+      .tab[data-p="tavily"] .tab-dot  { background: #00d4a8; }
 
       .provider-panel { display: none; margin-top: 12px; }
       .provider-panel.active { display: block; }
@@ -145,6 +146,9 @@
         </button>
         <button class="tab" data-p="xiaomimimo">
           <span class="tab-dot"></span>Xiaomi MiMo
+        </button>
+        <button class="tab" data-p="tavily">
+          <span class="tab-dot"></span>Tavily
         </button>
       </div>
     </div>
@@ -253,6 +257,29 @@
         </select>
         <div class="help">
           集群字段当前用于未来扩展（多账号 / region-specific URL）。当前 cookie auth 已绑定 user，无视。
+        </div>
+      </div>
+    </div>
+
+    <!-- Tavily Panel (Phase 1 新增:第一个非 AI provider) -->
+    <div class="provider-panel" data-p="tavily">
+      <div class="provider-section">
+        <h2>🟢 Tavily API Key</h2>
+        <div class="field">
+          <div class="input-row">
+            <input id="api-key-tavily" type="password" placeholder="tvly-..." autocomplete="off" />
+            <button id="copy-key-tavily" title="复制到剪贴板">📋</button>
+          </div>
+          <div class="status" id="api-key-status-tavily">—</div>
+        </div>
+        <div class="row">
+          <button id="save-key-tavily" class="primary">保存</button>
+          <button id="del-key-tavily" class="danger">删除</button>
+        </div>
+        <div class="help">
+          Tavily 是 AI agent 常用的 search API（<strong>不是</strong> LLM token plan）。
+          Musage 会展示主指标 "150/1000 credits" + 5 个 endpoint 细分行。
+          <br/>从 <a href="https://app.tavily.com/home" target="_blank" style="color:#4a90e2">app.tavily.com</a> 获取 API key。
         </div>
       </div>
     </div>

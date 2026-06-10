@@ -7,7 +7,7 @@
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
-use crate::config::{self, AppConfig, ProviderOverrides};
+use crate::config::{self, AppConfig, FloatingPinMode, ProviderOverrides};
 use crate::providers::{deepseek, minimax, ErrorKind, Provider, ProviderImpl, ProviderSnapshot, QuotaSnapshot};
 use crate::AppState;
 
@@ -207,6 +207,96 @@ pub async fn reset_floating_window(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn quit_app(app: AppHandle) {
     app.exit(0);
+}
+
+/// 设置浮窗的置顶/置底模式，同时把模式持久化到 config。
+///
+/// 模式含义：
+/// - `pin_top`   ：浮窗始终在最上层（系统 always-on-top）
+/// - `pin_bottom`：默认在底部（不 always-on-top），鼠标 hover 进窗口时由前端
+///                 调 [`set_floating_hover_raise`] 临时切到置顶，鼠标离开后还原
+/// - `normal`    ：不强制层级，跟普通窗口一样
+///
+/// 调本命令会**立即**应用效果，并把选择持久化到 config.json（下次启动恢复）。
+#[tauri::command]
+pub async fn set_floating_pin_mode(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    mode: String,
+) -> Result<(), String> {
+    let parsed = parse_pin_mode(&mode)?;
+    apply_pin_mode_to_window(&app, parsed);
+    {
+        let mut cfg = state.config.write().await;
+        if cfg.floating_pin_mode != parsed {
+            cfg.floating_pin_mode = parsed;
+            let _ = cfg.save();
+        }
+    }
+    // 通知浮窗刷新 hover 监听（PinTop/Normal 模式下不应该有 hover 监听）
+    let _ = app.emit("musage://pin-mode-changed", &parsed);
+    Ok(())
+}
+
+/// 浮窗的 hover 状态切换（只在 PinBottom 模式下生效）。
+///
+/// - `hovering=true`  → 临时把窗口设成 always-on-top
+/// - `hovering=false` → 还原成 always-on-top=false（让其它窗口盖住它）
+///
+/// 平台差异：
+/// - 非 macOS：前端 JS 的 `mouseenter`/`mouseleave` 会调本命令，由 platform stub
+///   走 Tauri 原生 `set_always_on_top` 切顶层。
+/// - macOS：窗口在 `kCGNormalWindowLevel - 1` 时被其它 app 盖住，JS mouseenter
+///   触发不到，所以 [`crate::platform::macos`] 启了一个 background thread 轮询
+///   `NSEvent.mouseLocation()` + 窗口 `frame`，自己切 level。前端这条信号会被
+///   macos stub 忽略（`TRACKER_RUNNING` 才会生效）。
+///
+/// 在 PinTop / Normal 模式下调用会被忽略（不会破坏其它模式的状态）。
+#[tauri::command]
+pub async fn set_floating_hover_raise(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    hovering: bool,
+) -> Result<(), String> {
+    let mode = {
+        let cfg = state.config.read().await;
+        cfg.floating_pin_mode
+    };
+    if mode != FloatingPinMode::PinBottom {
+        // 非 PinBottom 模式忽略 hover 信号，避免误改置顶状态
+        return Ok(());
+    }
+    crate::platform::set_window_hover_raise(&app, hovering);
+    Ok(())
+}
+
+fn parse_pin_mode(s: &str) -> Result<FloatingPinMode, String> {
+    match s {
+        "pin_top" | "PinTop" => Ok(FloatingPinMode::PinTop),
+        "pin_bottom" | "PinBottom" => Ok(FloatingPinMode::PinBottom),
+        "normal" | "Normal" => Ok(FloatingPinMode::Normal),
+        other => Err(format!("未知的浮窗置顶模式: {other}")),
+    }
+}
+
+/// 把 pin 模式应用到浮窗窗口。失败只 warn，不抛错（窗口可能还没建好）。
+///
+/// macOS 上不能只调 `set_always_on_top(false)` —— 那样的话窗口是
+/// `kCGNormalWindowLevel = 0`，前台调度会把其它正在激活的 app 窗口叠上来，
+/// 浮窗就"消失"了。所以走 [`crate::platform`] 模块的私有 API 实现：
+/// - PinTop   → `kCGFloatingWindowLevel` (3)
+/// - PinBottom→ `kCGNormalWindowLevel - 1` (-1) + 启动全局 hover tracker
+/// - Normal   → `kCGNormalWindowLevel` (0)
+///
+/// 非 macOS 平台 (Windows / Linux) stub 走 Tauri 原生 `set_always_on_top`，
+/// Windows 上 `set_always_on_top(false)` 配 `HWND_NOTOPMOST` 行为 OK，
+/// Linux 上 EWMH 不支持"置底"会降级成普通窗口 —— 已知限制。
+pub fn apply_pin_mode_to_window(app: &AppHandle, mode: FloatingPinMode) {
+    match mode {
+        FloatingPinMode::PinTop => crate::platform::set_window_pin_top(app),
+        FloatingPinMode::PinBottom => crate::platform::set_window_pin_bottom(app),
+        FloatingPinMode::Normal => crate::platform::set_window_normal(app),
+    }
 }
 
 // ── 核心实现 ──────────────────────────────────────────────

@@ -2,6 +2,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 type ProviderId = "minimax" | "deepseek";
+type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
 
 interface ProviderConfig {
   enabled: boolean;
@@ -29,6 +30,7 @@ interface AppConfig {
   autostart: boolean;
   floating_x: number | null;
   floating_y: number | null;
+  floating_pin_mode?: FloatingPinMode;
   // 用户加的字段名候选（应对 MiniMax 改 schema）
   schema_overrides?: Record<string, ProviderOverrides>;
 }
@@ -141,6 +143,13 @@ async function loadConfig() {
   ($("#interval") as HTMLInputElement).value = String(cfg.refresh_interval_secs);
   ($("#autostart") as HTMLInputElement).checked = cfg.autostart;
 
+  // 置顶/置底模式：缺省 = pin_top（保持老版本行为）
+  const pinMode: FloatingPinMode = cfg.floating_pin_mode ?? "pin_top";
+  const radio = document.querySelector<HTMLInputElement>(
+    `input[name="pin-mode"][value="${pinMode}"]`,
+  );
+  if (radio) radio.checked = true;
+
   // schema overrides (高级)
   const ov = cfg.schema_overrides ?? {};
   const mm = ov.minimax ?? { five_hour: { count_candidates: [] }, weekly: { count_candidates: [] } };
@@ -154,6 +163,18 @@ async function loadConfig() {
     null,
     2,
   );
+}
+
+/// 置顶/置底模式：选中即生效（通过 `set_floating_pin_mode` 命令）。
+/// 不需要走"保存配置"按钮，因为这条改动是即时的，command 内部会同步落盘。
+async function applyPinMode(mode: FloatingPinMode) {
+  try {
+    await invoke("set_floating_pin_mode", { mode });
+    const label = mode === "pin_top" ? "已设为：始终置顶" : mode === "pin_bottom" ? "已设为：置底（hover 置顶）" : "已设为：普通窗口";
+    flash(`✓ ${label}`);
+  } catch (e) {
+    flash(`✗ 切换置顶模式失败: ${e}`, true);
+  }
 }
 
 async function saveConfig() {
@@ -173,6 +194,15 @@ async function saveConfig() {
     return;
   }
 
+  // 先拉一次当前 config，把浮窗位置/置顶模式这类用户没在面板上改的字段保留下来。
+  // 旧实现把 floating_x/y 写死成 null，会把已记忆的窗口位置清空 —— 已修。
+  const existing = await invoke<AppConfig>("get_config");
+  const pinRadio = document.querySelector<HTMLInputElement>('input[name="pin-mode"]:checked');
+  const pinMode: FloatingPinMode =
+    (pinRadio?.value as FloatingPinMode | undefined) ??
+    existing.floating_pin_mode ??
+    "pin_top";
+
   const cfg: AppConfig = {
     providers: {
       minimax: {
@@ -183,8 +213,9 @@ async function saveConfig() {
     },
     refresh_interval_secs: parseInt(($("#interval") as HTMLInputElement).value, 10) || 60,
     autostart: ($("#autostart") as HTMLInputElement).checked,
-    floating_x: null,
-    floating_y: null,
+    floating_x: existing.floating_x ?? null,
+    floating_y: existing.floating_y ?? null,
+    floating_pin_mode: pinMode,
     schema_overrides: {
       minimax: {
         five_hour: { count_candidates: fiveHourCandidates },
@@ -287,6 +318,17 @@ $("#reset-floating")?.addEventListener("click", async () => {
   } finally {
     btn.disabled = false;
   }
+});
+
+// 置顶/置底模式：单选按钮变更即生效（不依赖"保存配置"按钮）
+document.querySelectorAll<HTMLInputElement>('input[name="pin-mode"]').forEach((r) => {
+  r.addEventListener("change", () => {
+    if (!r.checked) return;
+    const mode = r.value as FloatingPinMode;
+    if (mode === "pin_top" || mode === "pin_bottom" || mode === "normal") {
+      applyPinMode(mode);
+    }
+  });
 });
 
 (async () => {

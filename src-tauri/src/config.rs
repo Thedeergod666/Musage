@@ -46,6 +46,30 @@ impl Default for ProviderConfig {
     }
 }
 
+/// 浮窗置顶/置底行为
+///
+/// - `PinTop`   ：浮窗一直在最上层（系统 always-on-top 模式）
+/// - `PinBottom`：默认在底部（不 always-on-top，会被其它窗口盖住），
+///                鼠标 hover 进浮窗时临时切到置顶，鼠标离开后回到置底
+/// - `Normal`   ：不强制层级，跟普通窗口一样（被聚焦时在前，失焦后被盖住）
+///
+/// 序列化用 snake_case 字符串，向后兼容旧 config（缺字段 → PinTop，老版本的默认行为）。
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FloatingPinMode {
+    #[default]
+    PinTop,
+    PinBottom,
+    Normal,
+}
+
+impl FloatingPinMode {
+    pub fn is_serialized(&self) -> bool {
+        // 所有枚举值都参与序列化；保留这个方法是为了语义一致
+        true
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     /// provider id → 配置
@@ -57,8 +81,21 @@ pub struct AppConfig {
     pub floating_w: Option<i32>,
     /// 浮窗高度
     pub floating_h: Option<i32>,
+    /// 浮窗置顶/置底模式（缺省 = PinTop，保持旧版本行为）
+    #[serde(default)]
+    pub floating_pin_mode: FloatingPinMode,
     pub autostart: bool,
     pub show_in_tray_on_close: bool,
+    /// 省电模式：禁用 backdrop-filter 模糊 + 所有 CSS transition。
+    /// 适合老 Intel Mac / 非 macOS WebView 性能不足时使用。
+    /// 默认 false（开启玻璃材质）。前端通过 `body[data-low-power]` 属性响应。
+    #[serde(default)]
+    pub low_power_mode: bool,
+    /// 全屏时自动隐藏浮窗（macOS 通过 NSMenu.menuBarVisible 检测）。
+    /// 退出全屏后自动恢复显示。非 macOS 平台 stub（暂不支持）。
+    /// 默认 false（保持原有行为：全屏时浮窗仍可能露出）。
+    #[serde(default)]
+    pub auto_hide_in_fullscreen: bool,
     /// 用户自定义的字段名候选（应对 MiniMax 改 schema）
     /// key = provider.id_str()，value = 该 provider 的 overrides
     #[serde(default)]
@@ -119,6 +156,7 @@ impl Default for AppConfig {
             floating_y: None,
             floating_w: None,
             floating_h: None,
+            floating_pin_mode: FloatingPinMode::default(),
             autostart: false,
             show_in_tray_on_close: true,
             schema_overrides: BTreeMap::new(),
@@ -167,6 +205,7 @@ impl AppConfig {
             cfg.floating_y = legacy.floating_y;
             cfg.floating_w = legacy.floating_w;
             cfg.floating_h = legacy.floating_h;
+            cfg.floating_pin_mode = FloatingPinMode::default();
             cfg.autostart = legacy.autostart.unwrap_or(false);
             cfg.show_in_tray_on_close = legacy.show_in_tray_on_close.unwrap_or(true);
             // 落盘

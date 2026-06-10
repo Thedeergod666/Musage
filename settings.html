@@ -101,6 +101,32 @@
         background: rgba(255, 255, 255, 0.05);
         margin: 16px 0;
       }
+
+      /* Pin mode 单选 */
+      .pin-mode { display: flex; flex-direction: column; gap: 6px; }
+      .pin-opt {
+        display: flex; align-items: flex-start; gap: 10px;
+        padding: 10px 12px;
+        background: #15171c;
+        border: 1px solid #2a2d35;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: border-color 0.15s, background 0.15s;
+      }
+      .pin-opt:hover { border-color: #3a3d45; }
+      .pin-opt input[type="radio"] {
+        margin-top: 3px;
+        width: auto;
+        flex: 0 0 auto;
+        accent-color: #4a90e2;
+      }
+      .pin-opt:has(input:checked) {
+        border-color: #4a90e2;
+        background: #1f2733;
+      }
+      .pin-opt-body { display: flex; flex-direction: column; gap: 2px; }
+      .pin-opt-title { font-size: 13px; color: #e0e0e0; font-weight: 500; }
+      .pin-opt-desc { font-size: 11px; color: #888; line-height: 1.4; }
     </style>
   </head>
   <body>
@@ -210,6 +236,33 @@
 
     <div class="provider-section">
       <h2>🪟 浮窗</h2>
+      <div class="field">
+        <label>置顶 / 置底 行为</label>
+        <div class="pin-mode">
+          <label class="pin-opt">
+            <input type="radio" name="pin-mode" value="pin_top" checked />
+            <span class="pin-opt-body">
+              <span class="pin-opt-title">📌 始终置顶</span>
+              <span class="pin-opt-desc">浮窗永远在最上层，不被其它窗口盖住</span>
+            </span>
+          </label>
+          <label class="pin-opt">
+            <input type="radio" name="pin-mode" value="pin_bottom" />
+            <span class="pin-opt-body">
+              <span class="pin-opt-title">⬇ 置底，鼠标 hover 时置顶</span>
+              <span class="pin-opt-desc">默认在底部，鼠标进入浮窗时自动浮上来</span>
+            </span>
+          </label>
+          <label class="pin-opt">
+            <input type="radio" name="pin-mode" value="normal" />
+            <span class="pin-opt-body">
+              <span class="pin-opt-title">🔓 普通窗口</span>
+              <span class="pin-opt-desc">不强制层级，跟普通窗口一样</span>
+            </span>
+          </label>
+        </div>
+        <div class="help">改动会立即生效（不需要点"保存配置"），并写入 config.json 下次启动恢复。</div>
+      </div>
       <div class="field">
         <div class="row">
           <button id="reset-floating" class="primary">归位到主屏幕正中央</button>

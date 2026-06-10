@@ -35,6 +35,15 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 dirs = "5"
 
+# macOS 私有 API —— PinBottom 模式需要直接操作 NSWindow.level 把窗口
+# 放到 kCGNormalWindowLevel - 1（所有正常 app 窗口之下），仅 macOS 需要。
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSWindow"] }
+objc2-core-graphics = { version = "0.3", features = ["CGWindowLevel", "CGGeometry"] }
+# NSRect (= CGRect) 来自 objc2-core-foundation，开启对应 feature 后 NSGeometry alias 才生效。
+objc2-foundation = { version = "0.3", features = ["NSGeometry", "NSString", "objc2-core-foundation"] }
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

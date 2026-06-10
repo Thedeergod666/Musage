@@ -14,6 +14,7 @@
 
 mod commands;
 mod config;
+mod platform;
 mod poller;
 mod providers;
 mod tray;
@@ -24,6 +25,7 @@ use tokio::sync::RwLock;
 
 use crate::config::AppConfig;
 use crate::providers::QuotaSnapshot;
+use crate::commands::apply_pin_mode_to_window;
 
 pub struct AppState {
     pub snapshot: Arc<RwLock<QuotaSnapshot>>,
@@ -88,6 +90,9 @@ pub fn run() {
                     let _ = win.set_size(tauri::PhysicalSize::new(ww, hh));
                 }
 
+                // 恢复浮窗的置顶/置底模式（用户上次选的）
+                apply_pin_mode_to_window(app.handle(), cfg.floating_pin_mode);
+
                 // 监听移动 / 缩放 → 持久化（spawn 异步任务避免阻塞 UI 线程）
                 let app_for_event = app.handle().clone();
                 win.on_window_event(move |event| match event {
@@ -150,6 +155,8 @@ pub fn run() {
             commands::show_floating_window,
             commands::hide_settings_window,
             commands::reset_floating_window,
+            commands::set_floating_pin_mode,
+            commands::set_floating_hover_raise,
             commands::quit_app,
         ])
         .on_window_event(|window, event| {

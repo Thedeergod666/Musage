@@ -135,7 +135,10 @@ D:\Codes\Musage\
         ├── poller.rs         ← tokio interval
         ├── tray.rs           ← 托盘菜单 + 动态图标（合并了原 icon.rs）
         ├── config.rs         ← AppConfig + keys.json 文件存储
-        └── commands.rs       ← tauri::command 暴露给前端
+        ├── commands.rs       ← tauri::command 暴露给前端
+        └── platform/         ← 平台特定代码（仅 macOS 有非 stub 实现）
+            ├── mod.rs
+            └── macos.rs
 ```
 
 ## 已确立的设计决策
@@ -150,10 +153,10 @@ D:\Codes\Musage\
 8. **tray 菜单**：显示 / 设置 / 立即刷新 / 退出
 9. **`crate-type` 不用 cdylib**：Tauri 2 + Windows + GNU 工具链下，cdylib 会触发 MinGW ld 16-bit ordinal 表溢出
 10. **tray 逻辑合并在 tray.rs**：原 icon.rs 已删除，所有托盘 + 图标生成代码都集中在 `tray.rs`
+11. **macOS 置底走私有 API（platform/macos.rs）**：仅 `set_always_on_top(false)` 在 macOS 上不够 —— 窗口会变成 `kCGNormalWindowLevel = 0`，前台调度会把它埋掉。`platform::macos` 用 `objc2` 直接调 `NSWindow.setLevel()`，PinBottom 时设到 `kCGNormalWindowLevel - 1`（即 -1），低于所有普通 app 窗口但高于桌面。同时启一个 background thread 轮询 `NSEvent.mouseLocation()` + 窗口 `frame` 做点-in-rect，因为窗口在 level -1 时被其它 app 盖住，JS `mouseenter` 触发不到。详见 [musage-ui-design](memory/musage-ui-design.md)。非 macOS 平台 stub 走 Tauri 原生 `set_always_on_top`。
 
 ## 已知风险
 
-- 🔴 **用户截图里泄露了 sk-cp-... API key**（在 DevTools 响应里），建议重置
 - 🟡 MiniMax 6/1 改 schema，新字段名未明
 - 🟡 GNU 工具链 + Tauri 2 在 Windows 的稳定性需要实战验证
 - 🟡 托盘图标的字体加载需要 `assets/font.ttf`，缺了就只有色块

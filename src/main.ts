@@ -11,6 +11,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { checkForUpdate, onUpdateState } from "./updater";
 import minimaxLogo from "./assets/minimax-logo.png";
 import deepseekLogo from "./assets/deepseek-icon.png";
 import xiaomimimoLogo from "./assets/xiaomimimo-logo.png";
@@ -482,6 +483,28 @@ async function init() {
     if (t.closest(".open-settings")) {
       e.stopPropagation();
       invoke("open_settings_window").catch((e) => console.error(e));
+    }
+  });
+
+  // ── 启动 5s 后静默检查更新（不弹窗、不抢焦点） ──
+  // 延迟是为了让首屏数据先到位，不要跟初始拉取抢资源
+  setTimeout(() => {
+    checkForUpdate(/* silent */ true)
+      .then((s) => {
+        if (s.status === "available" && s.version) {
+          console.info(`[updater] 新版本 v${s.version} 可用，请到设置面板查看`);
+        } else if (s.status === "error") {
+          // 静默检查时错误只 log，不打扰用户（离线/没配 pubkey 都会触发）
+          console.debug(`[updater] 静默检查失败: ${s.error}`);
+        }
+      })
+      .catch((e) => console.debug("[updater] 静默检查异常", e));
+  }, 5000);
+
+  // ── 订阅 updater 状态：托盘气泡 / 设置面板 banner 可以挂这里 ──
+  onUpdateState((s) => {
+    if (s.status === "error") {
+      console.warn(`[updater] ${s.error}`);
     }
   });
 

@@ -1,5 +1,12 @@
 // 设置面板 —— 多 provider key + 全局配置
 import { invoke } from "@tauri-apps/api/core";
+import {
+  checkForUpdate,
+  downloadAndInstall,
+  onUpdateState,
+  relaunchApp,
+  type UpdateState,
+} from "./updater";
 
 type ProviderId = "minimax" | "deepseek" | "xiaomimimo";
 type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
@@ -358,6 +365,151 @@ function providerDisplay(p: ProviderId): string {
   return p === "minimax" ? "MiniMax" : p === "deepseek" ? "DeepSeek" : "Xiaomi MiMo";
 }
 
+// ── 自动更新面板 ──
+//
+// 从 TS 动态注入，不动 settings.html。包含：
+//   - 当前版本
+//   - "检查更新" 按钮
+//   - 状态显示（最新 / 有可用 / 下载中 / 错误）
+//   - 有可用更新时的"立即下载" / "下载并重启" 按钮
+
+function setupUpdaterSection() {
+  // 找到 "保存配置" 按钮所在 row，插一个新区块在它前面
+  const saveRow = $("#save")?.closest(".row");
+  if (!saveRow) return;
+
+  const block = document.createElement("div");
+  block.className = "row";
+  block.id = "updater-section";
+  block.innerHTML = `
+    <h3 style="margin: 0 0 8px 0; font-size: 14px;">自动更新</h3>
+    <div style="font-size: 12px; opacity: 0.7; margin-bottom: 8px;">
+      当前版本：<span id="updater-current-version">—</span>
+    </div>
+    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+      <button id="updater-check" class="primary">检查更新</button>
+      <button id="updater-install" class="primary" style="display: none;">下载并安装</button>
+      <button id="updater-relaunch" class="primary" style="display: none;">立即重启</button>
+      <span id="updater-status" style="font-size: 12px; opacity: 0.8;"></span>
+    </div>
+    <div id="updater-notes" style="display: none; margin-top: 8px; font-size: 12px;
+                                     padding: 8px; background: rgba(255,255,255,0.05);
+                                     border-radius: 4px; white-space: pre-wrap;"></div>
+  `;
+  saveRow.parentElement?.insertBefore(block, saveRow);
+
+  // 读当前版本
+  invoke<string>("get_app_version")
+    .then((v) => {
+      const el = document.getElementById("updater-current-version");
+      if (el) el.textContent = `v${v}`;
+    })
+    .catch(() => {});
+
+  // 绑按钮
+  document.getElementById("updater-check")?.addEventListener("click", () => {
+    void doCheck();
+  });
+  document.getElementById("updater-install")?.addEventListener("click", () => {
+    void doInstall();
+  });
+  document.getElementById("updater-relaunch")?.addEventListener("click", () => {
+    relaunchApp().catch((e) => flash(`✗ 重启失败: ${e}`, true));
+  });
+
+  // 订阅状态
+  onUpdateState(renderUpdaterState);
+}
+
+async function doCheck() {
+  const btn = document.getElementById("updater-check") as HTMLButtonElement | null;
+  if (btn) btn.disabled = true;
+  try {
+    await checkForUpdate(false);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function doInstall() {
+  const installBtn = document.getElementById("updater-install") as HTMLButtonElement | null;
+  const checkBtn = document.getElementById("updater-check") as HTMLButtonElement | null;
+  if (installBtn) installBtn.disabled = true;
+  if (checkBtn) checkBtn.disabled = true;
+  try {
+    const result = await downloadAndInstall();
+    if (result.status === "ready") {
+      // 显示"立即重启"按钮
+    }
+  } finally {
+    if (installBtn) installBtn.disabled = false;
+    if (checkBtn) checkBtn.disabled = false;
+  }
+}
+
+function renderUpdaterState(s: UpdateState) {
+  const status = document.getElementById("updater-status");
+  const installBtn = document.getElementById("updater-install") as HTMLButtonElement | null;
+  const relaunchBtn = document.getElementById("updater-relaunch") as HTMLButtonElement | null;
+  const notes = document.getElementById("updater-notes");
+  if (!status) return;
+
+  switch (s.status) {
+    case "checking":
+      status.textContent = "检查中…";
+      status.style.color = "";
+      if (installBtn) installBtn.style.display = "none";
+      if (relaunchBtn) relaunchBtn.style.display = "none";
+      if (notes) notes.style.display = "none";
+      break;
+    case "up-to-date":
+      status.textContent = "✓ 已是最新";
+      status.style.color = "#4caf50";
+      if (installBtn) installBtn.style.display = "none";
+      if (relaunchBtn) relaunchBtn.style.display = "none";
+      if (notes) notes.style.display = "none";
+      break;
+    case "available":
+      status.textContent = `🎉 发现新版本 v${s.version}`;
+      status.style.color = "#2196f3";
+      if (installBtn) installBtn.style.display = "";
+      if (relaunchBtn) relaunchBtn.style.display = "none";
+      if (notes) {
+        if (s.notes) {
+          notes.textContent = s.notes;
+          notes.style.display = "";
+        } else {
+          notes.style.display = "none";
+        }
+      }
+      break;
+    case "downloading":
+      status.textContent =
+        s.progress != null
+          ? `下载中… ${(s.progress * 100).toFixed(0)}%`
+          : "下载中…";
+      status.style.color = "#ff9800";
+      if (installBtn) installBtn.style.display = "none";
+      if (relaunchBtn) relaunchBtn.style.display = "none";
+      break;
+    case "ready":
+      status.textContent = "✓ 已下载完成，点击重启生效";
+      status.style.color = "#4caf50";
+      if (installBtn) installBtn.style.display = "none";
+      if (relaunchBtn) relaunchBtn.style.display = "";
+      break;
+    case "error":
+      status.textContent = `✗ ${s.error ?? "更新失败"}`;
+      status.style.color = "#f44336";
+      if (installBtn) installBtn.style.display = "none";
+      if (relaunchBtn) relaunchBtn.style.display = "none";
+      break;
+    default:
+      // idle / disabled —— 不动 UI
+      break;
+  }
+}
+
 // ── 启动 ──
 
 setupTabs();
@@ -427,4 +579,5 @@ $("#auto-hide-in-fullscreen")?.addEventListener("change", async () => {
   await loadKeyStatus("xiaomimimo");
   await loadCookieStatus("xiaomimimo");
   await loadConfig();
+  setupUpdaterSection();
 })();

@@ -1,36 +1,41 @@
 name: Release
 
 # ──────────────────────────────────────────────────────────────
-# 触发：推送 v*.*.* 标签（v0.1.0 / v1.2.3 之类）
-# 也支持手动触发（Actions 页 → Run workflow）
+# 触发：
+#   1) 推送 v*.*.* 标签（v0.1.0 / v1.2.3-rc.1 之类）
+#   2) Actions 页手动 Run workflow（输入版本号）
 # ──────────────────────────────────────────────────────────────
 on:
   push:
-    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
   workflow_dispatch:
     inputs:
       version:
-        description: "版本号（不带 v 前缀，例如 0.1.1）"
+        description: "版本号（不带 v 前缀）"
         required: true
         type: string
 
-# 给 GH Release API 写权限
 permissions:
   contents: write
 
-# 避免一条 PR 同时跑俩分支：取消上一个同分支的运行
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   # ────────────────────────────────────────────────────────
-  # Job 1: 平台构建矩阵
+  # 平台构建 + 发布矩阵
+  #
+  # 每个 target 跑一次 tauri build，tauri-action 负责：
+  #   - 拿 TAURI_SIGNING_PRIVATE_KEY 自动签 bundle
+  #   - 产物落到 target/<target>/release/bundle/
+  #   - 在第一个跑完的 job 里创建 GitHub Release
+  #   - 把所有 bundle + latest.json 上传成 release assets
+  #     (latest.json 里的 url 字段会被填成真实 asset 地址)
   # ────────────────────────────────────────────────────────
   build:
     name: build (${{ matrix.label }})
     runs-on: ${{ matrix.os }}
-    # 失败不立即取消其他平台构建 —— 全部跑完方便一次看全
     strategy:
       fail-fast: false
       matrix:
@@ -60,28 +65,25 @@ jobs:
           node-version: "20"
           cache: "pnpm"
 
-      # ── Rust 工具链（按 target 装）──
+      # ── Rust 工具链 ──
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      # ── Rust 依赖缓存（按 target 分桶，第一次 build 能省 5-10 分钟）──
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
           shared-key: ${{ matrix.target }}
 
-      # ── 关键：你们用了 macos-private-api feature，
-      # objc2 需要明确知道 macOS 最低版本。CI runner 是 Sonoma。
-      # Windows 上这一行是 no-op，但留着也无害。──
+      # ── macOS objc2 需要明确最低部署版本 ──
       - name: Set macOS deployment target
         if: runner.os == 'macOS'
         run: echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> $GITHUB_ENV
 
-      # ── 从 tag 抽出版本号，注入到 package.json / Cargo.toml / tauri.conf.json ──
-      - name: Inject version
+      # ── 注入版本号到 tauri.conf.json，再触发 sync-version.cjs 同步到另外两份 ──
+      - name: Sync version
         shell: bash
         run: |
           if [ "${{ github.event_name }}" = "push" ]; then
@@ -90,74 +92,90 @@ jobs:
             VERSION="${{ inputs.version }}"
           fi
           echo "Building Musage v${VERSION} for ${{ matrix.target }}"
-          sed -i.bak "s/\"version\": \"0.1.0\"/\"version\": \"${VERSION}\"/" \
-            package.json src-tauri/tauri.conf.json
-          sed -i.bak "s/^version = \"0.1.0\"/version = \"${VERSION}\"/" \
-            src-tauri/Cargo.toml
-          rm -f package.json.bak src-tauri/tauri.conf.json.bak src-tauri/Cargo.toml.bak
-          grep -H '"version"' package.json src-tauri/tauri.conf.json
-          grep -H '^version' src-tauri/Cargo.toml
+
+          # 用 Node 而不是 sed，更可靠（tauri.conf.json 含嵌套 JSON）
+          node -e "
+            const fs = require('fs');
+            const p = 'src-tauri/tauri.conf.json';
+            const c = JSON.parse(fs.readFileSync(p, 'utf8'));
+            c.version = '${VERSION}';
+            fs.writeFileSync(p, JSON.stringify(c, null, 2) + '\n');
+          "
+
+          # 同步到 package.json + Cargo.toml
+          pnpm sync-version
 
       # ── 前端依赖 ──
       - name: Install frontend deps
         run: pnpm install --frozen-lockfile
 
-      # ── Rust 依赖（仅 check，不编译整个 bundle，节省 CI 时间）──
-      - name: Cargo check
-        run: cd src-tauri && cargo check --target ${{ matrix.target }} --release
-
-      # ── 真正的打包 ──
-      - name: Tauri build
-        run: pnpm tauri:build -- --target ${{ matrix.target }}
+      # ── 真正的打包 + release（tauri-action 接管）──
+      #
+      # tauri-action 会：
+      #   1) 调 `tauri build --target ${{ matrix.target }}`
+      #   2) 第一个完成 build 的 job 创建 GitHub Release
+      #   3) 所有 job 完成后把 bundles + latest.json 上传到 release
+      #
+      # 关键 env：
+      #   - TAURI_SIGNING_PRIVATE_KEY    : 私钥（base64 编码），用于签 manifest
+      #   - TAURI_SIGNING_PRIVATE_KEY_PASSWORD : 私钥密码（无密码留空）
+      #   - APPLE_*  : macOS 签名 + 公证
+      #   - WINDOWS_CERTIFICATE_*        : Windows EV 签名
+      #
+      # 没配对应 secret 就跳过对应平台签名，bundle 仍能出来
+      - name: Tauri build & release
+        uses: tauri-apps/tauri-action@v0
         env:
-          # ── 可选：签名/公证 secrets（没配就走未签名路径）──
-          # macOS：
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # ── Tauri updater 签名（生成 latest.json 的 signature 字段）──
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # ── macOS 签名 + 公证（可选，没配就走未签名路径）──
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Windows（EV 证书 thumbprint）：
-          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
-
-      # ── 上传产物（每个平台一个 artifact，名字清晰）──
-      - name: Upload bundle
-        uses: actions/upload-artifact@v4
+          # ── Windows EV 签名（可选）──
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         with:
-          name: musage-${{ matrix.label }}
-          if-no-files-found: error
-          retention-days: 14
-          path: |
-            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app
-            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
-            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
-            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+          # 不让 action 自己跑 `pnpm build`，因为我们前面已经跑了 sync-version
+          beforeBuildCommand: pnpm build
+          # 不让 action 自己写 tagName：用本 workflow 触发的 tag
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', inputs.version) }}
+          releaseName: "Musage ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', inputs.version) }}"
+          releaseDraft: true
+          releaseBody: .github/RELEASE_TEMPLATE.md
+          # 强制更新器：每个 target 都产出 latest.json
+          updaterJson: |
+            {
+              "version": "${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', inputs.version) }}",
+              "notes": "",
+              "pub_date": ""
+            }
+          args: --target ${{ matrix.target }}
 
   # ────────────────────────────────────────────────────────
-  # Job 2: 聚合产物，发布 Draft Release
+  # 验证 job：build 完后跑一次 cargo check 验证 manifest 路径
+  #（tauri-action 已经处理了 release 创建，这里只是 sanity check）
   # ────────────────────────────────────────────────────────
-  release:
-    name: publish release
+  verify:
+    name: verify release assets
     needs: build
     runs-on: ubuntu-latest
+    if: success()
     steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: List downloaded files
-        run: find artifacts -type f | sort
-
-      - name: Create draft release
-        uses: softprops/action-gh-release@v2
-        with:
-          draft: true                # 草稿状态 —— 你审核完再点发布
-          generate_release_notes: true
-          # CHANGELOG.md 顶部有则取，否则用自动生成的
-          body_path: ${{ github.workspace }}/.github/RELEASE_TEMPLATE.md
-          files: |
-            artifacts/musage-macos-arm64/**
-            artifacts/musage-macos-x64/**
-            artifacts/musage-windows-x64/**
+      - name: Wait a moment for release
+        run: sleep 15
+      - name: Verify latest.json
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', inputs.version) }}"
+          echo "验证 release $TAG 是否包含 latest.json + 三个平台的 bundle"
+          gh release view "$TAG" --json assets --jq '.assets[].name' | sort
+          gh release view "$TAG" --json assets --jq '.assets[].name' | grep -q "latest.json" \
+            || (echo "::error::latest.json 没找到"; exit 1)
+          echo "✓ latest.json 已上传"

@@ -146,6 +146,11 @@ body[data-hover] #app {
 
 .card-name {
   letter-spacing: 0.3px;
+  /* 窄宽度下被裁时显示 ... 而非破坏布局 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 /* 状态点：对应天气 widget 里的"太阳/雨"图标，全程保留色彩 */

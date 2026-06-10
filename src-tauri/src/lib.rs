@@ -88,10 +88,10 @@ pub fn run() {
                     let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
                 }
                 if let (Some(w), Some(h)) = (cfg.floating_w, cfg.floating_h) {
-                    // 尊重 tauri.conf.json 里的 minWidth/minHeight
+                    // 尊重 tauri.conf.json 里的 minWidth/minHeight（保持同步）
                     let scale = win.scale_factor().unwrap_or(1.0);
-                    let min_w = (260.0 * scale) as u32;
-                    let min_h = (120.0 * scale) as u32;
+                    let min_w = (180.0 * scale) as u32;
+                    let min_h = (100.0 * scale) as u32;
                     let ww = w.max(min_w as i32) as u32;
                     let hh = h.max(min_h as i32) as u32;
                     let _ = win.set_size(tauri::PhysicalSize::new(ww, hh));

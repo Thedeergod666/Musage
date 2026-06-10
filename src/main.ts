@@ -20,6 +20,7 @@ import "./styles.css";
 const PROVIDER_META: Record<string, { name: string; logo: string }> = {
   minimax: { name: "MiniMax", logo: minimaxLogo },
   deepseek: { name: "DeepSeek", logo: deepseekLogo },
+  xiaomimimo: { name: "Xiaomi MiMo", logo: "" },  // 暂无 logo，纯文字
 };
 
 type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
@@ -37,7 +38,7 @@ interface QuotaRow {
 }
 
 interface ProviderSnapshot {
-  provider: "minimax" | "deepseek";
+  provider: "minimax" | "deepseek" | "xiaomimimo";
   success: boolean;
   rows: QuotaRow[];
   error: string | null;
@@ -355,7 +356,15 @@ function formatAmount(v: number | null | undefined): string {
 }
 
 function colorClass(util: number): string {
-  if (util < 70) return "ok";
+  // 4 档离散色 —— 整条 bar + 文字单色，**不**是位置性渐变。
+  // 上次做的绿→青→黄→红 4 段位置渐变在 50% 这种"中间态"会同时显 3 色，
+  // 喧宾夺主。改成按阈值整条换色，一眼看到当前处于哪个档。
+  //   < 50%    → ok     (绿，安全)
+  //   50-75%   → cyan   (青，过半提醒)
+  //   75-90%   → warn   (黄，警告)
+  //   >= 90%   → alert  (红，告警)
+  if (util < 50) return "ok";
+  if (util < 75) return "cyan";
   if (util < 90) return "warn";
   return "alert";
 }

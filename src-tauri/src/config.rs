@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 use crate::providers::minimax::Region;
+use crate::providers::xiaomi::XiaomiRegion;
 use crate::providers::Provider;
 
 const CONFIG_FILE: &str = "config.json";
@@ -32,9 +33,12 @@ const KEYS_FILE: &str = "keys.json";
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub enabled: bool,
-    /// 仅 MiniMax 用（DeepSeek 没 region 概念，序列化时跳过）
+    /// MiniMax 用（DeepSeek 没 region 概念，序列化时跳过）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub region: Option<Region>,
+    /// Xiaomi MiMo 用（CN/SGP/AMS，序列化时跳过）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xiaomi_region: Option<XiaomiRegion>,
 }
 
 impl Default for ProviderConfig {
@@ -42,6 +46,7 @@ impl Default for ProviderConfig {
         Self {
             enabled: true,
             region: None,
+            xiaomi_region: None,
         }
     }
 }
@@ -124,12 +129,19 @@ pub struct FieldTriple {
 }
 
 /// 单个 provider 的全部 overrides
+///
+/// 各 provider 用各自用得到的 tier：
+/// - MiniMax：`five_hour` + `weekly`
+/// - Xiaomi MiMo：`monthly`
+/// - DeepSeek：不走 schema_overrides（响应固定）
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProviderOverrides {
     #[serde(default)]
     pub five_hour: TierOverrides,
     #[serde(default)]
     pub weekly: TierOverrides,
+    #[serde(default)]
+    pub monthly: TierOverrides,
 }
 
 impl Default for AppConfig {
@@ -140,6 +152,7 @@ impl Default for AppConfig {
             ProviderConfig {
                 enabled: true,
                 region: Some(Region::Cn),
+                xiaomi_region: None,
             },
         );
         providers.insert(
@@ -147,6 +160,15 @@ impl Default for AppConfig {
             ProviderConfig {
                 enabled: true,
                 region: None,
+                xiaomi_region: None,
+            },
+        );
+        providers.insert(
+            Provider::Xiaomimimo.id_str().to_string(),
+            ProviderConfig {
+                enabled: true,
+                region: None,
+                xiaomi_region: Some(XiaomiRegion::Cn),
             },
         );
         Self {
@@ -200,6 +222,7 @@ impl AppConfig {
                 ProviderConfig {
                     enabled: true,
                     region: legacy.region.or(Some(Region::Cn)),
+                    xiaomi_region: None,
                 },
             );
             cfg.refresh_interval_secs = legacy.refresh_interval_secs.unwrap_or(60);
@@ -235,10 +258,17 @@ impl AppConfig {
                     Provider::Minimax => ProviderConfig {
                         enabled: true,
                         region: Some(Region::Cn),
+                        xiaomi_region: None,
                     },
                     Provider::Deepseek => ProviderConfig {
                         enabled: true,
                         region: None,
+                        xiaomi_region: None,
+                    },
+                    Provider::Xiaomimimo => ProviderConfig {
+                        enabled: true,
+                        region: None,
+                        xiaomi_region: Some(XiaomiRegion::Cn),
                     },
                 });
         }
@@ -261,6 +291,14 @@ impl AppConfig {
             .unwrap_or(Region::Cn)
     }
 
+    /// 取 Xiaomi MiMo 的 region（默认 CN）
+    pub fn xiaomi_region(&self) -> XiaomiRegion {
+        self.providers
+            .get(Provider::Xiaomimimo.id_str())
+            .and_then(|c| c.xiaomi_region)
+            .unwrap_or(XiaomiRegion::Cn)
+    }
+
     /// 启用/禁用某个 provider
     pub fn set_enabled(&mut self, provider: Provider, enabled: bool) {
         let entry = self
@@ -270,10 +308,17 @@ impl AppConfig {
                 Provider::Minimax => ProviderConfig {
                     enabled,
                     region: Some(Region::Cn),
+                    xiaomi_region: None,
                 },
                 Provider::Deepseek => ProviderConfig {
                     enabled,
                     region: None,
+                    xiaomi_region: None,
+                },
+                Provider::Xiaomimimo => ProviderConfig {
+                    enabled,
+                    region: None,
+                    xiaomi_region: Some(XiaomiRegion::Cn),
                 },
             });
         entry.enabled = enabled;
@@ -287,8 +332,22 @@ impl AppConfig {
             .or_insert(ProviderConfig {
                 enabled: true,
                 region: Some(region),
+                xiaomi_region: None,
             });
         entry.region = Some(region);
+    }
+
+    /// 设置 Xiaomi MiMo 的 region
+    pub fn set_xiaomi_region(&mut self, region: XiaomiRegion) {
+        let entry = self
+            .providers
+            .entry(Provider::Xiaomimimo.id_str().to_string())
+            .or_insert(ProviderConfig {
+                enabled: true,
+                region: None,
+                xiaomi_region: Some(region),
+            });
+        entry.xiaomi_region = Some(region);
     }
 
     /// 启用的 provider 列表（按 [`Provider::all`] 顺序）

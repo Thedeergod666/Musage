@@ -10,6 +10,7 @@
 
 pub mod deepseek;
 pub mod minimax;
+pub mod xiaomi;
 
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +21,7 @@ pub enum Provider {
     #[default]
     Minimax,
     Deepseek,
+    Xiaomimimo,
 }
 
 impl Provider {
@@ -27,6 +29,7 @@ impl Provider {
         match self {
             Provider::Minimax => "minimax",
             Provider::Deepseek => "deepseek",
+            Provider::Xiaomimimo => "xiaomimimo",
         }
     }
 
@@ -34,11 +37,12 @@ impl Provider {
         match self {
             Provider::Minimax => "MiniMax",
             Provider::Deepseek => "DeepSeek",
+            Provider::Xiaomimimo => "Xiaomi MiMo",
         }
     }
 
-    pub fn all() -> [Provider; 2] {
-        [Provider::Minimax, Provider::Deepseek]
+    pub fn all() -> [Provider; 3] {
+        [Provider::Minimax, Provider::Deepseek, Provider::Xiaomimimo]
     }
 }
 
@@ -152,6 +156,16 @@ impl ProviderSnapshot {
             }
             Provider::Minimax => {
                 // 取第一个有 utilization 的 row
+                let u = self.rows.iter()
+                    .filter_map(|r| r.utilization)
+                    .next()
+                    .unwrap_or(0.0);
+                if u < 70.0 { "ok" }
+                else if u < 90.0 { "warn" }
+                else { "alert" }
+            }
+            Provider::Xiaomimimo => {
+                // 跟 MiniMax 一样的百分比阈值
                 let u = self.rows.iter()
                     .filter_map(|r| r.utilization)
                     .next()

@@ -83,6 +83,7 @@
       }
       .tab[data-p="minimax"] .tab-dot  { background: #9b59ff; }
       .tab[data-p="deepseek"] .tab-dot { background: #4a90e2; }
+      .tab[data-p="xiaomimimo"] .tab-dot { background: #ff6a00; }
 
       .provider-panel { display: none; margin-top: 12px; }
       .provider-panel.active { display: block; }
@@ -142,6 +143,9 @@
         <button class="tab" data-p="deepseek">
           <span class="tab-dot"></span>DeepSeek
         </button>
+        <button class="tab" data-p="xiaomimimo">
+          <span class="tab-dot"></span>Xiaomi MiMo
+        </button>
       </div>
     </div>
 
@@ -197,6 +201,41 @@
       </div>
     </div>
 
+    <!-- Xiaomi MiMo Panel -->
+    <div class="provider-panel" data-p="xiaomimimo">
+      <div class="provider-section">
+        <h2>🟧 Xiaomi MiMo Token Plan Key</h2>
+        <div class="field">
+          <div class="input-row">
+            <input id="api-key-xiaomimimo" type="password" placeholder="tp-..." autocomplete="off" />
+            <button id="copy-key-xiaomimimo" title="复制到剪贴板">📋</button>
+          </div>
+          <div class="status" id="api-key-status-xiaomimimo">—</div>
+        </div>
+        <div class="row">
+          <button id="save-key-xiaomimimo" class="primary">保存</button>
+          <button id="del-key-xiaomimimo" class="danger">删除</button>
+        </div>
+        <div class="help">
+          🔒 Token Plan 专用 key（<code>tp-</code> 开头，区别于 pay-as-you-go 的 <code>sk-</code>）。
+          <br/>从 <a href="https://platform.xiaomimimo.com/tokenplan/subscription" target="_blank" style="color:#4a90e2">platform.xiaomimimo.com</a> 订阅后获取。
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Xiaomi MiMo 集群</label>
+        <select id="xiaomi-region">
+          <option value="cn">🇨🇳 中国 (token-plan-cn)</option>
+          <option value="sgp">🌏 新加坡 (token-plan-sgp)</option>
+          <option value="ams">🌍 欧洲 (token-plan-ams)</option>
+        </select>
+        <div class="help">
+          ⚠️ endpoint 是按 MiniMax 模式推的（<code>/v1/api/openplatform/coding_plan/remains</code>），
+          官方没文档公开。如果 404，把 keys.json 里 key 旁边的 base URL 试一下能不能 reach。
+        </div>
+      </div>
+    </div>
+
     <div class="divider"></div>
 
     <!-- Schema overrides (高级，MiniMax 改字段名后用) -->
@@ -213,6 +252,10 @@
       <div class="field">
         <label>MiniMax · 周 候选字段名</label>
         <textarea id="overrides-weekly-minimax" rows="3" placeholder='[{"total":"...","remaining":"...","end":"..."}]'></textarea>
+      </div>
+      <div class="field">
+        <label>Xiaomi MiMo · 月度 候选字段名</label>
+        <textarea id="overrides-monthly-xiaomimimo" rows="3" placeholder='[{"total":"...","remaining":"...","end":"..."}]'></textarea>
       </div>
     </details>
 

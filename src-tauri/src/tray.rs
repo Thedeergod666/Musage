@@ -487,6 +487,20 @@ fn provider_short_body(p: &ProviderSnapshot) -> String {
                 p.provider.display_name().to_string()
             }
         }
+        Provider::Xiaomimimo => {
+            // 跟 MiniMax 一样："Xiaomi MiMo 月度 5% / 补偿 100%"
+            let mut parts = Vec::new();
+            for r in &p.rows {
+                if let Some(u) = r.utilization {
+                    parts.push(format!("{} {}%", r.label, u.round() as i64));
+                }
+            }
+            if parts.is_empty() {
+                p.provider.display_name().to_string()
+            } else {
+                format!("{} {}", p.provider.display_name(), parts.join(" / "))
+            }
+        }
     }
 }
 

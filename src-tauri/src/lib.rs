@@ -240,8 +240,9 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
             None => cfg.enabled_providers(),
             Some("minimax") => vec![providers::Provider::Minimax],
             Some("deepseek") => vec![providers::Provider::Deepseek],
+            Some("xiaomi") | Some("xiaomimimo") => vec![providers::Provider::Xiaomimimo],
             Some(other) => {
-                eprintln!("[dump] 未知 provider: {other}（可用: minimax / deepseek）");
+                eprintln!("[dump] 未知 provider: {other}（可用: minimax / deepseek / xiaomi）");
                 return 2;
             }
         };
@@ -284,6 +285,15 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
                     let p = providers::deepseek::Deepseek;
                     <providers::deepseek::Deepseek as providers::ProviderImpl>::fetch(&p, &key)
                         .await
+                }
+                providers::Provider::Xiaomimimo => {
+                    let region = cfg.xiaomi_region();
+                    let ov = cfg.schema_overrides
+                        .get(provider.id_str())
+                        .cloned()
+                        .unwrap_or_default();
+                    let r = providers::xiaomi::Xiaomimimo::do_fetch(&key, region, &ov).await;
+                    r.map(|(_, snap)| snap)
                 }
             };
 

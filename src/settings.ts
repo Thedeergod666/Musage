@@ -1,12 +1,13 @@
 // 设置面板 —— 多 provider key + 全局配置
 import { invoke } from "@tauri-apps/api/core";
 
-type ProviderId = "minimax" | "deepseek";
+type ProviderId = "minimax" | "deepseek" | "xiaomimimo";
 type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
 
 interface ProviderConfig {
   enabled: boolean;
   region?: "cn" | "en" | null;
+  xiaomi_region?: "cn" | "sgp" | "ams" | null;
 }
 
 interface FieldTriple {
@@ -142,6 +143,9 @@ async function loadConfig() {
   const regionEl = $("#region") as HTMLSelectElement;
   const minimaxRegion = cfg.providers?.minimax?.region ?? "cn";
   regionEl.value = minimaxRegion;
+  const xiaomiRegionEl = $("#xiaomi-region") as HTMLSelectElement;
+  const xiaomiRegion = cfg.providers?.xiaomimimo?.xiaomi_region ?? "cn";
+  xiaomiRegionEl.value = xiaomiRegion;
   ($("#interval") as HTMLInputElement).value = String(cfg.refresh_interval_secs);
   ($("#autostart") as HTMLInputElement).checked = cfg.autostart;
 
@@ -170,6 +174,10 @@ async function loadConfig() {
     null,
     2,
   );
+  const xm = (ov as Record<string, any>).xiaomimimo ?? { monthly: { count_candidates: [] } };
+  const xmMonthly = xm.monthly?.count_candidates ?? [];
+  const xmEl = document.getElementById("overrides-monthly-xiaomimimo") as HTMLTextAreaElement | null;
+  if (xmEl) xmEl.value = JSON.stringify(xmMonthly, null, 2);
 }
 
 /// 置顶/置底模式：选中即生效（通过 `set_floating_pin_mode` 命令）。
@@ -188,12 +196,16 @@ async function saveConfig() {
   // 解析 schema overrides 的 JSON；解析失败给提示但不影响其它字段保存
   let fiveHourCandidates: FieldTriple[] = [];
   let weeklyCandidates: FieldTriple[] = [];
+  let monthlyCandidates: FieldTriple[] = [];
   try {
     const raw5h = ($("#overrides-5h-minimax") as HTMLTextAreaElement).value.trim() || "[]";
     const rawWeek = ($("#overrides-weekly-minimax") as HTMLTextAreaElement).value.trim() || "[]";
+    const xmMonthlyEl = document.getElementById("overrides-monthly-xiaomimimo") as HTMLTextAreaElement | null;
+    const rawMonth = xmMonthlyEl?.value.trim() || "[]";
     fiveHourCandidates = JSON.parse(raw5h);
     weeklyCandidates = JSON.parse(rawWeek);
-    if (!Array.isArray(fiveHourCandidates) || !Array.isArray(weeklyCandidates)) {
+    monthlyCandidates = JSON.parse(rawMonth);
+    if (!Array.isArray(fiveHourCandidates) || !Array.isArray(weeklyCandidates) || !Array.isArray(monthlyCandidates)) {
       throw new Error("必须是 JSON 数组");
     }
   } catch (e) {
@@ -217,6 +229,10 @@ async function saveConfig() {
         region: ($("#region") as HTMLSelectElement).value as "cn" | "en",
       },
       deepseek: { enabled: true },
+      xiaomimimo: {
+        enabled: true,
+        xiaomi_region: ($("#xiaomi-region") as HTMLSelectElement).value as "cn" | "sgp" | "ams",
+      },
     },
     refresh_interval_secs: parseInt(($("#interval") as HTMLInputElement).value, 10) || 60,
     autostart: ($("#autostart") as HTMLInputElement).checked,
@@ -231,6 +247,11 @@ async function saveConfig() {
         weekly: { count_candidates: weeklyCandidates },
       },
       deepseek: { five_hour: { count_candidates: [] }, weekly: { count_candidates: [] } },
+      xiaomimimo: {
+        five_hour: { count_candidates: [] },
+        weekly: { count_candidates: [] },
+        monthly: { count_candidates: monthlyCandidates },
+      },
     },
   };
   try {
@@ -300,7 +321,7 @@ function flash(msg: string, isError = false) {
 }
 
 function providerDisplay(p: ProviderId): string {
-  return p === "minimax" ? "MiniMax" : "DeepSeek";
+  return p === "minimax" ? "MiniMax" : p === "deepseek" ? "DeepSeek" : "Xiaomi MiMo";
 }
 
 // ── 启动 ──
@@ -310,10 +331,13 @@ setupTabs();
 $("#save")?.addEventListener("click", saveConfig);
 $("#save-key-minimax")?.addEventListener("click", () => saveKey("minimax"));
 $("#save-key-deepseek")?.addEventListener("click", () => saveKey("deepseek"));
+$("#save-key-xiaomimimo")?.addEventListener("click", () => saveKey("xiaomimimo"));
 $("#del-key-minimax")?.addEventListener("click", () => deleteKey("minimax"));
 $("#del-key-deepseek")?.addEventListener("click", () => deleteKey("deepseek"));
+$("#del-key-xiaomimimo")?.addEventListener("click", () => deleteKey("xiaomimimo"));
 $("#copy-key-minimax")?.addEventListener("click", () => copyKey("minimax"));
 $("#copy-key-deepseek")?.addEventListener("click", () => copyKey("deepseek"));
+$("#copy-key-xiaomimimo")?.addEventListener("click", () => copyKey("xiaomimimo"));
 $("#test")?.addEventListener("click", testConn);
 
 $("#reset-floating")?.addEventListener("click", async () => {
@@ -364,5 +388,6 @@ $("#auto-hide-in-fullscreen")?.addEventListener("change", async () => {
 (async () => {
   await loadKeyStatus("minimax");
   await loadKeyStatus("deepseek");
+  await loadKeyStatus("xiaomimimo");
   await loadConfig();
 })();

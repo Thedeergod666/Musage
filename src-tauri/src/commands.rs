@@ -8,7 +8,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::config::{self, AppConfig, FloatingPinMode, ProviderOverrides};
-use crate::providers::{deepseek, minimax, ErrorKind, Provider, ProviderImpl, ProviderSnapshot, QuotaSnapshot};
+use crate::providers::{deepseek, minimax, xiaomi, ErrorKind, Provider, ProviderImpl, ProviderSnapshot, QuotaSnapshot};
 use crate::AppState;
 
 /// 把 provider 抛出的中文错误串映射成 [`ErrorKind`]。
@@ -353,6 +353,7 @@ pub fn apply_pin_mode_to_window(app: &AppHandle, mode: FloatingPinMode) {
 pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnapshot, String> {
     let now_ms = chrono::Utc::now().timestamp_millis();
     let region = cfg.region();
+    let xiaomi_region = cfg.xiaomi_region();
     let enabled = cfg.enabled_providers();
 
     // 每个 provider 自己的 overrides（用户从设置面板加的字段名候选）
@@ -383,6 +384,11 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                             Provider::Deepseek => {
                                 let p = deepseek::Deepseek;
                                 <deepseek::Deepseek as ProviderImpl>::fetch(&p, &k).await
+                            }
+                            Provider::Xiaomimimo => {
+                                xiaomi::Xiaomimimo::do_fetch(&k, xiaomi_region, &ov)
+                                    .await
+                                    .map(|(_, snap)| snap)
                             }
                         }
                     });

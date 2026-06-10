@@ -1,40 +1,26 @@
 //! 暴露给前端的 tauri commands
 //!
-//! 多 provider 模型：
-//! - [`refresh_inner`] 是核心实现，被 `refresh_now` (tauri command) 和后台 poller 共用
-//! - key 操作按 provider 命名（`has_api_key_for` / `set_api_key_for` / `delete_api_key_for`）
+//! ## 双轨制（Phase 1 迁移期）
+//!
+//! 旧 API（`set_api_key_for(provider: Provider, ...)`）继续存在，给老的 3 个
+//! provider（MiniMax / DeepSeek / Xiaomi）用。新 API（`set_source_credential(id: String, ...)`）
+//! 走字符串 id，给新的 / 未来的 source（含 Tavily）用。前端优先用新 API。
+//!
+//! ## 关键路径
+//!
+//! [`refresh_inner`] 用 [`crate::providers::builtin_sources`] 注册表遍历所有启用的
+//! source，每个 source 自己负责鉴权 + 拉数据 + 解析。这是 ROADMAP Phase 1 的核心。
+//!
+//! [`refresh_now`] 和 [`crate::poller::tick`] 共用 refresh_inner。
 
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
-use crate::config::{self, AppConfig, FloatingPinMode, ProviderOverrides};
-use crate::providers::{deepseek, minimax, xiaomi, ErrorKind, Provider, ProviderImpl, ProviderSnapshot, QuotaSnapshot};
+use crate::config::{self, AppConfig, FloatingPinMode};
+use crate::providers::{
+    builtin_sources, find_source, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderSnapshot, QuotaSnapshot, QuotaSource,
+};
 use crate::AppState;
-
-/// 把 provider 抛出的中文错误串映射成 [`ErrorKind`]。
-///
-/// 借鉴 ccswitch 的 `isValid: false` 思路：除了文案还给出机器可读类型，
-/// 前端按类型选样式 + 操作按钮。
-fn classify_error_message(msg: &str) -> ErrorKind {
-    let m = msg;
-    if m.contains("API key 为空") || m.contains("未配置 API key") {
-        ErrorKind::UnconfiguredKey
-    } else if m.contains("鉴权失败") || m.contains("无权限") || m.contains("HTTP 401") || m.contains("HTTP 403") {
-        ErrorKind::AuthFailed
-    } else if m.contains("频繁") || m.contains("HTTP 429") {
-        ErrorKind::RateLimited
-    } else if m.starts_with("网络错误") || m.contains("网络错误") {
-        ErrorKind::Network
-    } else if m.contains("不是 JSON") {
-        ErrorKind::Parse
-    } else if m.contains("未识别 schema") {
-        ErrorKind::SchemaUnknown
-    } else if m.contains("服务异常") || m.contains("HTTP 5") {
-        ErrorKind::ServerError
-    } else {
-        ErrorKind::Other
-    }
-}
 
 #[tauri::command]
 pub async fn get_snapshot(state: State<'_, AppState>) -> Result<QuotaSnapshot, String> {
@@ -72,7 +58,7 @@ pub async fn save_config(
 ) -> Result<(), String> {
     let mut cfg = cfg;
     if cfg.refresh_interval_secs < 10 {
-        cfg.refresh_interval_secs = 10;
+        return Err("轮询间隔不能小于 10 秒（避免触发 provider rate limit）".to_string());
     }
     cfg.save()?;
 
@@ -96,6 +82,74 @@ pub async fn save_config(
     }
     Ok(())
 }
+
+// ── 新 API：按字符串 id 操作（推荐） ──────────────────────────────
+
+/// 注册表元信息：前端拿到后能动态渲染设置面板（避免硬编码 3 个 provider）。
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SourceMeta {
+    pub id: String,
+    pub display_name: String,
+    /// "api_key" | "cookie"
+    pub auth_kind: &'static str,
+    pub enabled: bool,
+}
+
+/// 列出所有内置 source 的元信息 + 当前启用状态。
+#[tauri::command]
+pub async fn list_sources(state: State<'_, AppState>) -> Result<Vec<SourceMeta>, String> {
+    let cfg = state.config.read().await;
+    Ok(builtin_sources()
+        .iter()
+        .map(|s| SourceMeta {
+            id: s.id().to_string(),
+            display_name: s.display_name().to_string(),
+            auth_kind: match s.auth_kind() {
+                AuthKind::ApiKey => "api_key",
+                AuthKind::Cookie => "cookie",
+            },
+            enabled: cfg.is_enabled_id(s.id()),
+        })
+        .collect())
+}
+
+#[tauri::command]
+pub async fn has_source_credential(id: String) -> Result<bool, String> {
+    // 验证 id 存在（防 IPC 注入任意 key 名）
+    let _ = find_source(&id).ok_or_else(|| format!("未知的 source id: {id}"))?;
+    Ok(config::load_credential_for_id(&id)?.is_some())
+}
+
+#[tauri::command]
+pub async fn set_source_credential(id: String, value: String) -> Result<(), String> {
+    let src = find_source(&id).ok_or_else(|| format!("未知的 source id: {id}"))?;
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Err("凭据不能为空".to_string());
+    }
+    // 鉴权方式决定存哪个字段
+    let cred = match src.auth_kind() {
+        AuthKind::ApiKey => Credentials { api_key: Some(trimmed.to_string()), cookie: None },
+        AuthKind::Cookie => Credentials { api_key: None, cookie: Some(trimmed.to_string()) },
+    };
+    config::save_credential_for_id(&id, &cred)
+}
+
+#[tauri::command]
+pub async fn delete_source_credential(id: String) -> Result<(), String> {
+    let _ = find_source(&id).ok_or_else(|| format!("未知的 source id: {id}"))?;
+    config::delete_credential_for_id(&id)
+}
+
+/// 用于设置面板"复制到剪贴板"按钮。返回值仅一次 IPC 用，不在前端持久化。
+#[tauri::command]
+pub async fn get_source_credential(id: String) -> Result<Option<String>, String> {
+    let _ = find_source(&id).ok_or_else(|| format!("未知的 source id: {id}"))?;
+    let cred = config::load_credential_for_id(&id)?;
+    Ok(cred.and_then(|c| c.api_key.or(c.cookie)))
+}
+
+// ── 旧 API：按 Provider enum 操作（保留给现有 UI） ──────────────────
 
 #[tauri::command]
 pub async fn has_api_key_for(provider: Provider) -> Result<bool, String> {
@@ -192,80 +246,24 @@ pub async fn hide_settings_window(app: AppHandle) -> Result<(), String> {
 }
 
 /// 浮窗归位到主屏幕正中央，并把位置持久化。
-///
-/// 用 `primary_monitor()` 拿主屏的工作区尺寸（不是窗口尺寸），
-/// 减去浮窗的 outer size 除以 2，得到左上角坐标。
 #[tauri::command]
 pub async fn reset_floating_window(app: AppHandle) -> Result<(), String> {
     let win = app
         .get_webview_window("floating")
         .ok_or_else(|| "找不到浮窗".to_string())?;
 
-    let monitor = app
-        .primary_monitor()
-        .map_err(|e| format!("primary_monitor: {e}"))?
-        .ok_or_else(|| "找不到主显示器".to_string())?;
-
-    let mon_size = monitor.size(); // PhysicalSize<u32>
-    let mon_pos = monitor.position(); // PhysicalPosition<i32>
-    let win_size = win
-        .outer_size()
-        .map_err(|e| format!("outer_size: {e}"))?;
-
-    let x = mon_pos.x + ((mon_size.width as i32 - win_size.width as i32) / 2).max(0);
-    let y = mon_pos.y + ((mon_size.height as i32 - win_size.height as i32) / 2).max(0);
-
-    win.set_position(tauri::PhysicalPosition::new(x, y))
-        .map_err(|e| format!("set_position: {e}"))?;
+    // 优先用 Tauri 内置 center() —— 自己算 monitor 几何的旧实现
+    // (commands.rs:209-216 旧版) 有 .max(0) 截断的 bug，多显示器 / 负坐标场景会偏。
+    win.center().map_err(|e| format!("center: {e}"))?;
 
     // 持久化（on_window_event(Moved) 也会触发，但先写一次更稳）
-    {
+    if let Ok(pos) = win.outer_position() {
         let state = app.state::<crate::AppState>();
         let mut cfg = state.config.write().await;
-        cfg.floating_x = Some(x);
-        cfg.floating_y = Some(y);
+        cfg.floating_x = Some(pos.x);
+        cfg.floating_y = Some(pos.y);
         let _ = cfg.save();
     }
-    Ok(())
-}
-
-/// 切换省电模式。即时生效：
-/// 1. 把 config.low_power_mode 改掉并落盘
-/// 2. emit `musage://low-power-mode-changed` 给浮窗 → 前端切 body[data-low-power]
-#[tauri::command]
-pub async fn set_low_power_mode(
-    state: State<'_, AppState>,
-    app: AppHandle,
-    enabled: bool,
-) -> Result<(), String> {
-    {
-        let mut cfg = state.config.write().await;
-        if cfg.low_power_mode != enabled {
-            cfg.low_power_mode = enabled;
-            let _ = cfg.save();
-        }
-    }
-    let _ = app.emit("musage://low-power-mode-changed", enabled);
-    Ok(())
-}
-
-/// 切换「全屏时自动隐藏浮窗」。即时生效：
-/// 1. 把 config 改掉并落盘
-/// 2. 同步给平台层（macOS watcher 用 / 非 macOS no-op）
-#[tauri::command]
-pub async fn set_auto_hide_in_fullscreen(
-    state: State<'_, AppState>,
-    app: AppHandle,
-    enabled: bool,
-) -> Result<(), String> {
-    {
-        let mut cfg = state.config.write().await;
-        if cfg.auto_hide_in_fullscreen != enabled {
-            cfg.auto_hide_in_fullscreen = enabled;
-            let _ = cfg.save();
-        }
-    }
-    crate::platform::set_auto_hide_in_fullscreen(&app, enabled);
     Ok(())
 }
 
@@ -274,25 +272,11 @@ pub async fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
-/// 返回当前应用版本（来自 tauri.conf.json 的 version 字段）。
-///
-/// 前端用于：
-/// 1. 设置面板底部展示 "Musage v0.1.0"
-/// 2. 跟 updater 拉到的远端版本对比时做日志
 #[tauri::command]
 pub fn get_app_version(app: AppHandle) -> String {
     app.package_info().version.to_string()
 }
 
-/// 设置浮窗的置顶/置底模式，同时把模式持久化到 config。
-///
-/// 模式含义：
-/// - `pin_top`   ：浮窗始终在最上层（系统 always-on-top）
-/// - `pin_bottom`：默认在底部（不 always-on-top），鼠标 hover 进窗口时由前端
-///                 调 [`set_floating_hover_raise`] 临时切到置顶，鼠标离开后还原
-/// - `normal`    ：不强制层级，跟普通窗口一样
-///
-/// 调本命令会**立即**应用效果，并把选择持久化到 config.json（下次启动恢复）。
 #[tauri::command]
 pub async fn set_floating_pin_mode(
     state: State<'_, AppState>,
@@ -308,25 +292,10 @@ pub async fn set_floating_pin_mode(
             let _ = cfg.save();
         }
     }
-    // 通知浮窗刷新 hover 监听（PinTop/Normal 模式下不应该有 hover 监听）
     let _ = app.emit("musage://pin-mode-changed", &parsed);
     Ok(())
 }
 
-/// 浮窗的 hover 状态切换（只在 PinBottom 模式下生效）。
-///
-/// - `hovering=true`  → 临时把窗口设成 always-on-top
-/// - `hovering=false` → 还原成 always-on-top=false（让其它窗口盖住它）
-///
-/// 平台差异：
-/// - 非 macOS：前端 JS 的 `mouseenter`/`mouseleave` 会调本命令，由 platform stub
-///   走 Tauri 原生 `set_always_on_top` 切顶层。
-/// - macOS：窗口在 `kCGNormalWindowLevel - 1` 时被其它 app 盖住，JS mouseenter
-///   触发不到，所以 [`crate::platform::macos`] 启了一个 background thread 轮询
-///   `NSEvent.mouseLocation()` + 窗口 `frame`，自己切 level。前端这条信号会被
-///   macos stub 忽略（`TRACKER_RUNNING` 才会生效）。
-///
-/// 在 PinTop / Normal 模式下调用会被忽略（不会破坏其它模式的状态）。
 #[tauri::command]
 pub async fn set_floating_hover_raise(
     state: State<'_, AppState>,
@@ -338,7 +307,6 @@ pub async fn set_floating_hover_raise(
         cfg.floating_pin_mode
     };
     if mode != FloatingPinMode::PinBottom {
-        // 非 PinBottom 模式忽略 hover 信号，避免误改置顶状态
         return Ok(());
     }
     crate::platform::set_window_hover_raise(&app, hovering);
@@ -354,18 +322,6 @@ fn parse_pin_mode(s: &str) -> Result<FloatingPinMode, String> {
     }
 }
 
-/// 把 pin 模式应用到浮窗窗口。失败只 warn，不抛错（窗口可能还没建好）。
-///
-/// macOS 上不能只调 `set_always_on_top(false)` —— 那样的话窗口是
-/// `kCGNormalWindowLevel = 0`，前台调度会把其它正在激活的 app 窗口叠上来，
-/// 浮窗就"消失"了。所以走 [`crate::platform`] 模块的私有 API 实现：
-/// - PinTop   → `kCGFloatingWindowLevel` (3)
-/// - PinBottom→ `kCGNormalWindowLevel - 1` (-1) + 启动全局 hover tracker
-/// - Normal   → `kCGNormalWindowLevel` (0)
-///
-/// 非 macOS 平台 (Windows / Linux) stub 走 Tauri 原生 `set_always_on_top`，
-/// Windows 上 `set_always_on_top(false)` 配 `HWND_NOTOPMOST` 行为 OK，
-/// Linux 上 EWMH 不支持"置底"会降级成普通窗口 —— 已知限制。
 pub fn apply_pin_mode_to_window(app: &AppHandle, mode: FloatingPinMode) {
     match mode {
         FloatingPinMode::PinTop => crate::platform::set_window_pin_top(app),
@@ -374,92 +330,78 @@ pub fn apply_pin_mode_to_window(app: &AppHandle, mode: FloatingPinMode) {
     }
 }
 
-// ── 核心实现 ──────────────────────────────────────────────
+// ── 核心：refresh_inner ───────────────────────────────────────────
 
-/// 刷新所有 enabled provider。**并发**跑，互不拖累。
+/// 刷新所有启用的 source。**并发**跑，互不拖累。
 ///
 /// 被 [`refresh_now`] 和 [`crate::poller::tick`] 共用。
+///
+/// Phase 1：每个 source 自己负责鉴权和 fetch，commands.rs 不再 `match provider`。
 pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnapshot, String> {
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    let region = cfg.region();
-    let xiaomi_region = cfg.xiaomi_region();
-    let enabled = cfg.enabled_providers();
-
-    // 每个 provider 自己的 overrides（用户从设置面板加的字段名候选）
-    // 必须 clone 出来再 move 进 spawn（cfg 是引用，spawn 要求 'static）
-    let overrides_for = |p: Provider| -> ProviderOverrides {
-        cfg.schema_overrides
-            .get(p.id_str())
-            .cloned()
-            .unwrap_or_default()
-    };
-
-    // 准备每个 provider 的 fetch 任务（keys.json 读 key 同步，main 里完成避免 spawn 阻塞）
-    let mut tasks: Vec<(Provider, tokio::task::JoinHandle<Result<ProviderSnapshot, String>>)> =
+    // 按 cfg 准备好 sources（避免在 spawn 闭包里 .await 持锁）
+    let sources = builtin_sources();
+    let mut tasks: Vec<(String, tokio::task::JoinHandle<Result<ProviderSnapshot, String>>)> =
         Vec::new();
-    for provider in enabled {
-        let key_res = config::load_api_key_for(provider);
-        match key_res {
-            Ok(Some(k)) => {
-                let ov = overrides_for(provider);
+
+    for src in &sources {
+        let id = src.id();
+        // 跳过未启用的
+        if !cfg.is_enabled_id(id) {
+            continue;
+        }
+
+        // 1. 同步加载凭据（避免在 tokio::spawn 里 await I/O）
+        let creds_res = config::load_credential_for_id(id);
+
+        // 2. 让 source 更新自己的 state（region / overrides）
+        update_source_state(src, cfg).await;
+
+        match creds_res {
+            Ok(Some(creds)) => {
+                let id_owned = id.to_string();
+                // 注意：每次 fetch 都重新构造 source 实例，但内部 state 是
+                // Arc<RwLock> 共享的，所以 region / overrides 不会丢。
+                let src_box: Box<dyn QuotaSource> = builtin_sources()
+                    .into_iter()
+                    .find(|s| s.id() == id)
+                    .expect("source still registered");
                 let task: tokio::task::JoinHandle<Result<ProviderSnapshot, String>> =
                     tokio::spawn(async move {
-                        match provider {
-                            Provider::Minimax => {
-                                minimax::Minimax::do_fetch(&k, region, &ov)
-                                    .await
-                                    .map(|(_, snap)| snap)
-                            }
-                            Provider::Deepseek => {
-                                let p = deepseek::Deepseek;
-                                <deepseek::Deepseek as ProviderImpl>::fetch(&p, &k).await
-                            }
-                            Provider::Xiaomimimo => {
-                                // Xiaomi 走 dashboard cookie（不是 Bearer/api-key header）
-                                let cookie_res = config::load_cookie_for(provider);
-                                let snap_res: Result<ProviderSnapshot, String> = match cookie_res {
-                                    Ok(Some(cookie)) => {
-                                        xiaomi::Xiaomimimo::do_fetch(&cookie, xiaomi_region, &ov)
-                                            .await
-                                            .map(|(_, snap)| snap)
-                                    }
-                                    Ok(None) => Err("未配置 Dashboard cookie".to_string()),
-                                    Err(e) => Err(e),
-                                };
-                                snap_res
-                            }
+                        match src_box.fetch(&creds).await {
+                            Ok(snap) => Ok(snap),
+                            Err(e) => Err(e.message),  // message 给前端看，kind 由 classify 还原
                         }
                     });
-                tasks.push((provider, task));
+                tasks.push((id_owned, task));
             }
             Ok(None) => {
-                // key 没配 → 直接给错误快照，不入 task
-                tasks.push((
-                    provider,
-                    tokio::spawn(async move {
-                        Err("未配置 API key（设置面板填入）".to_string())
-                    }),
-                ));
+                let id_owned = id.to_string();
+                let task = tokio::spawn(async move {
+                    Err("未配置凭据（设置面板填入）".to_string())
+                });
+                tasks.push((id_owned, task));
             }
             Err(e) => {
-                tasks.push((
-                    provider,
-                    tokio::spawn(async move { Err(format!("读 keys.json 失败: {e}")) }),
-                ));
+                let id_owned = id.to_string();
+                let task = tokio::spawn(async move {
+                    Err(format!("读 keys.json 失败: {e}"))
+                });
+                tasks.push((id_owned, task));
             }
         }
     }
 
-    // 收集所有结果（保持按 cfg.enabled_providers() 顺序）
+    // 收集所有结果（按 builtin_sources 顺序，前端卡顺序稳定）
     let mut snap = QuotaSnapshot::default();
-    for (provider, task) in tasks {
+    for (id, task) in tasks {
         match task.await {
             Ok(Ok(s)) => snap.providers.push(s),
             Ok(Err(e)) => {
-                let kind = classify_error_message(&e);
-                snap.providers.push(ProviderSnapshot::empty_error(provider, kind, e));
+                let provider = provider_from_id(&id);
+                snap.providers.push(ProviderSnapshot::empty_error(provider, classify_error_message(&e), e));
             }
             Err(join_err) => {
+                let provider = provider_from_id(&id);
                 snap.providers.push(ProviderSnapshot::empty_error(
                     provider,
                     ErrorKind::Other,
@@ -469,7 +411,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
         }
     }
 
-    snap.fetched_at = Some(now_ms);
+    snap.fetched_at = Some(chrono::Utc::now().timestamp_millis());
 
     // 刷新托盘 + 推送
     let _ = app.emit("musage://snapshot", &snap);
@@ -478,4 +420,74 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
     }
 
     Ok(snap)
+}
+
+/// 把 provider id 映射到 Provider enum（仅供空错误快照用，UI 仍以 source_id 为准）。
+fn provider_from_id(id: &str) -> Provider {
+    match id {
+        "minimax" => Provider::Minimax,
+        "deepseek" => Provider::Deepseek,
+        "xiaomimimo" => Provider::Xiaomimimo,
+        _ => Provider::Minimax,  // 占位，Phase 2 加 Tavily 变体
+    }
+}
+
+/// 在 fetch 前把 cfg 里的 region / overrides 推给 source（如果 source 实现了的话）。
+///
+/// 公开给 [`crate::lib::run_dump_subcommand`] 共享。
+pub async fn update_source_state(src: &Box<dyn QuotaSource>, cfg: &AppConfig) {
+    use crate::providers::minimax::Region;
+    use crate::providers::xiaomi::XiaomiRegion;
+
+    match src.id() {
+        "minimax" => {
+            // builtin_sources() 每次都新建实例 —— 但它们各自的 state 是 Arc<RwLock>，
+            // 也就是说，重新建一个 MinimaxSource 不会丢失原 state（Arc 共享）。
+            if let Some(s) = builtin_sources().into_iter().find(|s| s.id() == "minimax") {
+                let region = match cfg.region() {
+                    Region::Cn => Region::Cn,
+                    Region::En => Region::En,
+                };
+                let ov = cfg.schema_overrides.get("minimax").cloned().unwrap_or_default();
+                if let Some(ms) = (s.as_ref() as &dyn std::any::Any).downcast_ref::<crate::providers::minimax::MinimaxSource>() {
+                    ms.set_state(region, ov).await;
+                }
+            }
+        }
+        "xiaomimimo" => {
+            if let Some(s) = builtin_sources().into_iter().find(|s| s.id() == "xiaomimimo") {
+                let region = cfg.xiaomi_region();
+                let ov = cfg.schema_overrides.get("xiaomimimo").cloned().unwrap_or_default();
+                if let Some(xs) = (s.as_ref() as &dyn std::any::Any).downcast_ref::<crate::providers::xiaomi::XiaomimimoSource>() {
+                    xs.set_state(region, ov).await;
+                }
+            }
+        }
+        _ => {}  // deepseek / tavily 暂不需要 state
+    }
+}
+
+/// 把 provider 抛出的中文错误串映射成 [`ErrorKind`]。
+///
+/// Phase 1 起，理想情况下 provider 返回的是 [`FetchError`]（带 kind），但
+/// 为了保持 refresh_inner 的鲁棒性，这里仍然对最终的中文消息做兜底分类。
+fn classify_error_message(msg: &str) -> ErrorKind {
+    let m = msg;
+    if m.contains("API key 为空") || m.contains("未配置") {
+        ErrorKind::UnconfiguredKey
+    } else if m.contains("鉴权失败") || m.contains("无权限") || m.contains("HTTP 401") || m.contains("HTTP 403") {
+        ErrorKind::AuthFailed
+    } else if m.contains("频繁") || m.contains("HTTP 429") {
+        ErrorKind::RateLimited
+    } else if m.starts_with("网络错误") || m.contains("网络错误") {
+        ErrorKind::Network
+    } else if m.contains("不是 JSON") {
+        ErrorKind::Parse
+    } else if m.contains("未识别 schema") {
+        ErrorKind::SchemaUnknown
+    } else if m.contains("服务异常") || m.contains("HTTP 5") {
+        ErrorKind::ServerError
+    } else {
+        ErrorKind::Other
+    }
 }

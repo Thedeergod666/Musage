@@ -32,7 +32,7 @@ use std::thread;
 use std::time::Duration;
 
 use objc2::MainThreadMarker;
-use objc2_app_kit::{NSEvent, NSWindow};
+use objc2_app_kit::{NSEvent, NSMenu, NSWindow};
 use objc2_core_graphics::{kCGFloatingWindowLevel, kCGNormalWindowLevel, CGWindowLevel};
 use objc2_foundation::NSPoint;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
@@ -192,4 +192,119 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
     });
     // 50ms 超时兜底：main thread 卡住时 hover 轮询不至于一起卡住
     rx.recv_timeout(Duration::from_millis(50)).unwrap_or(false)
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  Fullscreen watcher —— 检测全屏并自动隐藏浮窗
+// ═══════════════════════════════════════════════════════════════════
+//
+// 思路：用 `+[NSMenu menuBarVisible]` 探测菜单栏是否可见。macOS 进入全屏
+// 时（任何 app 的 fullscreen），菜单栏自动隐藏；退出全屏菜单栏恢复。
+// 这是 macOS 默认行为，绝大多数用户没改。
+//
+// **已知 caveat**：用户在「系统设置 → 桌面与程序坞 → 在桌面上自动隐藏
+// 并显示菜单栏」打开后，菜单栏在非全屏也会消失 → 会误触发隐藏浮窗。
+// 这是 trade-off 已知局限，写在设置面板 help 文字里告诉用户。
+//
+// 设计：
+// - tracker 始终运行（idempotent），由 lib.rs 启动一次
+// - AUTO_HIDE_IN_FULLSCREEN 原子开关由 commands.rs save_config / 启动
+//   时同步给 macos.rs（保持 config.json 单源真理）
+// - WINDOW_HIDDEN_BY_FULLSCREEN 标志「窗口是被我们隐藏的」，避免用户手动
+//   隐藏后又被我们误恢复
+
+static FULLSCREEN_WATCHER_RUNNING: AtomicBool = AtomicBool::new(false);
+static AUTO_HIDE_IN_FULLSCREEN: AtomicBool = AtomicBool::new(false);
+static WINDOW_HIDDEN_BY_FULLSCREEN: AtomicBool = AtomicBool::new(false);
+
+/// 设置「全屏时自动隐藏浮窗」开关。
+/// - 立即开启：watcher loop 下个 tick (≤2s) 会探测当前状态并执行
+/// - 立即关闭：如果浮窗是被我们隐藏的，立刻恢复显示（不等 loop）
+pub fn set_auto_hide_in_fullscreen<R: Runtime>(app: &AppHandle<R>, enabled: bool) {
+    let was = AUTO_HIDE_IN_FULLSCREEN.swap(enabled, Ordering::SeqCst);
+    if was && !enabled {
+        // 刚关闭功能 —— 如果窗口是我们之前自动藏起来的，立刻恢复
+        if WINDOW_HIDDEN_BY_FULLSCREEN.swap(false, Ordering::SeqCst) {
+            show_floating(app);
+        }
+    }
+}
+
+/// 启动 fullscreen watcher。idempotent，启动后整个 app 生命周期不停。
+/// 由 lib.rs setup() 调一次。开销：2s 一次 + 一次主线程 dispatch + 一次
+/// `[NSMenu menuBarVisible]` 读取，约 μs 级，可忽略。
+pub fn start_fullscreen_watcher<R: Runtime>(app: AppHandle<R>) {
+    if FULLSCREEN_WATCHER_RUNNING.swap(true, Ordering::SeqCst) {
+        return; // 已在跑
+    }
+    thread::Builder::new()
+        .name("musage-fullscreen-watcher".into())
+        .spawn(move || {
+            tracing::debug!("fullscreen watcher 启动");
+            let mut last_fs = false;
+            loop {
+                thread::sleep(Duration::from_secs(2));
+
+                // 功能开关关：还原任何之前的自动隐藏 + 重置状态
+                if !AUTO_HIDE_IN_FULLSCREEN.load(Ordering::SeqCst) {
+                    if WINDOW_HIDDEN_BY_FULLSCREEN.swap(false, Ordering::SeqCst) {
+                        show_floating(&app);
+                    }
+                    last_fs = false;
+                    continue;
+                }
+
+                // 功能开关开：探测 + 响应状态变化
+                let is_fs = is_menubar_hidden(&app);
+                if is_fs == last_fs {
+                    continue;
+                }
+                last_fs = is_fs;
+
+                if is_fs {
+                    // 进入全屏 —— 隐藏浮窗（若我们尚未藏）
+                    if !WINDOW_HIDDEN_BY_FULLSCREEN.swap(true, Ordering::SeqCst) {
+                        tracing::debug!("检测到全屏 → 隐藏浮窗");
+                        hide_floating(&app);
+                    }
+                } else {
+                    // 退出全屏 —— 恢复浮窗（若是我们之前藏的）
+                    if WINDOW_HIDDEN_BY_FULLSCREEN.swap(false, Ordering::SeqCst) {
+                        tracing::debug!("退出全屏 → 恢复浮窗");
+                        show_floating(&app);
+                    }
+                }
+            }
+        })
+        .expect("spawn fullscreen watcher thread");
+}
+
+/// 探测 macOS 菜单栏是否被隐藏。隐藏 → 大概率正在全屏。
+/// 主线程同步调用（NSMenu 类方法需要 main thread）。
+fn is_menubar_hidden<R: Runtime>(app: &AppHandle<R>) -> bool {
+    let (tx, rx) = mpsc::channel::<bool>();
+    let _ = app.run_on_main_thread(move || {
+        let mtm = MainThreadMarker::new().expect("inside run_on_main_thread callback");
+        let visible = NSMenu::menuBarVisible(mtm);
+        let _ = tx.send(!visible);
+    });
+    rx.recv_timeout(Duration::from_millis(200)).unwrap_or(false)
+}
+
+fn hide_floating<R: Runtime>(app: &AppHandle<R>) {
+    let app2 = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(win) = app2.get_webview_window("floating") {
+            let _ = win.hide();
+        }
+    });
+}
+
+fn show_floating<R: Runtime>(app: &AppHandle<R>) {
+    let app2 = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(win) = app2.get_webview_window("floating") {
+            let _ = win.show();
+        }
+    });
 }

@@ -31,6 +31,8 @@ interface AppConfig {
   floating_x: number | null;
   floating_y: number | null;
   floating_pin_mode?: FloatingPinMode;
+  low_power_mode?: boolean;
+  auto_hide_in_fullscreen?: boolean;
   // 用户加的字段名候选（应对 MiniMax 改 schema）
   schema_overrides?: Record<string, ProviderOverrides>;
 }
@@ -150,6 +152,11 @@ async function loadConfig() {
   );
   if (radio) radio.checked = true;
 
+  // 性能 / 可见性
+  ($("#low-power-mode") as HTMLInputElement).checked = cfg.low_power_mode ?? false;
+  ($("#auto-hide-in-fullscreen") as HTMLInputElement).checked =
+    cfg.auto_hide_in_fullscreen ?? false;
+
   // schema overrides (高级)
   const ov = cfg.schema_overrides ?? {};
   const mm = ov.minimax ?? { five_hour: { count_candidates: [] }, weekly: { count_candidates: [] } };
@@ -216,6 +223,8 @@ async function saveConfig() {
     floating_x: existing.floating_x ?? null,
     floating_y: existing.floating_y ?? null,
     floating_pin_mode: pinMode,
+    low_power_mode: ($("#low-power-mode") as HTMLInputElement).checked,
+    auto_hide_in_fullscreen: ($("#auto-hide-in-fullscreen") as HTMLInputElement).checked,
     schema_overrides: {
       minimax: {
         five_hour: { count_candidates: fiveHourCandidates },
@@ -329,6 +338,27 @@ document.querySelectorAll<HTMLInputElement>('input[name="pin-mode"]').forEach((r
       applyPinMode(mode);
     }
   });
+});
+
+// 省电模式 / 全屏自动隐藏：勾选即生效（独立 command，不必点"保存配置"）
+$("#low-power-mode")?.addEventListener("change", async () => {
+  const enabled = ($("#low-power-mode") as HTMLInputElement).checked;
+  try {
+    await invoke("set_low_power_mode", { enabled });
+    flash(enabled ? "✓ 省电模式已开启" : "✓ 省电模式已关闭");
+  } catch (e) {
+    flash(`✗ 切换失败: ${e}`, true);
+  }
+});
+
+$("#auto-hide-in-fullscreen")?.addEventListener("change", async () => {
+  const enabled = ($("#auto-hide-in-fullscreen") as HTMLInputElement).checked;
+  try {
+    await invoke("set_auto_hide_in_fullscreen", { enabled });
+    flash(enabled ? "✓ 全屏自动隐藏已开启（仅 macOS）" : "✓ 全屏自动隐藏已关闭");
+  } catch (e) {
+    flash(`✗ 切换失败: ${e}`, true);
+  }
 });
 
 (async () => {

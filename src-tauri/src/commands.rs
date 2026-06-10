@@ -84,6 +84,12 @@ pub async fn save_config(
         mgr.disable().map_err(|e| format!("autostart disable: {e}"))?;
     }
 
+    // 同步「全屏自动隐藏」开关到平台层（watcher 始终运行，这里翻原子开关）
+    crate::platform::set_auto_hide_in_fullscreen(&app, cfg.auto_hide_in_fullscreen);
+
+    // 广播省电模式给浮窗，让前端 toggle body[data-low-power]
+    let _ = app.emit("musage://low-power-mode-changed", cfg.low_power_mode);
+
     {
         let mut guard = state.config.write().await;
         *guard = cfg;
@@ -201,6 +207,46 @@ pub async fn reset_floating_window(app: AppHandle) -> Result<(), String> {
         cfg.floating_y = Some(y);
         let _ = cfg.save();
     }
+    Ok(())
+}
+
+/// 切换省电模式。即时生效：
+/// 1. 把 config.low_power_mode 改掉并落盘
+/// 2. emit `musage://low-power-mode-changed` 给浮窗 → 前端切 body[data-low-power]
+#[tauri::command]
+pub async fn set_low_power_mode(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    {
+        let mut cfg = state.config.write().await;
+        if cfg.low_power_mode != enabled {
+            cfg.low_power_mode = enabled;
+            let _ = cfg.save();
+        }
+    }
+    let _ = app.emit("musage://low-power-mode-changed", enabled);
+    Ok(())
+}
+
+/// 切换「全屏时自动隐藏浮窗」。即时生效：
+/// 1. 把 config 改掉并落盘
+/// 2. 同步给平台层（macOS watcher 用 / 非 macOS no-op）
+#[tauri::command]
+pub async fn set_auto_hide_in_fullscreen(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    {
+        let mut cfg = state.config.write().await;
+        if cfg.auto_hide_in_fullscreen != enabled {
+            cfg.auto_hide_in_fullscreen = enabled;
+            let _ = cfg.save();
+        }
+    }
+    crate::platform::set_auto_hide_in_fullscreen(&app, enabled);
     Ok(())
 }
 

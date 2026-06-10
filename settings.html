@@ -271,6 +271,27 @@
           浮窗位置 + 大小已经自动记忆，下次启动恢复。点"归位"可把窗口挪到当前主屏幕正中央。
         </div>
       </div>
+      <div class="field">
+        <div class="check">
+          <input id="low-power-mode" type="checkbox" />
+          <label for="low-power-mode" style="margin:0">省电模式（关闭玻璃模糊 + 过渡动画）</label>
+        </div>
+        <div class="help">
+          老 Intel Mac / Linux WebKitGTK 等 GPU 弱的平台开启可显著减少 backdrop-filter 开销。
+          视觉上 idle 状态会丢失玻璃质感，hover 仍保留色彩切换。改动会立即生效。
+        </div>
+      </div>
+      <div class="field">
+        <div class="check">
+          <input id="auto-hide-in-fullscreen" type="checkbox" />
+          <label for="auto-hide-in-fullscreen" style="margin:0">全屏时自动隐藏浮窗</label>
+        </div>
+        <div class="help">
+          检测到任何 app 进入全屏（菜单栏自动隐藏）→ 浮窗暂时隐藏；退出全屏 → 自动恢复。
+          目前仅 macOS 生效（通过 NSMenu.menuBarVisible 探测）。
+          <br/>⚠ 若你在「系统设置 → 桌面与程序坞 → 在桌面上自动隐藏并显示菜单栏」开了，可能会被误触发。
+        </div>
+      </div>
     </div>
 
     <div class="row">

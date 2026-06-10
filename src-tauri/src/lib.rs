@@ -77,6 +77,11 @@ pub fn run() {
             // 非 macOS 平台是 no-op stub。
             crate::platform::start_hover_emitter(app.handle().clone());
 
+            // 启动 fullscreen watcher（macOS 探测菜单栏可见性 → 自动隐藏浮窗）。
+            // 非 macOS 是 no-op。watcher 自身始终运行，是否真的隐藏看 config
+            // 的 auto_hide_in_fullscreen，这个开关由下面 from-config 同步到平台层。
+            crate::platform::start_fullscreen_watcher(app.handle().clone());
+
             // 初始化托盘
             tray::setup(app.handle())?;
 
@@ -99,6 +104,12 @@ pub fn run() {
 
                 // 恢复浮窗的置顶/置底模式（用户上次选的）
                 apply_pin_mode_to_window(app.handle(), cfg.floating_pin_mode);
+
+                // 同步「全屏自动隐藏」开关到平台层（watcher 已经启动，这里只翻开关）
+                crate::platform::set_auto_hide_in_fullscreen(
+                    app.handle(),
+                    cfg.auto_hide_in_fullscreen,
+                );
 
                 // 监听移动 / 缩放 → 持久化（spawn 异步任务避免阻塞 UI 线程）
                 let app_for_event = app.handle().clone();
@@ -164,6 +175,8 @@ pub fn run() {
             commands::reset_floating_window,
             commands::set_floating_pin_mode,
             commands::set_floating_hover_raise,
+            commands::set_low_power_mode,
+            commands::set_auto_hide_in_fullscreen,
             commands::quit_app,
         ])
         .on_window_event(|window, event| {

@@ -388,3 +388,46 @@ body[data-hover] #app .err-server_error     .err-label { color: #ff453a; backgro
   text-shadow: var(--text-shadow);
   transition: color 0.28s, text-shadow 0.28s;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+ *  省电模式 —— body[data-low-power]
+ * ═══════════════════════════════════════════════════════════════════
+ *
+ * 杀掉 GPU 最贵的 backdrop-filter blur + 所有 CSS transition。
+ * 适合老 Intel Mac / Linux WebKitGTK / 任何 backdrop-filter 性能不行的平台。
+ *
+ * 视觉上：
+ *   - idle 状态丢失玻璃质感（瓦片变成纯半透深底，不再模糊背景）
+ *   - 提高瓦片 alpha 弥补失去的玻璃效果带来的可读性下降
+ *   - hover 状态仍然保留色彩切换（cheap），只是没有 ~280ms 过渡而已 —— 直接 snap
+ *   - 状态点的彩色光晕也关掉（次要装饰，省一点合成层）
+ */
+
+body[data-low-power] #app {
+  /* idle: 加深 alpha 弥补无玻璃 */
+  --tile-bg: rgba(22, 24, 30, 0.78);
+  --tile-blur: 0;
+  --tile-saturate: 100%;
+}
+body[data-low-power][data-hover] #app {
+  /* hover: 不再继续 blur，只把 alpha 拉到接近不透明，色彩仍 swap */
+  --tile-bg: rgba(28, 30, 38, 0.92);
+  --tile-blur: 0;
+  --tile-saturate: 100%;
+}
+
+/* 强制关掉所有动画 / 过渡 / blur 滤镜 */
+body[data-low-power] *,
+body[data-low-power] *::before,
+body[data-low-power] *::after {
+  transition: none !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  animation: none !important;
+}
+
+/* 状态点光晕也关 —— box-shadow 不算 GPU 重灾区但是个累加项，省电模式索性全清 */
+body[data-low-power] .card-dot.ok,
+body[data-low-power] .card-dot.alert {
+  box-shadow: none;
+}

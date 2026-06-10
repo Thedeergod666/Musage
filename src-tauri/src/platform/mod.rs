@@ -70,3 +70,14 @@ pub fn start_hover_emitter<R: tauri::Runtime>(_app: tauri::AppHandle<R>) {
     // Win/Linux: WebView2 / WebKitGTK 都正常向非焦点窗口分发 mouseMoved 事件，
     // 前端 JS 直接挂 mouseenter/mouseleave 即可同步 body[data-hover]。
 }
+
+// ── Fullscreen watcher：非 macOS 暂未实现 ──
+// Win/Linux 全屏检测 API 各家不同（Win32 / X11 / Wayland），需要单独适配。
+// 设置项保留可见但开了无效，help 文字告诉用户「目前仅 macOS 生效」。
+#[cfg(not(target_os = "macos"))]
+pub fn start_fullscreen_watcher<R: tauri::Runtime>(_app: tauri::AppHandle<R>) {}
+#[cfg(not(target_os = "macos"))]
+pub fn set_auto_hide_in_fullscreen<R: tauri::Runtime>(
+    _app: &tauri::AppHandle<R>,
+    _enabled: bool,
+) {}

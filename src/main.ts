@@ -442,6 +442,16 @@ async function init() {
     setHoverAttr(e.payload);
   }).then((fn) => (unlistenHover = fn));
 
+  // ── 省电模式同步：body[data-low-power] 让 CSS 关掉 backdrop-filter + transition ──
+  let unlistenLowPower: UnlistenFn | null = null;
+  const setLowPowerAttr = (on: boolean) => {
+    if (on) document.body.dataset.lowPower = "1";
+    else delete document.body.dataset.lowPower;
+  };
+  listen<boolean>("musage://low-power-mode-changed", (e) => {
+    setLowPowerAttr(e.payload);
+  }).then((fn) => (unlistenLowPower = fn));
+
   // 启动时立即 render loading 占位，避免空白窗口
   app.innerHTML = `<div class="err"><div class="err-title">⏳ 加载中…</div></div>`;
 
@@ -467,14 +477,18 @@ async function init() {
     }
   });
 
-  // 读取用户选的置顶/置底模式。
+  // 读取用户选的置顶/置底模式 + 省电模式初始状态。
   // PinBottom 模式下，监听 mouseenter/mouseleave 让后端临时切到 always-on-top。
   let pinMode: FloatingPinMode = "pin_top";
   try {
-    const cfg = await invoke<{ floating_pin_mode?: FloatingPinMode }>("get_config");
+    const cfg = await invoke<{
+      floating_pin_mode?: FloatingPinMode;
+      low_power_mode?: boolean;
+    }>("get_config");
     pinMode = cfg.floating_pin_mode ?? "pin_top";
+    setLowPowerAttr(cfg.low_power_mode ?? false);
   } catch (e) {
-    console.error("读 pin mode 失败", e);
+    console.error("读 config 失败", e);
   }
   setupHoverRaise(pinMode);
 
@@ -490,6 +504,7 @@ async function init() {
   window.addEventListener("beforeunload", () => {
     if (unlisten) unlisten();
     if (unlistenHover) unlistenHover();
+    if (unlistenLowPower) unlistenLowPower();
     if (countdownTimer !== null) clearInterval(countdownTimer);
   });
 }

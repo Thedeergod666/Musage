@@ -11,12 +11,10 @@ from PIL import Image, ImageDraw, ImageFont
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src-tauri", "icons")
 os.makedirs(OUT, exist_ok=True)
 
-# 配色：红底 + 白色加粗 M
-BG = (220, 38, 38, 255)         # 主红
-BG_GRAD_TOP = (240, 60, 60, 255)  # 顶部稍亮
-BG_GRAD_BOT = (200, 30, 30, 255)  # 底部稍暗
-RING = (255, 255, 255, 70)        # 外圈细环
-FG = (255, 255, 255, 255)
+# 配色：白底 + 黑色加粗 M + 黑色细环（极简，避免和网易云撞色）
+BG = (255, 255, 255, 255)     # 纯白
+RING = (0, 0, 0, 200)          # 黑环（半透明一点不那么硬）
+FG = (0, 0, 0, 255)            # 黑色 M
 
 
 def find_font(size: int):
@@ -65,32 +63,20 @@ def make_icon(size: int) -> Image.Image:
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
-    # 圆角矩形（macOS 风格 app icon）
+    # 圆角矩形（macOS 风格 app icon）—— 纯白底
     r = int(size * 0.225)
-    # 简单纵向渐变：分两段绘制近似
-    d.rounded_rectangle([(0, 0), (size - 1, int(size * 0.55))], radius=r, fill=BG_GRAD_TOP)
-    d.rounded_rectangle([(0, int(size * 0.45)), (size - 1, size - 1)], radius=r, fill=BG_GRAD_BOT)
-    # 重新画一遍完整底（盖住接缝，圆角会按外轮廓剪）
     d.rounded_rectangle([(0, 0), (size - 1, size - 1)], radius=r, fill=BG)
-    # 顶部到底部细渐变：再叠一层 alpha 渐变
-    overlay = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    od = ImageDraw.Draw(overlay)
-    for y in range(size):
-        a = int(20 * (y / size))  # 顶部到底部 alpha 0→20 一点点暗
-        od.line([(0, y), (size, y)], fill=(0, 0, 0, a))
-    img = Image.alpha_composite(img, overlay)
-    d = ImageDraw.Draw(img)
 
-    # 外圈细环（白色低 alpha）—— 装饰
-    ring_margin = int(size * 0.18)
+    # 外圈细环（黑色，装饰）—— 比之前更细一点
+    ring_margin = int(size * 0.20)
     d.ellipse(
         [(ring_margin, ring_margin), (size - ring_margin, size - ring_margin)],
-        outline=RING, width=max(1, size // 32),
+        outline=RING, width=max(1, size // 40),
     )
 
     # 中心 "M" 字 —— 加粗 + 居中略下移
     if size >= 16:
-        font, is_bold = find_font(int(size * 0.52))
+        font, is_bold = find_font(int(size * 0.55))
         if font is not None:
             bbox = d.textbbox((0, 0), "M", font=font)
             tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
@@ -101,7 +87,7 @@ def make_icon(size: int) -> Image.Image:
                 d.text((cx, cy), "M", font=font, fill=FG)
             else:
                 # 兜底：用 stroke 模拟加粗
-                sw = max(1, int(size * 0.045))
+                sw = max(1, int(size * 0.05))
                 d.text((cx, cy), "M", font=font, fill=FG, stroke_width=sw, stroke_fill=FG)
     return img
 

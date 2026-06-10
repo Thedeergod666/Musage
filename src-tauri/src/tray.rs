@@ -2,8 +2,10 @@
 //!
 //! 渲染规则：
 //! - 32x32 RGBA
-//! - 圆形背景：颜色 = 所有 provider 中**最差**的 health（绿/橙/红/灰）
-//! - 中心两行文字（font 加载失败时只画圆）：
+//! - **无背景填充**（透明），只画两行文字
+//! - 文字 = health 色（绿/橙/红/灰，对应 worst_health）+ 1px 黑色描边，
+//!   任意 tray 背景色下都可读
+//! - 中心两行文字（font 加载失败时退化为全透明空白图标）：
 //!   - 优先 MiniMax：上 `h<5h%>`、下 `w<周%>`（h=hour, w=week）
 //!   - 其次 DeepSeek：上 余额数字、下 货币单位
 //!   - 都没有：上 `!`、下 `!`
@@ -181,34 +183,15 @@ fn make_placeholder_icon() -> Image<'static> {
 }
 
 fn render_icon(snap: &QuotaSnapshot) -> Image<'static> {
+    // 透明背景 —— 模仿监控 LCD 两行显示
     let mut img: image::ImageBuffer<Rgba<u8>, Vec<u8>> =
         image::ImageBuffer::from_fn(ICON_SIZE, ICON_SIZE, |_x, _y| Rgba([0, 0, 0, 0]));
-    let center = ICON_SIZE as i32 / 2;
-    let radius = center - 1;
-    let r2 = radius * radius;
 
-    // 颜色：所有 provider 中最差
-    let health = snap.worst_health();
-    let color = match health {
-        "ok" => Rgba([76u8, 175, 80, 255]),    // 绿
-        "warn" => Rgba([255u8, 152, 0, 255]),  // 橙
-        "alert" => Rgba([244u8, 67, 54, 255]), // 红
-        _ => Rgba([128u8, 128, 128, 255]),     // 灰
-    };
+    // 纯白文字（macOS 菜单栏深底白字最清晰；不再按 health 染色）
+    let text_color = Rgba([255u8, 255, 255, 255]);
 
-    for y in 0..ICON_SIZE {
-        for x in 0..ICON_SIZE {
-            let dx = x as i32 - center;
-            let dy = y as i32 - center;
-            if dx * dx + dy * dy <= r2 {
-                img.put_pixel(x, y, color);
-            }
-        }
-    }
-
-    // 中心两行文字
     let (line1, line2) = pick_two_lines(snap);
-    draw_two_line_text(&mut img, &line1, &line2, Rgba([255, 255, 255, 255]));
+    draw_two_line_text(&mut img, &line1, &line2, text_color);
 
     let (w, h) = img.dimensions();
     Image::new_owned(img.into_raw(), w, h)
@@ -299,7 +282,7 @@ fn format_amount_compact(v: f64) -> String {
     }
 }
 
-/// 在 32x32 上画两行居中文字。font 缺失则 noop。
+/// 在 32x32 上画两行居中纯白文字。font 缺失则 noop —— 整个图标就是空白透明。
 fn draw_two_line_text(
     img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>,
     top: &str,
@@ -307,24 +290,23 @@ fn draw_two_line_text(
     color: Rgba<u8>,
 ) {
     let Some(font) = load_font() else { return };
-    let scale = PxScale::from(12.0);
+    let scale = PxScale::from(13.0);
     let scaled = font.as_scaled(scale);
     let w = ICON_SIZE as f32;
 
-    // 测量 + 居中
-    let top_w: f32 = top
-        .chars()
-        .map(|c| scaled.h_advance(font.glyph_id(c)))
-        .sum();
-    let top_x = ((w - top_w) / 2.0).max(1.0) as i32;
-    draw_text_mut(img, color, top_x, 13, scale, font, top);
+    let measure = |text: &str| -> f32 {
+        text.chars().map(|c| scaled.h_advance(font.glyph_id(c))).sum()
+    };
 
-    let bot_w: f32 = bottom
-        .chars()
-        .map(|c| scaled.h_advance(font.glyph_id(c)))
-        .sum();
+    // 上行 baseline = 12
+    let top_w = measure(top);
+    let top_x = ((w - top_w) / 2.0).max(1.0) as i32;
+    draw_text_mut(img, color, top_x, 12, scale, font, top);
+
+    // 下行 baseline = 26
+    let bot_w = measure(bottom);
     let bot_x = ((w - bot_w) / 2.0).max(1.0) as i32;
-    draw_text_mut(img, color, bot_x, 27, scale, font, bottom);
+    draw_text_mut(img, color, bot_x, 26, scale, font, bottom);
 }
 
 fn tooltip(snap: &QuotaSnapshot) -> String {

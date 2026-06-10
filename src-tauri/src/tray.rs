@@ -3,7 +3,10 @@
 //! 渲染规则：
 //! - 32x32 RGBA
 //! - 圆形背景：颜色 = 所有 provider 中**最差**的 health（绿/橙/红/灰）
-//! - 中心文字：仅 MiniMax 5h utilization（DeepSeek 不显示数字，因 32x32 装不下金额）
+//! - 中心两行文字（font 加载失败时只画圆）：
+//!   - 优先 MiniMax：上 `h<5h%>`、下 `w<周%>`（h=hour, w=week）
+//!   - 其次 DeepSeek：上 余额数字、下 货币单位
+//!   - 都没有：上 `!`、下 `!`
 //! - 托盘 tooltip：所有 provider 的核心状态，逗号分隔
 
 use ab_glyph::{Font, FontVec, PxScale, ScaleFont};
@@ -152,69 +155,125 @@ fn render_icon(snap: &QuotaSnapshot) -> Image<'static> {
         }
     }
 
-    // 中心文字：只取 MiniMax 的 5h utilization（DeepSeek 装不下金额）
-    let text_opt: Option<String> = if snap.providers.is_empty() {
-        Some("?".to_string())
-    } else if let Some(minimax) = snap
-        .providers
-        .iter()
-        .find(|p| p.provider == Provider::Minimax && p.success)
-    {
-        minimax
-            .rows
-            .first()
-            .and_then(|r| r.utilization)
-            .map(format_pct_short)
-            .or(Some("?".to_string()))
-    } else if let Some(p) = snap.providers.iter().find(|p| p.success) {
-        // 只有 DeepSeek 成功时显示货币首字符
-        let c = p
-            .rows
-            .first()
-            .and_then(|r| r.unit.as_ref())
-            .and_then(|s| s.chars().next())
-            .map(|c| c.to_string());
-        c.or(Some("✓".to_string()))
-    } else {
-        Some("!".to_string())
-    };
-
-    if let Some(t) = text_opt {
-        draw_centered_text(&mut img, &t, Rgba([255, 255, 255, 255]));
-    }
+    // 中心两行文字
+    let (line1, line2) = pick_two_lines(snap);
+    draw_two_line_text(&mut img, &line1, &line2, Rgba([255, 255, 255, 255]));
 
     let (w, h) = img.dimensions();
     Image::new_owned(img.into_raw(), w, h)
 }
 
-fn format_pct_short(v: f64) -> String {
-    let r = v.round() as i64;
-    if r >= 100 {
-        format!("{}x", (r / 100).max(1))
-    } else if r < 0 {
-        "0".to_string()
+/// 选 primary provider 并返回 (line1, line2)。
+///
+/// 优先级：MiniMax 成功 > DeepSeek 成功 > 失败态。
+/// MiniMax 用 `h<5h%>` / `w<周%>`（h=hour, w=week，方便一眼区分）。
+/// DeepSeek 用余额数字 / 货币单位（如 "128" / "CNY"）。
+/// 缺失行用 `"—"` 占位。
+fn pick_two_lines(snap: &QuotaSnapshot) -> (String, String) {
+    if snap.providers.is_empty() {
+        return ("…".to_string(), "".to_string());
+    }
+
+    if let Some(minimax) = snap
+        .providers
+        .iter()
+        .find(|p| p.provider == Provider::Minimax && p.success)
+    {
+        let five_h = minimax
+            .rows
+            .iter()
+            .find(|r| r.label == "5h")
+            .and_then(|r| r.utilization)
+            .map(format_pct_with_h_prefix)
+            .unwrap_or_else(|| "h—".to_string());
+        let weekly = minimax
+            .rows
+            .iter()
+            .find(|r| r.label == "周")
+            .and_then(|r| r.utilization)
+            .map(format_pct_with_w_prefix)
+            .unwrap_or_else(|| "w—".to_string());
+        return (five_h, weekly);
+    }
+
+    if let Some(deepseek) = snap
+        .providers
+        .iter()
+        .find(|p| p.provider == Provider::Deepseek && p.success)
+    {
+        let amount = deepseek
+            .rows
+            .iter()
+            .find(|r| r.remaining.is_some())
+            .and_then(|r| r.remaining)
+            .map(format_amount_compact)
+            .unwrap_or_else(|| "—".to_string());
+        let currency = deepseek
+            .rows
+            .iter()
+            .find(|r| r.remaining.is_some())
+            .and_then(|r| r.unit.clone())
+            .unwrap_or_else(|| "CNY".to_string());
+        return (amount, currency);
+    }
+
+    ("!".to_string(), "×".to_string())
+}
+
+/// "h<已用%>" —— 例如 "h10%"。32x32 装得下 4 字符。
+fn format_pct_with_h_prefix(v: f64) -> String {
+    let n = v.round().clamp(0.0, 999.0) as i64;
+    format!("h{}%", n)
+}
+
+/// "w<已用%>" —— 例如 "w5%"。
+fn format_pct_with_w_prefix(v: f64) -> String {
+    let n = v.round().clamp(0.0, 999.0) as i64;
+    format!("w{}%", n)
+}
+
+/// 紧凑金额格式：<1000 整数；<10000 1 位小数 k；<1M 整数 k；否则 1 位小数 M。
+/// 32x32 限制字符数 ≤ 5。
+fn format_amount_compact(v: f64) -> String {
+    let abs = v.abs();
+    if abs >= 1_000_000.0 {
+        // 转 f32 走 f32 的 Display 格式化（f64 没有 {:#.1} 那种 trait）
+        format!("{:.1}M", (v / 1_000_000.0) as f32)
+    } else if abs >= 10_000.0 {
+        format!("{}k", (v / 1000.0).round() as i64)
+    } else if abs >= 1000.0 {
+        format!("{:.1}k", (v / 1000.0) as f32)
     } else {
-        r.to_string()
+        format!("{}", v.round() as i64)
     }
 }
 
-fn draw_centered_text(
+/// 在 32x32 上画两行居中文字。font 缺失则 noop。
+fn draw_two_line_text(
     img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>,
-    text: &str,
+    top: &str,
+    bottom: &str,
     color: Rgba<u8>,
 ) {
     let Some(font) = load_font() else { return };
-    let scale = PxScale::from(20.0);
+    let scale = PxScale::from(12.0);
     let scaled = font.as_scaled(scale);
-    let text_w: f32 = text
+    let w = ICON_SIZE as f32;
+
+    // 测量 + 居中
+    let top_w: f32 = top
         .chars()
         .map(|c| scaled.h_advance(font.glyph_id(c)))
         .sum();
-    let w = ICON_SIZE as f32;
-    let h = ICON_SIZE as f32;
-    let x = ((w - text_w) / 2.0).max(2.0) as i32;
-    let y = (h - scale.y - 2.0).max(2.0) as i32;
-    draw_text_mut(img, color, x, y, scale, font, text);
+    let top_x = ((w - top_w) / 2.0).max(1.0) as i32;
+    draw_text_mut(img, color, top_x, 13, scale, font, top);
+
+    let bot_w: f32 = bottom
+        .chars()
+        .map(|c| scaled.h_advance(font.glyph_id(c)))
+        .sum();
+    let bot_x = ((w - bot_w) / 2.0).max(1.0) as i32;
+    draw_text_mut(img, color, bot_x, 27, scale, font, bottom);
 }
 
 fn tooltip(snap: &QuotaSnapshot) -> String {

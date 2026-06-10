@@ -20,7 +20,7 @@
 | 后端 | Rust (stable-x86_64-pc-windows-gnu) |
 | 前端 | Vanilla TypeScript + Vite（无框架，极小） |
 | HTTP | reqwest + rustls-tls |
-| 密钥存储 | keyring crate（Windows Credential Manager） |
+| 密钥存储 | 本地 `keys.json` 文件（Unix 0600 权限，原子写）。原 keyring 方案在 macOS 上启动弹 Keychain 访问窗 + 解锁密码框，体验不优雅 |
 | 动态托盘 | image + imageproc + ab_glyph |
 | 异步 | tokio |
 | 日志 | tracing + tracing-subscriber |
@@ -85,7 +85,7 @@
 ✅ Rust 核心代码：main/lib/api/poller/tray/config/commands/icon
 ✅ 前端：main.ts / styles.css / settings.ts / settings.html
 ✅ 托盘图标动态绘制（颜色 + 百分比文字）
-✅ Windows keyring 存 key
+✅ 本地 `keys.json`（0600）存 key，macOS 启动零弹窗
 ✅ 后台 tokio 轮询
 ✅ CLI `musage dump` 子命令
 ✅ Rust GNU 工具链已装
@@ -134,7 +134,7 @@ D:\Codes\Musage\
         ├── api.rs            ← ★ 核心：拉取 + 宽容解析
         ├── poller.rs         ← tokio interval
         ├── tray.rs           ← 托盘菜单 + 动态图标（合并了原 icon.rs）
-        ├── config.rs         ← AppConfig + keyring
+        ├── config.rs         ← AppConfig + keys.json 文件存储
         └── commands.rs       ← tauri::command 暴露给前端
 ```
 
@@ -142,7 +142,7 @@ D:\Codes\Musage\
 
 1. **不用 MSVC 工具链**（环境无 cl.exe），用 GNU 工具链，自带 MinGW
 2. **托盘图标动态生成**，不依赖打包好的图标资源
-3. **API key 不落盘**，只用 OS keyring
+3. **API key 落 `keys.json`（0600 权限）**，不走 OS keyring。原 keyring 方案在 macOS 启动会弹 Keychain 访问窗 + 登录钥匙串密码框，体验糟
 4. **前端极简**（vanilla TS），无 React/Vue，避免启动慢
 5. **schema 宽容解析**：`api.rs` 支持字段名多版本，回退到原始 JSON 让开发者肉眼定位
 6. **关闭悬浮窗 = 隐藏**，不退出 app（`WindowEvent::CloseRequested` 拦截）

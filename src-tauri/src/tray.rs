@@ -22,17 +22,68 @@ use tauri::{
 
 use crate::providers::{Provider, ProviderSnapshot, QuotaSnapshot};
 
-// 字体加载（如果 assets/font.ttf 缺失则跳过文字，纯色圆点）
+// 字体加载：优先用户自选填 `assets/font.ttf`，再走系统字体 fallback，
+// 最后用平台内置的备用路径。全部失败 → 纯色圆点（无文字）。
 static FONT: OnceLock<Option<FontVec>> = OnceLock::new();
 
 fn load_font() -> Option<&'static FontVec> {
     FONT.get_or_init(|| {
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/font.ttf");
-        std::fs::read(&path)
-            .ok()
-            .and_then(|bytes| FontVec::try_from_vec(bytes).ok())
+        // 1. 用户自选填
+        let user_path =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/font.ttf");
+        if let Some(font) = try_load_font(&user_path) {
+            tracing::debug!(path = %user_path.display(), "loaded user font");
+            return Some(font);
+        }
+
+        // 2. 系统字体 fallback（单 face .ttf，避免 .ttc collection）
+        for path in system_font_paths() {
+            if let Some(font) = try_load_font(&path) {
+                tracing::debug!(path = %path.display(), "loaded system font");
+                return Some(font);
+            }
+        }
+
+        tracing::warn!("no usable TTF found; tray will show color circle without text");
+        None
     })
     .as_ref()
+}
+
+fn try_load_font(path: &std::path::Path) -> Option<FontVec> {
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| FontVec::try_from_vec(bytes).ok())
+}
+
+fn system_font_paths() -> Vec<std::path::PathBuf> {
+    let mut paths = Vec::new();
+    #[cfg(target_os = "macos")]
+    {
+        // macOS 系统自带的单 face TTF（不动 .ttc，避免 collection 解析坑）
+        paths.push("/System/Library/Fonts/Supplemental/Arial.ttf".into());
+        paths.push("/System/Library/Fonts/Supplemental/Arial Bold.ttf".into());
+        paths.push("/System/Library/Fonts/Supplemental/Verdana.ttf".into());
+        paths.push("/System/Library/Fonts/Supplemental/Georgia.ttf".into());
+        paths.push("/System/Library/Fonts/Supplemental/Tahoma.ttf".into());
+        paths.push("/Library/Fonts/Arial.ttf".into());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        paths.push("C:/Windows/Fonts/arial.ttf".into());
+        paths.push("C:/Windows/Fonts/arialbd.ttf".into());
+        paths.push("C:/Windows/Fonts/segoeui.ttf".into());
+        paths.push("C:/Windows/Fonts/tahoma.ttf".into());
+        paths.push("C:/Windows/Fonts/consola.ttf".into());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        paths.push("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".into());
+        paths.push("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".into());
+        paths.push("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf".into());
+        paths.push("/usr/share/fonts/TTF/DejaVuSans.ttf".into());
+    }
+    paths
 }
 
 const ICON_SIZE: u32 = 32;

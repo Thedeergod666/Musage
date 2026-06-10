@@ -130,10 +130,43 @@ print("[ok] icon.ico")
 make_icon(1024).save(os.path.join(OUT, "icon.png"))
 print("[ok] icon.png (1024x1024 master)")
 
-# icon.icns placeholder
-icns_placeholder = os.path.join(OUT, "icon.icns")
-if not os.path.exists(icns_placeholder):
-    make_icon(512).save(icns_placeholder)
-    print("[warn] icon.icns is PNG placeholder (macOS build needs png2icns)")
+# icon.icns —— 在 macOS 上用 iconutil 从多尺寸 PNG 拼一个真 .icns
+# 其他平台没这个工具就退化成 PNG（足够 Tauri 编译通过）
+import subprocess, shutil, tempfile
+
+icns_path = os.path.join(OUT, "icon.icns")
+if sys.platform == "darwin" and shutil.which("iconutil"):
+    with tempfile.TemporaryDirectory() as tmp:
+        iconset = os.path.join(tmp, "icon.iconset")
+        os.makedirs(iconset)
+        # 必需的多尺寸 PNG
+        sizes = [
+            (16, "icon_16x16.png"),
+            (32, "icon_16x16@2x.png"),     # 16pt @2x
+            (32, "icon_32x32.png"),
+            (64, "icon_32x32@2x.png"),     # 32pt @2x
+            (128, "icon_128x128.png"),
+            (256, "icon_128x128@2x.png"),  # 128pt @2x
+            (256, "icon_256x256.png"),
+            (512, "icon_256x256@2x.png"),  # 256pt @2x
+            (512, "icon_512x512.png"),
+            (1024, "icon_512x512@2x.png"), # 512pt @2x
+        ]
+        for size, name in sizes:
+            make_icon(size).save(os.path.join(iconset, name))
+        try:
+            subprocess.run(
+                ["iconutil", "-c", "icns", iconset, "-o", icns_path],
+                check=True, capture_output=True,
+            )
+            print(f"[ok] icon.icns (proper macOS icns, {os.path.getsize(icns_path)} bytes)")
+        except subprocess.CalledProcessError as e:
+            print(f"[warn] iconutil failed: {e.stderr.decode(errors='ignore')}")
+            make_icon(512).save(icns_path)
+            print(f"[warn] icon.icns is PNG fallback")
+else:
+    # 非 macOS 或没 iconutil：保持 PNG 兜底
+    make_icon(512).save(icns_path)
+    print(f"[warn] icon.icns is PNG placeholder (macOS-only iconutil used for real icns)")
 
 print(f"\nAll icons generated -> {OUT}")

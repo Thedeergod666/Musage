@@ -19,10 +19,12 @@ import "./styles.css";
 
 /// 静态映射：provider id → 官网 logo + 显示名
 /// logo 走 Vite `?url` import 拿到打包后的 URL
+/// Tavily 暂时没有本地 logo（占位 PNG 没生成），用空字符串让 UI 显示一个 fallback
 const PROVIDER_META: Record<string, { name: string; logo: string }> = {
   minimax: { name: "MiniMax", logo: minimaxLogo },
   deepseek: { name: "DeepSeek", logo: deepseekLogo },
   xiaomimimo: { name: "Xiaomi MiMo", logo: xiaomimimoLogo },
+  tavily: { name: "Tavily", logo: "" },
 };
 
 type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
@@ -33,14 +35,22 @@ interface QuotaRow {
   label: string;
   utilization: number | null;
   remaining: number | null;
-  total: number | null;
+  /** Phase 1 新增：Tavily credits 用了多少 */
+  used?: number | null;
+  /** Phase 1 新增：Tavily credits 总量 */
+  total?: number | null;
   resets_at: number | null;
   unit: string | null;
   extra: { is_available?: boolean; display?: string } | null;
 }
 
 interface ProviderSnapshot {
+  /** 兼容字段（minimax / deepseek / xiaomimimo）。新代码用 source_id。 */
   provider: "minimax" | "deepseek" | "xiaomimimo";
+  /** Phase 1 新增。 */
+  source_id?: string | null;
+  source_display_name?: string | null;
+  plan_name?: string | null;
   success: boolean;
   rows: QuotaRow[];
   error: string | null;
@@ -99,11 +109,13 @@ function render(snap: QuotaSnapshot) {
 
   let anchor: ChildNode | null = null;
   for (const p of snap.providers) {
-    let card = existingCards.get(p.provider);
+    // Phase 1：用 source_id 路由（registry-driven），provider 字段保兼容
+    const id = p.source_id ?? p.provider;
+    let card = existingCards.get(id);
     if (card) {
-      existingCards.delete(p.provider);
+      existingCards.delete(id);
     } else {
-      card = buildCardSkeleton(p.provider);
+      card = buildCardSkeleton(id);
       // 保持顺序：插在 anchor 之后
       if (anchor && anchor.parentNode) {
         anchor.parentNode.insertBefore(card, anchor.nextSibling);
@@ -153,7 +165,9 @@ function buildCardSkeleton(providerId: string): HTMLElement {
 
 function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
   const title = card.querySelector<HTMLElement>(".card-title")!;
-  const meta = PROVIDER_META[p.provider] ?? { name: p.provider, logo: "" };
+  // Phase 1：用 source_id 路由（registry-driven），provider 字段保兼容
+  const id = p.source_id ?? p.provider;
+  const meta = PROVIDER_META[id] ?? { name: p.source_display_name ?? id, logo: "" };
   const logo = title.querySelector<HTMLImageElement>(".card-logo")!;
   const name = title.querySelector<HTMLElement>(".card-name")!;
   if (logo.src !== meta.logo) logo.src = meta.logo;
@@ -236,6 +250,9 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
 // ── 行 ──
 
 function rowKey(r: QuotaRow): string {
+  // Phase 1: Tavily 走"used/total"组合（"150/1000 credits"），优先于 remaining/utilization
+  if (r.used != null && r.total != null) return `credits:${r.label}`;
+  if (r.used != null) return `used:${r.label}`;
   if (r.utilization != null) return `pct:${r.label}`;
   if (r.remaining != null) return `amt:${r.label}`;
   if (r.extra?.display) return `status:${r.label}`;
@@ -245,7 +262,27 @@ function rowKey(r: QuotaRow): string {
 function buildRowSkeleton(r: QuotaRow): HTMLElement {
   const row = document.createElement("div");
   row.className = "row";
-  if (r.utilization != null) {
+  if (r.used != null && r.total != null) {
+    // Phase 1: credits 行（"150/1000 credits"） + 进度条
+    row.classList.add("credits-row");
+    row.innerHTML = `
+      <div class="row-label">
+        <span></span>
+        <span class="pct credits"></span>
+      </div>
+      <div class="bar"><div class="bar-fill"></div></div>
+      <div class="row-foot"></div>
+    `;
+  } else if (r.used != null) {
+    // 只有 used 没有 total（无限制套餐）
+    row.classList.add("credits-row", "no-total");
+    row.innerHTML = `
+      <div class="row-label">
+        <span></span>
+        <span class="pct credits"></span>
+      </div>
+    `;
+  } else if (r.utilization != null) {
     row.innerHTML = `
       <div class="row-label">
         <span></span>
@@ -275,7 +312,27 @@ function buildRowSkeleton(r: QuotaRow): HTMLElement {
 }
 
 function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
-  if (r.utilization != null) {
+  // Phase 1: credits 行（"150/1000 credits"）
+  if (r.used != null && r.total != null) {
+    const cls = colorClass(r.utilization ?? (r.used / r.total) * 100);
+    const labelSpan = rowEl.querySelector<HTMLElement>(".row-label > span:first-child")!;
+    labelSpan.textContent = r.label;
+    const pct = rowEl.querySelector<HTMLElement>(".pct")!;
+    pct.textContent = `${Math.round(r.used)}/${Math.round(r.total)} ${escapeHtml(r.unit ?? "")}`;
+    pct.className = `pct credits ${cls}`;
+    const bar = rowEl.querySelector<HTMLElement>(".bar-fill")!;
+    bar.className = `bar-fill ${cls}`;
+    bar.style.width = `${barWidth(r.utilization)}%`;
+    if (r.resets_at) rowEl.dataset.resetsAt = String(r.resets_at);
+    else delete rowEl.dataset.resetsAt;
+  } else if (r.used != null) {
+    // 只有 used 没有 total
+    const labelSpan = rowEl.querySelector<HTMLElement>(".row-label > span:first-child")!;
+    labelSpan.textContent = r.label;
+    const pct = rowEl.querySelector<HTMLElement>(".pct")!;
+    pct.textContent = `${Math.round(r.used)} ${escapeHtml(r.unit ?? "")}`;
+    pct.className = "pct credits";
+  } else if (r.utilization != null) {
     const cls = colorClass(r.utilization);
     const labelSpan = rowEl.querySelector<HTMLElement>(".row-label > span:first-child")!;
     labelSpan.textContent = r.label;
@@ -307,8 +364,9 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
 
 function updateFoot(snap: QuotaSnapshot) {
   let foot = app.querySelector<HTMLElement>(".foot");
+  // H9 修复：用 error_kind 枚举判断，不再依赖中文错误串（前者 Rust 改文案不会破）
   const anyUnconfigured = snap.providers.some(
-    (p) => !p.success && (p.error ?? "").includes("未配置 API key"),
+    (p) => !p.success && p.error_kind === "unconfigured_key",
   );
   const hint = anyUnconfigured
     ? "未配置 provider 的 key → 右键托盘 → 设置"

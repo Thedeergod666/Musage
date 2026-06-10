@@ -71,6 +71,36 @@ pub fn run() {
             // 初始化托盘
             tray::setup(app.handle())?;
 
+            // 恢复浮窗位置 + 大小（用户上次拖/拉过的话）
+            // 必须在 show() 之前调用，否则会有 1 帧错位
+            if let Some(win) = app.get_webview_window("floating") {
+                let cfg = cfg_handle.config.blocking_read().clone();
+                if let (Some(x), Some(y)) = (cfg.floating_x, cfg.floating_y) {
+                    let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+                }
+                if let (Some(w), Some(h)) = (cfg.floating_w, cfg.floating_h) {
+                    // 尊重 tauri.conf.json 里的 minWidth/minHeight
+                    let scale = win.scale_factor().unwrap_or(1.0);
+                    let min_w = (260.0 * scale) as u32;
+                    let min_h = (120.0 * scale) as u32;
+                    let ww = w.max(min_w as i32) as u32;
+                    let hh = h.max(min_h as i32) as u32;
+                    let _ = win.set_size(tauri::PhysicalSize::new(ww, hh));
+                }
+
+                // 监听移动 / 缩放 → 持久化（spawn 异步任务避免阻塞 UI 线程）
+                let app_for_event = app.handle().clone();
+                win.on_window_event(move |event| match event {
+                    tauri::WindowEvent::Moved(pos) => {
+                        persist_floating_geom(&app_for_event, Some(pos.x), Some(pos.y), None, None);
+                    }
+                    tauri::WindowEvent::Resized(size) => {
+                        persist_floating_geom(&app_for_event, None, None, Some(size.width as i32), Some(size.height as i32));
+                    }
+                    _ => {}
+                });
+            }
+
             // 默认显示悬浮窗
             if let Some(win) = app.get_webview_window("floating") {
                 let _ = win.show();
@@ -119,6 +149,7 @@ pub fn run() {
             commands::hide_floating_window,
             commands::show_floating_window,
             commands::hide_settings_window,
+            commands::reset_floating_window,
             commands::quit_app,
         ])
         .on_window_event(|window, event| {
@@ -132,6 +163,41 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// 把浮窗位置/大小变化持久化到 config.json。None 表示该字段保持原值。
+///
+/// 在 tokio 任务里跑，避免阻塞 UI 线程（on_window_event 在主线程触发）。
+fn persist_floating_geom(
+    app: &tauri::AppHandle,
+    x: Option<i32>,
+    y: Option<i32>,
+    w: Option<i32>,
+    h: Option<i32>,
+) {
+    let app2 = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app2.state::<AppState>();
+        let mut cfg = state.config.write().await;
+        let mut dirty = false;
+        if let Some(x) = x {
+            if cfg.floating_x != Some(x) { cfg.floating_x = Some(x); dirty = true; }
+        }
+        if let Some(y) = y {
+            if cfg.floating_y != Some(y) { cfg.floating_y = Some(y); dirty = true; }
+        }
+        if let Some(w) = w {
+            if cfg.floating_w != Some(w) { cfg.floating_w = Some(w); dirty = true; }
+        }
+        if let Some(h) = h {
+            if cfg.floating_h != Some(h) { cfg.floating_h = Some(h); dirty = true; }
+        }
+        if dirty {
+            if let Err(e) = cfg.save() {
+                tracing::warn!(error = %e, "保存浮窗几何失败");
+            }
+        }
+    });
 }
 
 /// `musage dump [provider]` 子命令：拉一次用量并打印

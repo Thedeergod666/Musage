@@ -1,5 +1,8 @@
 // 悬浮窗：floating.html
-// 多 provider 渲染：循环 providers 数组，每段一张卡片。
+// 多 provider 渲染：每段一张卡片。
+//
+// 渲染策略：增量 DOM 更新（diff by `data-provider` / `data-row-key`），
+// 而不是 innerHTML 全量替换。innerHTML 会导致一帧空白，肉眼可见"闪一下"。
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -45,59 +48,6 @@ interface QuotaSnapshot {
 const app = document.getElementById("app")!;
 let countdownTimer: number | null = null;
 
-function render(snap: QuotaSnapshot) {
-  if (!snap.providers || snap.providers.length === 0) {
-    app.innerHTML = `<div class="err"><div class="err-title">⏳ 加载中…</div></div>`;
-    return;
-  }
-
-  const cards = snap.providers.map(renderProviderCard).join("");
-
-  const anyUnconfigured = snap.providers.some(
-    (p) => p.error_kind === "unconfigured_key",
-  );
-  const footHint = anyUnconfigured
-    ? "未配置 provider 的 key → 右键托盘 → 设置"
-    : "拖动移动 · 右键菜单";
-
-  app.innerHTML = `${cards}<div class="foot">${snap.providers.length} 个 provider · ${footHint}</div>`;
-
-  startCountdown();
-}
-
-function renderProviderCard(p: ProviderSnapshot): string {
-  if (!p.success) {
-    const kind = p.error_kind ?? "other";
-    const label = errorKindLabel(kind);
-    const needsSettings = kind === "unconfigured_key" || kind === "auth_failed";
-    const settingsBtn = needsSettings
-      ? `<button class="err-btn open-settings">打开设置</button>`
-      : "";
-    // "Schema 未知" 引导用户去看 overrides
-    const schemaHint =
-      kind === "schema_unknown"
-        ? `<div class="hint">→ 设置面板 · Schema overrides 加新字段名</div>`
-        : "";
-    return `<section class="card err-card err-${escapeHtml(kind)}">
-      <header class="card-head">
-        <span class="card-title">${providerLabel(p.provider)}</span>
-        <span class="err-label">${escapeHtml(label)}</span>
-      </header>
-      <div class="err-msg">${escapeHtml(p.error ?? "未知错误")}</div>
-      ${settingsBtn}
-      ${schemaHint}
-    </section>`;
-  }
-  const rowsHtml = p.rows.map(renderRow).join("");
-  return `<section class="card">
-    <header class="card-head">
-      <span class="card-title">${providerLabel(p.provider)}</span>
-      <span class="card-dot ${dotClass(p)}"></span>
-    </header>
-    ${rowsHtml}
-  </section>`;
-}
-
 const ERROR_LABELS: Record<string, string> = {
   unconfigured_key: "未配置 Key",
   auth_failed: "Key 无效",
@@ -113,39 +63,241 @@ function errorKindLabel(k: string): string {
   return ERROR_LABELS[k] ?? "未知错误";
 }
 
-function renderRow(r: QuotaRow, idx: number): string {
-  // 百分比模式（MiniMax 5h/周）
-  if (r.utilization != null) {
-    return `<div class="row" data-tier="${idx}" data-resets-at="${r.resets_at ?? ""}">
-      <div class="row-label">
-        <span>${escapeHtml(r.label)}</span>
-        <span class="pct ${colorClass(r.utilization)}">${formatPct(r.utilization)}</span>
-      </div>
-      <div class="bar"><div class="bar-fill ${colorClass(r.utilization)}" style="width:${barWidth(r.utilization)}%"></div></div>
-      <div class="row-foot">${formatReset(r.resets_at, r.label + " 重置")}</div>
-    </div>`;
+// ── 渲染入口 ──
+
+function render(snap: QuotaSnapshot) {
+  if (!snap.providers || snap.providers.length === 0) {
+    renderLoading();
+    return;
   }
-  // 余额模式（DeepSeek）
-  if (r.remaining != null) {
-    return `<div class="row balance-row">
-      <div class="row-label">
-        <span>${escapeHtml(r.label)}</span>
-        <span class="pct balance">${formatAmount(r.remaining)} ${escapeHtml(r.unit ?? "")}</span>
-      </div>
-    </div>`;
+
+  // 1. 增量更新每张 provider 卡片
+  const existingCards = new Map<string, HTMLElement>();
+  app.querySelectorAll<HTMLElement>(".card[data-provider]").forEach((el) => {
+    const key = el.dataset.provider;
+    if (key) existingCards.set(key, el);
+  });
+
+  let anchor: ChildNode | null = null;
+  for (const p of snap.providers) {
+    let card = existingCards.get(p.provider);
+    if (card) {
+      existingCards.delete(p.provider);
+    } else {
+      card = buildCardSkeleton(p.provider);
+      // 保持顺序：插在 anchor 之后
+      if (anchor && anchor.parentNode) {
+        anchor.parentNode.insertBefore(card, anchor.nextSibling);
+      } else {
+        app.insertBefore(card, app.firstChild);
+      }
+    }
+    updateCard(card, p);
+    anchor = card;
   }
-  // 状态行（DeepSeek is_available）
-  if (r.extra?.display) {
-    const ok = r.extra.is_available !== false;
-    return `<div class="row status-row">
-      <div class="row-label">
-        <span>${escapeHtml(r.label)}</span>
-        <span class="status ${ok ? "ok" : "alert"}">${escapeHtml(r.extra.display)}</span>
-      </div>
-    </div>`;
+  // 移除 snap 里没有的卡（provider 被关了）
+  for (const orphan of existingCards.values()) {
+    orphan.remove();
   }
-  return "";
+
+  // 2. 底部 footer（始终只有 1 个）
+  updateFoot(snap);
+
+  startCountdown();
 }
+
+function renderLoading() {
+  // 留一个占位 .err —— 首次启动 / 还没拉到数据时
+  if (!app.querySelector(".err")) {
+    app.innerHTML = `<div class="err"><div class="err-title">⏳ 加载中…</div></div>`;
+  }
+}
+
+// ── 卡片 ──
+
+function buildCardSkeleton(providerId: string): HTMLElement {
+  const card = document.createElement("section");
+  card.className = "card";
+  card.dataset.provider = providerId;
+  card.innerHTML = `
+    <header class="card-head">
+      <span class="card-title"></span>
+      <span class="card-dot"></span>
+    </header>
+    <div class="rows"></div>
+  `;
+  return card;
+}
+
+function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
+  const title = card.querySelector<HTMLElement>(".card-title")!;
+  title.textContent = providerLabel(p.provider);
+
+  const dot = card.querySelector<HTMLElement>(".card-dot")!;
+  dot.className = `card-dot ${dotClass(p)}`;
+
+  const rowsBox = card.querySelector<HTMLElement>(".rows")!;
+
+  if (!p.success) {
+    // 错误卡片：替换 rowsBox 为错误 UI
+    const kind = p.error_kind ?? "other";
+    const label = errorKindLabel(kind);
+    const needsSettings = kind === "unconfigured_key" || kind === "auth_failed";
+    const settingsBtn = needsSettings
+      ? `<button class="err-btn open-settings">打开设置</button>`
+      : "";
+    const schemaHint =
+      kind === "schema_unknown"
+        ? `<div class="hint">→ 设置面板 · Schema overrides 加新字段名</div>`
+        : "";
+    // err-* class 让 CSS 决定错误卡样式
+    card.classList.add("err-card", `err-${kind}`);
+    // header 里也加个 err-label 标种类
+    const head = card.querySelector<HTMLElement>(".card-head")!;
+    let headLabel = head.querySelector<HTMLElement>(".err-label");
+    if (!headLabel) {
+      headLabel = document.createElement("span");
+      headLabel.className = "err-label";
+      head.appendChild(headLabel);
+    }
+    headLabel.textContent = label;
+    // rowsBox 重新填充
+    rowsBox.innerHTML = `
+      <div class="err-msg">${escapeHtml(p.error ?? "未知错误")}</div>
+      ${settingsBtn}
+      ${schemaHint}
+    `;
+    return;
+  }
+
+  // 成功卡片：rowsBox 走 diff
+  card.classList.remove("err-card");
+  card.classList.forEach((c) => {
+    if (c.startsWith("err-") && c !== "err-card") card.classList.remove(c);
+  });
+  // 清掉 err-label
+  const headLabel = card.querySelector<HTMLElement>(".err-label");
+  if (headLabel) headLabel.remove();
+
+  const existing = new Map<string, HTMLElement>();
+  rowsBox.querySelectorAll<HTMLElement>(".row[data-row-key]").forEach((el) => {
+    const k = el.dataset.rowKey;
+    if (k) existing.set(k, el);
+  });
+
+  let rowAnchor: ChildNode | null = null;
+  for (const r of p.rows) {
+    const key = rowKey(r);
+    let rowEl = existing.get(key);
+    if (rowEl) {
+      existing.delete(key);
+    } else {
+      rowEl = buildRowSkeleton(r);
+      rowEl.dataset.rowKey = key;
+      if (rowAnchor && rowAnchor.parentNode === rowsBox) {
+        rowAnchor.parentNode.insertBefore(rowEl, rowAnchor.nextSibling);
+      } else {
+        rowsBox.insertBefore(rowEl, rowsBox.firstChild);
+      }
+    }
+    updateRow(rowEl, r);
+    rowAnchor = rowEl;
+  }
+  for (const orphan of existing.values()) orphan.remove();
+}
+
+// ── 行 ──
+
+function rowKey(r: QuotaRow): string {
+  if (r.utilization != null) return `pct:${r.label}`;
+  if (r.remaining != null) return `amt:${r.label}`;
+  if (r.extra?.display) return `status:${r.label}`;
+  return "unknown";
+}
+
+function buildRowSkeleton(r: QuotaRow): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "row";
+  if (r.utilization != null) {
+    row.innerHTML = `
+      <div class="row-label">
+        <span></span>
+        <span class="pct"></span>
+      </div>
+      <div class="bar"><div class="bar-fill"></div></div>
+      <div class="row-foot"></div>
+    `;
+  } else if (r.remaining != null) {
+    row.classList.add("balance-row");
+    row.innerHTML = `
+      <div class="row-label">
+        <span></span>
+        <span class="pct balance"></span>
+      </div>
+    `;
+  } else if (r.extra?.display) {
+    row.classList.add("status-row");
+    row.innerHTML = `
+      <div class="row-label">
+        <span></span>
+        <span class="status"></span>
+      </div>
+    `;
+  }
+  return row;
+}
+
+function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
+  if (r.utilization != null) {
+    const cls = colorClass(r.utilization);
+    const labelSpan = rowEl.querySelector<HTMLElement>(".row-label > span:first-child")!;
+    labelSpan.textContent = r.label;
+    const pct = rowEl.querySelector<HTMLElement>(".pct")!;
+    pct.textContent = formatPct(r.utilization);
+    pct.className = `pct ${cls}`;
+    const bar = rowEl.querySelector<HTMLElement>(".bar-fill")!;
+    bar.className = `bar-fill ${cls}`;
+    bar.style.width = `${barWidth(r.utilization)}%`;
+    if (r.resets_at) rowEl.dataset.resetsAt = String(r.resets_at);
+    else delete rowEl.dataset.resetsAt;
+  } else if (r.remaining != null) {
+    const labelSpan = rowEl.querySelector<HTMLElement>(".row-label > span:first-child")!;
+    labelSpan.textContent = r.label;
+    const pct = rowEl.querySelector<HTMLElement>(".pct")!;
+    pct.textContent = `${formatAmount(r.remaining)} ${escapeHtml(r.unit ?? "")}`;
+    pct.className = "pct balance";
+  } else if (r.extra?.display) {
+    const labelSpan = rowEl.querySelector<HTMLElement>(".row-label > span:first-child")!;
+    labelSpan.textContent = r.label;
+    const ok = r.extra.is_available !== false;
+    const status = rowEl.querySelector<HTMLElement>(".status")!;
+    status.textContent = r.extra.display;
+    status.className = `status ${ok ? "ok" : "alert"}`;
+  }
+}
+
+// ── Footer ──
+
+function updateFoot(snap: QuotaSnapshot) {
+  let foot = app.querySelector<HTMLElement>(".foot");
+  const anyUnconfigured = snap.providers.some(
+    (p) => !p.success && (p.error ?? "").includes("未配置 API key"),
+  );
+  const hint = anyUnconfigured
+    ? "未配置 provider 的 key → 右键托盘 → 设置"
+    : "拖动移动 · 右键菜单";
+  const text = `${snap.providers.length} 个 provider · ${hint}`;
+  if (foot) {
+    foot.textContent = text;
+  } else {
+    foot = document.createElement("div");
+    foot.className = "foot";
+    foot.textContent = text;
+    app.appendChild(foot);
+  }
+}
+
+// ── 倒计时（每秒就地更新 .row-foot，不动其他 DOM） ──
 
 function startCountdown() {
   if (countdownTimer !== null) clearInterval(countdownTimer);
@@ -175,7 +327,6 @@ function formatPct(v: number | null | undefined): string {
 
 function formatAmount(v: number | null | undefined): string {
   if (v == null) return "—";
-  // 千分位 + 2 位小数
   return v.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
@@ -193,12 +344,6 @@ function dotClass(p: ProviderSnapshot): string {
 function barWidth(util: number | null | undefined): number {
   if (util == null) return 0;
   return Math.min(util, 100);
-}
-
-function formatReset(ms: number | null, prefix: string): string {
-  if (!ms) return prefix;
-  const dt = new Date(ms);
-  return `${prefix} ${pad2(dt.getHours())}:${pad2(dt.getMinutes())}`;
 }
 
 function formatResetWithCountdown(ms: number, prefix: string): string {

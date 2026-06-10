@@ -166,6 +166,44 @@ pub async fn hide_settings_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 浮窗归位到主屏幕正中央，并把位置持久化。
+///
+/// 用 `primary_monitor()` 拿主屏的工作区尺寸（不是窗口尺寸），
+/// 减去浮窗的 outer size 除以 2，得到左上角坐标。
+#[tauri::command]
+pub async fn reset_floating_window(app: AppHandle) -> Result<(), String> {
+    let win = app
+        .get_webview_window("floating")
+        .ok_or_else(|| "找不到浮窗".to_string())?;
+
+    let monitor = app
+        .primary_monitor()
+        .map_err(|e| format!("primary_monitor: {e}"))?
+        .ok_or_else(|| "找不到主显示器".to_string())?;
+
+    let mon_size = monitor.size(); // PhysicalSize<u32>
+    let mon_pos = monitor.position(); // PhysicalPosition<i32>
+    let win_size = win
+        .outer_size()
+        .map_err(|e| format!("outer_size: {e}"))?;
+
+    let x = mon_pos.x + ((mon_size.width as i32 - win_size.width as i32) / 2).max(0);
+    let y = mon_pos.y + ((mon_size.height as i32 - win_size.height as i32) / 2).max(0);
+
+    win.set_position(tauri::PhysicalPosition::new(x, y))
+        .map_err(|e| format!("set_position: {e}"))?;
+
+    // 持久化（on_window_event(Moved) 也会触发，但先写一次更稳）
+    {
+        let state = app.state::<crate::AppState>();
+        let mut cfg = state.config.write().await;
+        cfg.floating_x = Some(x);
+        cfg.floating_y = Some(y);
+        let _ = cfg.save();
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn quit_app(app: AppHandle) {
     app.exit(0);

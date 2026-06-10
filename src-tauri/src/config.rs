@@ -53,6 +53,10 @@ pub struct AppConfig {
     pub refresh_interval_secs: u64,
     pub floating_x: Option<i32>,
     pub floating_y: Option<i32>,
+    /// 浮窗宽度（用户手动 resize 后记住）。None = 用 tauri.conf.json 默认值
+    pub floating_w: Option<i32>,
+    /// 浮窗高度
+    pub floating_h: Option<i32>,
     pub autostart: bool,
     pub show_in_tray_on_close: bool,
     /// 用户自定义的字段名候选（应对 MiniMax 改 schema）
@@ -113,6 +117,8 @@ impl Default for AppConfig {
             refresh_interval_secs: 60,
             floating_x: None,
             floating_y: None,
+            floating_w: None,
+            floating_h: None,
             autostart: false,
             show_in_tray_on_close: true,
             schema_overrides: BTreeMap::new(),
@@ -141,6 +147,8 @@ impl AppConfig {
             refresh_interval_secs: Option<u64>,
             floating_x: Option<i32>,
             floating_y: Option<i32>,
+            floating_w: Option<i32>,
+            floating_h: Option<i32>,
             autostart: Option<bool>,
             show_in_tray_on_close: Option<bool>,
         }
@@ -157,6 +165,8 @@ impl AppConfig {
             cfg.refresh_interval_secs = legacy.refresh_interval_secs.unwrap_or(60);
             cfg.floating_x = legacy.floating_x;
             cfg.floating_y = legacy.floating_y;
+            cfg.floating_w = legacy.floating_w;
+            cfg.floating_h = legacy.floating_h;
             cfg.autostart = legacy.autostart.unwrap_or(false);
             cfg.show_in_tray_on_close = legacy.show_in_tray_on_close.unwrap_or(true);
             // 落盘

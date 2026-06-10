@@ -276,6 +276,19 @@ $("#copy-key-minimax")?.addEventListener("click", () => copyKey("minimax"));
 $("#copy-key-deepseek")?.addEventListener("click", () => copyKey("deepseek"));
 $("#test")?.addEventListener("click", testConn);
 
+$("#reset-floating")?.addEventListener("click", async () => {
+  const btn = $("#reset-floating") as HTMLButtonElement;
+  btn.disabled = true;
+  try {
+    await invoke("reset_floating_window");
+    flash("✓ 浮窗已归位到主屏幕正中央");
+  } catch (e) {
+    flash(`✗ 归位失败: ${e}`, true);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
 (async () => {
   await loadKeyStatus("minimax");
   await loadKeyStatus("deepseek");

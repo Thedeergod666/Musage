@@ -84,6 +84,31 @@ impl QuotaSource for XiaomimimoSource {
     fn display_name(&self) -> &'static str { "Xiaomi MiMo" }
     fn auth_kind(&self) -> AuthKind { AuthKind::Cookie }
 
+    fn set_state<'a>(
+        &'a self,
+        cfg: serde_json::Value,
+    ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            let region_str = cfg.get("providers")
+                .and_then(|p| p.get("xiaomimimo"))
+                .and_then(|m| m.get("xiaomi_region"))
+                .and_then(|r| r.as_str())
+                .unwrap_or("cn");
+            let region = match region_str {
+                "sgp" => XiaomiRegion::Sgp,
+                "ams" => XiaomiRegion::Ams,
+                _ => XiaomiRegion::Cn,
+            };
+            let overrides: ProviderOverrides = cfg.get("schema_overrides")
+                .and_then(|so| so.get("xiaomimimo"))
+                .and_then(|m| serde_json::from_value(m.clone()).ok())
+                .unwrap_or_default();
+            let mut s = self.state.write().await;
+            s.region = region;
+            s.overrides = overrides;
+        })
+    }
+
     fn fetch<'a>(
         &'a self,
         credentials: &'a Credentials,
@@ -94,7 +119,7 @@ impl QuotaSource for XiaomimimoSource {
                 return Err(FetchError::unconfigured("未配置 Dashboard cookie（设置面板填入）"));
             }
             let state = self.state.read().await.clone();
-            do_fetch(cookie, state.region, &state.overrides).await
+            Xiaomimimo::do_fetch(cookie, state.region, &state.overrides).await.map(|(_, snap)| snap)
         })
     }
 }

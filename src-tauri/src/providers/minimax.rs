@@ -97,6 +97,31 @@ impl QuotaSource for MinimaxSource {
     fn display_name(&self) -> &'static str { "MiniMax" }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
 
+    fn set_state<'a>(
+        &'a self,
+        cfg: serde_json::Value,
+    ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            // cfg 是 AppConfig 的 JSON，自己取需要的字段
+            let region_str = cfg.get("providers")
+                .and_then(|p| p.get("minimax"))
+                .and_then(|m| m.get("region"))
+                .and_then(|r| r.as_str())
+                .unwrap_or("cn");
+            let region = match region_str {
+                "en" => Region::En,
+                _ => Region::Cn,
+            };
+            let overrides: ProviderOverrides = cfg.get("schema_overrides")
+                .and_then(|so| so.get("minimax"))
+                .and_then(|m| serde_json::from_value(m.clone()).ok())
+                .unwrap_or_default();
+            let mut s = self.state.write().await;
+            s.region = region;
+            s.overrides = overrides;
+        })
+    }
+
     fn fetch<'a>(
         &'a self,
         credentials: &'a Credentials,
@@ -107,7 +132,7 @@ impl QuotaSource for MinimaxSource {
                 return Err(FetchError::unconfigured("未配置 API key（设置面板填入）"));
             }
             let state = self.state.read().await.clone();
-            do_fetch(api_key, state.region, &state.overrides).await
+            Minimax::do_fetch(api_key, state.region, &state.overrides).await.map(|(_, snap)| snap)
         })
     }
 }

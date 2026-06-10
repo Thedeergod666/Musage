@@ -320,6 +320,15 @@ pub trait QuotaSource: Send + Sync {
     fn display_name(&self) -> &'static str;
     /// 鉴权方式（决定设置面板显示什么输入框）
     fn auth_kind(&self) -> AuthKind;
+    /// 更新运行时状态（region / overrides）。`value` 是 [`AppConfig`] 的
+    /// 完整 JSON 序列化，source 自己按需取字段。无状态的 source 可以忽略。
+    ///
+    /// Phase 1 用这个来替代 downcast —— typed dispatch 痛点 + dyn 没法
+    /// 装成具体类型，所以用"发 JSON 让 source 自己解析"的折中。
+    fn set_state<'a>(
+        &'a self,
+        cfg: serde_json::Value,
+    ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>>;
     /// 拉数据。`credentials` 里能拿到这个 source 需要的凭据（api_key / cookie）。
     fn fetch<'a>(
         &'a self,

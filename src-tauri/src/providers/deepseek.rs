@@ -45,6 +45,14 @@ impl QuotaSource for DeepseekSource {
     fn display_name(&self) -> &'static str { "DeepSeek" }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
 
+    fn set_state<'a>(
+        &'a self,
+        _cfg: serde_json::Value,
+    ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        // deepseek 无 region / overrides 概念，忽略
+        Box::pin(async move {})
+    }
+
     fn fetch<'a>(
         &'a self,
         credentials: &'a Credentials,

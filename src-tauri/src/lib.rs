@@ -118,7 +118,6 @@ pub fn run() {
                 let app_for_event = app.handle().clone();
                 spawn_debounced_geom_persister(app_for_event, win.clone());
             }
-            }
 
             // 默认显示悬浮窗
             if let Some(win) = app.get_webview_window("floating") {

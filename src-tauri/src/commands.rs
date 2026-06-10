@@ -436,35 +436,15 @@ fn provider_from_id(id: &str) -> Provider {
 ///
 /// 公开给 [`crate::lib::run_dump_subcommand`] 共享。
 pub async fn update_source_state(src: &Box<dyn QuotaSource>, cfg: &AppConfig) {
-    use crate::providers::minimax::Region;
-    use crate::providers::xiaomi::XiaomiRegion;
-
-    match src.id() {
-        "minimax" => {
-            // builtin_sources() 每次都新建实例 —— 但它们各自的 state 是 Arc<RwLock>，
-            // 也就是说，重新建一个 MinimaxSource 不会丢失原 state（Arc 共享）。
-            if let Some(s) = builtin_sources().into_iter().find(|s| s.id() == "minimax") {
-                let region = match cfg.region() {
-                    Region::Cn => Region::Cn,
-                    Region::En => Region::En,
-                };
-                let ov = cfg.schema_overrides.get("minimax").cloned().unwrap_or_default();
-                if let Some(ms) = (s.as_ref() as &dyn std::any::Any).downcast_ref::<crate::providers::minimax::MinimaxSource>() {
-                    ms.set_state(region, ov).await;
-                }
-            }
+    // 把整个 cfg 序列化成 JSON，让 source 自己按需取字段
+    let cfg_json = match serde_json::to_value(cfg) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "序列化 AppConfig 失败，跳过 set_state");
+            return;
         }
-        "xiaomimimo" => {
-            if let Some(s) = builtin_sources().into_iter().find(|s| s.id() == "xiaomimimo") {
-                let region = cfg.xiaomi_region();
-                let ov = cfg.schema_overrides.get("xiaomimimo").cloned().unwrap_or_default();
-                if let Some(xs) = (s.as_ref() as &dyn std::any::Any).downcast_ref::<crate::providers::xiaomi::XiaomimimoSource>() {
-                    xs.set_state(region, ov).await;
-                }
-            }
-        }
-        _ => {}  // deepseek / tavily 暂不需要 state
-    }
+    };
+    src.set_state(cfg_json).await;
 }
 
 /// 把 provider 抛出的中文错误串映射成 [`ErrorKind`]。

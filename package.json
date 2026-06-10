@@ -5,6 +5,10 @@
   "type": "module",
   "description": "MiniMax Token Plan 实时用量监控 - 桌面悬浮窗 + 系统托盘",
   "scripts": {
+    "sync-version": "node scripts/sync-version.cjs",
+    "bump": "node scripts/bump-version.cjs",
+    "predev": "pnpm sync-version",
+    "prebuild": "pnpm sync-version",
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
@@ -15,7 +19,9 @@
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-autostart": "^2.0.0",
-    "@tauri-apps/plugin-os": "^2.0.0"
+    "@tauri-apps/plugin-os": "^2.0.0",
+    "@tauri-apps/plugin-updater": "^2.0.0",
+    "@tauri-apps/plugin-process": "^2.0.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",

@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── 前端：类型 + 编译 ──
+  frontend:
+    name: frontend (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 9 }
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build          # tsc + vite build，不出 bundle
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.os }}
+          path: dist
+          retention-days: 3
+
+  # ── 后端：cargo check（不动 bundle，省时间）──
+  rust:
+    name: rust (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+      - name: cargo check
+        working-directory: src-tauri
+        run: cargo check --all-targets
+        env:
+          # CI 上没必要开 macos-private-api，省 objc2 链接
+          RUSTFLAGS: ""
+      - name: cargo test (no-run)
+        working-directory: src-tauri
+        run: cargo test --no-run
+
+  # ── 前端构建产物在所有平台保持一致：对比 hash ──
+  frontend-consistency:
+    name: frontend consistency
+    needs: frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { pattern: dist-* }
+      - name: Compare hashes
+        run: |
+          for d in dist-*/; do
+            (cd "$d" && find . -type f | sort | xargs sha256sum) | sha256sum > "$d.sha"
+          done
+          cat dist-ubuntu-latest.sha dist-macos-latest.sha dist-windows-latest.sha
+          # 如果 hash 不一致说明 OS-specific 构建差异
+          if [ "$(cat dist-ubuntu-latest.sha)" != "$(cat dist-macos-latest.sha)" ]; then
+            echo "::error::frontend dist differs across OS"
+            exit 1
+          fi

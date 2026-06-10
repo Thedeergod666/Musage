@@ -1,0 +1,163 @@
+name: Release
+
+# ──────────────────────────────────────────────────────────────
+# 触发：推送 v*.*.* 标签（v0.1.0 / v1.2.3 之类）
+# 也支持手动触发（Actions 页 → Run workflow）
+# ──────────────────────────────────────────────────────────────
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（不带 v 前缀，例如 0.1.1）"
+        required: true
+        type: string
+
+# 给 GH Release API 写权限
+permissions:
+  contents: write
+
+# 避免一条 PR 同时跑俩分支：取消上一个同分支的运行
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ────────────────────────────────────────────────────────
+  # Job 1: 平台构建矩阵
+  # ────────────────────────────────────────────────────────
+  build:
+    name: build (${{ matrix.label }})
+    runs-on: ${{ matrix.os }}
+    # 失败不立即取消其他平台构建 —— 全部跑完方便一次看全
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            label: macos-arm64
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            label: macos-x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            label: windows-x64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Node / pnpm ──
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "pnpm"
+
+      # ── Rust 工具链（按 target 装）──
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # ── Rust 依赖缓存（按 target 分桶，第一次 build 能省 5-10 分钟）──
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: ${{ matrix.target }}
+
+      # ── 关键：你们用了 macos-private-api feature，
+      # objc2 需要明确知道 macOS 最低版本。CI runner 是 Sonoma。
+      # Windows 上这一行是 no-op，但留着也无害。──
+      - name: Set macOS deployment target
+        if: runner.os == 'macOS'
+        run: echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> $GITHUB_ENV
+
+      # ── 从 tag 抽出版本号，注入到 package.json / Cargo.toml / tauri.conf.json ──
+      - name: Inject version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="${{ inputs.version }}"
+          fi
+          echo "Building Musage v${VERSION} for ${{ matrix.target }}"
+          sed -i.bak "s/\"version\": \"0.1.0\"/\"version\": \"${VERSION}\"/" \
+            package.json src-tauri/tauri.conf.json
+          sed -i.bak "s/^version = \"0.1.0\"/version = \"${VERSION}\"/" \
+            src-tauri/Cargo.toml
+          rm -f package.json.bak src-tauri/tauri.conf.json.bak src-tauri/Cargo.toml.bak
+          grep -H '"version"' package.json src-tauri/tauri.conf.json
+          grep -H '^version' src-tauri/Cargo.toml
+
+      # ── 前端依赖 ──
+      - name: Install frontend deps
+        run: pnpm install --frozen-lockfile
+
+      # ── Rust 依赖（仅 check，不编译整个 bundle，节省 CI 时间）──
+      - name: Cargo check
+        run: cd src-tauri && cargo check --target ${{ matrix.target }} --release
+
+      # ── 真正的打包 ──
+      - name: Tauri build
+        run: pnpm tauri:build -- --target ${{ matrix.target }}
+        env:
+          # ── 可选：签名/公证 secrets（没配就走未签名路径）──
+          # macOS：
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Windows（EV 证书 thumbprint）：
+          WINDOWS_CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+
+      # ── 上传产物（每个平台一个 artifact，名字清晰）──
+      - name: Upload bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: musage-${{ matrix.label }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app
+            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
+            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+
+  # ────────────────────────────────────────────────────────
+  # Job 2: 聚合产物，发布 Draft Release
+  # ────────────────────────────────────────────────────────
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List downloaded files
+        run: find artifacts -type f | sort
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true                # 草稿状态 —— 你审核完再点发布
+          generate_release_notes: true
+          # CHANGELOG.md 顶部有则取，否则用自动生成的
+          body_path: ${{ github.workspace }}/.github/RELEASE_TEMPLATE.md
+          files: |
+            artifacts/musage-macos-arm64/**
+            artifacts/musage-macos-x64/**
+            artifacts/musage-windows-x64/**
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

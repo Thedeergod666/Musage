@@ -16,6 +16,12 @@ src-tauri/target/
 src-tauri/Cargo.lock
 src-tauri/gen/
 
+# Tauri updater signing key（私钥，绝不提交！）
+# 用 tauri signer generate 生成
+*.tauri.key
+musage.key
+tauri-updater-key*
+
 # IDE
 .vscode/
 .idea/

@@ -274,6 +274,16 @@ pub async fn quit_app(app: AppHandle) {
     app.exit(0);
 }
 
+/// 返回当前应用版本（来自 tauri.conf.json 的 version 字段）。
+///
+/// 前端用于：
+/// 1. 设置面板底部展示 "Musage v0.1.0"
+/// 2. 跟 updater 拉到的远端版本对比时做日志
+#[tauri::command]
+pub fn get_app_version(app: AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
 /// 设置浮窗的置顶/置底模式，同时把模式持久化到 config。
 ///
 /// 模式含义：

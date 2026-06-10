@@ -56,6 +56,8 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             // 读取配置
             let config = AppConfig::load(&app.handle()).unwrap_or_default();
@@ -181,6 +183,7 @@ pub fn run() {
             commands::set_low_power_mode,
             commands::set_auto_hide_in_fullscreen,
             commands::quit_app,
+            commands::get_app_version,
         ])
         .on_window_event(|window, event| {
             // 关闭悬浮窗时拦截，避免退出整个 app

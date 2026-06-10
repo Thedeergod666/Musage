@@ -48,5 +48,16 @@
     "category": "Utility",
     "shortDescription": "MiniMax Token Plan 实时用量监控",
     "longDescription": "桌面悬浮窗 + 系统托盘，实时显示 MiniMax M2 系列模型的 5h / 周用量"
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Thedeergod666/Musage/releases/latest/download/latest.json"
+      ],
+      "pubkey": "REPLACE_WITH_OUTPUT_OF_TAURI_SIGNER_GENERATE",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

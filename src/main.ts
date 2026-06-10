@@ -13,6 +13,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import minimaxLogo from "./assets/minimax-logo.png";
 import deepseekLogo from "./assets/deepseek-icon.png";
+import xiaomimimoLogo from "./assets/xiaomimimo-logo.png";
 import "./styles.css";
 
 /// 静态映射：provider id → 官网 logo + 显示名
@@ -20,7 +21,7 @@ import "./styles.css";
 const PROVIDER_META: Record<string, { name: string; logo: string }> = {
   minimax: { name: "MiniMax", logo: minimaxLogo },
   deepseek: { name: "DeepSeek", logo: deepseekLogo },
-  xiaomimimo: { name: "Xiaomi MiMo", logo: "" },  // 暂无 logo，纯文字
+  xiaomimimo: { name: "Xiaomi MiMo", logo: xiaomimimoLogo },
 };
 
 type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";

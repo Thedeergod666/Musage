@@ -232,15 +232,22 @@ body[data-hover] #app {
   position: absolute;
   inset: 0;
   border-radius: 2px;
-  background: var(--bar-grad, transparent);
+  /* iOS 26 风格位置性多段渐变：沿 0%→33%→66%→100% 位置铺绿→青→黄→红。
+   * 渐变是铺满整个 bar 的位置性色带（positional），fill 宽度 = 利用率，渐变
+   * 相应被截取到当前位置：
+   *   50% 利用 → 只看到绿→青段（黄/红在 66% 之外，看不见）
+   *   100% 利用 → 看到全部 4 色
+   * 这比原来"统一绿"信息密度高，是真正的色阶。 */
+  background: linear-gradient(90deg,
+    #30d158 0%,     /* iOS green  */
+    #5ac8fa 33%,    /* iOS cyan   */
+    #ff9f0a 66%,    /* iOS yellow */
+    #ff453a 100%    /* iOS red    */
+  );
   opacity: 0;
   transition: opacity 0.28s;
 }
 body[data-hover] #app .bar-fill::after { opacity: 1; }
-
-.bar-fill.ok    { --bar-grad: linear-gradient(90deg, #30d158, #5cd673); }
-.bar-fill.warn  { --bar-grad: linear-gradient(90deg, #ff9f0a, #ffb43a); }
-.bar-fill.alert { --bar-grad: linear-gradient(90deg, #ff453a, #ff6c63); }
 
 .row-foot {
   font-size: 10.5px;
@@ -430,4 +437,9 @@ body[data-low-power] *::after {
 body[data-low-power] .card-dot.ok,
 body[data-low-power] .card-dot.alert {
   box-shadow: none;
+}
+
+/* bar 的彩色渐变覆盖在 hover 时也会渲染，省电模式直接给纯白（视觉上更"省电"） */
+body[data-low-power] .bar-fill::after {
+  background: rgba(255, 255, 255, 0.55) !important;
 }

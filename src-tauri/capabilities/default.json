@@ -20,6 +20,6 @@
     "autostart:default",
     "os:default",
     "updater:default",
-    "process:allow-relaunch"
+    "process:default"
   ]
 }

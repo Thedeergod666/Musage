@@ -116,6 +116,25 @@ pub async fn delete_api_key_for(provider: Provider) -> Result<(), String> {
     config::delete_api_key_for(provider)
 }
 
+#[tauri::command]
+pub async fn has_cookie_for(provider: Provider) -> Result<bool, String> {
+    Ok(config::load_cookie_for(provider)?.is_some())
+}
+
+#[tauri::command]
+pub async fn set_cookie_for(provider: Provider, cookie: String) -> Result<(), String> {
+    let trimmed = cookie.trim();
+    if trimmed.is_empty() {
+        return Err("cookie 不能为空".to_string());
+    }
+    config::save_cookie_for(provider, trimmed)
+}
+
+#[tauri::command]
+pub async fn delete_cookie_for(provider: Provider) -> Result<(), String> {
+    config::delete_cookie_for(provider)
+}
+
 /// 从 keys.json 读出明文 key（用于"复制到剪贴板"功能）。
 /// 前端不会保存返回值，只用一次写剪贴板后丢弃。
 #[tauri::command]
@@ -386,9 +405,18 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                                 <deepseek::Deepseek as ProviderImpl>::fetch(&p, &k).await
                             }
                             Provider::Xiaomimimo => {
-                                xiaomi::Xiaomimimo::do_fetch(&k, xiaomi_region, &ov)
-                                    .await
-                                    .map(|(_, snap)| snap)
+                                // Xiaomi 走 dashboard cookie（不是 Bearer/api-key header）
+                                let cookie_res = config::load_cookie_for(provider);
+                                let snap_res: Result<ProviderSnapshot, String> = match cookie_res {
+                                    Ok(Some(cookie)) => {
+                                        xiaomi::Xiaomimimo::do_fetch(&cookie, xiaomi_region, &ov)
+                                            .await
+                                            .map(|(_, snap)| snap)
+                                    }
+                                    Ok(None) => Err("未配置 Dashboard cookie".to_string()),
+                                    Err(e) => Err(e),
+                                };
+                                snap_res
                             }
                         }
                     });

@@ -222,6 +222,28 @@
         </div>
       </div>
 
+      <div class="provider-section">
+        <h2>🍪 Dashboard Cookie（用量查询用）</h2>
+        <div class="field">
+          <label>Cookie header 值</label>
+          <textarea id="cookie-xiaomimimo" rows="4" placeholder='api-platform_serviceToken="..."; userId=...; api-platform_slh="..."; api-platform_ph="..."'></textarea>
+          <div class="status" id="cookie-status-xiaomimimo">—</div>
+        </div>
+        <div class="row">
+          <button id="save-cookie-xiaomimimo" class="primary">保存 Cookie</button>
+          <button id="del-cookie-xiaomimimo" class="danger">删除 Cookie</button>
+        </div>
+        <div class="help">
+          ⚠️ Xiaomi 用量走 dashboard admin API，需要浏览器登录态。
+          <br/>
+          <strong>获取方法</strong>：Chrome 登录
+          <a href="https://platform.xiaomimimo.com/console/plan-manage" target="_blank" style="color:#4a90e2">platform.xiaomimimo.com</a>
+          → F12 → Network → 任意 <code>/api/v1/tokenPlan/*</code> 请求 → 右键 → Copy → Copy request headers →
+          找 <code>cookie:</code> 这一行整段粘贴到上面。
+          <br/>Cookie 登出后失效，过期时 (HTTP 401) 错误信息会引导重粘。
+        </div>
+      </div>
+
       <div class="field">
         <label>Xiaomi MiMo 集群</label>
         <select id="xiaomi-region">
@@ -230,8 +252,7 @@
           <option value="ams">🌍 欧洲 (token-plan-ams)</option>
         </select>
         <div class="help">
-          ⚠️ endpoint 是按 MiniMax 模式推的（<code>/v1/api/openplatform/coding_plan/remains</code>），
-          官方没文档公开。如果 404，把 keys.json 里 key 旁边的 base URL 试一下能不能 reach。
+          集群字段当前用于未来扩展（多账号 / region-specific URL）。当前 cookie auth 已绑定 user，无视。
         </div>
       </div>
     </div>

@@ -121,6 +121,40 @@ async function deleteKey(provider: ProviderId) {
   flash("✓ 已删除");
 }
 
+async function loadCookieStatus(provider: ProviderId) {
+  const has = await invoke<boolean>("has_cookie_for", { provider });
+  const el = document.getElementById(`cookie-status-${provider}`);
+  if (el) {
+    el.textContent = has ? "✓ 已保存到本机" : "未设置";
+    el.className = `status ${has ? "ok" : ""}`;
+  }
+}
+
+async function saveCookie(provider: ProviderId) {
+  const input = document.getElementById(`cookie-${provider}`) as HTMLTextAreaElement | null;
+  if (!input) return;
+  const cookie = input.value.trim();
+  if (!cookie) {
+    flash("⚠ 请先粘贴 Cookie", true);
+    return;
+  }
+  try {
+    await invoke("set_cookie_for", { provider, cookie });
+    input.value = "";
+    await loadCookieStatus(provider);
+    flash(`✓ ${providerDisplay(provider)} Cookie 已保存`);
+  } catch (e) {
+    flash(`✗ 保存失败: ${e}`, true);
+  }
+}
+
+async function deleteCookie(provider: ProviderId) {
+  if (!confirm(`确认删除 ${providerDisplay(provider)} 的 Cookie？`)) return;
+  await invoke("delete_cookie_for", { provider });
+  await loadCookieStatus(provider);
+  flash("✓ Cookie 已删除");
+}
+
 // 从 keys.json 读明文 → 写剪贴板。用完即弃，不在 JS 侧长期保存。
 async function copyKey(provider: ProviderId) {
   try {
@@ -338,6 +372,8 @@ $("#del-key-xiaomimimo")?.addEventListener("click", () => deleteKey("xiaomimimo"
 $("#copy-key-minimax")?.addEventListener("click", () => copyKey("minimax"));
 $("#copy-key-deepseek")?.addEventListener("click", () => copyKey("deepseek"));
 $("#copy-key-xiaomimimo")?.addEventListener("click", () => copyKey("xiaomimimo"));
+$("#save-cookie-xiaomimimo")?.addEventListener("click", () => saveCookie("xiaomimimo"));
+$("#del-cookie-xiaomimimo")?.addEventListener("click", () => deleteCookie("xiaomimimo"));
 $("#test")?.addEventListener("click", testConn);
 
 $("#reset-floating")?.addEventListener("click", async () => {
@@ -389,5 +425,6 @@ $("#auto-hide-in-fullscreen")?.addEventListener("change", async () => {
   await loadKeyStatus("minimax");
   await loadKeyStatus("deepseek");
   await loadKeyStatus("xiaomimimo");
+  await loadCookieStatus("xiaomimimo");
   await loadConfig();
 })();

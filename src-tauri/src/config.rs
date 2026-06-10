@@ -446,3 +446,34 @@ pub fn delete_api_key_for(provider: Provider) -> Result<(), String> {
     }
     Ok(())
 }
+
+// ── 通用 secret 存取（用于 cookie / 其它 token） ─────────────
+
+fn cookie_key(provider: Provider) -> String {
+    format!("{}:cookie", provider.id_str())
+}
+
+pub fn load_cookie_for(provider: Provider) -> Result<Option<String>, String> {
+    let map = read_keys()?;
+    Ok(map.get(&cookie_key(provider)).cloned())
+}
+
+pub fn save_cookie_for(provider: Provider, cookie: &str) -> Result<(), String> {
+    let mut map = read_keys().unwrap_or_default();
+    map.insert(cookie_key(provider), cookie.to_string());
+    write_keys_atomic(&map)
+}
+
+pub fn delete_cookie_for(provider: Provider) -> Result<(), String> {
+    let mut map = read_keys().unwrap_or_default();
+    map.remove(&cookie_key(provider));
+    if map.is_empty() {
+        let path = keys_path()?;
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|e| format!("remove empty keys: {e}"))?;
+        }
+    } else {
+        write_keys_atomic(&map)?;
+    }
+    Ok(())
+}

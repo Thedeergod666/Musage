@@ -168,6 +168,9 @@ pub fn run() {
             commands::set_api_key_for,
             commands::delete_api_key_for,
             commands::get_api_key_for,
+            commands::has_cookie_for,
+            commands::set_cookie_for,
+            commands::delete_cookie_for,
             commands::open_settings_window,
             commands::hide_floating_window,
             commands::show_floating_window,
@@ -292,7 +295,18 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
                         .get(provider.id_str())
                         .cloned()
                         .unwrap_or_default();
-                    let r = providers::xiaomi::Xiaomimimo::do_fetch(&key, region, &ov).await;
+                    let cookie = match config::load_cookie_for(provider) {
+                        Ok(Some(c)) => c,
+                        Ok(None) => {
+                            eprintln!("[dump] keys.json 里没找到 Xiaomi MiMo 的 cookie。请先在 GUI 设置面板填入。");
+                            continue;
+                        }
+                        Err(e) => {
+                            eprintln!("[dump] 读 cookie 失败: {e}");
+                            continue;
+                        }
+                    };
+                    let r = providers::xiaomi::Xiaomimimo::do_fetch(&cookie, region, &ov).await;
                     r.map(|(_, snap)| snap)
                 }
             };

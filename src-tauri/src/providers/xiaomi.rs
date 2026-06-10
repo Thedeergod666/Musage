@@ -1,24 +1,26 @@
 //! Xiaomi MiMo Token Plan 用量查询
 //!
-//! 端点（**猜测**：照 MiniMax `/v1/api/openplatform/coding_plan/remains` 模式）：
-//! - CN: `https://token-plan-cn.xiaomimimo.com/v1/api/openplatform/coding_plan/remains`
-//! - SGP: `https://token-plan-sgp.xiaomimimo.com/v1/api/openplatform/coding_plan/remains`
-//! - AMS: `https://token-plan-ams.xiaomimimo.com/v1/api/openplatform/coding_plan/remains`
+//! ⚠️ **小米官方没公开 usage query endpoint** —— dashboard 里的"当前套餐用量"
+//! 数据来自某个内部 API，没在 docs 里。文档只列了**推理 endpoint**：
+//! 数据来自某个内部 API，没在 docs 里。文档只列了**推理 endpoint**：
+//! - Anthropic 兼容: `POST {BASE_URL}/v1/messages`，header `api-key: tp-xxxxx`
+//! - OpenAI 兼容:   `POST {BASE_URL}/chat/completions`，header `api-key: tp-xxxxx`
 //!
-//! **官方未文档化**，实际 endpoint 可能不同。如果字段名也对不上，
-//! 走设置面板 · Schema overrides 加候选三元组（参考 ccswitch 的可配置 extractor 思路）。
+//! ccswitch 也没把 Xiaomi Token Plan 用量监控做出来（只把 Xiaomi 作为
+//! pay-as-you-go 模型 provider）。
 //!
-//! API key 格式：`tp-xxxxx`（Token Plan 专用，与 pay-as-you-go 的 `sk-` 区分）
+//! ## 已知信息
+//! - 集群：`token-plan-cn` / `token-plan-sgp` / `token-plan-ams`（用户截图用 cn）
+//! - API key 格式：`tp-xxxxx`（Token Plan 专用，区别于 `sk-` pay-as-you-go）
+//! - Auth header：**`api-key: tp-xxxxx`**（不是 `Authorization: Bearer`）
+//! - 响应里有 `meta.usage.{credits_used, usd_spent}`（per-request，不是剩余额度）
 //!
-//! ## Schema 预期（基于小米后台 dashboard 显示的字段名）
+//! ## 做法：探测候选路径
+//! 用户在浏览器 dashboard (platform.xiaomimimo.com) 上打开 DevTools → Network，
+//! 找到那个拉"套餐用量"的请求，告诉我 URL，我改常量。
 //!
-//! - 主额度：`used_credits` / `total_credits`（或 `remaining_credits` + `total_credits`）
-//! - 补偿积分：`compensation_used_credits` / `compensation_total_credits`
-//! - 套餐到期：`expires_at`（epoch ms）或 `expire_at` 或 `end_time`（distance seconds）
-//!
-//! UI 上每个用一行 `QuotaRow`：
-//! - "月度" → 已用百分比 + 到期时间
-//! - "补偿" → 已用百分比（无 reset）
+//! 当前实现的 endpoint 都是**猜的**，按响应特征做宽容解析。如果用户配了 overrides
+//! schema 字段名，照样能命中（`schema_overrides.xiaomimimo.monthly`）。
 
 use std::pin::Pin;
 use std::time::Duration;
@@ -51,11 +53,12 @@ pub enum XiaomiRegion {
 }
 
 impl XiaomiRegion {
-    pub fn api_url(&self) -> &'static str {
+    /// 只返回 base URL（不含 path），具体 path 在 do_fetch 里逐个试
+    pub fn host_base(&self) -> &'static str {
         match self {
-            XiaomiRegion::Cn => "https://token-plan-cn.xiaomimimo.com/v1/api/openplatform/coding_plan/remains",
-            XiaomiRegion::Sgp => "https://token-plan-sgp.xiaomimimo.com/v1/api/openplatform/coding_plan/remains",
-            XiaomiRegion::Ams => "https://token-plan-ams.xiaomimimo.com/v1/api/openplatform/coding_plan/remains",
+            XiaomiRegion::Cn => "https://token-plan-cn.xiaomimimo.com",
+            XiaomiRegion::Sgp => "https://token-plan-sgp.xiaomimimo.com",
+            XiaomiRegion::Ams => "https://token-plan-ams.xiaomimimo.com",
         }
     }
     pub fn label(&self) -> &'static str {
@@ -89,36 +92,63 @@ impl Xiaomimimo {
             .build()
             .map_err(|e| format!("build client: {e}"))?;
 
-        let resp = client
-            .get(region.api_url())
-            .header("Authorization", format!("Bearer {api_key}"))
-            .header("Accept", "application/json")
-            .send()
-            .await
-            .map_err(|e| format!("网络错误 [{}]: {e}", region.api_url()))?;
+        // ⚠️ Xiaomi 用的是 `api-key: tp-xxxxx`，不是 `Authorization: Bearer`
+        //    （参考官方 curl 样例；MiniMax 才用 Bearer）
+        // ⚠️ usage query endpoint 没文档公开 —— 当前 base url 是按"OpenAI 风格管理 API"
+        //    的常见模式猜的几个候选，逐个试；第一个 200 的就拿来 parse。
+        let host_base = match region {
+            XiaomiRegion::Cn => "https://token-plan-cn.xiaomimimo.com",
+            XiaomiRegion::Sgp => "https://token-plan-sgp.xiaomimimo.com",
+            XiaomiRegion::Ams => "https://token-plan-ams.xiaomimimo.com",
+        };
+        let candidates: &[&str] = &[
+            "/v1/usage",
+            "/v1/quota",
+            "/v1/account/usage",
+            "/v1/dashboard/billing/credit_grants",  // 仿 OpenAI 的
+            "/v1/subscription",
+            "/v1/api/openplatform/coding_plan/remains", // 仿 MiniMax
+        ];
 
-        let status = resp.status();
-        if status == reqwest::StatusCode::UNAUTHORIZED {
-            return Err("鉴权失败，请检查 Xiaomi MiMo API key（Token Plan 用 tp- 开头）".to_string());
-        }
-        if status == reqwest::StatusCode::FORBIDDEN {
-            return Err("无权限访问 Xiaomi MiMo 用量接口（HTTP 403）".to_string());
-        }
-        if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(format!(
-                "Xiaomi MiMo 服务异常 (HTTP {status}): {}",
-                body.chars().take(200).collect::<String>()
-            ));
+        let mut last_err = String::new();
+        for path in candidates {
+            let url = format!("{host_base}{path}");
+            let resp = match client
+                .get(&url)
+                .header("api-key", api_key)
+                .header("Accept", "application/json")
+                .send()
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    last_err = format!("{}: {}", url, e);
+                    continue;
+                }
+            };
+            let status = resp.status();
+            // 404 / 401 / 405 / 501 都不是我们要的；继续试下一个
+            if !status.is_success() {
+                last_err = format!("{} → HTTP {}", url, status);
+                continue;
+            }
+            // 成功
+            let raw: serde_json::Value = resp
+                .json()
+                .await
+                .map_err(|e| format!("{} → 响应不是 JSON: {}", url, e))?;
+            let snap = parse(&raw, region, overrides);
+            return Ok((raw, snap));
         }
 
-        let raw: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| format!("响应不是 JSON: {e}"))?;
-
-        let snap = parse(&raw, region, overrides);
-        Ok((raw, snap))
+        // 全部候选都失败
+        Err(format!(
+            "Xiaomi MiMo usage endpoint 未公开 —— {} 个候选路径全部失败（最后一个错: {}）。\
+             请打开 platform.xiaomimimo.com dashboard → DevTools Network → 找那个拉'套餐用量'的请求，\
+             把 URL 贴给我。",
+            candidates.len(),
+            last_err
+        ))
     }
 }
 

@@ -357,15 +357,13 @@ function formatAmount(v: number | null | undefined): string {
 
 function colorClass(util: number): string {
   // 4 档离散色 —— 整条 bar + 文字单色，**不**是位置性渐变。
-  // 上次做的绿→青→黄→红 4 段位置渐变在 50% 这种"中间态"会同时显 3 色，
-  // 喧宾夺主。改成按阈值整条换色，一眼看到当前处于哪个档。
   //   < 50%    → ok     (绿，安全)
-  //   50-75%   → cyan   (青，过半提醒)
-  //   75-90%   → warn   (黄，警告)
-  //   >= 90%   → alert  (红，告警)
+  //   50-70%   → cyan   (青，过半提醒)
+  //   70-88%   → warn   (黄，警告)
+  //   >= 88%   → alert  (红，告警)
   if (util < 50) return "ok";
-  if (util < 75) return "cyan";
-  if (util < 90) return "warn";
+  if (util < 70) return "cyan";
+  if (util < 88) return "warn";
   return "alert";
 }
 

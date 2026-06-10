@@ -23,6 +23,9 @@
 #[cfg(target_os = "macos")]
 pub mod macos;
 
+/// 引入 Manager trait，让 `app.get_webview_window(...)` 可用（Tauri 2 需要显式 use）。
+use tauri::Manager;
+
 #[cfg(target_os = "macos")]
 pub use self::macos::*;
 

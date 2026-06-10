@@ -152,9 +152,29 @@ html, body {
   word-break: break-all;
   margin: 4px 0;
 }
-.err-dot {
-  color: #f44336;
-  font-size: 12px;
+.err-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+/* ErrorKind → 颜色映射（snake_case 类名） */
+.err-unconfigured_key .err-label { color: #ff9800; background: rgba(255, 152, 0, 0.12); }
+.err-auth_failed        .err-label { color: #f44336; background: rgba(244, 67, 54, 0.12); }
+.err-rate_limited       .err-label { color: #ff9800; background: rgba(255, 152, 0, 0.12); }
+.err-network            .err-label { color: #ff9800; background: rgba(255, 152, 0, 0.12); }
+.err-parse              .err-label { color: #9b59ff; background: rgba(155, 89, 255, 0.12); }
+.err-schema_unknown     .err-label { color: #9b59ff; background: rgba(155, 89, 255, 0.12); }
+.err-server_error       .err-label { color: #f44336; background: rgba(244, 67, 54, 0.12); }
+.err-other              .err-label { color: #888;    background: rgba(255, 255, 255, 0.06); }
+
+.err-card .hint {
+  font-size: 10px;
+  color: #888;
+  margin-top: 4px;
+  font-style: italic;
 }
 
 .err {

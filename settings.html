@@ -173,6 +173,25 @@
 
     <div class="divider"></div>
 
+    <!-- Schema overrides (高级，MiniMax 改字段名后用) -->
+    <details class="overrides">
+      <summary>🔧 Schema overrides（高级 · MiniMax 改字段名后填这里）</summary>
+      <div class="help">
+        只在 <strong>解析失败 / 显示 "Schema 未知"</strong> 时用。每行一个 JSON 对象，<code>total</code> + <code>remaining</code> 同时存在才算命中，<code>end</code> 可选。
+        改完点"保存配置"。参考 ccswitch 的 schema 字段名逆向。
+      </div>
+      <div class="field">
+        <label>MiniMax · 5h 候选字段名</label>
+        <textarea id="overrides-5h-minimax" rows="3" placeholder='[{"total":"...","remaining":"...","end":"..."}]'></textarea>
+      </div>
+      <div class="field">
+        <label>MiniMax · 周 候选字段名</label>
+        <textarea id="overrides-weekly-minimax" rows="3" placeholder='[{"total":"...","remaining":"...","end":"..."}]'></textarea>
+      </div>
+    </details>
+
+    <div class="divider"></div>
+
     <!-- 全局设置 -->
     <div class="field">
       <label>刷新间隔（秒）</label>

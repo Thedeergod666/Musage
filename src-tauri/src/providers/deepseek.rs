@@ -152,6 +152,7 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, String> {
         success: true,
         rows,
         error: None,
+        error_kind: None,
         fetched_at: Some(chrono::Utc::now().timestamp_millis()),
         raw: Some(raw),
         is_healthy: is_available,

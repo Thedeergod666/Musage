@@ -51,6 +51,40 @@ pub struct AppConfig {
     pub floating_y: Option<i32>,
     pub autostart: bool,
     pub show_in_tray_on_close: bool,
+    /// 用户自定义的字段名候选（应对 MiniMax 改 schema）
+    /// key = provider.id_str()，value = 该 provider 的 overrides
+    #[serde(default)]
+    pub schema_overrides: BTreeMap<String, ProviderOverrides>,
+}
+
+/// 单个 tier（5h / 周 / 月等）的字段名 overrides
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TierOverrides {
+    /// count-based schema 的候选三元组（total/remaining/end）
+    /// 解析时按顺序尝试，用户在前 = 优先
+    #[serde(default)]
+    pub count_candidates: Vec<FieldTriple>,
+}
+
+/// count-based schema 的字段名三元组
+///
+/// `total` + `remaining` 同时存在且 total > 0 时认为命中。
+/// `end` 可选（旧 schema 通常是 epoch ms，新 schema 是 duration 秒，smart_reset_to_ms 会自动识别）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FieldTriple {
+    pub total: String,
+    pub remaining: String,
+    #[serde(default)]
+    pub end: Option<String>,
+}
+
+/// 单个 provider 的全部 overrides
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProviderOverrides {
+    #[serde(default)]
+    pub five_hour: TierOverrides,
+    #[serde(default)]
+    pub weekly: TierOverrides,
 }
 
 impl Default for AppConfig {
@@ -77,6 +111,7 @@ impl Default for AppConfig {
             floating_y: None,
             autostart: false,
             show_in_tray_on_close: true,
+            schema_overrides: BTreeMap::new(),
         }
     }
 }

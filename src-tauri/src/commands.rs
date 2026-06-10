@@ -7,9 +7,34 @@
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
-use crate::config::{self, AppConfig};
-use crate::providers::{deepseek, minimax, Provider, ProviderImpl, ProviderSnapshot, QuotaSnapshot};
+use crate::config::{self, AppConfig, ProviderOverrides};
+use crate::providers::{deepseek, minimax, ErrorKind, Provider, ProviderImpl, ProviderSnapshot, QuotaSnapshot};
 use crate::AppState;
+
+/// 把 provider 抛出的中文错误串映射成 [`ErrorKind`]。
+///
+/// 借鉴 ccswitch 的 `isValid: false` 思路：除了文案还给出机器可读类型，
+/// 前端按类型选样式 + 操作按钮。
+fn classify_error_message(msg: &str) -> ErrorKind {
+    let m = msg;
+    if m.contains("API key 为空") || m.contains("未配置 API key") {
+        ErrorKind::UnconfiguredKey
+    } else if m.contains("鉴权失败") || m.contains("无权限") || m.contains("HTTP 401") || m.contains("HTTP 403") {
+        ErrorKind::AuthFailed
+    } else if m.contains("频繁") || m.contains("HTTP 429") {
+        ErrorKind::RateLimited
+    } else if m.starts_with("网络错误") || m.contains("网络错误") {
+        ErrorKind::Network
+    } else if m.contains("不是 JSON") {
+        ErrorKind::Parse
+    } else if m.contains("未识别 schema") {
+        ErrorKind::SchemaUnknown
+    } else if m.contains("服务异常") || m.contains("HTTP 5") {
+        ErrorKind::ServerError
+    } else {
+        ErrorKind::Other
+    }
+}
 
 #[tauri::command]
 pub async fn get_snapshot(state: State<'_, AppState>) -> Result<QuotaSnapshot, String> {
@@ -156,6 +181,15 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
     let region = cfg.region();
     let enabled = cfg.enabled_providers();
 
+    // 每个 provider 自己的 overrides（用户从设置面板加的字段名候选）
+    // 必须 clone 出来再 move 进 spawn（cfg 是引用，spawn 要求 'static）
+    let overrides_for = |p: Provider| -> ProviderOverrides {
+        cfg.schema_overrides
+            .get(p.id_str())
+            .cloned()
+            .unwrap_or_default()
+    };
+
     // 准备每个 provider 的 fetch 任务（keyring 读 key 同步，main 里完成避免 spawn 阻塞）
     let mut tasks: Vec<(Provider, tokio::task::JoinHandle<Result<ProviderSnapshot, String>>)> =
         Vec::new();
@@ -163,11 +197,12 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
         let key_res = config::load_api_key_for(provider);
         match key_res {
             Ok(Some(k)) => {
+                let ov = overrides_for(provider);
                 let task: tokio::task::JoinHandle<Result<ProviderSnapshot, String>> =
                     tokio::spawn(async move {
                         match provider {
                             Provider::Minimax => {
-                                minimax::Minimax::do_fetch(&k, region)
+                                minimax::Minimax::do_fetch(&k, region, &ov)
                                     .await
                                     .map(|(_, snap)| snap)
                             }
@@ -202,10 +237,14 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
     for (provider, task) in tasks {
         match task.await {
             Ok(Ok(s)) => snap.providers.push(s),
-            Ok(Err(e)) => snap.providers.push(ProviderSnapshot::empty_error(provider, e)),
+            Ok(Err(e)) => {
+                let kind = classify_error_message(&e);
+                snap.providers.push(ProviderSnapshot::empty_error(provider, kind, e));
+            }
             Err(join_err) => {
                 snap.providers.push(ProviderSnapshot::empty_error(
                     provider,
+                    ErrorKind::Other,
                     format!("task join 失败: {join_err}"),
                 ));
             }

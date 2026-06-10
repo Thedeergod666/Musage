@@ -180,7 +180,11 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
             let result: Result<providers::ProviderSnapshot, String> = match provider {
                 providers::Provider::Minimax => {
                     let region = cfg.region();
-                    let r = providers::minimax::Minimax::do_fetch(&key, region).await;
+                    let ov = cfg.schema_overrides
+                        .get(provider.id_str())
+                        .cloned()
+                        .unwrap_or_default();
+                    let r = providers::minimax::Minimax::do_fetch(&key, region, &ov).await;
                     r.map(|(_, snap)| snap)
                 }
                 providers::Provider::Deepseek => {

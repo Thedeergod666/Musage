@@ -8,12 +8,29 @@ interface ProviderConfig {
   region?: "cn" | "en" | null;
 }
 
+interface FieldTriple {
+  total: string;
+  remaining: string;
+  end?: string | null;
+}
+
+interface TierOverrides {
+  count_candidates: FieldTriple[];
+}
+
+interface ProviderOverrides {
+  five_hour: TierOverrides;
+  weekly: TierOverrides;
+}
+
 interface AppConfig {
   providers: Record<string, ProviderConfig>;
   refresh_interval_secs: number;
   autostart: boolean;
   floating_x: number | null;
   floating_y: number | null;
+  // 用户加的字段名候选（应对 MiniMax 改 schema）
+  schema_overrides?: Record<string, ProviderOverrides>;
 }
 
 interface ProviderSnapshot {
@@ -26,6 +43,16 @@ interface ProviderSnapshot {
     unit: string | null;
   }>;
   error: string | null;
+  error_kind?:
+    | "unconfigured_key"
+    | "auth_failed"
+    | "rate_limited"
+    | "network"
+    | "parse"
+    | "schema_unknown"
+    | "server_error"
+    | "other"
+    | null;
 }
 
 interface QuotaSnapshot {
@@ -113,9 +140,39 @@ async function loadConfig() {
   regionEl.value = minimaxRegion;
   ($("#interval") as HTMLInputElement).value = String(cfg.refresh_interval_secs);
   ($("#autostart") as HTMLInputElement).checked = cfg.autostart;
+
+  // schema overrides (高级)
+  const ov = cfg.schema_overrides ?? {};
+  const mm = ov.minimax ?? { five_hour: { count_candidates: [] }, weekly: { count_candidates: [] } };
+  ($("#overrides-5h-minimax") as HTMLTextAreaElement).value = JSON.stringify(
+    mm.five_hour?.count_candidates ?? [],
+    null,
+    2,
+  );
+  ($("#overrides-weekly-minimax") as HTMLTextAreaElement).value = JSON.stringify(
+    mm.weekly?.count_candidates ?? [],
+    null,
+    2,
+  );
 }
 
 async function saveConfig() {
+  // 解析 schema overrides 的 JSON；解析失败给提示但不影响其它字段保存
+  let fiveHourCandidates: FieldTriple[] = [];
+  let weeklyCandidates: FieldTriple[] = [];
+  try {
+    const raw5h = ($("#overrides-5h-minimax") as HTMLTextAreaElement).value.trim() || "[]";
+    const rawWeek = ($("#overrides-weekly-minimax") as HTMLTextAreaElement).value.trim() || "[]";
+    fiveHourCandidates = JSON.parse(raw5h);
+    weeklyCandidates = JSON.parse(rawWeek);
+    if (!Array.isArray(fiveHourCandidates) || !Array.isArray(weeklyCandidates)) {
+      throw new Error("必须是 JSON 数组");
+    }
+  } catch (e) {
+    flash(`✗ Schema overrides JSON 解析失败: ${e}`, true);
+    return;
+  }
+
   const cfg: AppConfig = {
     providers: {
       minimax: {
@@ -128,6 +185,13 @@ async function saveConfig() {
     autostart: ($("#autostart") as HTMLInputElement).checked,
     floating_x: null,
     floating_y: null,
+    schema_overrides: {
+      minimax: {
+        five_hour: { count_candidates: fiveHourCandidates },
+        weekly: { count_candidates: weeklyCandidates },
+      },
+      deepseek: { five_hour: { count_candidates: [] }, weekly: { count_candidates: [] } },
+    },
   };
   try {
     await invoke("save_config", { cfg });

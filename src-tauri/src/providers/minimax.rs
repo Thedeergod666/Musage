@@ -33,7 +33,8 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use super::{Provider, ProviderImpl, ProviderSnapshot, QuotaRow};
+use super::{ErrorKind, Provider, ProviderImpl, ProviderSnapshot, QuotaRow};
+use crate::config::ProviderOverrides;
 
 const URL_CN: &str = "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains";
 const URL_EN: &str = "https://api.minimax.io/v1/api/openplatform/coding_plan/remains";
@@ -68,10 +69,14 @@ pub struct Minimax {
 }
 
 impl Minimax {
-    /// 真正的拉取实现（接受 region 参数）
+    /// 真正的拉取实现（接受 region + 用户 overrides）
+    ///
+    /// 返回 `Err(String)` 是为了兼容 trait `ProviderImpl::fetch` 的签名。
+    /// 错误分类信息由 `commands::classify_error_message` 在外层补到 `error_kind`。
     pub async fn do_fetch(
         api_key: &str,
         region: Region,
+        overrides: &ProviderOverrides,
     ) -> Result<(serde_json::Value, ProviderSnapshot), String> {
         if api_key.trim().is_empty() {
             return Err("API key 为空".to_string());
@@ -113,7 +118,7 @@ impl Minimax {
             .await
             .map_err(|e| format!("响应不是 JSON: {e}"))?;
 
-        let snap = parse(&raw, region);
+        let snap = parse(&raw, region, overrides);
         Ok((raw, snap))
     }
 }
@@ -132,7 +137,10 @@ impl ProviderImpl for Minimax {
     ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, String>> + Send + 'a>> {
         let region = self.region;
         Box::pin(async move {
-            let (_, snap) = Self::do_fetch(api_key, region).await?;
+            // ProviderImpl trait 不传 overrides；commands.rs 走 do_fetch 直接传。
+            // 这里给个空 overrides 保持编译。
+            let (_, snap) =
+                Self::do_fetch(api_key, region, &ProviderOverrides::default()).await?;
             Ok(snap)
         })
     }
@@ -140,7 +148,7 @@ impl ProviderImpl for Minimax {
 
 /// 灵活解析：兼容 6/1 前后的 schema
 #[allow(dead_code)] // region 参数为未来多区域 provider 准备
-fn parse(raw: &serde_json::Value, _region: Region) -> ProviderSnapshot {
+fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides) -> ProviderSnapshot {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
     // 业务级错误（ccswitch 也这么做）
@@ -156,6 +164,7 @@ fn parse(raw: &serde_json::Value, _region: Region) -> ProviderSnapshot {
                 success: false,
                 rows: vec![],
                 error: Some(format!("MiniMax API code {code}: {msg}")),
+                error_kind: Some(ErrorKind::ServerError),
                 fetched_at: Some(now_ms),
                 raw: Some(raw.clone()),
                 is_healthy: false,
@@ -185,6 +194,7 @@ fn parse(raw: &serde_json::Value, _region: Region) -> ProviderSnapshot {
             success: false,
             rows: vec![],
             error: Some("响应缺少 model_remains[0]".to_string()),
+            error_kind: Some(ErrorKind::Parse),
             fetched_at: Some(now_ms),
             raw: Some(raw.clone()),
             is_healthy: false,
@@ -201,7 +211,7 @@ fn parse(raw: &serde_json::Value, _region: Region) -> ProviderSnapshot {
             ("interval_total", "interval_remaining", "interval_end"),
             ("window_total", "window_remaining", "window_end"),
             ("total_5h", "used_5h", "reset_5h"),
-        ]));
+        ], &overrides.five_hour.count_candidates));
 
     let weekly = parse_tier_percent(item, "current_weekly_remaining_percent",
                                        "current_weekly_status", "weekly_end_time")
@@ -209,7 +219,7 @@ fn parse(raw: &serde_json::Value, _region: Region) -> ProviderSnapshot {
             ("current_weekly_total_count", "current_weekly_usage_count", "weekly_end_time"),
             ("weekly_total", "weekly_remaining", "weekly_end"),
             ("total_week", "used_week", "reset_week"),
-        ]));
+        ], &overrides.weekly.count_candidates));
 
     // 转成 QuotaRow
     let mut rows = Vec::new();
@@ -246,8 +256,9 @@ fn parse(raw: &serde_json::Value, _region: Region) -> ProviderSnapshot {
         error: if success {
             None
         } else {
-            Some("未识别 schema，请把 raw 字段贴给开发者".to_string())
+            Some("未识别 schema，请把 raw 字段贴给开发者，或在设置面板添加候选字段名".to_string())
         },
+        error_kind: if success { None } else { Some(ErrorKind::SchemaUnknown) },
         fetched_at: Some(now_ms),
         raw: Some(raw.clone()),
         is_healthy,
@@ -292,10 +303,33 @@ fn parse_tier_percent(
 /// 旧 schema 解析（count-based，已知 2026-06-01 后对 Plus 订阅者已不可靠）
 ///
 /// 字段名带 "usage" 实际语义是"剩余"。已用% = (total - remaining) / total * 100。
+///
+/// `user_overrides` 先于内置 `candidates` 尝试，方便用户在设置面板加新字段名
+/// （MiniMax 改 schema 后不用等发版）。
 fn parse_tier_count(
     item: &serde_json::Value,
     candidates: &[(&str, &str, &str)],
+    user_overrides: &[crate::config::FieldTriple],
 ) -> Option<TierInternal> {
+    // 1. 先试用户 overrides（按数组顺序）
+    for triple in user_overrides {
+        let total = item.get(&triple.total).and_then(num_to_f64);
+        let remain = item.get(&triple.remaining).and_then(num_to_f64);
+        if let (Some(t), Some(r)) = (total, remain) {
+            if t > 0.0 {
+                let utilization = ((t - r) / t) * 100.0;
+                let resets_at = triple.end.as_deref()
+                    .and_then(|k| item.get(k)
+                        .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))))
+                    .map(smart_reset_to_ms);
+                return Some(TierInternal {
+                    utilization,
+                    resets_at,
+                });
+            }
+        }
+    }
+    // 2. 再试内置默认
     for (k_total, k_remain, k_reset) in candidates {
         let total = item.get(*k_total).and_then(num_to_f64);
         let remain = item.get(*k_remain).and_then(num_to_f64);

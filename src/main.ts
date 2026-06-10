@@ -22,6 +22,16 @@ interface ProviderSnapshot {
   success: boolean;
   rows: QuotaRow[];
   error: string | null;
+  error_kind?:
+    | "unconfigured_key"
+    | "auth_failed"
+    | "rate_limited"
+    | "network"
+    | "parse"
+    | "schema_unknown"
+    | "server_error"
+    | "other"
+    | null;
   fetched_at: number | null;
   raw?: unknown;
   is_healthy: boolean;
@@ -44,7 +54,7 @@ function render(snap: QuotaSnapshot) {
   const cards = snap.providers.map(renderProviderCard).join("");
 
   const anyUnconfigured = snap.providers.some(
-    (p) => !p.success && (p.error ?? "").includes("未配置 API key"),
+    (p) => p.error_kind === "unconfigured_key",
   );
   const footHint = anyUnconfigured
     ? "未配置 provider 的 key → 右键托盘 → 设置"
@@ -57,13 +67,25 @@ function render(snap: QuotaSnapshot) {
 
 function renderProviderCard(p: ProviderSnapshot): string {
   if (!p.success) {
-    return `<section class="card err-card">
+    const kind = p.error_kind ?? "other";
+    const label = errorKindLabel(kind);
+    const needsSettings = kind === "unconfigured_key" || kind === "auth_failed";
+    const settingsBtn = needsSettings
+      ? `<button class="err-btn open-settings">打开设置</button>`
+      : "";
+    // "Schema 未知" 引导用户去看 overrides
+    const schemaHint =
+      kind === "schema_unknown"
+        ? `<div class="hint">→ 设置面板 · Schema overrides 加新字段名</div>`
+        : "";
+    return `<section class="card err-card err-${escapeHtml(kind)}">
       <header class="card-head">
         <span class="card-title">${providerLabel(p.provider)}</span>
-        <span class="err-dot">●</span>
+        <span class="err-label">${escapeHtml(label)}</span>
       </header>
       <div class="err-msg">${escapeHtml(p.error ?? "未知错误")}</div>
-      <button class="err-btn open-settings">打开设置</button>
+      ${settingsBtn}
+      ${schemaHint}
     </section>`;
   }
   const rowsHtml = p.rows.map(renderRow).join("");
@@ -74,6 +96,21 @@ function renderProviderCard(p: ProviderSnapshot): string {
     </header>
     ${rowsHtml}
   </section>`;
+}
+
+const ERROR_LABELS: Record<string, string> = {
+  unconfigured_key: "未配置 Key",
+  auth_failed: "Key 无效",
+  rate_limited: "请求过快",
+  network: "网络错误",
+  parse: "响应异常",
+  schema_unknown: "Schema 未知",
+  server_error: "服务异常",
+  other: "未知错误",
+};
+
+function errorKindLabel(k: string): string {
+  return ERROR_LABELS[k] ?? "未知错误";
 }
 
 function renderRow(r: QuotaRow, idx: number): string {

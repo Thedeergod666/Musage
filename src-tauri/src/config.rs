@@ -159,6 +159,8 @@ impl Default for AppConfig {
             floating_pin_mode: FloatingPinMode::default(),
             autostart: false,
             show_in_tray_on_close: true,
+            low_power_mode: false,
+            auto_hide_in_fullscreen: false,
             schema_overrides: BTreeMap::new(),
         }
     }

@@ -1,15 +1,23 @@
 /* 悬浮窗 —— iOS 26 / macOS 26 widget 风格
  *
- * 设计哲学（v2 — 统一白字）：
+ * 设计哲学（v3 — body[data-hover] 取代 :hover）：
  *   - 整窗 #app 完全透明，每个 .card 是独立的玻璃胶囊瓦片
  *   - 默认（idle）：瓦片半透 + **所有数据文字统一白色**（仿 macOS 26 天气 widget：
  *     温度/城市/时段都是白的，只有太阳/雨图标保留颜色），"不抢注意力"但仍可读
- *   - 鼠标进入窗口（#app:hover）：瓦片背景升至 ~82% alpha + 强 blur + 阴影 + 内描边，
+ *   - 鼠标进入窗口（body[data-hover] #app）：瓦片背景升至 ~82% alpha + 强 blur + 阴影 + 内描边，
  *     同时数字从白色平滑变为 iOS 语义色（绿/橙/红/蓝），bar 上的渐变彩条 fade-in
  *   - 状态点 .card-dot 与天气 widget 里的"太阳/雨"图标对应，**全程保留色彩**
- *   - 所有色彩切换走 CSS variable swap，单一 #app:hover 触发整组变化，~280ms iOS spring 过渡
+ *   - 所有色彩切换走 CSS variable swap，单一 body[data-hover] #app 触发整组变化，~280ms iOS spring 过渡
  *
- * 注：所有 class 名与 main.ts 保持一致 —— 这是纯 CSS 改造，零 DOM/JS 改动。
+ * ## 为什么用 body[data-hover] 而不是 :hover？
+ *
+ * macOS 上 NSWindow 默认不向非 key window 派发 mouseMoved 事件，WKWebView 的
+ * CSS `:hover` 在浮窗未聚焦时不会激活 —— 体验上表现为"必须先点一下窗口 hover 才生效"。
+ * 解决：Rust 端 (platform/macos.rs 的 hover emitter) 每 50ms 调
+ * `NSEvent.mouseLocation` 全局轮询鼠标，做 point-in-rect 后 emit
+ * `musage://floating-hover` 事件 → 前端 main.ts 收到后 toggle body.dataset.hover。
+ * Win/Linux 上不需要 Rust 轮询（WebView 正常分发事件），但 main.ts 同时挂
+ * JS mouseenter/leave 兜底也设这个 attribute，CSS 选择器跨平台统一。
  */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -65,7 +73,7 @@ html, body {
 #app:active { cursor: grabbing; }
 
 /* ── 鼠标进入窗口 → 唤醒玻璃材质 + iOS 语义色 ── */
-#app:hover {
+body[data-hover] #app {
   --tile-bg: rgba(28, 30, 38, 0.82);
   --tile-blur: 28px;
   --tile-saturate: 180%;
@@ -223,7 +231,7 @@ html, body {
   opacity: 0;
   transition: opacity 0.28s;
 }
-#app:hover .bar-fill::after { opacity: 1; }
+body[data-hover] #app .bar-fill::after { opacity: 1; }
 
 .bar-fill.ok    { --bar-grad: linear-gradient(90deg, #30d158, #5cd673); }
 .bar-fill.warn  { --bar-grad: linear-gradient(90deg, #ff9f0a, #ffb43a); }
@@ -286,13 +294,13 @@ html, body {
   transition: color 0.28s, background-color 0.28s;
 }
 /* hover 才上语义色 —— idle 全部中性白徽章 */
-#app:hover .err-unconfigured_key .err-label { color: #ff9f0a; background: rgba(255, 159, 10, 0.18); }
-#app:hover .err-auth_failed      .err-label { color: #ff453a; background: rgba(255, 69, 58, 0.18); }
-#app:hover .err-rate_limited     .err-label { color: #ff9f0a; background: rgba(255, 159, 10, 0.18); }
-#app:hover .err-network          .err-label { color: #ff9f0a; background: rgba(255, 159, 10, 0.18); }
-#app:hover .err-parse            .err-label { color: #bf5af2; background: rgba(191, 90, 242, 0.18); }
-#app:hover .err-schema_unknown   .err-label { color: #bf5af2; background: rgba(191, 90, 242, 0.18); }
-#app:hover .err-server_error     .err-label { color: #ff453a; background: rgba(255, 69, 58, 0.18); }
+body[data-hover] #app .err-unconfigured_key .err-label { color: #ff9f0a; background: rgba(255, 159, 10, 0.18); }
+body[data-hover] #app .err-auth_failed      .err-label { color: #ff453a; background: rgba(255, 69, 58, 0.18); }
+body[data-hover] #app .err-rate_limited     .err-label { color: #ff9f0a; background: rgba(255, 159, 10, 0.18); }
+body[data-hover] #app .err-network          .err-label { color: #ff9f0a; background: rgba(255, 159, 10, 0.18); }
+body[data-hover] #app .err-parse            .err-label { color: #bf5af2; background: rgba(191, 90, 242, 0.18); }
+body[data-hover] #app .err-schema_unknown   .err-label { color: #bf5af2; background: rgba(191, 90, 242, 0.18); }
+body[data-hover] #app .err-server_error     .err-label { color: #ff453a; background: rgba(255, 69, 58, 0.18); }
 
 .err-card .hint {
   font-size: 10px;

@@ -417,9 +417,30 @@ async function init() {
 
   // 订阅后端推送
   let unlisten: UnlistenFn | null = null;
+  let unlistenHover: UnlistenFn | null = null;
   listen<QuotaSnapshot>("musage://snapshot", (e) => {
     render(e.payload);
   }).then((fn) => (unlisten = fn));
+
+  // ── Hover 状态同步：驱动 body[data-hover] 让 iOS 26 玻璃效果生效 ──
+  //
+  // 双路径并存（先到先生效，幂等）：
+  //   1. Rust `musage://floating-hover`（macOS 必需 —— WKWebView 非
+  //      key window 不分发 mouseMoved，CSS `:hover` 在浮窗未聚焦时失效，
+  //      Rust 用 NSEvent.mouseLocation 全局轮询绕过）
+  //   2. JS mouseenter/mouseleave（Win/Linux 主路径；macOS 聚焦态下兜底）
+  //
+  // 跟原有 PinBottom mode 的 setupHoverRaise(level 切换 IPC) 并行存在，
+  // 关注点不同：这里只管 CSS attribute，不动 always-on-top。
+  const setHoverAttr = (on: boolean) => {
+    if (on) document.body.dataset.hover = "1";
+    else delete document.body.dataset.hover;
+  };
+  document.body.addEventListener("mouseenter", () => setHoverAttr(true));
+  document.body.addEventListener("mouseleave", () => setHoverAttr(false));
+  listen<boolean>("musage://floating-hover", (e) => {
+    setHoverAttr(e.payload);
+  }).then((fn) => (unlistenHover = fn));
 
   // 启动时立即 render loading 占位，避免空白窗口
   app.innerHTML = `<div class="err"><div class="err-title">⏳ 加载中…</div></div>`;
@@ -468,6 +489,7 @@ async function init() {
 
   window.addEventListener("beforeunload", () => {
     if (unlisten) unlisten();
+    if (unlistenHover) unlistenHover();
     if (countdownTimer !== null) clearInterval(countdownTimer);
   });
 }

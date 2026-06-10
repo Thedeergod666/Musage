@@ -70,6 +70,13 @@ pub fn run() {
             // 启动后台轮询
             poller::start(app.handle().clone());
 
+            // 启动 hover emitter：始终运行，不管 pin mode 是哪个
+            // macOS 上这是绕过 WKWebView "非 key window 不分发 mouseMoved"
+            // 的关键 —— Rust 端轮询全局鼠标位置 → emit 给前端 → 切
+            // body[data-hover] → CSS 玻璃 hover 效果不依赖窗口焦点。
+            // 非 macOS 平台是 no-op stub。
+            crate::platform::start_hover_emitter(app.handle().clone());
+
             // 初始化托盘
             tray::setup(app.handle())?;
 

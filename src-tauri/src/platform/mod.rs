@@ -61,5 +61,12 @@ pub fn set_window_hover_raise<R: tauri::Runtime>(
 pub fn start_hover_tracker<R: tauri::Runtime>(_app: &tauri::AppHandle<R>) {
     // 非 macOS 平台：hover 监听由前端 JS mouseenter/leave 完成，不需要 OS 层面 tracker
 }
+
+/// 始终运行的全局鼠标位置广播器：macOS 上必需（WKWebView 非 key window
+/// 不分发 mouseMoved 事件，CSS `:hover` 在浮窗未聚焦时失效），其它平台
+/// 浏览器层 `:hover` 工作正常，前端 JS mouseenter/leave 就够 —— stub 真 no-op。
 #[cfg(not(target_os = "macos"))]
-pub fn stop_hover_tracker() {}
+pub fn start_hover_emitter<R: tauri::Runtime>(_app: tauri::AppHandle<R>) {
+    // Win/Linux: WebView2 / WebKitGTK 都正常向非焦点窗口分发 mouseMoved 事件，
+    // 前端 JS 直接挂 mouseenter/mouseleave 即可同步 body[data-hover]。
+}

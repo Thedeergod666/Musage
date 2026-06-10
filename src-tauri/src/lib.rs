@@ -2,7 +2,7 @@
 //!
 //! 架构：
 //! - `providers` : 多 provider 抽象（trait + minimax/deepseek 实现）
-//! - `config`    : 多 provider 配置 + keyring 存取
+//! - `config`    : 多 provider 配置 + 本地 keys.json 存取
 //! - `poller`    : tokio 后台定时拉取
 //! - `commands`  : tauri::command 暴露给前端
 //! - `tray`      : 系统托盘 + 动态图标
@@ -164,11 +164,11 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
             let key = match config::load_api_key_for(provider) {
                 Ok(Some(k)) => k,
                 Ok(None) => {
-                    eprintln!("[dump] keyring 里没找到 {} 的 key。请先在 GUI 设置面板配置。", provider.display_name());
+                    eprintln!("[dump] keys.json 里没找到 {} 的 key。请先在 GUI 设置面板配置。", provider.display_name());
                     continue;
                 }
                 Err(e) => {
-                    eprintln!("[dump] keyring 读 key 失败: {e}");
+                    eprintln!("[dump] 读 keys.json 失败: {e}");
                     continue;
                 }
             };

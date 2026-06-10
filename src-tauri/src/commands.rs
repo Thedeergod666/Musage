@@ -110,7 +110,7 @@ pub async fn delete_api_key_for(provider: Provider) -> Result<(), String> {
     config::delete_api_key_for(provider)
 }
 
-/// 从 keyring 读出明文 key（用于"复制到剪贴板"功能）。
+/// 从 keys.json 读出明文 key（用于"复制到剪贴板"功能）。
 /// 前端不会保存返回值，只用一次写剪贴板后丢弃。
 #[tauri::command]
 pub async fn get_api_key_for(provider: Provider) -> Result<Option<String>, String> {
@@ -190,7 +190,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
             .unwrap_or_default()
     };
 
-    // 准备每个 provider 的 fetch 任务（keyring 读 key 同步，main 里完成避免 spawn 阻塞）
+    // 准备每个 provider 的 fetch 任务（keys.json 读 key 同步，main 里完成避免 spawn 阻塞）
     let mut tasks: Vec<(Provider, tokio::task::JoinHandle<Result<ProviderSnapshot, String>>)> =
         Vec::new();
     for provider in enabled {
@@ -226,7 +226,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
             Err(e) => {
                 tasks.push((
                     provider,
-                    tokio::spawn(async move { Err(format!("读 keyring 失败: {e}")) }),
+                    tokio::spawn(async move { Err(format!("读 keys.json 失败: {e}")) }),
                 ));
             }
         }

@@ -1,6 +1,6 @@
 # Musage
 
-> **Mu**(sage) = **Mu**xima + **Usage**，MiniMax Token Plan 实时用量监控的桌面悬浮窗
+> **Musage** = **My** + **Usage**，MiniMax Token Plan 实时用量监控的桌面悬浮窗
 
 ![windows](https://img.shields.io/badge/platform-Windows-blue) ![tauri](https://img.shields.io/badge/Tauri-2-orange) ![rust](https://img.shields.io/badge/rust-1.96+-orange)
 
@@ -206,4 +206,10 @@ Authorization: Bearer <api_key>
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE) file.
+
+Copyright (c) 2026 Thedeergod666
+
+## Acknowledgements
+
+API schema parsing (MiniMax `coding_plan/remains` percent-based & count-based, DeepSeek `user/balance`) was reverse-engineered and adapted from [**farion1231/cc-switch**](https://github.com/farion1231/cc-switch) (MIT, Copyright (c) 2025 Jason Young). No code was copied — only schema field names, semantics, and the `isValid`-style error classification pattern were referenced.

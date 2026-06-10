@@ -31,9 +31,10 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+use objc2::MainThreadMarker;
 use objc2_app_kit::{NSEvent, NSWindow};
 use objc2_core_graphics::{kCGFloatingWindowLevel, kCGNormalWindowLevel, CGWindowLevel};
-use objc2_foundation::NSRect;
+use objc2_foundation::NSPoint;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 /// 始终在底部：在 kCGNormalWindowLevel 之下 1 格。
@@ -102,14 +103,12 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
 
                 // mouseLocation 在 macOS 上是 thread-safe 的，可从任意线程调
                 let mouse = NSEvent::mouseLocation();
-                // frame 必须从 main thread 拿
-                let Some(frame) = get_window_frame_on_main(&app) else {
-                    continue;
-                };
-                let inside = mouse.x >= frame.origin.x
-                    && mouse.x <= frame.origin.x + frame.size.width
-                    && mouse.y >= frame.origin.y
-                    && mouse.y <= frame.origin.y + frame.size.height;
+
+                // 关键：用 NSWindow.windowNumberAtPoint 做命中测试 ——
+                // 不光检查"鼠标在不在浮窗 frame 内"，还要确认浮窗在该点是**最上层**。
+                // PinBottom 模式下浮窗经常被其它 app 部分遮挡，单纯 point-in-rect
+                // 会在被遮挡区域也误触发置顶（用户其实在操作遮挡它的那个 app）。
+                let inside = is_floating_topmost_at(&app, mouse);
 
                 if inside != last_inside {
                     last_inside = inside;
@@ -153,28 +152,44 @@ pub fn set_window_level<R: Runtime>(app: &AppHandle<R>, level: CGWindowLevel) {
     });
 }
 
-/// 在 main thread 拿窗口的当前 frame（屏幕坐标系，原点左下）。
-/// 用 mpsc channel 把值从 main thread 同步送回调用方。
-/// 拿不到（窗口已销毁/未建好/ns_window 失败）→ 返回 None，调用方跳过这次轮询。
-fn get_window_frame_on_main<R: Runtime>(app: &AppHandle<R>) -> Option<NSRect> {
-    let (tx, rx) = mpsc::channel::<Option<NSRect>>();
+/// 命中测试：鼠标在 `point` 处时，浮窗是否是**最上层**窗口。
+///
+/// 用 `+[NSWindow windowNumberAtPoint:belowWindowWithWindowNumber:]` 传 0
+/// （穿透所有 app 检查整个屏幕），返回该点 topmost window 的 ID。
+/// 与浮窗自己的 `windowNumber` 比对：
+/// - 相等 → 鼠标 hover 在浮窗**可见**部分
+/// - 不等 → 别的窗口盖在那里，用户在跟那个窗口交互，不该触发置顶/玻璃显形
+///
+/// 解决 PinBottom 模式下浮窗被部分遮挡时，鼠标移到被盖的区域也误触发的问题。
+///
+/// dispatch 到 main thread（NSWindow API 强制要求）。channel 同步等待。
+/// 拿不到 / 超时 / 浮窗未上屏 → 保守返回 false。
+fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> bool {
+    let (tx, rx) = mpsc::channel::<bool>();
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
-        let result = (|| -> Option<NSRect> {
+        let result = (|| -> Option<bool> {
             let win = app2.get_webview_window("floating")?;
             let ptr = win.ns_window().ok()?;
             if ptr.is_null() {
                 return None;
             }
+            // SAFETY: ptr 来自 webview_window 的 NSWindow，整个 app 生命周期有效。
             let window: &NSWindow = unsafe { &*ptr.cast::<NSWindow>() };
-            Some(window.frame())
+            let our_id = window.windowNumber();
+            if our_id == 0 {
+                // 窗口还没上屏（极少见，初始化竞态）→ 直接 false
+                return Some(false);
+            }
+            // 传 0 = 不排除任何窗口，返回整个屏幕在该点 topmost window 的 number
+            // MainThreadMarker 在 run_on_main_thread 回调里必然能拿到（我们就在主线程）
+            let mtm = MainThreadMarker::new().expect("inside run_on_main_thread callback");
+            let topmost =
+                NSWindow::windowNumberAtPoint_belowWindowWithWindowNumber(point, 0, mtm);
+            Some(topmost == our_id)
         })();
-        let _ = tx.send(result);
+        let _ = tx.send(result.unwrap_or(false));
     });
-    let frame = rx.recv().ok().flatten()?;
-    if frame.size.width > 0.0 && frame.size.height > 0.0 {
-        Some(frame)
-    } else {
-        None
-    }
+    // 50ms 超时兜底：main thread 卡住时 hover 轮询不至于一起卡住
+    rx.recv_timeout(Duration::from_millis(50)).unwrap_or(false)
 }

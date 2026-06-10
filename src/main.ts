@@ -3,10 +3,26 @@
 //
 // 渲染策略：增量 DOM 更新（diff by `data-provider` / `data-row-key`），
 // 而不是 innerHTML 全量替换。innerHTML 会导致一帧空白，肉眼可见"闪一下"。
+//
+// 置顶/置底行为（设置面板里选）：
+// - pin_top    ：一直置顶（系统 always-on-top）
+// - pin_bottom ：默认不置顶（会被其它窗口盖住），鼠标 hover 进浮窗时临时置顶
+// - normal     ：不强制层级
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import minimaxLogo from "./assets/minimax-logo.png";
+import deepseekLogo from "./assets/deepseek-icon.png";
 import "./styles.css";
+
+/// 静态映射：provider id → 官网 logo + 显示名
+/// logo 走 Vite `?url` import 拿到打包后的 URL
+const PROVIDER_META: Record<string, { name: string; logo: string }> = {
+  minimax: { name: "MiniMax", logo: minimaxLogo },
+  deepseek: { name: "DeepSeek", logo: deepseekLogo },
+};
+
+type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
 
 // ── 类型（必须和 src-tauri/src/providers/mod.rs 对齐）──
 
@@ -121,7 +137,10 @@ function buildCardSkeleton(providerId: string): HTMLElement {
   card.dataset.provider = providerId;
   card.innerHTML = `
     <header class="card-head">
-      <span class="card-title"></span>
+      <span class="card-title">
+        <img class="card-logo" alt="" />
+        <span class="card-name"></span>
+      </span>
       <span class="card-dot"></span>
     </header>
     <div class="rows"></div>
@@ -131,7 +150,12 @@ function buildCardSkeleton(providerId: string): HTMLElement {
 
 function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
   const title = card.querySelector<HTMLElement>(".card-title")!;
-  title.textContent = providerLabel(p.provider);
+  const meta = PROVIDER_META[p.provider] ?? { name: p.provider, logo: "" };
+  const logo = title.querySelector<HTMLImageElement>(".card-logo")!;
+  const name = title.querySelector<HTMLElement>(".card-name")!;
+  if (logo.src !== meta.logo) logo.src = meta.logo;
+  logo.alt = meta.name;
+  name.textContent = meta.name;
 
   const dot = card.querySelector<HTMLElement>(".card-dot")!;
   dot.className = `card-dot ${dotClass(p)}`;
@@ -366,10 +390,6 @@ function pad2(n: number): string {
   return n.toString().padStart(2, "0");
 }
 
-function providerLabel(p: "minimax" | "deepseek"): string {
-  return p === "minimax" ? "🟪 MiniMax" : "🟦 DeepSeek";
-}
-
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 }
@@ -426,10 +446,54 @@ async function init() {
     }
   });
 
+  // 读取用户选的置顶/置底模式。
+  // PinBottom 模式下，监听 mouseenter/mouseleave 让后端临时切到 always-on-top。
+  let pinMode: FloatingPinMode = "pin_top";
+  try {
+    const cfg = await invoke<{ floating_pin_mode?: FloatingPinMode }>("get_config");
+    pinMode = cfg.floating_pin_mode ?? "pin_top";
+  } catch (e) {
+    console.error("读 pin mode 失败", e);
+  }
+  setupHoverRaise(pinMode);
+
+  // 设置面板改了模式时，重新挂/摘 hover 监听。
+  // （设置面板那边调 set_floating_pin_mode 会 emit 这个事件）
+  listen<FloatingPinMode>("musage://pin-mode-changed", (e) => {
+    // 清掉旧的监听再装新的（幂等）
+    document.removeEventListener("mouseenter", hoverEnterHandler);
+    document.removeEventListener("mouseleave", hoverLeaveHandler);
+    setupHoverRaise(e.payload);
+  });
+
   window.addEventListener("beforeunload", () => {
     if (unlisten) unlisten();
     if (countdownTimer !== null) clearInterval(countdownTimer);
   });
+}
+
+/// 在 PinBottom 模式下挂 mouseenter/mouseleave 监听，调用
+/// `set_floating_hover_raise` 让后端临时把 always-on-top 打开 / 关掉。
+/// 其它模式不挂监听，避免无意义的 IPC。
+///
+/// 处理器是 module-scope 命名函数，setupHoverRaise 多次调用时先摘再装，幂等。
+function hoverEnterHandler() {
+  invoke("set_floating_hover_raise", { hovering: true }).catch((e) =>
+    console.error(e),
+  );
+}
+function hoverLeaveHandler() {
+  invoke("set_floating_hover_raise", { hovering: false }).catch((e) =>
+    console.error(e),
+  );
+}
+
+function setupHoverRaise(mode: FloatingPinMode) {
+  if (mode !== "pin_bottom") return;
+  // 鼠标进浮窗（窗口整体）→ 临时置顶
+  document.addEventListener("mouseenter", hoverEnterHandler);
+  // 鼠标离开浮窗 → 取消置顶，让其它窗口能盖住它
+  document.addEventListener("mouseleave", hoverLeaveHandler);
 }
 
 init();

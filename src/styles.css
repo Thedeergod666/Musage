@@ -1,4 +1,16 @@
-/* 悬浮窗样式 —— 多 provider 卡片堆叠 */
+/* 悬浮窗 —— iOS 26 / macOS 26 widget 风格
+ *
+ * 设计哲学（v2 — 统一白字）：
+ *   - 整窗 #app 完全透明，每个 .card 是独立的玻璃胶囊瓦片
+ *   - 默认（idle）：瓦片半透 + **所有数据文字统一白色**（仿 macOS 26 天气 widget：
+ *     温度/城市/时段都是白的，只有太阳/雨图标保留颜色），"不抢注意力"但仍可读
+ *   - 鼠标进入窗口（#app:hover）：瓦片背景升至 ~82% alpha + 强 blur + 阴影 + 内描边，
+ *     同时数字从白色平滑变为 iOS 语义色（绿/橙/红/蓝），bar 上的渐变彩条 fade-in
+ *   - 状态点 .card-dot 与天气 widget 里的"太阳/雨"图标对应，**全程保留色彩**
+ *   - 所有色彩切换走 CSS variable swap，单一 #app:hover 触发整组变化，~280ms iOS spring 过渡
+ *
+ * 注：所有 class 名与 main.ts 保持一致 —— 这是纯 CSS 改造，零 DOM/JS 改动。
+ */
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -7,125 +19,233 @@ html, body {
   height: 100%;
   background: transparent;
   overflow: hidden;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text",
+               "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
   user-select: none;
   -webkit-user-select: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
+/* ── 整窗容器：透明，承载多个独立瓦片 ── */
 #app {
   width: 100%;
   height: 100%;
-  background: rgba(20, 22, 28, 0.92);
-  backdrop-filter: blur(20px) saturate(180%);
-  -webkit-backdrop-filter: blur(20px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
-  color: #e6e6e6;
-  padding: 12px 14px 8px;
+  padding: 5px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 6px;
   cursor: grab;
+
+  /* 玻璃材质 */
+  --tile-bg: rgba(22, 24, 30, 0.30);
+  --tile-blur: 10px;
+  --tile-saturate: 140%;
+  --tile-border: rgba(255, 255, 255, 0);
+  --tile-shadow: 0 0 0 rgba(0, 0, 0, 0);
+
+  /* 文字层级（idle：偏白，靠 alpha 拉开主次） */
+  --text-bright: rgba(255, 255, 255, 0.96);
+  --text-mute:   rgba(255, 255, 255, 0.68);
+  --text-faint:  rgba(255, 255, 255, 0.44);
+  --text-shadow: 0 1px 2px rgba(0, 0, 0, 0.55);
+  --bar-track:   rgba(255, 255, 255, 0.14);
+
+  /* 语义色（idle：全部统一为白，对齐 macOS 26 widget） */
+  --c-data-ok:    rgba(255, 255, 255, 0.96);
+  --c-data-warn:  rgba(255, 255, 255, 0.96);
+  --c-data-alert: rgba(255, 255, 255, 0.96);
+  --c-data-info:  rgba(255, 255, 255, 0.96);
+
+  /* 状态徽章背景（idle：中性半透白） */
+  --c-bg-ok:    rgba(255, 255, 255, 0.10);
+  --c-bg-alert: rgba(255, 255, 255, 0.10);
 }
 #app:active { cursor: grabbing; }
 
-/* ── Provider 卡片 ── */
+/* ── 鼠标进入窗口 → 唤醒玻璃材质 + iOS 语义色 ── */
+#app:hover {
+  --tile-bg: rgba(28, 30, 38, 0.82);
+  --tile-blur: 28px;
+  --tile-saturate: 180%;
+  --tile-border: rgba(255, 255, 255, 0.10);
+  --tile-shadow: 0 10px 30px rgba(0, 0, 0, 0.45),
+                 0 0 0 0.5px rgba(255, 255, 255, 0.04) inset;
+  --text-bright: #f4f5f7;
+  --text-mute:   rgba(255, 255, 255, 0.72);
+  --text-faint:  rgba(255, 255, 255, 0.52);
+  --text-shadow: 0 1px 2px rgba(0, 0, 0, 0);  /* alpha→0 以平滑 transition */
+  --bar-track:   rgba(255, 255, 255, 0.12);
+
+  /* 语义色：iOS 系统色 */
+  --c-data-ok:    #30d158;
+  --c-data-warn:  #ff9f0a;
+  --c-data-alert: #ff453a;
+  --c-data-info:  #0a84ff;
+  --c-bg-ok:    rgba(48, 209, 88, 0.16);
+  --c-bg-alert: rgba(255, 69, 58, 0.16);
+}
+
+/* ── Provider 卡片：独立 iOS 26 widget tile ── */
 
 .card {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-}
-.card:last-of-type {
-  border-bottom: none;
-  padding-bottom: 0;
+  gap: 8px;
+  padding: 11px 13px 12px;
+  background: var(--tile-bg);
+  backdrop-filter: blur(var(--tile-blur)) saturate(var(--tile-saturate));
+  -webkit-backdrop-filter: blur(var(--tile-blur)) saturate(var(--tile-saturate));
+  border: 1px solid var(--tile-border);
+  border-radius: 18px;
+  box-shadow: var(--tile-shadow);
+  transition:
+    background-color 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    backdrop-filter 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    -webkit-backdrop-filter 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .card-head {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.5px;
-  color: #888;
-  text-transform: uppercase;
+  color: var(--text-mute);
+  letter-spacing: -0.1px;
+  text-shadow: var(--text-shadow);
+  transition: color 0.28s, text-shadow 0.28s;
 }
-
 .card-title {
-  font-size: 11px;
+  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
+/* provider 官网 logo（MiniMax 红橙渐变 / DeepSeek 蓝鲸鱼） */
+.card-logo {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border-radius: 4px;
+  object-fit: contain;
+}
+
+.card-name {
+  letter-spacing: 0.3px;
+}
+
+/* 状态点：对应天气 widget 里的"太阳/雨"图标，全程保留色彩 */
 .card-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   display: inline-block;
+  flex-shrink: 0;
 }
-.card-dot.ok    { background: #4caf50; box-shadow: 0 0 6px rgba(76, 175, 80, 0.6); }
-.card-dot.alert { background: #f44336; box-shadow: 0 0 6px rgba(244, 67, 54, 0.6); }
+.card-dot.ok    { background: #30d158; box-shadow: 0 0 8px rgba(48, 209, 88, 0.7); }
+.card-dot.alert { background: #ff453a; box-shadow: 0 0 8px rgba(255, 69, 58, 0.7); }
 
-/* ── 行 ── */
+/* ── 行容器 ── */
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
 
 .row {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 5px;
 }
 
 .row-label {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  font-size: 12px;
-  letter-spacing: 0.5px;
+  letter-spacing: -0.1px;
+  text-shadow: var(--text-shadow);
+  transition: text-shadow 0.28s;
 }
 .row-label > span:first-child {
-  color: #aaa;
+  color: var(--text-mute);
   font-weight: 500;
+  font-size: 11px;
+  transition: color 0.28s;
 }
 
+/* ── 主数据：大字号 tabular nums，idle 白 / hover 彩 ── */
+
 .pct {
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 22px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
   font-feature-settings: "tnum";
+  letter-spacing: -0.6px;
+  line-height: 1;
+  color: var(--text-bright);                   /* 未带 .ok/.warn/.alert/.balance 时的回退 */
+  text-shadow: var(--text-shadow);
+  transition: color 0.28s, text-shadow 0.28s;
 }
-.pct.ok    { color: #4caf50; }
-.pct.warn  { color: #ff9800; }
-.pct.alert { color: #f44336; }
-.pct.balance { color: #4a90e2; }
+.pct.ok      { color: var(--c-data-ok); }
+.pct.warn    { color: var(--c-data-warn); }
+.pct.alert   { color: var(--c-data-alert); }
+.pct.balance { color: var(--c-data-info); }
+
+/* ── Bar：双层 —— 底层白色 idle 可见，::after 渐变彩条 hover fade-in ── */
 
 .bar {
   height: 4px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--bar-track);
   border-radius: 2px;
   overflow: hidden;
+  transition: background-color 0.28s;
 }
 .bar-fill {
+  position: relative;
   height: 100%;
   border-radius: 2px;
-  transition: width 0.4s ease, background-color 0.3s ease;
+  background-color: rgba(255, 255, 255, 0.62); /* idle: 白色半透 */
+  transition: width 0.4s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.bar-fill.ok    { background: linear-gradient(90deg, #4caf50, #66bb6a); }
-.bar-fill.warn  { background: linear-gradient(90deg, #ff9800, #ffa726); }
-.bar-fill.alert { background: linear-gradient(90deg, #f44336, #ef5350); }
+.bar-fill::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 2px;
+  background: var(--bar-grad, transparent);
+  opacity: 0;
+  transition: opacity 0.28s;
+}
+#app:hover .bar-fill::after { opacity: 1; }
+
+.bar-fill.ok    { --bar-grad: linear-gradient(90deg, #30d158, #5cd673); }
+.bar-fill.warn  { --bar-grad: linear-gradient(90deg, #ff9f0a, #ffb43a); }
+.bar-fill.alert { --bar-grad: linear-gradient(90deg, #ff453a, #ff6c63); }
 
 .row-foot {
   font-size: 10.5px;
-  color: #888;
+  color: var(--text-faint);
   font-variant-numeric: tabular-nums;
+  text-shadow: var(--text-shadow);
+  transition: color 0.28s, text-shadow 0.28s;
 }
 
-/* DeepSeek 余额行（无 bar） */
+/* ── 余额行（DeepSeek） ── */
+
 .balance-row .pct {
-  font-size: 16px;
+  font-size: 17px;
   letter-spacing: -0.3px;
 }
 
-/* DeepSeek 状态行 */
+/* ── 状态行（DeepSeek） ── */
+
 .status-row {
   flex-direction: row;
   align-items: center;
@@ -133,83 +253,125 @@ html, body {
 }
 .status {
   font-size: 11px;
-  font-weight: 500;
-  padding: 1px 6px;
-  border-radius: 3px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 6px;
+  text-shadow: var(--text-shadow);
+  transition: color 0.28s, background-color 0.28s, text-shadow 0.28s;
 }
-.status.ok    { color: #4caf50; background: rgba(76, 175, 80, 0.12); }
-.status.alert { color: #f44336; background: rgba(244, 67, 54, 0.12); }
+.status.ok    { color: var(--c-data-ok);    background: var(--c-bg-ok); }
+.status.alert { color: var(--c-data-alert); background: var(--c-bg-alert); }
 
-/* ── 错误卡片 ── */
+/* ── 错误卡片：保留 tile 形态但居中 ── */
 
 .err-card {
   text-align: center;
-  padding: 6px 4px;
+  padding: 10px 12px;
 }
 .err-card .err-msg {
   font-size: 11px;
-  color: #ccc;
+  color: var(--text-mute);
   word-break: break-all;
   margin: 4px 0;
+  text-shadow: var(--text-shadow);
 }
 .err-label {
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.3px;
-  padding: 2px 6px;
-  border-radius: 3px;
-  text-transform: uppercase;
+  letter-spacing: 0.2px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  color: var(--text-bright);
+  background: rgba(255, 255, 255, 0.10);
+  transition: color 0.28s, background-color 0.28s;
 }
-/* ErrorKind → 颜色映射（snake_case 类名） */
-.err-unconfigured_key .err-label { color: #ff9800; background: rgba(255, 152, 0, 0.12); }
-.err-auth_failed        .err-label { color: #f44336; background: rgba(244, 67, 54, 0.12); }
-.err-rate_limited       .err-label { color: #ff9800; background: rgba(255, 152, 0, 0.12); }
-.err-network            .err-label { color: #ff9800; background: rgba(255, 152, 0, 0.12); }
-.err-parse              .err-label { color: #9b59ff; background: rgba(155, 89, 255, 0.12); }
-.err-schema_unknown     .err-label { color: #9b59ff; background: rgba(155, 89, 255, 0.12); }
-.err-server_error       .err-label { color: #f44336; background: rgba(244, 67, 54, 0.12); }
-.err-other              .err-label { color: #888;    background: rgba(255, 255, 255, 0.06); }
+/* hover 才上语义色 —— idle 全部中性白徽章 */
+#app:hover .err-unconfigured_key .err-label { color: #ff9f0a; background: rgba(255, 159, 10, 0.18); }
+#app:hover .err-auth_failed      .err-label { color: #ff453a; background: rgba(255, 69, 58, 0.18); }
+#app:hover .err-rate_limited     .err-label { color: #ff9f0a; background: rgba(255, 159, 10, 0.18); }
+#app:hover .err-network          .err-label { color: #ff9f0a; background: rgba(255, 159, 10, 0.18); }
+#app:hover .err-parse            .err-label { color: #bf5af2; background: rgba(191, 90, 242, 0.18); }
+#app:hover .err-schema_unknown   .err-label { color: #bf5af2; background: rgba(191, 90, 242, 0.18); }
+#app:hover .err-server_error     .err-label { color: #ff453a; background: rgba(255, 69, 58, 0.18); }
 
 .err-card .hint {
   font-size: 10px;
-  color: #888;
+  color: var(--text-faint);
   margin-top: 4px;
   font-style: italic;
+  text-shadow: var(--text-shadow);
 }
 
+/* ── 加载 / 全屏错误占位 ── */
+
 .err {
-  height: 100%;
+  flex: 1;
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: center;
   text-align: center;
-  padding: 8px;
+  padding: 14px;
   gap: 6px;
+  background: var(--tile-bg);
+  backdrop-filter: blur(var(--tile-blur)) saturate(var(--tile-saturate));
+  -webkit-backdrop-filter: blur(var(--tile-blur)) saturate(var(--tile-saturate));
+  border: 1px solid var(--tile-border);
+  border-radius: 18px;
+  box-shadow: var(--tile-shadow);
+  transition:
+    background-color 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    backdrop-filter 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    -webkit-backdrop-filter 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.err-title { font-size: 13px; color: #f44336; font-weight: 600; }
-.err-msg { font-size: 11px; color: #ccc; word-break: break-all; }
+.err-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--c-data-alert);   /* idle 白 / hover 红，复用语义色变量 */
+  text-shadow: var(--text-shadow);
+  transition: color 0.28s, text-shadow 0.28s;
+}
+.err-msg {
+  font-size: 11px;
+  color: var(--text-mute);
+  word-break: break-all;
+  text-shadow: var(--text-shadow);
+}
+
 .err-btn {
-  margin-top: 4px;
-  padding: 4px 10px;
-  background: #4a90e2;
+  margin-top: 6px;
+  padding: 6px 14px;
+  background: #0a84ff;
   color: #fff;
   border: none;
-  border-radius: 4px;
+  border-radius: 9px;
   font-size: 11px;
+  font-weight: 600;
   cursor: pointer;
   font-family: inherit;
+  letter-spacing: 0.1px;
+  transition: background 0.18s, transform 0.12s;
 }
-.err-btn:hover { background: #5aa0f2; }
-.hint { font-size: 10px; color: #666; margin-top: 2px; }
+.err-btn:hover  { background: #2294ff; }
+.err-btn:active { transform: scale(0.96); }
 
-/* ── 底部 ── */
+.hint {
+  font-size: 10px;
+  color: var(--text-faint);
+  margin-top: 2px;
+  text-shadow: var(--text-shadow);
+}
+
+/* ── 底部说明（不进瓦片，独立漂浮在最下方） ── */
 
 .foot {
   margin-top: auto;
   font-size: 10px;
-  color: #666;
+  color: var(--text-faint);
   text-align: center;
-  border-top: 1px solid rgba(255, 255, 255, 0.05);
-  padding-top: 6px;
+  padding: 4px 6px 2px;
+  text-shadow: var(--text-shadow);
+  transition: color 0.28s, text-shadow 0.28s;
 }

@@ -121,6 +121,11 @@ function render(snap: QuotaSnapshot) {
     return;
   }
 
+  // 真数据到达 → 清掉首屏的「加载中…」占位，避免它一直挂在 DOM 里
+  // 跟真卡片叠在一起（之前 [H8] 状态下的 bug：4 张 provider 卡 + 1 张残留 err）
+  const errPlaceholder = app.querySelector<HTMLElement>(".err");
+  if (errPlaceholder) errPlaceholder.remove();
+
   // 1. 增量更新每张 provider 卡片
   const existingCards = new Map<string, HTMLElement>();
   app.querySelectorAll<HTMLElement>(".card[data-provider]").forEach((el) => {

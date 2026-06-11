@@ -259,8 +259,8 @@ async function loadConfig() {
     }
   }
 
-  // Provider 排序（拖拽/上下按钮）
-  renderProviderOrder(cfg.provider_order ?? []);
+  // Provider 排序（per-panel ↑↓ 按钮）
+  renderProviderOrderPanels(cfg.provider_order ?? []);
 
   // schema overrides (高级)
   const ov = cfg.schema_overrides ?? {};
@@ -369,7 +369,7 @@ async function saveConfig() {
     auto_hide_in_fullscreen: ($("#auto-hide-in-fullscreen") as HTMLInputElement).checked,
     tavily_concise_mode:
       (document.getElementById("tavily-concise-mode") as HTMLInputElement | null)?.checked ?? true,
-    provider_order: readProviderOrder(),
+    provider_order: currentProviderOrder,
     schema_overrides: {
       minimax: {
         five_hour: { count_candidates: fiveHourCandidates },
@@ -461,100 +461,65 @@ function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
 /// Provider 排序（拖拽/上下按钮）
 /// DOM 结构：每个 provider 一个 row（[id="provider-order-row-{id}"]），
 /// 包含 ↑ ↓ 按钮，移位后重新调换 DOM 顺序。保存时按当前 DOM 顺序生成
-/// provider_order 数组。
-const PROVIDER_DISPLAY_NAME: Record<ProviderId, string> = {
-  minimax: "MiniMax",
-  deepseek: "DeepSeek",
-  xiaomimimo: "Xiaomi MiMo",
-  tavily: "Tavily",
-};
+/// Provider 顺序（per-panel ↑↓ 按钮）
+/// 之前的实现是单独的「浮窗顺序」section + ↑↓ 按钮，调完要滚到那里再保存。
+/// 改成在每个 provider panel 内部放「位置 X/4」+ ↑↓ 按钮，逻辑分散但
+/// 视觉跟 provider 关联更紧密，调完即时生效。
+const BUILTIN_ORDER: ProviderId[] = ["minimax", "deepseek", "xiaomimimo", "tavily"];
+let currentProviderOrder: string[] = [];
 
-function renderProviderOrder(order: string[]) {
-  const list = document.getElementById("provider-order-list");
-  if (!list) return;
+function canonicalizeOrder(order: string[]): ProviderId[] {
   // 用 config.order 做主序，没列出的 provider 沉到末尾（用 builtin 顺序）
-  const builtin: ProviderId[] = ["minimax", "deepseek", "xiaomimimo", "tavily"];
   const ordered: ProviderId[] = [];
   for (const id of order) {
-    if ((builtin as string[]).includes(id) && !(ordered as string[]).includes(id)) {
+    if ((BUILTIN_ORDER as string[]).includes(id) && !(ordered as string[]).includes(id)) {
       ordered.push(id as ProviderId);
     }
   }
-  for (const id of builtin) {
+  for (const id of BUILTIN_ORDER) {
     if (!(ordered as string[]).includes(id)) ordered.push(id);
   }
-  list.innerHTML = ordered
-    .map(
-      (id, i) => `
-      <div class="order-row" data-id="${id}">
-        <span class="order-name">${PROVIDER_DISPLAY_NAME[id]}</span>
-        <span class="order-btns">
-          <button type="button" data-move="up"   ${i === 0 ? "disabled" : ""} aria-label="上移">↑</button>
-          <button type="button" data-move="down" ${i === ordered.length - 1 ? "disabled" : ""} aria-label="下移">↓</button>
-        </span>
-      </div>`,
-    )
-    .join("");
-  // 绑按钮
-  list.querySelectorAll<HTMLButtonElement>("button[data-move]").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const row = btn.closest<HTMLElement>(".order-row");
-      if (!row) return;
-      const dir = btn.dataset.move;
-      const sibling = dir === "up" ? row.previousElementSibling : row.nextElementSibling;
-      if (sibling) {
-        if (dir === "up") list.insertBefore(row, sibling);
-        else list.insertBefore(sibling, row);
-        refreshOrderButtons();
-        // 即时落盘 + emit config-changed → 浮窗 re-fetch → 顺序立即生效
-        // 不必再让用户点"保存顺序"
-        void saveProviderOrderOnly();
-      }
-    });
-  });
-  refreshOrderButtons();
+  return ordered;
 }
 
-function refreshOrderButtons() {
-  const list = document.getElementById("provider-order-list");
-  if (!list) return;
-  const rows = list.querySelectorAll<HTMLElement>(".order-row");
-  rows.forEach((row, i) => {
-    const up = row.querySelector<HTMLButtonElement>('button[data-move="up"]');
-    const down = row.querySelector<HTMLButtonElement>('button[data-move="down"]');
-    if (up) up.disabled = i === 0;
-    if (down) down.disabled = i === rows.length - 1;
-  });
-}
-
-function readProviderOrder(): string[] {
-  const list = document.getElementById("provider-order-list");
-  if (!list) return [];
-  const ids: string[] = [];
-  list.querySelectorAll<HTMLElement>(".order-row").forEach((row) => {
-    const id = row.dataset.id;
-    if (id) ids.push(id);
-  });
-  return ids;
-}
-
-/// 只保存 provider_order（不触碰其它字段），让用户调完顺序后不必滚到底部
-/// 点全局"保存"也能直接落盘 —— 浮窗顺序是用户最高频调的。
-async function saveProviderOrderOnly() {
-  try {
-    const order = readProviderOrder();
-    const existing = await invoke<AppConfig>("get_config");
-    await invoke("save_config", {
-      cfg: { ...existing, provider_order: order },
-    });
-    flash(`✓ 顺序已保存（${order.join(" → ")}）`);
-  } catch (e) {
-    flash(`✗ 保存顺序失败: ${e}`, true);
+function renderProviderOrderPanels(order: string[]) {
+  currentProviderOrder = canonicalizeOrder(order);
+  // 每个 panel 都有 #order-pos-{id} 显示当前位置 + ↑↓ 按钮
+  for (const id of BUILTIN_ORDER) {
+    const pos = currentProviderOrder.indexOf(id);
+    const posEl = document.getElementById(`order-pos-${id}`);
+    if (posEl) posEl.textContent = `位置 ${pos + 1}/${currentProviderOrder.length}`;
+    const upBtn = document.querySelector<HTMLButtonElement>(`.order-up[data-id="${id}"]`);
+    const downBtn = document.querySelector<HTMLButtonElement>(`.order-down[data-id="${id}"]`);
+    if (upBtn) upBtn.disabled = pos === 0;
+    if (downBtn) downBtn.disabled = pos === currentProviderOrder.length - 1;
   }
 }
 
-function resetProviderOrder() {
-  renderProviderOrder([]);  // 空 = builtin 注册表顺序
+async function moveProviderInOrder(id: string, dir: "up" | "down") {
+  const idx = currentProviderOrder.indexOf(id);
+  if (idx < 0) return;
+  const newIdx = dir === "up" ? idx - 1 : idx + 1;
+  if (newIdx < 0 || newIdx >= currentProviderOrder.length) return;
+  // 内存里调换
+  [currentProviderOrder[idx], currentProviderOrder[newIdx]] = [
+    currentProviderOrder[newIdx],
+    currentProviderOrder[idx],
+  ];
+  try {
+    // 后端走 set_provider_order（不触碰其它字段，落盘 + emit config-changed）
+    await invoke("set_provider_order", { order: currentProviderOrder });
+    // 重新刷各 panel 的「位置 X/4」和 ↑↓ 边界
+    renderProviderOrderPanels(currentProviderOrder);
+    flash(`✓ ${id} 已移到位置 ${newIdx + 1}`);
+  } catch (e) {
+    // 回滚
+    [currentProviderOrder[idx], currentProviderOrder[newIdx]] = [
+      currentProviderOrder[newIdx],
+      currentProviderOrder[idx],
+    ];
+    flash(`✗ 调整顺序失败: ${e}`, true);
+  }
 }
 
 let flashTimer: number | null = null;
@@ -972,8 +937,20 @@ document.getElementById("logs-refresh")?.addEventListener("click", () => void lo
 document.getElementById("logs-clear")?.addEventListener("click", () => void clearLogs());
 document.getElementById("logs-copy")?.addEventListener("click", () => void copyLogs());
 document.getElementById("logs-filter")?.addEventListener("change", () => void loadLogs());
-document.getElementById("save-provider-order")?.addEventListener("click", () => void saveProviderOrderOnly());
-document.getElementById("reset-provider-order")?.addEventListener("click", () => resetProviderOrder());
+// Provider 顺序按钮：每个 panel 里的 ↑ ↓ 都绑同一个 moveProviderInOrder，
+// data-id 决定是动哪个 provider。
+document.querySelectorAll<HTMLButtonElement>(".order-up").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const id = btn.dataset.id;
+    if (id) void moveProviderInOrder(id, "up");
+  });
+});
+document.querySelectorAll<HTMLButtonElement>(".order-down").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const id = btn.dataset.id;
+    if (id) void moveProviderInOrder(id, "down");
+  });
+});
 
 (async () => {
   try {

@@ -172,7 +172,12 @@ function rowsForRender(p: ProviderSnapshot): QuotaRow[] {
     // 简洁模式：只保留主指标行（"209/1000 credits" 那条），隐藏 5 个
     // endpoint 细分行（search/extract/crawl/map/research）。
     // 进度条保留在 rowLabel 下方，跟 MiniMax 5h/周 一致。
-    return p.rows.filter((r) => r.used != null && r.total != null);
+    //
+    // 取首行即可 —— tavily.rs 的 parse() 永远把主指标行（label="Free tier"）
+    // push 在最前，5 个 endpoint 细分在后。改成严格 "used+total 都有才保留"
+    // 会把 "limit=null"（无限制套餐或某些 paid plan）的账号主行也过滤掉
+    // 导致浮窗空卡片。
+    return p.rows.length > 0 ? [p.rows[0]] : [];
   }
   return p.rows;
 }
@@ -516,7 +521,14 @@ function barWidth(util: number | null | undefined): number {
 function formatResetWithCountdown(ms: number, prefix: string): string {
   const remainMs = ms - Date.now();
   const dt = new Date(ms);
-  const time = `${pad2(dt.getHours())}:${pad2(dt.getMinutes())}`;
+  // 重置时间刚好是本地午夜 00:00 → 显示日期比 "00:00" 直观得多
+  //（典型场景：MiniMax 周限额每天本地 00:00 重置，看 80h 后还是 "00:00"
+  // 数不出日子）。日期也走本地，跟 getHours()/getMinutes() 一致 —— 用户
+  // 看到的是自己时区里的日期。
+  const isMidnight = dt.getHours() === 0 && dt.getMinutes() === 0;
+  const time = isMidnight
+    ? `${dt.getMonth() + 1}-${dt.getDate()}`
+    : `${pad2(dt.getHours())}:${pad2(dt.getMinutes())}`;
   if (remainMs <= 0) {
     return `${prefix} ${time}（已重置）`;
   }

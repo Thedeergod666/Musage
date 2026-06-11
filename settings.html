@@ -239,21 +239,6 @@
       </div>
     </div>
 
-    <!-- Provider 排序（拖拽/上下按钮） -->
-    <div class="field">
-      <label>浮窗顺序</label>
-      <div class="order-section">
-        <div id="provider-order-list" class="order-list"></div>
-        <div class="help">
-          上下按钮调整 provider 在浮窗里从上到下的排列顺序。改完点下方「保存」立即生效（无需滚到底部）。
-        </div>
-        <div class="row" style="padding: 8px 12px 4px;">
-          <button id="save-provider-order" class="primary" type="button">保存顺序</button>
-          <button id="reset-provider-order" type="button" title="恢复默认（builtin 注册表顺序）">恢复默认</button>
-        </div>
-      </div>
-    </div>
-
     <!-- MiniMax Panel -->
     <div class="provider-panel active" data-p="minimax">
       <div class="provider-section">
@@ -305,6 +290,15 @@
           留空 = 用顶部"轮询间隔"。至少 10 秒（避免触发 provider rate limit）。
         </div>
       </div>
+
+      <div class="field">
+        <label>浮窗排序</label>
+        <div class="input-row" style="gap: 6px;">
+          <span style="align-self: center; color: #888; font-size: 12px;" id="order-pos-minimax">位置 —/—</span>
+          <button class="order-up" data-id="minimax" type="button" style="flex: 0 0 auto; width: 28px; height: 28px; padding: 0;">↑</button>
+          <button class="order-down" data-id="minimax" type="button" style="flex: 0 0 auto; width: 28px; height: 28px; padding: 0;">↓</button>
+        </div>
+      </div>
     </div>
 
     <!-- DeepSeek Panel -->
@@ -344,6 +338,15 @@
           <input id="interval-deepseek" type="number" min="10" step="5"
                  placeholder="默认 60 秒（顶部『轮询间隔』）" />
           <span style="align-self: center; color: #888; font-size: 12px;">秒</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>浮窗排序</label>
+        <div class="input-row" style="gap: 6px;">
+          <span style="align-self: center; color: #888; font-size: 12px;" id="order-pos-deepseek">位置 —/—</span>
+          <button class="order-up" data-id="deepseek" type="button" style="flex: 0 0 auto; width: 28px; height: 28px; padding: 0;">↑</button>
+          <button class="order-down" data-id="deepseek" type="button" style="flex: 0 0 auto; width: 28px; height: 28px; padding: 0;">↓</button>
         </div>
       </div>
     </div>
@@ -421,6 +424,15 @@
           <span style="align-self: center; color: #888; font-size: 12px;">秒</span>
         </div>
       </div>
+
+      <div class="field">
+        <label>浮窗排序</label>
+        <div class="input-row" style="gap: 6px;">
+          <span style="align-self: center; color: #888; font-size: 12px;" id="order-pos-xiaomimimo">位置 —/—</span>
+          <button class="order-up" data-id="xiaomimimo" type="button" style="flex: 0 0 auto; width: 28px; height: 28px; padding: 0;">↑</button>
+          <button class="order-down" data-id="xiaomimimo" type="button" style="flex: 0 0 auto; width: 28px; height: 28px; padding: 0;">↓</button>
+        </div>
+      </div>
     </div>
 
     <!-- Tavily Panel (Phase 1 新增:第一个非 AI provider) -->
@@ -461,6 +473,15 @@
           <input id="interval-tavily" type="number" min="10" step="5"
                  placeholder="默认 60 秒（顶部『轮询间隔』）" />
           <span style="align-self: center; color: #888; font-size: 12px;">秒</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>浮窗排序</label>
+        <div class="input-row" style="gap: 6px;">
+          <span style="align-self: center; color: #888; font-size: 12px;" id="order-pos-tavily">位置 —/—</span>
+          <button class="order-up" data-id="tavily" type="button" style="flex: 0 0 auto; width: 28px; height: 28px; padding: 0;">↑</button>
+          <button class="order-down" data-id="tavily" type="button" style="flex: 0 0 auto; width: 28px; height: 28px; padding: 0;">↓</button>
         </div>
       </div>
 

@@ -796,6 +796,11 @@ const LOG_DEDUP_WINDOW_MS: i64 = 60_000;
 /// IO 失败 / mutex 中毒都不阻塞调用方 —— 这是热路径的旁路。
 fn log_provider_error(app: &AppHandle, provider_id: &str, kind: ErrorKind, message: &str) {
     let now = chrono::Utc::now().timestamp_millis();
+    // H12 宽限期：用户刚点过「清空」日志的 60s 内，所有新错误一律不写
+    // —— 让用户真切看到「已清空」状态，不被立刻涌出的新错误淹没。
+    if is_in_clear_grace(now) {
+        return;
+    }
     let key = (provider_id.to_string(), kind.short_label());
 
     // 去重判断：拿锁尽量短
@@ -833,12 +838,35 @@ pub fn get_recent_logs(
     state.log.recent(n)
 }
 
-/// 设置面板「清空」按钮：清内存 + 删 jsonl 文件。同时清掉去重缓存，
-/// 避免「清空后立刻又来一个同 kind 错误反而被吞」的反直觉行为。
+/// 设置面板「清空」按钮：清内存 + 删 jsonl 文件。**保留** dedup 缓存 + 加
+/// 60s 宽限期：
+/// - dedup 保留 → 用户清完 log 1s 后 poller 跑出同 (provider, kind) 错误
+///   会被 60s 去重窗口吞掉，不刷出新日志
+/// - 宽限期 60s → 期间所有新错误一律不写（即使不同 kind）
+/// 两个机制叠加让用户真切看到「已清空」状态（1 分钟内），不被立刻涌出的
+/// 新错误淹没。
+const LOG_CLEAR_GRACE_MS: i64 = 60_000;
+static LAST_CLEAR_TS: std::sync::Mutex<Option<i64>> = std::sync::Mutex::new(None);
+
+pub(crate) fn is_in_clear_grace(now_ms: i64) -> bool {
+    let g = match LAST_CLEAR_TS.lock() {
+        Ok(g) => g,
+        Err(_) => return false,
+    };
+    match *g {
+        Some(t) if now_ms - t < LOG_CLEAR_GRACE_MS => true,
+        _ => false,
+    }
+}
+
 #[tauri::command]
 pub fn clear_logs(state: State<'_, AppState>) {
     state.log.clear();
     if let Ok(mut g) = dedup_cache().lock() {
         g.clear();
+    }
+    // 记下清空时间戳，宽限期内 log_provider_error 直接 return
+    if let Ok(mut g) = LAST_CLEAR_TS.lock() {
+        *g = Some(chrono::Utc::now().timestamp_millis());
     }
 }

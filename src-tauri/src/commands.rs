@@ -398,10 +398,14 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
             Ok(Ok(s)) => snap.providers.push(s),
             Ok(Err(e)) => {
                 let provider = provider_from_id(&id);
-                snap.providers.push(ProviderSnapshot::empty_error(provider, classify_error_message(&e), e));
+                let kind = classify_error_message(&e);
+                log_provider_error(app, &id, kind, &e);
+                snap.providers.push(ProviderSnapshot::empty_error(provider, kind, e));
             }
             Err(join_err) => {
                 let provider = provider_from_id(&id);
+                let msg = format!("任务调度失败: {join_err}");
+                log_provider_error(app, &id, ErrorKind::Other, &msg);
                 snap.providers.push(ProviderSnapshot::empty_error(
                     provider,
                     ErrorKind::Other,
@@ -469,5 +473,77 @@ fn classify_error_message(msg: &str) -> ErrorKind {
         ErrorKind::ServerError
     } else {
         ErrorKind::Other
+    }
+}
+
+// ── 日志：错误事件下沉到 LogStore ────────────────────────────────────
+//
+// 设计要点（commit 3d5ee5d）：
+// - refresh_inner 每个失败的 provider 都打一条 LogEntry::error
+// - 60s 去重窗口（同 provider + 同 kind）避免长断网刷爆日志
+// - 浮窗 UI 此时只翻红点，rowsBox 仍保留最后一次成功的数据
+// - 设置面板通过 `get_recent_logs` 拉取查看，`clear_logs` 清空
+
+/// (provider_id, kind_short_label) → 上次写日志的毫秒时间戳。
+/// 在 60s 窗口内的同 key 错误被吞掉，不重复写。
+fn dedup_cache() -> &'static std::sync::Mutex<std::collections::HashMap<(String, &'static str), i64>> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<(String, &'static str), i64>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+const LOG_DEDUP_WINDOW_MS: i64 = 60_000;
+
+/// 把一次 provider 拉取失败写进 [`crate::logstore::LogStore`]。
+///
+/// 同 (provider_id, kind) 在 60s 窗口内只保留第一条，避免长断网刷爆 ring buffer。
+/// IO 失败 / mutex 中毒都不阻塞调用方 —— 这是热路径的旁路。
+fn log_provider_error(app: &AppHandle, provider_id: &str, kind: ErrorKind, message: &str) {
+    let now = chrono::Utc::now().timestamp_millis();
+    let key = (provider_id.to_string(), kind.short_label());
+
+    // 去重判断：拿锁尽量短
+    {
+        let mut g = match dedup_cache().lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),  // 中毒也继续，日志比强一致重要
+        };
+        if let Some(&last_ts) = g.get(&key) {
+            if now - last_ts < LOG_DEDUP_WINDOW_MS {
+                return;
+            }
+        }
+        g.insert(key, now);
+    }
+
+    let state = app.state::<AppState>();
+    state.log.push(crate::logstore::LogEntry::error(
+        provider_id,
+        kind.short_label(),
+        message,
+    ));
+}
+
+/// 设置面板「📋 日志」拉取最近 N 条（最新在末尾）。
+///
+/// `limit` 上限被裁到 [`crate::logstore::max_entries`]，防止前端乱传 100000。
+#[tauri::command]
+pub fn get_recent_logs(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+) -> Vec<crate::logstore::LogEntry> {
+    let cap = crate::logstore::max_entries();
+    let n = limit.map(|l| l.min(cap));
+    state.log.recent(n)
+}
+
+/// 设置面板「清空」按钮：清内存 + 删 jsonl 文件。同时清掉去重缓存，
+/// 避免「清空后立刻又来一个同 kind 错误反而被吞」的反直觉行为。
+#[tauri::command]
+pub fn clear_logs(state: State<'_, AppState>) {
+    state.log.clear();
+    if let Ok(mut g) = dedup_cache().lock() {
+        g.clear();
     }
 }

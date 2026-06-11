@@ -25,6 +25,7 @@ use tauri::Manager;
 use tokio::sync::RwLock;
 
 use crate::config::AppConfig;
+use crate::logstore::LogStore;
 use crate::providers::{builtin_sources, QuotaSnapshot};
 use crate::commands::apply_pin_mode_to_window;
 

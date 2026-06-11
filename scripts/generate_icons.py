@@ -18,15 +18,16 @@ BG = (255, 255, 255, 255)     # 纯白
 RING = (0, 0, 0, 200)          # 黑环（半透明一点不那么硬）
 FG = (0, 0, 0, 255)            # 黑色 M
 
-# 画布外圈 padding：macOS HIG / StackOverflow 共识留 ~10% 安全区，
-# 否则 app icon 在 Dock 渲染时比其它大一圈。1024 - 10%*2 = ~820px 白底。
-ICON_PADDING_RATIO = 0.12
-# 字号占边长比例。0.50 加上 10% padding 后 M:BG ≈ 50:80 = 62%，
-# 跟 VSCode/WPS 视觉密度对齐
+# 画布外圈 padding：macOS HIG 模板留 13/16 = 0.8125 art（≈ 9.4% padding），
+# Reddit r/PWA 共识也是 ~10%。我们取 7% —— 比 12% 大一截（白底 ≈ 86%
+# 画布），更接近 VSCode/WPS 在 dock 上的视觉密度；又比 5% 安全区大一圈，
+# 避免 macOS 26 Tahoe 的 "squircle jail" 把它塞进更小的灰盒。
+ICON_PADDING_RATIO = 0.07
+# 字号占边长比例。0.50 加上 7% padding 后 M = 50% 画布 = 58% 白底。
 M_SCALE = 0.50
-# Ring 装饰：相对于**白底**的边距（不再是相对整个画布）。
-# 0.06 = 白底边距 6%，让 ring 贴在白底内侧、不顶到圆角边
-RING_MARGIN = 0.12
+# Ring 装饰：相对于**白底**的边距。0.08 = 白底边距 8%，贴在白底内侧
+# 不顶到圆角边；之前的 0.12 让 ring 离边太远、视觉上"空"。
+RING_MARGIN = 0.08
 # Ring 描边
 RING_STROKE = 1 / 48
 

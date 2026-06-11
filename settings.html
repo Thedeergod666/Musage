@@ -4,218 +4,6 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Musage · 设置</title>
-    <style>
-      * { box-sizing: border-box; margin: 0; padding: 0; }
-      body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-        background: #1a1c22;
-        color: #e0e0e0;
-        padding: 20px;
-        font-size: 13px;
-      }
-      h1 { font-size: 16px; margin-bottom: 16px; font-weight: 600; }
-      h2 { font-size: 12px; margin-bottom: 10px; color: #aaa; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-      .field { margin-bottom: 14px; }
-      label { display: block; margin-bottom: 6px; color: #aaa; font-size: 12px; }
-      input, select {
-        width: 100%;
-        padding: 8px 10px;
-        background: #2a2d35;
-        border: 1px solid #3a3d45;
-        border-radius: 6px;
-        color: #e0e0e0;
-        font-size: 13px;
-        font-family: inherit;
-      }
-      input:focus, select:focus { outline: none; border-color: #4a90e2; }
-      .input-row { display: flex; gap: 6px; align-items: stretch; }
-      .input-row input { flex: 1; }
-      .input-row button { flex: 0 0 auto; padding: 0 12px; }
-      .row { display: flex; gap: 8px; margin-top: 6px; }
-      button {
-        flex: 1;
-        padding: 8px 12px;
-        background: #2a2d35;
-        border: 1px solid #3a3d45;
-        color: #e0e0e0;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 12px;
-        font-family: inherit;
-      }
-      button:hover { background: #353840; }
-      button.primary { background: #4a90e2; border-color: #4a90e2; color: #fff; }
-      button.primary:hover { background: #5aa0f2; }
-      button.danger { background: #c0392b; border-color: #c0392b; color: #fff; }
-      button.danger:hover { background: #d35400; }
-      .status { font-size: 11px; color: #888; margin-top: 4px; }
-      .status.ok { color: #4caf50; }
-      .status.alert { color: #f44336; }
-      .flash { margin-top: 12px; min-height: 18px; font-size: 12px; }
-      .check { display: flex; align-items: center; gap: 8px; }
-      .check input { width: auto; }
-      .help { font-size: 11px; color: #888; margin-top: 4px; line-height: 1.5; }
-      code { background: #2a2d35; padding: 1px 4px; border-radius: 3px; font-size: 11px; }
-
-      /* Provider tabs */
-      .tabs { display: flex; gap: 4px; background: #15171c; padding: 3px; border-radius: 8px; }
-      .tab {
-        flex: 1;
-        padding: 8px 12px;
-        background: transparent;
-        border: none;
-        color: #888;
-        font-size: 12px;
-        font-weight: 500;
-        border-radius: 6px;
-        cursor: pointer;
-        transition: background 0.2s, color 0.2s;
-      }
-      .tab:hover { color: #ccc; }
-      .tab.active { background: #2a2d35; color: #fff; }
-      .tab .tab-dot {
-        display: inline-block;
-        width: 6px;
-        height: 6px;
-        border-radius: 50%;
-        margin-right: 6px;
-        vertical-align: middle;
-      }
-      .tab[data-p="minimax"] .tab-dot  { background: #9b59ff; }
-      .tab[data-p="deepseek"] .tab-dot { background: #4a90e2; }
-      .tab[data-p="xiaomimimo"] .tab-dot { background: #ff6a00; }
-      .tab[data-p="tavily"] .tab-dot  { background: #00d4a8; }
-
-      .provider-panel { display: none; margin-top: 12px; }
-      .provider-panel.active { display: block; }
-
-      /* Provider 排序列表 */
-      .order-section { background: #15171c; border: 1px solid #2a2d35; border-radius: 6px; padding: 4px 0; }
-      .order-list { display: flex; flex-direction: column; }
-      .order-row {
-        display: flex; align-items: center; justify-content: space-between;
-        padding: 8px 12px;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-      }
-      .order-row:last-child { border-bottom: none; }
-      .order-name { font-size: 13px; color: #e0e0e0; font-weight: 500; }
-      .order-btns { display: flex; gap: 4px; }
-      .order-btns button {
-        flex: 0 0 auto;
-        width: 28px; height: 28px;
-        padding: 0;
-        font-size: 14px;
-        line-height: 1;
-        background: #2a2d35;
-        border: 1px solid #3a3d45;
-        border-radius: 5px;
-      }
-      .order-btns button:hover:not(:disabled) { background: #3a4250; }
-      .order-btns button:disabled { opacity: 0.3; cursor: not-allowed; }
-      .provider-panel.active { display: block; }
-
-      .provider-section {
-        background: #15171c;
-        border: 1px solid #2a2d35;
-        border-radius: 8px;
-        padding: 14px;
-        margin-bottom: 14px;
-      }
-      .provider-section h2 { color: #ccc; margin-bottom: 12px; }
-
-      .divider {
-        height: 1px;
-        background: rgba(255, 255, 255, 0.05);
-        margin: 16px 0;
-      }
-
-      /* Pin mode 单选 */
-      .pin-mode { display: flex; flex-direction: column; gap: 6px; }
-      .pin-opt {
-        display: flex; align-items: flex-start; gap: 10px;
-        padding: 10px 12px;
-        background: #15171c;
-        border: 1px solid #2a2d35;
-        border-radius: 6px;
-        cursor: pointer;
-        transition: border-color 0.15s, background 0.15s;
-      }
-      .pin-opt:hover { border-color: #3a3d45; }
-      .pin-opt input[type="radio"] {
-        margin-top: 3px;
-        width: auto;
-        flex: 0 0 auto;
-        accent-color: #4a90e2;
-      }
-      .pin-opt:has(input:checked) {
-        border-color: #4a90e2;
-        background: #1f2733;
-      }
-      .pin-opt-body { display: flex; flex-direction: column; gap: 2px; }
-      .pin-opt-title { font-size: 13px; color: #e0e0e0; font-weight: 500; }
-      .pin-opt-desc { font-size: 11px; color: #888; line-height: 1.4; }
-
-      /* 日志模块 */
-      details.logs summary { cursor: pointer; font-size: 12px; color: #ccc; font-weight: 600; padding: 4px 0; }
-      details.logs summary:hover { color: #fff; }
-      .logs-filter {
-        background: #1d2027;
-        color: #ddd;
-        border: 1px solid #2a2d35;
-        border-radius: 5px;
-        padding: 4px 8px;
-        font: inherit;
-        font-size: 11px;
-        cursor: pointer;
-        /* select 默认很宽，跟几个按钮挤一行会反过来把按钮挤成竖排 */
-        flex: 0 0 auto;
-        min-width: 0;
-        max-width: 140px;
-      }
-      .logs-filter:hover { border-color: #4a90e2; }
-      /* 日志那行几个按钮 + 计数都用 flex: 0 0 auto，避免被 select 挤崩 */
-      details.logs .row > button,
-      details.logs .row > #logs-count {
-        flex: 0 0 auto;
-        white-space: nowrap;
-      }
-      .logs-list {
-        max-height: 260px;
-        overflow-y: auto;
-        background: #15171c;
-        border: 1px solid #2a2d35;
-        border-radius: 6px;
-        padding: 6px 8px;
-        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-        font-size: 11px;
-        line-height: 1.45;
-      }
-      .logs-empty { color: #666; text-align: center; padding: 12px 0; }
-      .log-row {
-        display: grid;
-        grid-template-columns: 60px 56px 80px 90px 1fr;
-        gap: 6px;
-        padding: 3px 0;
-        border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-        align-items: baseline;
-      }
-      .log-row:last-child { border-bottom: none; }
-      .log-time { color: #888; font-size: 10.5px; }
-      .log-level {
-        font-size: 9.5px;
-        font-weight: 700;
-        text-align: center;
-        padding: 1px 4px;
-        border-radius: 3px;
-        text-transform: uppercase;
-      }
-      .log-level.info  { color: #5ac8fa; background: rgba(90, 200, 250, 0.14); }
-      .log-level.warn  { color: #ff9f0a; background: rgba(255, 159, 10, 0.14); }
-      .log-level.error { color: #ff453a; background: rgba(255, 69, 58, 0.16); }
-      .log-provider { color: #ccc; }
-      .log-kind { color: #888; font-style: italic; }
-      .log-msg { color: #ddd; word-break: break-all; }
-    </style>
   </head>
   <body>
     <h1>⚙ Musage · 设置</h1>
@@ -256,7 +44,7 @@
         </div>
         <div class="help">
           🔒 密钥以 <code>0600</code> 权限存到本机 <code>keys.json</code>（与 config 同目录，不走系统钥匙串，启动零弹窗）。
-          <br/>从 <a href="https://platform.minimaxi.com/user-center/basic-information/interface-key" target="_blank" style="color:#4a90e2">platform.minimaxi.com</a> 获取。
+          <br/>从 <a href="https://platform.minimaxi.com/user-center/basic-information/interface-key" target="_blank" class="link-ext">platform.minimaxi.com</a> 获取。
         </div>
       </div>
 
@@ -272,7 +60,7 @@
         <label>浮窗显示</label>
         <div class="check">
           <input type="checkbox" id="enabled-minimax" />
-          <label for="enabled-minimax" style="margin: 0; color: #e0e0e0;">
+          <label for="enabled-minimax">
             在浮窗中显示 MiniMax 卡片
           </label>
         </div>
@@ -284,7 +72,7 @@
         <div class="input-row">
           <input id="interval-minimax" type="number" min="10" step="5"
                  placeholder="默认 60 秒（顶部『轮询间隔』）" />
-          <span style="align-self: center; color: #888; font-size: 12px;">秒</span>
+          <span class="unit-suffix">秒</span>
         </div>
         <div class="help">
           留空 = 用顶部"轮询间隔"。至少 10 秒（避免触发 provider rate limit）。
@@ -293,10 +81,10 @@
 
       <div class="field">
         <label>浮窗排序</label>
-        <div class="input-row" style="gap: 6px;">
-          <span style="align-self: center; color: #888; font-size: 12px;" id="order-pos-minimax">位置 —/—</span>
-          <button class="order-up" data-id="minimax" type="button" style="flex: 0 0 auto; width: 28px; height: 28px; padding: 0;">↑</button>
-          <button class="order-down" data-id="minimax" type="button" style="flex: 0 0 auto; width: 28px; height: 28px; padding: 0;">↓</button>
+        <div class="input-row order-row">
+          <span class="order-pos" id="order-pos-minimax">位置 —/—</span>
+          <button class="order-up" data-id="minimax" type="button">↑</button>
+          <button class="order-down" data-id="minimax" type="button">↓</button>
         </div>
       </div>
     </div>
@@ -318,7 +106,7 @@
         </div>
         <div class="help">
           🔒 密钥以 <code>0600</code> 权限存到本机 <code>keys.json</code>（与 MiniMax 的 key 互不影响）。
-          <br/>从 <a href="https://platform.deepseek.com/api_keys" target="_blank" style="color:#4a90e2">platform.deepseek.com</a> 获取。
+          <br/>从 <a href="https://platform.deepseek.com/api_keys" target="_blank" class="link-ext">platform.deepseek.com</a> 获取。
         </div>
       </div>
 
@@ -326,7 +114,7 @@
         <label>浮窗显示</label>
         <div class="check">
           <input type="checkbox" id="enabled-deepseek" />
-          <label for="enabled-deepseek" style="margin: 0; color: #e0e0e0;">
+          <label for="enabled-deepseek">
             在浮窗中显示 DeepSeek 卡片
           </label>
         </div>
@@ -337,16 +125,16 @@
         <div class="input-row">
           <input id="interval-deepseek" type="number" min="10" step="5"
                  placeholder="默认 60 秒（顶部『轮询间隔』）" />
-          <span style="align-self: center; color: #888; font-size: 12px;">秒</span>
+          <span class="unit-suffix">秒</span>
         </div>
       </div>
 
       <div class="field">
         <label>浮窗排序</label>
-        <div class="input-row" style="gap: 6px;">
-          <span style="align-self: center; color: #888; font-size: 12px;" id="order-pos-deepseek">位置 —/—</span>
-          <button class="order-up" data-id="deepseek" type="button" style="flex: 0 0 auto; width: 28px; height: 28px; padding: 0;">↑</button>
-          <button class="order-down" data-id="deepseek" type="button" style="flex: 0 0 auto; width: 28px; height: 28px; padding: 0;">↓</button>
+        <div class="input-row order-row">
+          <span class="order-pos" id="order-pos-deepseek">位置 —/—</span>
+          <button class="order-up" data-id="deepseek" type="button">↑</button>
+          <button class="order-down" data-id="deepseek" type="button">↓</button>
         </div>
       </div>
     </div>
@@ -368,7 +156,7 @@
         </div>
         <div class="help">
           🔒 Token Plan 专用 key（<code>tp-</code> 开头，区别于 pay-as-you-go 的 <code>sk-</code>）。
-          <br/>从 <a href="https://platform.xiaomimimo.com/tokenplan/subscription" target="_blank" style="color:#4a90e2">platform.xiaomimimo.com</a> 订阅后获取。
+          <br/>从 <a href="https://platform.xiaomimimo.com/tokenplan/subscription" target="_blank" class="link-ext">platform.xiaomimimo.com</a> 订阅后获取。
         </div>
       </div>
 
@@ -387,7 +175,7 @@
           ⚠️ Xiaomi 用量走 dashboard admin API，需要浏览器登录态。
           <br/>
           <strong>获取方法</strong>：Chrome 登录
-          <a href="https://platform.xiaomimimo.com/console/plan-manage" target="_blank" style="color:#4a90e2">platform.xiaomimimo.com</a>
+          <a href="https://platform.xiaomimimo.com/console/plan-manage" target="_blank" class="link-ext">platform.xiaomimimo.com</a>
           → F12 → Network → 任意 <code>/api/v1/tokenPlan/*</code> 请求 → 右键 → Copy → Copy request headers →
           找 <code>cookie:</code> 这一行整段粘贴到上面。
           <br/>Cookie 登出后失效，过期时 (HTTP 401) 错误信息会引导重粘。
@@ -410,7 +198,7 @@
         <label>浮窗显示</label>
         <div class="check">
           <input type="checkbox" id="enabled-xiaomimimo" />
-          <label for="enabled-xiaomimimo" style="margin: 0; color: #e0e0e0;">
+          <label for="enabled-xiaomimimo">
             在浮窗中显示 Xiaomi MiMo 卡片
           </label>
         </div>
@@ -421,16 +209,16 @@
         <div class="input-row">
           <input id="interval-xiaomimimo" type="number" min="10" step="5"
                  placeholder="默认 60 秒（顶部『轮询间隔』）" />
-          <span style="align-self: center; color: #888; font-size: 12px;">秒</span>
+          <span class="unit-suffix">秒</span>
         </div>
       </div>
 
       <div class="field">
         <label>浮窗排序</label>
-        <div class="input-row" style="gap: 6px;">
-          <span style="align-self: center; color: #888; font-size: 12px;" id="order-pos-xiaomimimo">位置 —/—</span>
-          <button class="order-up" data-id="xiaomimimo" type="button" style="flex: 0 0 auto; width: 28px; height: 28px; padding: 0;">↑</button>
-          <button class="order-down" data-id="xiaomimimo" type="button" style="flex: 0 0 auto; width: 28px; height: 28px; padding: 0;">↓</button>
+        <div class="input-row order-row">
+          <span class="order-pos" id="order-pos-xiaomimimo">位置 —/—</span>
+          <button class="order-up" data-id="xiaomimimo" type="button">↑</button>
+          <button class="order-down" data-id="xiaomimimo" type="button">↓</button>
         </div>
       </div>
     </div>
@@ -453,7 +241,7 @@
         <div class="help">
           Tavily 是 AI agent 常用的 search API（<strong>不是</strong> LLM token plan）。
           Musage 会展示主指标 "150/1000 credits" + 5 个 endpoint 细分行。
-          <br/>从 <a href="https://app.tavily.com/home" target="_blank" style="color:#4a90e2">app.tavily.com</a> 获取 API key。
+          <br/>从 <a href="https://app.tavily.com/home" target="_blank" class="link-ext">app.tavily.com</a> 获取 API key。
         </div>
       </div>
 
@@ -461,7 +249,7 @@
         <label>浮窗显示</label>
         <div class="check">
           <input type="checkbox" id="enabled-tavily" />
-          <label for="enabled-tavily" style="margin: 0; color: #e0e0e0;">
+          <label for="enabled-tavily">
             在浮窗中显示 Tavily 卡片
           </label>
         </div>
@@ -472,16 +260,16 @@
         <div class="input-row">
           <input id="interval-tavily" type="number" min="10" step="5"
                  placeholder="默认 60 秒（顶部『轮询间隔』）" />
-          <span style="align-self: center; color: #888; font-size: 12px;">秒</span>
+          <span class="unit-suffix">秒</span>
         </div>
       </div>
 
       <div class="field">
         <label>浮窗排序</label>
-        <div class="input-row" style="gap: 6px;">
-          <span style="align-self: center; color: #888; font-size: 12px;" id="order-pos-tavily">位置 —/—</span>
-          <button class="order-up" data-id="tavily" type="button" style="flex: 0 0 auto; width: 28px; height: 28px; padding: 0;">↑</button>
-          <button class="order-down" data-id="tavily" type="button" style="flex: 0 0 auto; width: 28px; height: 28px; padding: 0;">↓</button>
+        <div class="input-row order-row">
+          <span class="order-pos" id="order-pos-tavily">位置 —/—</span>
+          <button class="order-up" data-id="tavily" type="button">↑</button>
+          <button class="order-down" data-id="tavily" type="button">↓</button>
         </div>
       </div>
 
@@ -489,7 +277,7 @@
         <label>浮窗显示</label>
         <div class="check">
           <input type="checkbox" id="tavily-concise-mode" />
-          <label for="tavily-concise-mode" style="margin: 0; color: #e0e0e0;">
+          <label for="tavily-concise-mode">
             简洁模式（只显示主指标 "X/Y credits" + 进度条，隐藏 5 个 endpoint 细分）
           </label>
         </div>
@@ -509,7 +297,7 @@
         浮窗右上角红点 = 最近一次拉取报错。点击此处查看具体内容。
         持久错误也都会记下来便于排查（去重窗口 60s / 同一 provider + kind）。
       </div>
-      <div class="row" style="margin: 6px 0;">
+      <div class="row row-tight">
         <select id="logs-filter" class="logs-filter" title="筛选日志级别">
           <option value="all">全部</option>
           <option value="error">仅报错</option>
@@ -519,7 +307,7 @@
         <button id="logs-refresh" class="primary">刷新</button>
         <button id="logs-copy" class="primary" title="复制当前筛选后的日志到剪贴板">复制</button>
         <button id="logs-clear" class="danger">清空</button>
-        <span id="logs-count" style="font-size: 11px; color: #888; align-self: center;"></span>
+        <span id="logs-count"></span>
       </div>
       <div class="logs-list" id="logs-list">
         <div class="logs-empty">— 暂无日志 —</div>
@@ -561,7 +349,7 @@
     <div class="field">
       <div class="check">
         <input id="autostart" type="checkbox" />
-        <label for="autostart" style="margin:0">开机自启</label>
+        <label for="autostart">开机自启</label>
       </div>
     </div>
 
@@ -607,7 +395,7 @@
       <div class="field">
         <div class="check">
           <input id="low-power-mode" type="checkbox" />
-          <label for="low-power-mode" style="margin:0">省电模式（关闭玻璃模糊 + 过渡动画）</label>
+          <label for="low-power-mode">省电模式（关闭玻璃模糊 + 过渡动画）</label>
         </div>
         <div class="help">
           老 Intel Mac / Linux WebKitGTK 等 GPU 弱的平台开启可显著减少 backdrop-filter 开销。
@@ -617,7 +405,7 @@
       <div class="field">
         <div class="check">
           <input id="auto-hide-in-fullscreen" type="checkbox" />
-          <label for="auto-hide-in-fullscreen" style="margin:0">全屏时自动隐藏浮窗</label>
+          <label for="auto-hide-in-fullscreen">全屏时自动隐藏浮窗</label>
         </div>
         <div class="help">
           检测到任何 app 进入全屏（菜单栏自动隐藏）→ 浮窗暂时隐藏；退出全屏 → 自动恢复。

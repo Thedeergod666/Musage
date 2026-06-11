@@ -1,4 +1,5 @@
 // 设置面板 —— 多 provider key + 全局配置
+import "./settings.css"; // Vite 会在 build 时把 CSS 注入到 settings.html
 import { invoke } from "@tauri-apps/api/core";
 import {
   checkForUpdate,
@@ -573,7 +574,7 @@ async function loadLogs() {
           : `${filtered.length} / ${entries.length} 条`;
     }
   } catch (e) {
-    list.innerHTML = `<div class="logs-empty" style="color:#f44336">✗ 加载失败: ${escapeHtml(String(e))}</div>`;
+    list.innerHTML = `<div class="logs-empty error">✗ 加载失败: ${escapeHtml(String(e))}</div>`;
     if (count) count.textContent = "";
     console.error("[logs] load failed", e);
   }
@@ -676,22 +677,20 @@ function setupUpdaterSection() {
   if (!saveRow) return;
 
   const block = document.createElement("div");
-  block.className = "row";
+  block.className = "row updater-section";
   block.id = "updater-section";
   block.innerHTML = `
-    <h3 style="margin: 0 0 8px 0; font-size: 14px;">自动更新</h3>
-    <div style="font-size: 12px; opacity: 0.7; margin-bottom: 8px;">
+    <h3>自动更新</h3>
+    <div class="updater-meta">
       当前版本：<span id="updater-current-version">—</span>
     </div>
-    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+    <div class="updater-actions">
       <button id="updater-check" class="primary">检查更新</button>
-      <button id="updater-install" class="primary" style="display: none;">下载并安装</button>
-      <button id="updater-relaunch" class="primary" style="display: none;">立即重启</button>
-      <span id="updater-status" style="font-size: 12px; opacity: 0.8;"></span>
+      <button id="updater-install" class="primary" hidden>下载并安装</button>
+      <button id="updater-relaunch" class="primary" hidden>立即重启</button>
+      <span id="updater-status"></span>
     </div>
-    <div id="updater-notes" style="display: none; margin-top: 8px; font-size: 12px;
-                                     padding: 8px; background: rgba(255,255,255,0.05);
-                                     border-radius: 4px; white-space: pre-wrap;"></div>
+    <div id="updater-notes" class="updater-notes"></div>
   `;
   saveRow.parentElement?.insertBefore(block, saveRow);
 
@@ -755,28 +754,28 @@ function renderUpdaterState(s: UpdateState) {
     case "checking":
       status.textContent = "检查中…";
       status.style.color = "";
-      if (installBtn) installBtn.style.display = "none";
-      if (relaunchBtn) relaunchBtn.style.display = "none";
-      if (notes) notes.style.display = "none";
+      if (installBtn) installBtn.hidden = true;
+      if (relaunchBtn) relaunchBtn.hidden = true;
+      if (notes) notes.hidden = true;
       break;
     case "up-to-date":
       status.textContent = "✓ 已是最新";
       status.style.color = "#4caf50";
-      if (installBtn) installBtn.style.display = "none";
-      if (relaunchBtn) relaunchBtn.style.display = "none";
-      if (notes) notes.style.display = "none";
+      if (installBtn) installBtn.hidden = true;
+      if (relaunchBtn) relaunchBtn.hidden = true;
+      if (notes) notes.hidden = true;
       break;
     case "available":
       status.textContent = `🎉 发现新版本 v${s.version}`;
       status.style.color = "#2196f3";
-      if (installBtn) installBtn.style.display = "";
-      if (relaunchBtn) relaunchBtn.style.display = "none";
+      if (installBtn) installBtn.hidden = false;
+      if (relaunchBtn) relaunchBtn.hidden = true;
       if (notes) {
         if (s.notes) {
           notes.textContent = s.notes;
-          notes.style.display = "";
+          notes.hidden = false;
         } else {
-          notes.style.display = "none";
+          notes.hidden = true;
         }
       }
       break;
@@ -786,20 +785,20 @@ function renderUpdaterState(s: UpdateState) {
           ? `下载中… ${(s.progress * 100).toFixed(0)}%`
           : "下载中…";
       status.style.color = "#ff9800";
-      if (installBtn) installBtn.style.display = "none";
-      if (relaunchBtn) relaunchBtn.style.display = "none";
+      if (installBtn) installBtn.hidden = true;
+      if (relaunchBtn) relaunchBtn.hidden = true;
       break;
     case "ready":
       status.textContent = "✓ 已下载完成，点击重启生效";
       status.style.color = "#4caf50";
-      if (installBtn) installBtn.style.display = "none";
-      if (relaunchBtn) relaunchBtn.style.display = "";
+      if (installBtn) installBtn.hidden = true;
+      if (relaunchBtn) relaunchBtn.hidden = false;
       break;
     case "error":
       status.textContent = `✗ ${s.error ?? "更新失败"}`;
       status.style.color = "#f44336";
-      if (installBtn) installBtn.style.display = "none";
-      if (relaunchBtn) relaunchBtn.style.display = "none";
+      if (installBtn) installBtn.hidden = true;
+      if (relaunchBtn) relaunchBtn.hidden = true;
       break;
     default:
       // idle / disabled —— 不动 UI

@@ -96,6 +96,9 @@ pub struct AppConfig {
     #[serde(default)]
     pub floating_pin_mode: FloatingPinMode,
     pub autostart: bool,
+    /// 关闭主窗口时是否隐藏到托盘。serde_default 兜住老 config.json
+    /// 缺这字段（v0.1 加的字段，老用户第一次保存会缺）。
+    #[serde(default = "default_show_in_tray_on_close")]
     pub show_in_tray_on_close: bool,
     /// 省电模式：禁用 backdrop-filter 模糊 + 所有 CSS transition。
     /// 适合老 Intel Mac / 非 macOS WebView 性能不足时使用。
@@ -124,6 +127,10 @@ pub struct AppConfig {
 }
 
 const fn tavily_concise_default() -> bool {
+    true
+}
+
+const fn default_show_in_tray_on_close() -> bool {
     true
 }
 

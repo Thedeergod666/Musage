@@ -54,8 +54,13 @@ interface AppConfig {
   providers: Record<string, ProviderConfig>;
   refresh_interval_secs: number;
   autostart: boolean;
+  /// 关闭主窗口时是否隐藏到托盘（旧字段，Rust 端必填，缺了 save_config 会报
+  /// "missing field" —— 务必保留在 TS interface 里，否则 spread 展开后丢字段）
+  show_in_tray_on_close?: boolean;
   floating_x: number | null;
   floating_y: number | null;
+  floating_w?: number | null;
+  floating_h?: number | null;
   floating_pin_mode?: FloatingPinMode;
   low_power_mode?: boolean;
   auto_hide_in_fullscreen?: boolean;

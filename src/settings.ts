@@ -17,13 +17,16 @@ interface ProviderConfig {
   xiaomi_region?: "cn" | "sgp" | "ams" | null;
 }
 
-/// Phase 1 新增：注册表元信息（后端 list_sources 返回）
-interface SourceMeta {
-  id: string;
-  display_name: string;
-  auth_kind: "api_key" | "cookie";
-  enabled: boolean;
-}
+/// Phase 1 新增：注册表元信息（后端 list_sources 返回）。
+/// 当前 settings.ts 直接用 list_sources 返回 SourceMeta[] 来构建面板，
+/// 这里的接口保留给未来的动态渲染。设置面板硬编码 4 个 tab 还在
+/// （Phase 2 会改成从 SourceMeta 自动生成）。
+// interface SourceMeta {
+//   id: string;
+//   display_name: string;
+//   auth_kind: "api_key" | "cookie";
+//   enabled: boolean;
+// }
 
 interface FieldTriple {
   total: string;
@@ -38,6 +41,8 @@ interface TierOverrides {
 interface ProviderOverrides {
   five_hour: TierOverrides;
   weekly: TierOverrides;
+  /** Phase 1 新增：xiaomi MiMo 月度 tier 候选 */
+  monthly?: TierOverrides;
 }
 
 interface AppConfig {

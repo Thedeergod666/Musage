@@ -18,14 +18,17 @@ BG = (255, 255, 255, 255)     # 纯白
 RING = (0, 0, 0, 200)          # 黑环（半透明一点不那么硬）
 FG = (0, 0, 0, 255)            # 黑色 M
 
-# 字号占边长比例。0.45 对齐 VSCode / WPS 等系统 app icon 的视觉占比，
-# 留出明显外圈 padding —— macOS Dock/Launchpad 看到的 icon 才不会"大一圈"。
-M_SCALE = 0.55
-# 装饰 ring 系数：设为 0 即不再画环（已删），只保留 M on white。
-# 之前 0.18 边距的 ring 会让 ring 直接顶到圆角矩形边缘，macOS
-# 看到时感觉 icon 内容撑满，对比其它 app 显得"大一圈"。
-RING_MARGIN = 0      # 0 = 不画 ring
-RING_STROKE = 0
+# 画布外圈 padding：macOS HIG / StackOverflow 共识留 ~10% 安全区，
+# 否则 app icon 在 Dock 渲染时比其它大一圈。1024 - 10%*2 = ~820px 白底。
+ICON_PADDING_RATIO = 0.10
+# 字号占边长比例。0.50 加上 10% padding 后 M:BG ≈ 50:80 = 62%，
+# 跟 VSCode/WPS 视觉密度对齐
+M_SCALE = 0.50
+# Ring 装饰：相对于**白底**的边距（不再是相对整个画布）。
+# 0.06 = 白底边距 6%，让 ring 贴在白底内侧、不顶到圆角边
+RING_MARGIN = 0.12
+# Ring 描边
+RING_STROKE = 1 / 48
 
 
 def find_font(size: int):
@@ -75,28 +78,32 @@ def make_icon(size: int) -> Image.Image:
     """生成 Musage 图标（指定尺寸原生渲染，不用降采样）。
 
     Layout：
-      - 1024 canvas 周边留 ~5% 透明 padding，让 macOS 渲染时白底不撑满 dock 槽
-        （VSCode / WPS 等标准 icon 都这么做）
-      - 内层放圆角矩形白底 + 居中 M
-      - **不再画装饰 ring**：ring 顶到圆角边缘会让 macOS 看到时觉得
-        icon 内容物"撑满"，视觉上比其它 app 大一圈
+      - 1024 canvas 周边留 ~10% 透明 padding（macOS HIG / Apple 官方推荐）
+        Dock 渲染时白底不撑满槽位，跟 VSCode/WPS 视觉密度对齐
+      - 内层放圆角矩形白底 + 居中 ring + 居中 M
+        ring 相对白底 6% inset，不顶到圆角边
     """
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
-    # macOS 风格圆角矩形 —— 纯白底 + 5% 透明 padding 留出 dock 内边距
-    pad = int(size * 0.05)
-    r = int((size - 2 * pad) * 0.225)
+    # macOS 风格圆角矩形 —— 纯白底 + 10% 透明 padding 留出 dock 内边距
+    pad = int(size * ICON_PADDING_RATIO)
+    sq_size = size - 2 * pad  # 白底边长
+    r = int(sq_size * 0.225)
     d.rounded_rectangle(
-        [(pad, pad), (size - 1 - pad, size - 1 - pad)],
+        [(pad, pad), (pad + sq_size - 1, pad + sq_size - 1)],
         radius=r, fill=BG,
     )
 
-    # 装饰 ring：RING_MARGIN = 0 时跳过。
-    if RING_MARGIN > 0:
-        ring_margin = pad + int((size - 2 * pad) * RING_MARGIN)
+    # Ring 装饰：相对白底 inset RING_MARGIN，贴在白底内侧
+    if RING_MARGIN > 0 and size >= 32:
+        ring_offset = int(sq_size * RING_MARGIN)
+        rx0 = pad + ring_offset
+        ry0 = pad + ring_offset
+        rx1 = pad + sq_size - 1 - ring_offset
+        ry1 = pad + sq_size - 1 - ring_offset
         d.ellipse(
-            [(ring_margin, ring_margin), (size - ring_margin, size - ring_margin)],
+            [(rx0, ry0), (rx1, ry1)],
             outline=RING, width=max(1, int(size * RING_STROKE)),
         )
 

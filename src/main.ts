@@ -93,10 +93,46 @@ function isTransientError(kind: string | null | undefined): boolean {
   return kind != null && TRANSIENT_ERROR_KINDS.has(kind);
 }
 
+/// 跟 `updateCard` 的瞬态错误分支完全对齐：瞬态错误 + 有 lastGood →
+/// 视觉上跟 lastGood 一样（只翻红点 + 标 stale，rowsBox DOM 保持不动）。
+/// 持久错误 / 没历史成功 → 渲染 .err-msg + .err-btn（高度显著不同）。
+///
+/// **契约**：必须跟 `updateCard` 的瞬态错误分支（`isTransientError(kind) && good`
+/// 那块）保持严格一致 —— 任一处改了另一处要同步改，否则 contentFingerprint
+/// 算出来的"可见结构"就跟实际 DOM 脱节 → 要么漏 fit 要么白 fit。
+function effectiveSnap(p: ProviderSnapshot): ProviderSnapshot {
+  if (isTransientError(p.error_kind) && lastGoodSnap.has(p.provider)) {
+    return lastGoodSnap.get(p.provider)!;
+  }
+  return p;
+}
+
+/// 描述"用户看到的浮窗内容结构" —— 只看会改变 layout 的维度：
+///   - provider / source_id 列表（决定几张卡）
+///   - 每张卡是 ok 还是 err（错误态有 .err-msg / .err-btn 行）
+///   - 渲染哪些 row（按 rowKey，不看 utilization 数字）
+///
+/// 利用率、倒计时文字、logo / name 变化都**不**计入 → 不触发 fit。
+function contentFingerprint(snap: QuotaSnapshot): string {
+  return snap.providers.map((p) => {
+    const eff = effectiveSnap(p);
+    const id = eff.source_id ?? eff.provider;
+    const state = eff.success ? "ok" : `err:${eff.error_kind ?? "other"}`;
+    const rows = rowsForRender(eff);
+    return `${id}|${state}|${rows.length}|${rows.map((r) => rowKey(r)).join(",")}`;
+  }).join(";");
+}
+
 /// 每个 provider 的"最后一次成功"快照。
 /// 瞬态错误来时，浮窗用这份数据继续渲染 + dot 翻红。
 /// 持久错误（且无历史成功）才走完整的错误 UI。
 const lastGoodSnap = new Map<string, ProviderSnapshot>();
+
+/// 上一次 fit-to-content 时的"可见结构"指纹。
+/// 内容数据刷新（utilization / countdown）不改变这个值 → auto-resize 跳过，
+/// 保留用户手动改的窗口高度。结构变化（卡片增删 / 新错误 / 行数变化）才
+/// 重新 fit。详见 `contentFingerprint` + `autoResizeWindow`。
+let lastFitFingerprint: string | null = null;
 
 const ERROR_LABELS: Record<string, string> = {
   unconfigured_key: "未配置 Key",
@@ -161,8 +197,10 @@ function render(snap: QuotaSnapshot) {
   updateFoot(snap);
 
   startCountdown();
-  // 改完 DOM 后 → 量内容高度，调 Rust 把浮窗 resize 到 fit-content
-  void autoResizeWindow();
+  // 改完 DOM 后 → 量内容高度，调 Rust 把浮窗 resize 到 fit-content。
+  // autoResizeWindow 自己用 contentFingerprint 去重：utilization 刷新等
+  // 数据变化不动窗口；只有卡片/行结构变了才 fit。
+  void autoResizeWindow(snap);
 }
 
 /// 按 RenderPrefs 过滤 / 改写 rows（影响渲染前的数据，不动后端）
@@ -193,11 +231,22 @@ function rowsForRender(p: ProviderSnapshot): QuotaRow[] {
 /// 正确读法：`#app.scrollHeight` —— 这是 #app 内部所有卡片 + padding 的**自然**
 /// 高度，不受窗口 clientHeight 干扰。设到这个值后窗口内刚好能容下所有内容，
 /// 下一轮 scrollHeight 不变，达到稳态。
-async function autoResizeWindow() {
+///
+/// **不每次 render 都 fit**（修复"手动拖窗口被自动 fit 覆盖"）：
+/// 算 `contentFingerprint(snap)`，跟 `lastFitFingerprint` 比，相同就跳过。
+/// 数据刷新（utilization / countdown / logo 变化）不改变 fingerprint →
+/// 保留用户手动尺寸；结构变化（新增/移除卡、新错误、行数变化）才重新 fit。
+async function autoResizeWindow(snap: QuotaSnapshot) {
   await new Promise<void>((r) => requestAnimationFrame(() => r()));
-  const app = document.getElementById("app");
-  if (!app) return;
-  const contentH = app.scrollHeight;
+  const appEl = document.getElementById("app");
+  if (!appEl) return;
+
+  // 内容结构没变（只是 utilization / countdown 刷新）→ 保留用户手动尺寸
+  const fp = contentFingerprint(snap);
+  if (fp === lastFitFingerprint) return;
+  lastFitFingerprint = fp;
+
+  const contentH = appEl.scrollHeight;
   // 已经在 1px 容差内就跳过，避免子像素抖动触发的 re-resize
   const currentH = window.innerHeight;
   if (Math.abs(currentH - contentH) <= 1) return;
@@ -266,6 +315,8 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
     // ── 瞬态错误（网络抖动 / 限流 / 服务端错误）+ 之前有过成功数据 ──
     // **不**碰 rowsBox 的 DOM（最后一次成功渲染留下的用量数据原封不动），
     // 只翻红点 + 标 stale。具体报错已由后端写进 LogStore，浮窗不再展示。
+    // ⚠️ 这条分支的判定条件跟 `effectiveSnap`（上面）必须严格保持一致，
+    // 否则 contentFingerprint 算出来的"可见结构"就跟实际 DOM 脱节。
     if (isTransientError(kind) && good) {
       card.classList.remove("err-card");
       card.classList.forEach((c) => {

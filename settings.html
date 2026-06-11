@@ -253,6 +253,18 @@
         </div>
         <div class="help">关掉后 poller 不再拉取，浮窗也不显示这张卡。</div>
       </div>
+
+      <div class="field">
+        <label>轮询间隔（覆盖）</label>
+        <div class="input-row">
+          <input id="interval-minimax" type="number" min="10" step="5"
+                 placeholder="默认 60 秒（顶部『轮询间隔』）" />
+          <span style="align-self: center; color: #888; font-size: 12px;">秒</span>
+        </div>
+        <div class="help">
+          留空 = 用顶部"轮询间隔"。至少 10 秒（避免触发 provider rate limit）。
+        </div>
+      </div>
     </div>
 
     <!-- DeepSeek Panel -->
@@ -283,6 +295,15 @@
           <label for="enabled-deepseek" style="margin: 0; color: #e0e0e0;">
             在浮窗中显示 DeepSeek 卡片
           </label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>轮询间隔（覆盖）</label>
+        <div class="input-row">
+          <input id="interval-deepseek" type="number" min="10" step="5"
+                 placeholder="默认 60 秒（顶部『轮询间隔』）" />
+          <span style="align-self: center; color: #888; font-size: 12px;">秒</span>
         </div>
       </div>
     </div>
@@ -351,6 +372,15 @@
           </label>
         </div>
       </div>
+
+      <div class="field">
+        <label>轮询间隔（覆盖）</label>
+        <div class="input-row">
+          <input id="interval-xiaomimimo" type="number" min="10" step="5"
+                 placeholder="默认 60 秒（顶部『轮询间隔』）" />
+          <span style="align-self: center; color: #888; font-size: 12px;">秒</span>
+        </div>
+      </div>
     </div>
 
     <!-- Tavily Panel (Phase 1 新增:第一个非 AI provider) -->
@@ -382,6 +412,15 @@
           <label for="enabled-tavily" style="margin: 0; color: #e0e0e0;">
             在浮窗中显示 Tavily 卡片
           </label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>轮询间隔（覆盖）</label>
+        <div class="input-row">
+          <input id="interval-tavily" type="number" min="10" step="5"
+                 placeholder="默认 60 秒（顶部『轮询间隔』）" />
+          <span style="align-self: center; color: #888; font-size: 12px;">秒</span>
         </div>
       </div>
 

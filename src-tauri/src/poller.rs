@@ -20,10 +20,23 @@ pub fn start(app: AppHandle) {
             tracing::warn!(error = %e, "初次拉取失败");
         }
 
-        // per-provider 下次拉取时间。初始化为 "现在"（避免启动瞬间所有 provider 同时拉）
+        // per-provider 下次拉取时间。初始化为 "now + interval"（不在启动瞬间
+        // 跟 tick() 的全量 fetch 并发抢写 state.snapshot —— 那会跟 tick()
+        // 的「全量 push」撞出重复 provider 条目）。第一轮 per-provider 调度
+        // 会因为 now < entry 而全部 skip，等到各自 interval 后才开始 fire。
+        let cfg0 = app.state::<AppState>().config.read().await.clone();
         let mut next_fetch: HashMap<String, Instant> = HashMap::new();
         for src in builtin_sources() {
-            next_fetch.insert(src.id().to_string(), Instant::now());
+            let interval_secs = cfg0
+                .providers
+                .get(src.id())
+                .and_then(|p| p.refresh_interval_secs)
+                .unwrap_or(cfg0.refresh_interval_secs)
+                .max(10);
+            next_fetch.insert(
+                src.id().to_string(),
+                Instant::now() + Duration::from_secs(interval_secs),
+            );
         }
 
         // 每秒检查一次

@@ -544,11 +544,15 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
         .source_id
         .clone()
         .unwrap_or_else(|| id.to_string());
-    let legacy_id = provider_snap.provider.id_str();
-    if let Some(idx) = snap.providers.iter().position(|p| {
-        let p_id = p.source_id.as_deref().unwrap_or(p.provider.id_str());
-        p_id == source_id || p.provider.id_str() == legacy_id
-    }) {
+    // H10 修复：只按 source_id 匹配 —— 旧实现 fallback 到 provider.id_str()
+    // 会跟 Tavily 这类「复用 Provider::Minimax 占位」的 source 撞：per-provider
+    // poller 跟全量 refresh_inner 并发时，Tavily 的 fetch 找到 minimax 位置并
+    // 替换，全量后又加一个新 Tavily → 浮窗两个 Tavily 卡片。
+    if let Some(idx) = snap
+        .providers
+        .iter()
+        .position(|p| p.source_id.as_deref() == Some(source_id.as_str()))
+    {
         snap.providers[idx] = provider_snap;
     } else {
         snap.providers.push(provider_snap);

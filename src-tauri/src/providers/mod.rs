@@ -1,20 +1,35 @@
 //! Provider 多源抽象
 //!
-//! 引入 Provider trait 后，单一 MiniMax 依赖被抽成统一接口。
-//! 新增一个用量源只需要：
-//! 1. 在 [`Provider`] enum 加一个变体
-//! 2. 在本文件 `register` 函数里 `providers.push(Box::new(MyProvider))`
-//! 3. 在 [`QuotaRow`] 渲染端点用其字段
+//! ## 架构（ROADMAP Phase 1 起）
 //!
-//! 所有 Provider 共享 [`ProviderSnapshot`] 结构（rows: 通用行 + extra: provider 特有字段）。
+//! 每个用量源是 [`QuotaSource`] trait 的一个实现，由 [`builtin_sources`] 注册表
+//! 集中管理。新增一个 source 不再需要改 commands.rs 的 `match` 块：
+//!
+//! 1. 在 [`providers`] 子模块下新增 `xxx.rs`，写一个 `XxxSource: QuotaSource`
+//! 2. 在 [`builtin_sources`] 里 `Box::new(XxxSource::default())`
+//! 3. 在 `config.json` 的 `providers` 字段下加默认配置
+//!
+//! ## 向后兼容
+//!
+//! 旧的 [`Provider`] enum（minimax / deepseek / xiaomimimo）继续存在，
+//! 旧 [`ProviderSnapshot`] / [`ProviderImpl`] 也保留别名，commands.rs 走
+//! [`builtin_sources`] 路径，但 `dump` CLI 和 `set_api_key_for` 仍按 enum 走。
 
 pub mod deepseek;
 pub mod minimax;
+pub mod tavily;
 pub mod xiaomi;
+
+use std::pin::Pin;
+use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
 /// 厂商标识。序列化成稳定字符串（不依赖 enum 顺序）。
+///
+/// **新代码请优先用 `&str` id**（如 `"minimax"` / `"tavily"`），让 source 注册表
+/// 成为唯一真相源。本 enum 留着是因为 `config.rs` / `dump` CLI / 已有的 IPC 命令
+/// 还在用，加新 source 不需要改这一层。
 #[derive(Debug, Default, Clone, Copy, Hash, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Provider {
@@ -41,12 +56,45 @@ impl Provider {
         }
     }
 
+    /// 已知 provider 列表（按固定顺序）
     pub fn all() -> [Provider; 3] {
         [Provider::Minimax, Provider::Deepseek, Provider::Xiaomimimo]
     }
 }
 
-/// 错误分类（前端按 kind 选择不同样式 + 操作按钮）
+// ── 凭据（统一存放 api_key + cookie）────────────────────────────────
+
+/// 一个 quota source 需要的全部凭据。
+///
+/// MiniMax / DeepSeek 只需要 `api_key`；Xiaomi 需要 `cookie`；未来可扩展。
+#[derive(Debug, Clone, Default)]
+pub struct Credentials {
+    pub api_key: Option<String>,
+    pub cookie: Option<String>,
+}
+
+impl Credentials {
+    pub fn has_any(&self) -> bool {
+        self.api_key.as_deref().map(str::trim).map(str::is_empty) == Some(false)
+            || self.cookie.as_deref().map(str::trim).map(str::is_empty) == Some(false)
+    }
+}
+
+/// 鉴权方式（前端 UI 用，决定显示"API Key"输入框还是"Cookie"输入框）。
+///
+/// 实际拼 header 的逻辑在 [`crate::http::apply_auth`]（下一阶段）里；
+/// 这里先定义枚举值给 trait 用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuthKind {
+    /// 走 `Authorization: <prefix><api_key>`（Bearer / 空前缀）
+    ApiKey,
+    /// 走 `Cookie: <cookie>`
+    Cookie,
+}
+
+// ── 错误分类（前端按 kind 选样式 + 操作按钮）───────────────────────────
+
+/// 错误分类（前端按 kind 选择不同样式 + 操作按钮）。
 ///
 /// 借鉴 ccswitch extractor 的 `{isValid: false}` 思路：除了用户友好文案，
 /// 还给前端一个机器可读的类型，决定显示什么 UI。
@@ -92,31 +140,82 @@ impl ErrorKind {
     }
 }
 
+/// 结构化 fetch 错误。Phase 1 引入，用来替代散落在各 provider 里的中文 `String` 错误。
+///
+/// 配套 [`crate::commands::error_kind`] 把它转成 [`ErrorKind`]。
+#[derive(Debug, Clone)]
+pub struct FetchError {
+    pub kind: ErrorKind,
+    pub message: String,
+}
+
+impl FetchError {
+    pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
+        Self { kind, message: message.into() }
+    }
+    pub fn unconfigured(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::UnconfiguredKey, message)
+    }
+    pub fn auth(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::AuthFailed, message)
+    }
+    pub fn network(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Network, message)
+    }
+    pub fn parse(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Parse, message)
+    }
+    pub fn schema_unknown(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::SchemaUnknown, message)
+    }
+    pub fn server(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::ServerError, message)
+    }
+}
+
+impl std::fmt::Display for FetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+impl std::error::Error for FetchError {}
+
+// ── 一行展示数据 ─────────────────────────────────────────────────────
+
 /// 一行展示数据。三种模式互斥（用 `utilization` / `remaining` / `extra.display` 区分）：
 /// - **百分比模式**（MiniMax 5h/周）：`utilization` 有值，`resets_at` 有值
 /// - **余额模式**（DeepSeek）：`remaining` 有值，`unit` 是货币
 /// - **状态行**（DeepSeek is_available）：`extra.display` 有值
+///
+/// Phase 1 起加入 `used` + `total`（之前只有 `remaining`），用来支持 Tavily
+/// "150/1000 credits" 这种数字展示。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct QuotaRow {
-    /// 行标签，如 "5h" / "周" / "余额" / "状态"
+    /// 行标签，如 "5h" / "周" / "余额" / "状态" / "search"
     pub label: String,
-    /// 0-100+ 的百分比（MiniMax 用）
+    /// 0-100+ 的百分比（MiniMax / Xiaomi 用）
     pub utilization: Option<f64>,
-    /// 剩余数量（DeepSeek 钱包金额；MiniMax 暂未用）
+    /// 剩余数量（DeepSeek 钱包金额；Tavily credits）
     pub remaining: Option<f64>,
-    /// 总量（暂未用，预留）
+    /// 已用数量（Tavily credits 用，Phase 1 起开始填充）
+    pub used: Option<f64>,
+    /// 总量（Tavily credits 用，Phase 1 起开始填充）
     pub total: Option<f64>,
     /// 重置时间（毫秒；MiniMax 用）
     pub resets_at: Option<i64>,
-    /// 单位（"CNY" / "USD" / "%"）
+    /// 单位（"CNY" / "USD" / "%" / "credits"）
     pub unit: Option<String>,
     /// provider 特有扩展字段（如 `{is_available, display}`）
     pub extra: Option<serde_json::Value>,
 }
 
+// ── 单个 source 的 snapshot ──────────────────────────────────────────
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderSnapshot {
+    /// 兼容字段：序列化成 `"minimax"` 等。新代码可以忽略。
     pub provider: Provider,
+    /// 兼容字段：true = 成功拉到至少一行 row
     pub success: bool,
     pub rows: Vec<QuotaRow>,
     pub error: Option<String>,
@@ -128,6 +227,15 @@ pub struct ProviderSnapshot {
     pub raw: Option<serde_json::Value>,
     /// provider 自身是否健康（用于整体托盘颜色 + tooltip 颜色）
     pub is_healthy: bool,
+    /// Phase 1 新增：source id（字符串）。前端新代码用这个。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
+    /// Phase 1 新增：显示名。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_display_name: Option<String>,
+    /// Phase 1 新增：套餐名（如 "Standard" / "Free tier"）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plan_name: Option<String>,
 }
 
 impl ProviderSnapshot {
@@ -142,6 +250,9 @@ impl ProviderSnapshot {
             fetched_at: Some(chrono::Utc::now().timestamp_millis()),
             raw: None,
             is_healthy: false,
+            source_id: Some(provider.id_str().to_string()),
+            source_display_name: Some(provider.display_name().to_string()),
+            plan_name: None,
         }
     }
 
@@ -154,18 +265,8 @@ impl ProviderSnapshot {
             Provider::Deepseek => {
                 if self.is_healthy { "ok" } else { "alert" }
             }
-            Provider::Minimax => {
+            Provider::Minimax | Provider::Xiaomimimo => {
                 // 取第一个有 utilization 的 row
-                let u = self.rows.iter()
-                    .filter_map(|r| r.utilization)
-                    .next()
-                    .unwrap_or(0.0);
-                if u < 70.0 { "ok" }
-                else if u < 90.0 { "warn" }
-                else { "alert" }
-            }
-            Provider::Xiaomimimo => {
-                // 跟 MiniMax 一样的百分比阈值
                 let u = self.rows.iter()
                     .filter_map(|r| r.utilization)
                     .next()
@@ -177,6 +278,8 @@ impl ProviderSnapshot {
         }
     }
 }
+
+// ── 顶层快照 ────────────────────────────────────────────────────────
 
 /// 顶层快照：所有 provider 一次刷新的合集
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -203,22 +306,111 @@ impl QuotaSnapshot {
     }
 }
 
-/// Provider 抽象实现。
+// ── QuotaSource trait + 注册表（Phase 1 核心）────────────────────────
+
+/// 单个 quota source 的"身份 + 鉴权 + endpoint"配置。
 ///
-/// 用 Box<dyn> 持有，函数返回 `Pin<Box<dyn Future>>` 以避开 async_trait 宏。
-#[allow(dead_code)] // `id` / `display_name` 预留给未来的 dispatch 用
+/// 写死每个 source 的静态属性（id / display / 默认 endpoint 等）。
+/// 运行时（per-fetch）需要的东西（region、overrides、用户填的 key）通过
+/// [`QuotaSource::fetch`] 的参数传进去。
+pub trait QuotaSource: Send + Sync {
+    /// 稳定字符串 id（"minimax" / "tavily"）
+    fn id(&self) -> &'static str;
+    /// 给用户看的名字（"MiniMax" / "Tavily"）
+    fn display_name(&self) -> &'static str;
+    /// 鉴权方式（决定设置面板显示什么输入框）
+    fn auth_kind(&self) -> AuthKind;
+    /// 更新运行时状态（region / overrides）。`value` 是 [`AppConfig`] 的
+    /// 完整 JSON 序列化，source 自己按需取字段。无状态的 source 可以忽略。
+    ///
+    /// Phase 1 用这个来替代 downcast —— typed dispatch 痛点 + dyn 没法
+    /// 装成具体类型，所以用"发 JSON 让 source 自己解析"的折中。
+    fn set_state<'a>(
+        &'a self,
+        cfg: serde_json::Value,
+    ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>>;
+    /// 拉数据。`credentials` 里能拿到这个 source 需要的凭据（api_key / cookie）。
+    fn fetch<'a>(
+        &'a self,
+        credentials: &'a Credentials,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>>;
+}
+
+/// 全部内置 source 的注册表。commands.rs 和 dump CLI 都从这里拿 source。
+///
+/// **新增 source 只需要在这里加一行**。
+pub fn builtin_sources() -> Vec<Box<dyn QuotaSource>> {
+    vec![
+        Box::new(minimax::MinimaxSource::default()),
+        Box::new(deepseek::DeepseekSource::default()),
+        Box::new(xiaomi::XiaomimimoSource::default()),
+        Box::new(tavily::TavilySource::default()),
+    ]
+}
+
+/// 按 id 查 source。找不到返回 None。
+pub fn find_source(id: &str) -> Option<Box<dyn QuotaSource>> {
+    builtin_sources().into_iter().find(|s| s.id() == id)
+}
+
+// ── 共享 HTTP client ────────────────────────────────────────────────
+
+/// 进程内共享的 [`reqwest::Client`]。
+///
+/// 避免每次 poll 都重建 client（每个 provider 各重建一次，10s + 5s timeout + UA
+/// 全是重复代码 → M2 review 建议）。
+///
+/// 何时不要共享：per-source TLS tuning（目前没有），per-source proxy（没有）。
+/// 等真有需求再切回 per-source。
+static SHARED_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+pub fn shared_client() -> &'static reqwest::Client {
+    SHARED_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .user_agent(concat!("Musage/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .expect("build shared reqwest client")
+    })
+}
+
+// ── 兼容旧代码：ProviderImpl trait 保留为 dead-code ────────────────────
+
+/// 旧的 trait。新代码请用 [`QuotaSource`]。
+///
+/// 留着是因为 [`crate::commands`] 旧路径和 `dump` CLI 还引用；
+/// Phase 2 删。
+#[allow(dead_code)]
 pub trait ProviderImpl: Send + Sync {
     fn id(&self) -> Provider;
     fn display_name(&self) -> &'static str;
-
-    /// 拉取用量。
-    ///
-    /// `api_key` 是用户在该 provider 下配的 key。
-    /// 成功返回 [`ProviderSnapshot`]，失败返回带用户友好中文消息的 Err。
     fn fetch<'a>(
         &'a self,
         api_key: &'a str,
     ) -> std::pin::Pin<
         Box<dyn std::future::Future<Output = Result<ProviderSnapshot, String>> + Send + 'a>,
     >;
+}
+
+// ── 单元测试 fixture（共享 JSON） ───────────────────────────────────
+
+#[cfg(test)]
+pub(crate) mod test_fixtures {
+    use serde_json::json;
+
+    pub fn minimax_new_schema() -> serde_json::Value {
+        json!({
+            "base_resp": { "status_code": 0, "status_msg": "success" },
+            "model_remains": [{
+                "model_name": "general",
+                "current_interval_remaining_percent": 72,
+                "current_interval_status": 1,
+                "end_time": 14523,
+                "current_weekly_remaining_percent": 86,
+                "current_weekly_status": 1,
+                "weekly_end_time": 803245
+            }]
+        })
+    }
 }

@@ -8,7 +8,7 @@ import {
   type UpdateState,
 } from "./updater";
 
-type ProviderId = "minimax" | "deepseek" | "xiaomimimo";
+type ProviderId = "minimax" | "deepseek" | "xiaomimimo" | "tavily";
 type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
 
 interface ProviderConfig {
@@ -16,6 +16,17 @@ interface ProviderConfig {
   region?: "cn" | "en" | null;
   xiaomi_region?: "cn" | "sgp" | "ams" | null;
 }
+
+/// Phase 1 新增：注册表元信息（后端 list_sources 返回）。
+/// 当前 settings.ts 直接用 list_sources 返回 SourceMeta[] 来构建面板，
+/// 这里的接口保留给未来的动态渲染。设置面板硬编码 4 个 tab 还在
+/// （Phase 2 会改成从 SourceMeta 自动生成）。
+// interface SourceMeta {
+//   id: string;
+//   display_name: string;
+//   auth_kind: "api_key" | "cookie";
+//   enabled: boolean;
+// }
 
 interface FieldTriple {
   total: string;
@@ -30,6 +41,8 @@ interface TierOverrides {
 interface ProviderOverrides {
   five_hour: TierOverrides;
   weekly: TierOverrides;
+  /** Phase 1 新增：xiaomi MiMo 月度 tier 候选 */
+  monthly?: TierOverrides;
 }
 
 interface AppConfig {
@@ -46,12 +59,19 @@ interface AppConfig {
 }
 
 interface ProviderSnapshot {
+  /** 兼容字段（minimax / deepseek / xiaomimimo）。Phase 1 起请用 source_id。 */
   provider: ProviderId;
+  /** Phase 1 新增。 */
+  source_id?: string | null;
+  source_display_name?: string | null;
+  plan_name?: string | null;
   success: boolean;
   rows: Array<{
     label: string;
     utilization: number | null;
     remaining: number | null;
+    used?: number | null;
+    total?: number | null;
     unit: string | null;
   }>;
   error: string | null;
@@ -311,23 +331,41 @@ async function testConn() {
     const snap = await withTimeout(invoke<QuotaSnapshot>("refresh_now"), 12000, "请求超时（12s）");
     const ok = snap.providers.filter((p) => p.success);
     if (ok.length === 0) {
-      const errs = snap.providers.map((p) => `${p.provider}: ${p.error}`).join("; ");
+      const errs = snap.providers.map((p) => {
+        const id = p.source_id ?? p.provider;
+        return `${id}: ${p.error}`;
+      }).join("; ");
       flash(`✗ 全部失败: ${errs}`, true);
       return;
     }
     const summary = ok
       .map((p) => {
-        if (p.provider === "minimax") {
+        // Phase 1：用 source_id 路由（registry 驱动），provider 字段保兼容
+        const id = p.source_id ?? p.provider;
+        if (id === "minimax") {
           const fiveHour = p.rows.find((r) => r.utilization != null);
           return fiveHour
             ? `MiniMax 5h ${Math.round(fiveHour.utilization ?? 0)}%`
             : "MiniMax OK";
-        } else {
+        } else if (id === "deepseek") {
           const balance = p.rows.find((r) => r.remaining != null);
           return balance
             ? `DeepSeek ${formatAmount(balance.remaining ?? 0)} ${balance.unit ?? ""}`
             : "DeepSeek OK";
+        } else if (id === "xiaomimimo") {
+          const plan = p.rows.find((r) => r.utilization != null);
+          return plan
+            ? `Xiaomi 套餐 ${Math.round(plan.utilization ?? 0)}%`
+            : "Xiaomi OK";
+        } else if (id === "tavily") {
+          // 主指标在 used/total/unit="credits" 的那一行
+          const main = p.rows.find((r) => r.unit === "credits");
+          if (main && main.used != null && main.total != null) {
+            return `Tavily ${Math.round(main.used)}/${Math.round(main.total)} credits`;
+          }
+          return "Tavily OK";
         }
+        return `${id} OK`;
       })
       .join(" / ");
     flash(`✓ ${summary}`);
@@ -362,7 +400,12 @@ function flash(msg: string, isError = false) {
 }
 
 function providerDisplay(p: ProviderId): string {
-  return p === "minimax" ? "MiniMax" : p === "deepseek" ? "DeepSeek" : "Xiaomi MiMo";
+  switch (p) {
+    case "minimax":    return "MiniMax";
+    case "deepseek":   return "DeepSeek";
+    case "xiaomimimo": return "Xiaomi MiMo";
+    case "tavily":     return "Tavily";
+  }
 }
 
 // ── 日志模块（设置面板查看应用运行日志） ──
@@ -587,6 +630,59 @@ function renderUpdaterState(s: UpdateState) {
   }
 }
 
+// ── Tavily (Phase 1 新增) ────────────────────────────────────────
+//
+// Tavily 不是 Provider enum 的成员，只能走 id-based 新 API。
+
+async function loadTavilyKeyStatus() {
+  const has = await invoke<boolean>("has_source_credential", { id: "tavily" });
+  const el = document.getElementById("api-key-status-tavily");
+  if (el) {
+    el.textContent = has ? "✓ 已保存到本机" : "未设置";
+    el.className = `status ${has ? "ok" : ""}`;
+  }
+}
+
+async function saveTavilyKey() {
+  const input = document.getElementById("api-key-tavily") as HTMLInputElement | null;
+  if (!input) return;
+  const key = input.value.trim();
+  if (!key) {
+    flash("⚠ 请先粘贴 Tavily API key", true);
+    return;
+  }
+  try {
+    await invoke("set_source_credential", { id: "tavily", value: key });
+    input.value = "";
+    await loadTavilyKeyStatus();
+    flash("✓ Tavily key 已保存");
+    await testConn();
+  } catch (e) {
+    flash(`✗ 保存失败: ${e}`, true);
+  }
+}
+
+async function deleteTavilyKey() {
+  if (!confirm("确认删除 Tavily 的 API key？")) return;
+  await invoke("delete_source_credential", { id: "tavily" });
+  await loadTavilyKeyStatus();
+  flash("✓ Tavily key 已删除");
+}
+
+async function copyTavilyKey() {
+  try {
+    const key = await invoke<string | null>("get_source_credential", { id: "tavily" });
+    if (!key) {
+      flash("⚠ Tavily 未设置 key", true);
+      return;
+    }
+    await navigator.clipboard.writeText(key);
+    flash("✓ Tavily key 已复制到剪贴板");
+  } catch (e) {
+    flash(`✗ 复制失败: ${e}`, true);
+  }
+}
+
 // ── 启动 ──
 
 setupTabs();
@@ -595,12 +691,15 @@ $("#save")?.addEventListener("click", saveConfig);
 $("#save-key-minimax")?.addEventListener("click", () => saveKey("minimax"));
 $("#save-key-deepseek")?.addEventListener("click", () => saveKey("deepseek"));
 $("#save-key-xiaomimimo")?.addEventListener("click", () => saveKey("xiaomimimo"));
+$("#save-key-tavily")?.addEventListener("click", () => saveTavilyKey());
 $("#del-key-minimax")?.addEventListener("click", () => deleteKey("minimax"));
 $("#del-key-deepseek")?.addEventListener("click", () => deleteKey("deepseek"));
 $("#del-key-xiaomimimo")?.addEventListener("click", () => deleteKey("xiaomimimo"));
+$("#del-key-tavily")?.addEventListener("click", () => deleteTavilyKey());
 $("#copy-key-minimax")?.addEventListener("click", () => copyKey("minimax"));
 $("#copy-key-deepseek")?.addEventListener("click", () => copyKey("deepseek"));
 $("#copy-key-xiaomimimo")?.addEventListener("click", () => copyKey("xiaomimimo"));
+$("#copy-key-tavily")?.addEventListener("click", () => copyTavilyKey());
 $("#save-cookie-xiaomimimo")?.addEventListener("click", () => saveCookie("xiaomimimo"));
 $("#del-cookie-xiaomimimo")?.addEventListener("click", () => deleteCookie("xiaomimimo"));
 $("#test")?.addEventListener("click", testConn);
@@ -654,6 +753,7 @@ $("#auto-hide-in-fullscreen")?.addEventListener("change", async () => {
   await loadKeyStatus("minimax");
   await loadKeyStatus("deepseek");
   await loadKeyStatus("xiaomimimo");
+  await loadTavilyKeyStatus();
   await loadCookieStatus("xiaomimimo");
   await loadConfig();
   setupUpdaterSection();

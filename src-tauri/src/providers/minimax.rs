@@ -29,11 +29,12 @@
 //! 4. reset 字段智能识别：> 10^12 当 epoch ms，否则当 duration-seconds 加到 now
 
 use std::pin::Pin;
-use std::time::Duration;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 
-use super::{ErrorKind, Provider, ProviderImpl, ProviderSnapshot, QuotaRow};
+use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderImpl, ProviderSnapshot, QuotaRow, QuotaSource};
 use crate::config::ProviderOverrides;
 
 const URL_CN: &str = "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains";
@@ -62,6 +63,82 @@ impl Region {
     }
 }
 
+// ── QuotaSource 实现（Phase 1）────────────────────────────────────
+
+/// 每次 fetch 前可更新的运行时状态（region + 用户 overrides）。
+#[derive(Debug, Clone, Default)]
+pub struct MinimaxState {
+    pub region: Region,
+    pub overrides: ProviderOverrides,
+}
+
+/// 新的 trait 实现。commands.rs 走这条路径。
+pub struct MinimaxSource {
+    state: Arc<RwLock<MinimaxState>>,
+}
+
+impl Default for MinimaxSource {
+    fn default() -> Self {
+        Self { state: Arc::new(RwLock::new(MinimaxState::default())) }
+    }
+}
+
+impl MinimaxSource {
+    /// 每次 refresh tick 前由 commands.rs 调用，更新 region / overrides。
+    pub async fn set_state(&self, region: Region, overrides: ProviderOverrides) {
+        let mut s = self.state.write().await;
+        s.region = region;
+        s.overrides = overrides;
+    }
+}
+
+impl QuotaSource for MinimaxSource {
+    fn id(&self) -> &'static str { "minimax" }
+    fn display_name(&self) -> &'static str { "MiniMax" }
+    fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
+
+    fn set_state<'a>(
+        &'a self,
+        cfg: serde_json::Value,
+    ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            // cfg 是 AppConfig 的 JSON，自己取需要的字段
+            let region_str = cfg.get("providers")
+                .and_then(|p| p.get("minimax"))
+                .and_then(|m| m.get("region"))
+                .and_then(|r| r.as_str())
+                .unwrap_or("cn");
+            let region = match region_str {
+                "en" => Region::En,
+                _ => Region::Cn,
+            };
+            let overrides: ProviderOverrides = cfg.get("schema_overrides")
+                .and_then(|so| so.get("minimax"))
+                .and_then(|m| serde_json::from_value(m.clone()).ok())
+                .unwrap_or_default();
+            let mut s = self.state.write().await;
+            s.region = region;
+            s.overrides = overrides;
+        })
+    }
+
+    fn fetch<'a>(
+        &'a self,
+        credentials: &'a Credentials,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>> {
+        Box::pin(async move {
+            let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
+            if api_key.is_empty() {
+                return Err(FetchError::unconfigured("未配置 API key（设置面板填入）"));
+            }
+            let state = self.state.read().await.clone();
+            Minimax::do_fetch(api_key, state.region, &state.overrides).await.map(|(_, snap)| snap)
+        })
+    }
+}
+
+// ── 旧 ProviderImpl 兼容（dump CLI 还在用）────────────────────────
+
 #[derive(Debug, Default)]
 pub struct Minimax {
     /// 默认 CN；commands 层在调 fetch 前先从 config 复制一份给 Minimax
@@ -69,25 +146,19 @@ pub struct Minimax {
 }
 
 impl Minimax {
-    /// 真正的拉取实现（接受 region + 用户 overrides）
+    /// 真正的拉取实现（接受 region + 用户 overrides）。
     ///
-    /// 返回 `Err(String)` 是为了兼容 trait `ProviderImpl::fetch` 的签名。
-    /// 错误分类信息由 `commands::classify_error_message` 在外层补到 `error_kind`。
+    /// 返回 `Err(FetchError)` 给新代码用；`dump` CLI 把它转成 String。
     pub async fn do_fetch(
         api_key: &str,
         region: Region,
         overrides: &ProviderOverrides,
-    ) -> Result<(serde_json::Value, ProviderSnapshot), String> {
+    ) -> Result<(serde_json::Value, ProviderSnapshot), FetchError> {
         if api_key.trim().is_empty() {
-            return Err("API key 为空".to_string());
+            return Err(FetchError::unconfigured("API key 为空"));
         }
 
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .connect_timeout(Duration::from_secs(5))
-            .user_agent(concat!("Musage/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .map_err(|e| format!("build client: {e}"))?;
+        let client = shared_client();
 
         let resp = client
             .get(region.api_url())
@@ -96,27 +167,27 @@ impl Minimax {
             .header("Content-Type", "application/json")
             .send()
             .await
-            .map_err(|e| format!("网络错误 [{}]: {e}", region.api_url()))?;
+            .map_err(|e| FetchError::network(format!("网络错误 [{}]: {e}", region.api_url())))?;
 
         let status = resp.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
-            return Err("鉴权失败，请检查 MiniMax API key".to_string());
+            return Err(FetchError::auth("鉴权失败，请检查 MiniMax API key"));
         }
         if status == reqwest::StatusCode::FORBIDDEN {
-            return Err("无权限访问 MiniMax 用量接口（HTTP 403）".to_string());
+            return Err(FetchError::auth("无权限访问 MiniMax 用量接口（HTTP 403）"));
         }
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(format!(
+            return Err(FetchError::server(format!(
                 "MiniMax 服务异常 (HTTP {status}): {}",
                 body.chars().take(200).collect::<String>()
-            ));
+            )));
         }
 
         let raw: serde_json::Value = resp
             .json()
             .await
-            .map_err(|e| format!("响应不是 JSON: {e}"))?;
+            .map_err(|e| FetchError::parse(format!("响应不是 JSON: {e}")))?;
 
         let snap = parse(&raw, region, overrides);
         Ok((raw, snap))
@@ -124,12 +195,8 @@ impl Minimax {
 }
 
 impl ProviderImpl for Minimax {
-    fn id(&self) -> Provider {
-        Provider::Minimax
-    }
-    fn display_name(&self) -> &'static str {
-        "MiniMax"
-    }
+    fn id(&self) -> Provider { Provider::Minimax }
+    fn display_name(&self) -> &'static str { "MiniMax" }
 
     fn fetch<'a>(
         &'a self,
@@ -137,17 +204,17 @@ impl ProviderImpl for Minimax {
     ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, String>> + Send + 'a>> {
         let region = self.region;
         Box::pin(async move {
-            // ProviderImpl trait 不传 overrides；commands.rs 走 do_fetch 直接传。
-            // 这里给个空 overrides 保持编译。
-            let (_, snap) =
-                Self::do_fetch(api_key, region, &ProviderOverrides::default()).await?;
-            Ok(snap)
+            Minimax::do_fetch(api_key, region, &ProviderOverrides::default())
+                .await
+                .map(|(_, snap)| snap)
+                .map_err(|e| e.message)
         })
     }
 }
 
+// ── 解析逻辑（不变）────────────────────────────────────────────────
+
 /// 灵活解析：兼容 6/1 前后的 schema
-#[allow(dead_code)] // region 参数为未来多区域 provider 准备
 fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides) -> ProviderSnapshot {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
@@ -168,6 +235,9 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
                 fetched_at: Some(now_ms),
                 raw: Some(raw.clone()),
                 is_healthy: false,
+                source_id: Some(Provider::Minimax.id_str().to_string()),
+                source_display_name: Some(Provider::Minimax.display_name().to_string()),
+                plan_name: None,
             };
         }
     }
@@ -198,6 +268,9 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
             fetched_at: Some(now_ms),
             raw: Some(raw.clone()),
             is_healthy: false,
+            source_id: Some(Provider::Minimax.id_str().to_string()),
+            source_display_name: Some(Provider::Minimax.display_name().to_string()),
+            plan_name: None,
         };
     };
 
@@ -228,6 +301,7 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
             label: "5h".to_string(),
             utilization: Some(t.utilization),
             remaining: None,
+            used: None,
             total: None,
             resets_at: t.resets_at,
             unit: Some("%".to_string()),
@@ -239,6 +313,7 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
             label: "周".to_string(),
             utilization: Some(t.utilization),
             remaining: None,
+            used: None,
             total: None,
             resets_at: t.resets_at,
             unit: Some("%".to_string()),
@@ -262,6 +337,9 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
         fetched_at: Some(now_ms),
         raw: Some(raw.clone()),
         is_healthy,
+        source_id: Some(Provider::Minimax.id_str().to_string()),
+        source_display_name: Some(Provider::Minimax.display_name().to_string()),
+        plan_name: None,
     }
 }
 
@@ -278,7 +356,7 @@ struct TierInternal {
 /// - `k_reset`：距离重置的**秒数**（不是 epoch ms）
 ///
 /// 返回已用百分比 = 100 - remain%。如 status != 1 或字段缺失返回 None。
-fn parse_tier_percent(
+pub fn parse_tier_percent(
     item: &serde_json::Value,
     k_percent: &str,
     k_status: &str,
@@ -306,7 +384,7 @@ fn parse_tier_percent(
 ///
 /// `user_overrides` 先于内置 `candidates` 尝试，方便用户在设置面板加新字段名
 /// （MiniMax 改 schema 后不用等发版）。
-fn parse_tier_count(
+pub fn parse_tier_count(
     item: &serde_json::Value,
     candidates: &[(&str, &str, &str)],
     user_overrides: &[crate::config::FieldTriple],
@@ -368,4 +446,140 @@ fn smart_reset_to_ms(raw: i64) -> i64 {
 
 fn num_to_f64(v: &serde_json::Value) -> Option<f64> {
     v.as_f64().or_else(|| v.as_i64().map(|i| i as f64))
+}
+
+// ── 单元测试 ─────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::providers::test_fixtures::minimax_new_schema;
+    use crate::config::ProviderOverrides;
+
+    #[test]
+    fn parse_tier_percent_status_must_be_1() {
+        let item = serde_json::json!({
+            "current_interval_remaining_percent": 80,
+            "current_interval_status": 2,  // not in plan
+            "end_time": 100
+        });
+        assert!(parse_tier_percent(item, "current_interval_remaining_percent",
+                                       "current_interval_status", "end_time").is_none());
+    }
+
+    #[test]
+    fn parse_tier_percent_basic() {
+        let item = serde_json::json!({
+            "current_interval_remaining_percent": 72,
+            "current_interval_status": 1,
+            "end_time": 14523  // duration seconds
+        });
+        let t = parse_tier_percent(item, "current_interval_remaining_percent",
+                                       "current_interval_status", "end_time").unwrap();
+        assert!((t.utilization - 28.0).abs() < 0.001, "utilization = {}", t.utilization);
+        let resets = t.resets_at.unwrap();
+        let now = chrono::Utc::now().timestamp_millis();
+        // resets should be ~14523s in the future
+        assert!(resets > now, "resets should be in the future");
+        assert!(resets - now <= 14523 * 1000 + 100, "resets within 14523s + 100ms");
+    }
+
+    #[test]
+    fn parse_tier_percent_epoch_ms() {
+        // end_time > 10^12 → treat as epoch ms
+        let future = chrono::Utc::now().timestamp_millis() + 3_600_000;
+        let item = serde_json::json!({
+            "current_interval_remaining_percent": 50,
+            "current_interval_status": 1,
+            "end_time": future
+        });
+        let t = parse_tier_percent(item, "current_interval_remaining_percent",
+                                       "current_interval_status", "end_time").unwrap();
+        assert_eq!(t.resets_at, Some(future));
+    }
+
+    #[test]
+    fn parse_tier_percent_out_of_range() {
+        let item = serde_json::json!({
+            "current_interval_remaining_percent": 150,  // invalid
+            "current_interval_status": 1,
+            "end_time": 100
+        });
+        assert!(parse_tier_percent(item, "current_interval_remaining_percent",
+                                       "current_interval_status", "end_time").is_none());
+    }
+
+    #[test]
+    fn parse_tier_count_basic() {
+        let item = serde_json::json!({
+            "current_interval_total_count": 200,
+            "current_interval_usage_count": 56,
+            "end_time": 14523
+        });
+        let t = parse_tier_count(item,
+            &[("current_interval_total_count", "current_interval_usage_count", "end_time")],
+            &[]).unwrap();
+        // (200-56)/200 = 0.72 → 72%
+        assert!((t.utilization - 72.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_tier_count_user_override_wins() {
+        // user adds a custom field name; it should be tried first
+        let item = serde_json::json!({
+            "new_total": 100,
+            "new_remaining": 25
+        });
+        let overrides = vec![crate::config::FieldTriple {
+            total: "new_total".into(),
+            remaining: "new_remaining".into(),
+            end: None,
+        }];
+        let t = parse_tier_count(item, &[], &overrides).unwrap();
+        assert!((t.utilization - 75.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_tier_count_zero_total_rejected() {
+        let item = serde_json::json!({
+            "current_interval_total_count": 0,
+            "current_interval_usage_count": 0
+        });
+        assert!(parse_tier_count(item,
+            &[("current_interval_total_count", "current_interval_usage_count", "end_time")],
+            &[]).is_none());
+    }
+
+    #[test]
+    fn parse_full_new_schema_snapshot() {
+        let raw = minimax_new_schema();
+        let snap = parse(&raw, Region::Cn, &ProviderOverrides::default());
+        assert!(snap.success, "snap.error = {:?}", snap.error);
+        assert_eq!(snap.rows.len(), 2);
+        assert_eq!(snap.rows[0].label, "5h");
+        assert_eq!(snap.rows[1].label, "周");
+        // 5h: 100-72=28%; week: 100-86=14%
+        assert!((snap.rows[0].utilization.unwrap() - 28.0).abs() < 0.001);
+        assert!((snap.rows[1].utilization.unwrap() - 14.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_full_business_error() {
+        let raw = serde_json::json!({
+            "base_resp": { "status_code": 1004, "status_msg": "rate limit" }
+        });
+        let snap = parse(&raw, Region::Cn, &ProviderOverrides::default());
+        assert!(!snap.success);
+        assert_eq!(snap.error_kind, Some(ErrorKind::ServerError));
+    }
+
+    #[test]
+    fn parse_full_no_model_remains() {
+        let raw = serde_json::json!({
+            "base_resp": { "status_code": 0 }
+        });
+        let snap = parse(&raw, Region::Cn, &ProviderOverrides::default());
+        assert!(!snap.success);
+        assert_eq!(snap.error_kind, Some(ErrorKind::Parse));
+    }
 }

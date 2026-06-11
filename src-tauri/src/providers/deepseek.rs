@@ -25,44 +25,73 @@
 //! - `is_available=false` 通常意味着余额不足，UI 用红色提示
 
 use std::pin::Pin;
-use std::time::Duration;
 
 use serde_json::json;
 
-use super::{Provider, ProviderImpl, ProviderSnapshot, QuotaRow};
+use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderImpl, ProviderSnapshot, QuotaRow, QuotaSource};
 
 const URL: &str = "https://api.deepseek.com/user/balance";
+
+// ── QuotaSource 实现（Phase 1）────────────────────────────────────
+
+pub struct DeepseekSource;
+
+impl Default for DeepseekSource {
+    fn default() -> Self { Self }
+}
+
+impl QuotaSource for DeepseekSource {
+    fn id(&self) -> &'static str { "deepseek" }
+    fn display_name(&self) -> &'static str { "DeepSeek" }
+    fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
+
+    fn set_state<'a>(
+        &'a self,
+        _cfg: serde_json::Value,
+    ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        // deepseek 无 region / overrides 概念，忽略
+        Box::pin(async move {})
+    }
+
+    fn fetch<'a>(
+        &'a self,
+        credentials: &'a Credentials,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>> {
+        Box::pin(async move {
+            let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
+            if api_key.is_empty() {
+                return Err(FetchError::unconfigured("未配置 API key（设置面板填入）"));
+            }
+            do_fetch(api_key).await
+        })
+    }
+}
+
+// ── 旧 ProviderImpl 兼容（dump CLI 还在用）────────────────────────
 
 #[derive(Debug, Default)]
 pub struct Deepseek;
 
 impl ProviderImpl for Deepseek {
-    fn id(&self) -> Provider {
-        Provider::Deepseek
-    }
-    fn display_name(&self) -> &'static str {
-        "DeepSeek"
-    }
+    fn id(&self) -> Provider { Provider::Deepseek }
+    fn display_name(&self) -> &'static str { "DeepSeek" }
 
     fn fetch<'a>(
         &'a self,
         api_key: &'a str,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, String>> + Send + 'a>> {
-        Box::pin(async move { do_fetch(api_key).await })
+        Box::pin(async move {
+            do_fetch(api_key).await.map_err(|e| e.message)
+        })
     }
 }
 
-async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, String> {
+async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
     if api_key.trim().is_empty() {
-        return Err("API key 为空".to_string());
+        return Err(FetchError::unconfigured("API key 为空"));
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .connect_timeout(Duration::from_secs(5))
-        .user_agent(concat!("Musage/", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|e| format!("build client: {e}"))?;
+    let client = shared_client();
 
     let resp = client
         .get(URL)
@@ -70,30 +99,30 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, String> {
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| format!("DeepSeek 网络错误: {e}"))?;
+        .map_err(|e| FetchError::network(format!("DeepSeek 网络错误: {e}")))?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED {
-        return Err("鉴权失败，请检查 DeepSeek API key".to_string());
+        return Err(FetchError::auth("鉴权失败，请检查 DeepSeek API key"));
     }
     if status == reqwest::StatusCode::FORBIDDEN {
-        return Err("无权限访问 DeepSeek 钱包（HTTP 403）".to_string());
+        return Err(FetchError::auth("无权限访问 DeepSeek 钱包（HTTP 403）"));
     }
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err("DeepSeek 请求过于频繁，请稍后再试".to_string());
+        return Err(FetchError::new(ErrorKind::RateLimited, "DeepSeek 请求过于频繁，请稍后再试"));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!(
+        return Err(FetchError::server(format!(
             "DeepSeek 服务异常 (HTTP {status}): {}",
             body.chars().take(200).collect::<String>()
-        ));
+        )));
     }
 
     let raw: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| format!("响应不是 JSON: {e}"))?;
+        .map_err(|e| FetchError::parse(format!("响应不是 JSON: {e}")))?;
 
     let is_available = raw
         .get("is_available")
@@ -121,6 +150,7 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, String> {
                 label: "余额".to_string(),
                 utilization: None,
                 remaining: total_balance,
+                used: None,
                 total: None,
                 resets_at: None,
                 unit: Some(currency),
@@ -130,7 +160,7 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, String> {
     }
 
     if rows.is_empty() {
-        return Err("DeepSeek 响应缺少 balance_infos".to_string());
+        return Err(FetchError::parse("DeepSeek 响应缺少 balance_infos".to_string()));
     }
 
     // 状态行
@@ -138,6 +168,7 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, String> {
         label: "状态".to_string(),
         utilization: None,
         remaining: None,
+        used: None,
         total: None,
         resets_at: None,
         unit: None,
@@ -156,6 +187,9 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, String> {
         fetched_at: Some(chrono::Utc::now().timestamp_millis()),
         raw: Some(raw),
         is_healthy: is_available,
+        source_id: Some(Provider::Deepseek.id_str().to_string()),
+        source_display_name: Some(Provider::Deepseek.display_name().to_string()),
+        plan_name: None,
     })
 }
 

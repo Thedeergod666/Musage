@@ -20,11 +20,12 @@
 //! Cookie 会随用户登出失效，过期时 (HTTP 401) 错误信息会引导用户重新粘贴。
 
 use std::pin::Pin;
-use std::time::Duration;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 
-use super::{ErrorKind, Provider, ProviderImpl, ProviderSnapshot, QuotaRow};
+use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderImpl, ProviderSnapshot, QuotaRow, QuotaSource};
 use crate::config::ProviderOverrides;
 
 /// 公开 endpoint（dashboard admin API，不是 token-plan 子域）
@@ -52,6 +53,79 @@ impl XiaomiRegion {
     }
 }
 
+// ── QuotaSource 实现（Phase 1）────────────────────────────────────
+
+#[derive(Debug, Clone, Default)]
+pub struct XiaomimimoState {
+    pub region: XiaomiRegion,
+    pub overrides: ProviderOverrides,
+}
+
+pub struct XiaomimimoSource {
+    state: Arc<RwLock<XiaomimimoState>>,
+}
+
+impl Default for XiaomimimoSource {
+    fn default() -> Self {
+        Self { state: Arc::new(RwLock::new(XiaomimimoState::default())) }
+    }
+}
+
+impl XiaomimimoSource {
+    pub async fn set_state(&self, region: XiaomiRegion, overrides: ProviderOverrides) {
+        let mut s = self.state.write().await;
+        s.region = region;
+        s.overrides = overrides;
+    }
+}
+
+impl QuotaSource for XiaomimimoSource {
+    fn id(&self) -> &'static str { "xiaomimimo" }
+    fn display_name(&self) -> &'static str { "Xiaomi MiMo" }
+    fn auth_kind(&self) -> AuthKind { AuthKind::Cookie }
+
+    fn set_state<'a>(
+        &'a self,
+        cfg: serde_json::Value,
+    ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        Box::pin(async move {
+            let region_str = cfg.get("providers")
+                .and_then(|p| p.get("xiaomimimo"))
+                .and_then(|m| m.get("xiaomi_region"))
+                .and_then(|r| r.as_str())
+                .unwrap_or("cn");
+            let region = match region_str {
+                "sgp" => XiaomiRegion::Sgp,
+                "ams" => XiaomiRegion::Ams,
+                _ => XiaomiRegion::Cn,
+            };
+            let overrides: ProviderOverrides = cfg.get("schema_overrides")
+                .and_then(|so| so.get("xiaomimimo"))
+                .and_then(|m| serde_json::from_value(m.clone()).ok())
+                .unwrap_or_default();
+            let mut s = self.state.write().await;
+            s.region = region;
+            s.overrides = overrides;
+        })
+    }
+
+    fn fetch<'a>(
+        &'a self,
+        credentials: &'a Credentials,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>> {
+        Box::pin(async move {
+            let cookie = credentials.cookie.as_deref().unwrap_or("").trim();
+            if cookie.is_empty() {
+                return Err(FetchError::unconfigured("未配置 Dashboard cookie（设置面板填入）"));
+            }
+            let state = self.state.read().await.clone();
+            Xiaomimimo::do_fetch(cookie, state.region, &state.overrides).await.map(|(_, snap)| snap)
+        })
+    }
+}
+
+// ── 旧 ProviderImpl 兼容（dump CLI 还在用）────────────────────────
+
 #[derive(Debug, Default)]
 pub struct Xiaomimimo {
     pub region: XiaomiRegion,
@@ -62,17 +136,12 @@ impl Xiaomimimo {
         cookie: &str,
         _region: XiaomiRegion,
         overrides: &ProviderOverrides,
-    ) -> Result<(serde_json::Value, ProviderSnapshot), String> {
+    ) -> Result<(serde_json::Value, ProviderSnapshot), FetchError> {
         if cookie.trim().is_empty() {
-            return Err("Dashboard cookie 为空（设置面板 · Xiaomi · Dashboard Cookie）".to_string());
+            return Err(FetchError::unconfigured("Dashboard cookie 为空（设置面板 · Xiaomi · Dashboard Cookie）"));
         }
 
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .connect_timeout(Duration::from_secs(5))
-            .user_agent(concat!("Musage/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .map_err(|e| format!("build client: {e}"))?;
+        let client = shared_client();
 
         // ── 1. 拉用量
         let resp = client
@@ -81,33 +150,33 @@ impl Xiaomimimo {
             .header("Accept", "application/json")
             .send()
             .await
-            .map_err(|e| format!("网络错误 [{}]: {e}", USAGE_URL))?;
+            .map_err(|e| FetchError::network(format!("网络错误 [{}]: {e}", USAGE_URL)))?;
 
         let status = resp.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
-            return Err("Cookie 失效或无效 —— 请重新登录 platform.xiaomimimo.com → DevTools 复制新 Cookie".to_string());
+            return Err(FetchError::auth("Cookie 失效或无效 —— 请重新登录 platform.xiaomimimo.com → DevTools 复制新 Cookie"));
         }
         if status == reqwest::StatusCode::FORBIDDEN {
-            return Err("无权限访问 Xiaomi dashboard API（HTTP 403）".to_string());
+            return Err(FetchError::auth("无权限访问 Xiaomi dashboard API（HTTP 403）"));
         }
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(format!(
+            return Err(FetchError::server(format!(
                 "Xiaomi dashboard API 异常 (HTTP {status}): {}",
                 body.chars().take(200).collect::<String>()
-            ));
+            )));
         }
 
         let raw: serde_json::Value = resp
             .json()
             .await
-            .map_err(|e| format!("响应不是 JSON: {e}"))?;
+            .map_err(|e| FetchError::parse(format!("响应不是 JSON: {e}")))?;
 
         // 业务级 code
         if let Some(code) = raw.get("code").and_then(|v| v.as_i64()) {
             if code != 0 {
                 let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
-                return Err(format!("Xiaomi dashboard API code {code}: {msg}"));
+                return Err(FetchError::server(format!("Xiaomi dashboard API code {code}: {msg}")));
             }
         }
 
@@ -128,30 +197,21 @@ impl Xiaomimimo {
     }
 }
 
-// ── 公开给 tauri command 用 ──
-//
-// do_fetch 需要 cookie，ProviderImpl::fetch 拿不到；所以 commands.rs 走 cfg::load_cookie_for
-// 自己拼 cookie，再调 do_fetch。
-
 impl ProviderImpl for Xiaomimimo {
-    fn id(&self) -> Provider {
-        Provider::Xiaomimimo
-    }
-    fn display_name(&self) -> &'static str {
-        "Xiaomi MiMo"
-    }
+    fn id(&self) -> Provider { Provider::Xiaomimimo }
+    fn display_name(&self) -> &'static str { "Xiaomi MiMo" }
 
     fn fetch<'a>(
         &'a self,
         _api_key: &'a str,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, String>> + Send + 'a>> {
-        // ProviderImpl::fetch 拿不到 cookie，所以这个 trait method 不走 cookie 路径
-        // commands.rs 走 do_fetch 直接传 cookie
         Box::pin(async move {
             Err("Xiaomi MiMo 走 do_fetch（需要 dashboard cookie），ProviderImpl::fetch 未实现".to_string())
         })
     }
 }
+
+// ── 解析逻辑（不变）────────────────────────────────────────────────
 
 /// 解析 usage + detail 的 response
 ///
@@ -190,6 +250,12 @@ fn parse(
         .and_then(|v| v.as_str())
         .and_then(parse_datetime_utc_ms);
 
+    // plan 名（detail.data.planName，例 "Standard" / "Plus"）
+    let plan_name = raw_detail
+        .pointer("/data/planName")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+
     let mut rows = Vec::new();
 
     // ── 1. 套餐（plan_total_token）—— 主指标，dashboard 显示的就是它
@@ -198,6 +264,7 @@ fn parse(
             label: "套餐".to_string(),
             utilization: Some(pct),
             remaining: None,
+            used: None,
             total: None,
             resets_at,
             unit: Some("%".to_string()),
@@ -211,6 +278,7 @@ fn parse(
             label: "补偿".to_string(),
             utilization: Some(pct),
             remaining: None,
+            used: None,
             total: None,
             resets_at: None,
             unit: Some("%".to_string()),
@@ -224,6 +292,7 @@ fn parse(
             label: "月度".to_string(),
             utilization: Some(pct),
             remaining: None,
+            used: None,
             total: None,
             resets_at: None,
             unit: Some("%".to_string()),
@@ -245,6 +314,9 @@ fn parse(
         fetched_at: Some(now_ms),
         raw: Some(raw_usage.clone()),
         is_healthy: success,
+        source_id: Some(Provider::Xiaomimimo.id_str().to_string()),
+        source_display_name: Some(Provider::Xiaomimimo.display_name().to_string()),
+        plan_name,
     }
 }
 

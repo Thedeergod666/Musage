@@ -25,8 +25,7 @@ use tauri::Manager;
 use tokio::sync::RwLock;
 
 use crate::config::AppConfig;
-use crate::logstore::LogStore;
-use crate::providers::QuotaSnapshot;
+use crate::providers::{builtin_sources, QuotaSnapshot};
 use crate::commands::apply_pin_mode_to_window;
 
 pub struct AppState {
@@ -117,17 +116,10 @@ pub fn run() {
                     cfg.auto_hide_in_fullscreen,
                 );
 
-                // 监听移动 / 缩放 → 持久化（spawn 异步任务避免阻塞 UI 线程）
+                // 监听移动 / 缩放 → 持久化（**H1 修复**：debounce 到 500ms，
+                // 否则拖 300px 会 spawn 300 个 tokio 任务 + 写 config.json 300 次）
                 let app_for_event = app.handle().clone();
-                win.on_window_event(move |event| match event {
-                    tauri::WindowEvent::Moved(pos) => {
-                        persist_floating_geom(&app_for_event, Some(pos.x), Some(pos.y), None, None);
-                    }
-                    tauri::WindowEvent::Resized(size) => {
-                        persist_floating_geom(&app_for_event, None, None, Some(size.width as i32), Some(size.height as i32));
-                    }
-                    _ => {}
-                });
+                spawn_debounced_geom_persister(app_for_event, win.clone());
             }
 
             // 默认显示悬浮窗
@@ -137,8 +129,8 @@ pub fn run() {
             }
 
             // 首次启动引导：所有 provider 都没配 key → 自动弹设置窗口
-            let any_key = providers::Provider::all().iter().any(|p| {
-                config::load_api_key_for(*p)
+            let any_key = builtin_sources().iter().any(|src| {
+                config::load_credential_for_id(src.id())
                     .ok()
                     .flatten()
                     .is_some()
@@ -172,6 +164,11 @@ pub fn run() {
             commands::refresh_now,
             commands::get_config,
             commands::save_config,
+            commands::list_sources,
+            commands::has_source_credential,
+            commands::set_source_credential,
+            commands::delete_source_credential,
+            commands::get_source_credential,
             commands::has_api_key_for,
             commands::set_api_key_for,
             commands::delete_api_key_for,
@@ -186,8 +183,6 @@ pub fn run() {
             commands::reset_floating_window,
             commands::set_floating_pin_mode,
             commands::set_floating_hover_raise,
-            commands::set_low_power_mode,
-            commands::set_auto_hide_in_fullscreen,
             commands::quit_app,
             commands::get_app_version,
             commands::get_recent_logs,
@@ -206,36 +201,57 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-/// 把浮窗位置/大小变化持久化到 config.json。None 表示该字段保持原值。
+/// 启动一个后台任务，把浮窗的"位置/大小"事件 debounce 到 500ms 再写 config.json。
 ///
-/// 在 tokio 任务里跑，避免阻塞 UI 线程（on_window_event 在主线程触发）。
-fn persist_floating_geom(
-    app: &tauri::AppHandle,
-    x: Option<i32>,
-    y: Option<i32>,
-    w: Option<i32>,
-    h: Option<i32>,
+/// 修复 H1：原来每个像素的 `WindowEvent::Moved` 都 spawn 一个 tokio 任务并立即
+/// `save()` —— 拖 300px 会 spawn 300 个任务 + 写 300 次 config.json。
+/// 现在的策略：回调里只更新共享状态，background task 定时（500ms）检查并落盘。
+fn spawn_debounced_geom_persister(
+    app: tauri::AppHandle,
+    win: tauri::WebviewWindow,
 ) {
-    let app2 = app.clone();
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    let latest: Arc<Mutex<Option<(i32, i32, i32, i32)>>> = Arc::new(Mutex::new(None));
+    let latest_for_cb = latest.clone();
+
+    // 回调线程：只更新 latest，不做 I/O
+    win.on_window_event(move |event| match event {
+        tauri::WindowEvent::Moved(pos) => {
+            let mut g = latest_for_cb.lock().unwrap();
+            let cur = g.unwrap_or((pos.x, pos.y, 0, 0));
+            *g = Some((pos.x, pos.y, cur.2, cur.3));
+        }
+        tauri::WindowEvent::Resized(size) => {
+            let mut g = latest_for_cb.lock().unwrap();
+            let cur = g.unwrap_or((0, 0, size.width as i32, size.height as i32));
+            *g = Some((cur.0, cur.1, size.width as i32, size.height as i32));
+        }
+        _ => {}
+    });
+
+    // 落盘线程：每 500ms 检查 latest 是否有变化，有就写一次
     tauri::async_runtime::spawn(async move {
-        let state = app2.state::<AppState>();
-        let mut cfg = state.config.write().await;
-        let mut dirty = false;
-        if let Some(x) = x {
-            if cfg.floating_x != Some(x) { cfg.floating_x = Some(x); dirty = true; }
-        }
-        if let Some(y) = y {
-            if cfg.floating_y != Some(y) { cfg.floating_y = Some(y); dirty = true; }
-        }
-        if let Some(w) = w {
-            if cfg.floating_w != Some(w) { cfg.floating_w = Some(w); dirty = true; }
-        }
-        if let Some(h) = h {
-            if cfg.floating_h != Some(h) { cfg.floating_h = Some(h); dirty = true; }
-        }
-        if dirty {
-            if let Err(e) = cfg.save() {
-                tracing::warn!(error = %e, "保存浮窗几何失败");
+        loop {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            let pending = {
+                let mut g = latest.lock().unwrap();
+                g.take()
+            };
+            if let Some((x, y, w, h)) = pending {
+                let state = app.state::<AppState>();
+                let mut cfg = state.config.write().await;
+                let mut dirty = false;
+                if cfg.floating_x != Some(x) { cfg.floating_x = Some(x); dirty = true; }
+                if cfg.floating_y != Some(y) { cfg.floating_y = Some(y); dirty = true; }
+                if w > 0 && cfg.floating_w != Some(w) { cfg.floating_w = Some(w); dirty = true; }
+                if h > 0 && cfg.floating_h != Some(h) { cfg.floating_h = Some(h); dirty = true; }
+                if dirty {
+                    if let Err(e) = cfg.save() {
+                        tracing::warn!(error = %e, "保存浮窗几何失败 (debounced)");
+                    }
+                }
             }
         }
     });
@@ -243,36 +259,41 @@ fn persist_floating_geom(
 
 /// `musage dump [provider]` 子命令：拉一次用量并打印
 ///
-/// `provider`：可选，`minimax` / `deepseek`，不传则跑全部。
+/// `provider`：可选，`minimax` / `deepseek` / `xiaomimimo` / `tavily`，不传则跑全部启用的。
 fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
     let rt = tokio::runtime::Runtime::new().expect("create tokio runtime");
     rt.block_on(async {
         let cfg = AppConfig::load_from_disk().unwrap_or_default();
 
-        // 决定要 dump 哪些 provider
-        let targets: Vec<providers::Provider> = match provider_filter {
-            None => cfg.enabled_providers(),
-            Some("minimax") => vec![providers::Provider::Minimax],
-            Some("deepseek") => vec![providers::Provider::Deepseek],
-            Some("xiaomi") | Some("xiaomimimo") => vec![providers::Provider::Xiaomimimo],
-            Some(other) => {
-                eprintln!("[dump] 未知 provider: {other}（可用: minimax / deepseek / xiaomi）");
-                return 2;
-            }
+        // 决定要 dump 哪些 source
+        let sources: Vec<Box<dyn crate::providers::QuotaSource>> = match provider_filter {
+            None => builtin_sources()
+                .into_iter()
+                .filter(|s| cfg.is_enabled_id(s.id()))
+                .collect(),
+            Some(id) => match builtin_sources().into_iter().find(|s| s.id() == id) {
+                Some(s) => vec![s],
+                None => {
+                    let known: Vec<&str> = builtin_sources().iter().map(|s| s.id()).collect();
+                    eprintln!("[dump] 未知 source id: {id}（可用: {}）", known.join(" / "));
+                    return 2;
+                }
+            },
         };
 
-        if targets.is_empty() {
-            eprintln!("[dump] 没有启用的 provider");
+        if sources.is_empty() {
+            eprintln!("[dump] 没有启用的 source");
             return 2;
         }
 
-        for provider in targets {
-            println!("\n========== {} ==========", provider.display_name());
+        for src in sources {
+            println!("\n========== {} ({}) ==========", src.display_name(), src.id());
 
-            let key = match config::load_api_key_for(provider) {
-                Ok(Some(k)) => k,
+            // 加载凭据
+            let creds = match config::load_credential_for_id(src.id()) {
+                Ok(Some(c)) => c,
                 Ok(None) => {
-                    eprintln!("[dump] keys.json 里没找到 {} 的 key。请先在 GUI 设置面板配置。", provider.display_name());
+                    eprintln!("[dump] 未配置凭据。请先在 GUI 设置面板配置。");
                     continue;
                 }
                 Err(e) => {
@@ -281,46 +302,11 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
                 }
             };
 
-            let prefix = if key.len() >= 8 { &key[..8] } else { &key };
-            println!("[dump] api key 前缀: {prefix}…");
+            // 给 source 推 state（region / overrides）—— 命令行调试场景用 cfg 默认值
+            update_source_state_for_dump(&src, &cfg).await;
 
-            // 直接调对应的 provider 实现（不经过 poller）
-            let result: Result<providers::ProviderSnapshot, String> = match provider {
-                providers::Provider::Minimax => {
-                    let region = cfg.region();
-                    let ov = cfg.schema_overrides
-                        .get(provider.id_str())
-                        .cloned()
-                        .unwrap_or_default();
-                    let r = providers::minimax::Minimax::do_fetch(&key, region, &ov).await;
-                    r.map(|(_, snap)| snap)
-                }
-                providers::Provider::Deepseek => {
-                    let p = providers::deepseek::Deepseek;
-                    <providers::deepseek::Deepseek as providers::ProviderImpl>::fetch(&p, &key)
-                        .await
-                }
-                providers::Provider::Xiaomimimo => {
-                    let region = cfg.xiaomi_region();
-                    let ov = cfg.schema_overrides
-                        .get(provider.id_str())
-                        .cloned()
-                        .unwrap_or_default();
-                    let cookie = match config::load_cookie_for(provider) {
-                        Ok(Some(c)) => c,
-                        Ok(None) => {
-                            eprintln!("[dump] keys.json 里没找到 Xiaomi MiMo 的 cookie。请先在 GUI 设置面板填入。");
-                            continue;
-                        }
-                        Err(e) => {
-                            eprintln!("[dump] 读 cookie 失败: {e}");
-                            continue;
-                        }
-                    };
-                    let r = providers::xiaomi::Xiaomimimo::do_fetch(&cookie, region, &ov).await;
-                    r.map(|(_, snap)| snap)
-                }
-            };
+            // 走 registry 路径（Phase 1 起的新路径）
+            let result = src.fetch(&creds).await;
 
             match result {
                 Ok(snap) => {
@@ -332,11 +318,16 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
                     println!("{}", serde_json::to_string_pretty(&snap).unwrap_or_default());
                 }
                 Err(e) => {
-                    eprintln!("[dump] 拉取失败: {e}");
+                    eprintln!("[dump] 拉取失败: {:?}", e);
                 }
             }
         }
 
         0
     })
+}
+
+/// 给 dump CLI 推 source state（region / overrides）—— 走 commands 模块的共享逻辑。
+async fn update_source_state_for_dump(src: &Box<dyn crate::providers::QuotaSource>, cfg: &AppConfig) {
+    crate::commands::update_source_state(src, cfg).await;
 }

@@ -171,6 +171,16 @@ impl Default for AppConfig {
                 xiaomi_region: Some(XiaomiRegion::Cn),
             },
         );
+        // Phase 1: Tavily 作为第一个非 AI provider，默认 enabled。
+        // 没有 region 概念，所以 region/xiaomi_region 都 None。
+        providers.insert(
+            "tavily".to_string(),
+            ProviderConfig {
+                enabled: true,
+                region: None,
+                xiaomi_region: None,
+            },
+        );
         Self {
             providers,
             refresh_interval_secs: 60,
@@ -358,6 +368,12 @@ impl AppConfig {
             .collect()
     }
 
+    /// 按 source id 查 enabled（用于 registry 驱动的轮询循环）。
+    /// 缺省视为 true（首次启动时还没这个 key 的 entry，按"启用"处理）。
+    pub fn is_enabled_id(&self, id: &str) -> bool {
+        self.providers.get(id).map(|c| c.enabled).unwrap_or(true)
+    }
+
     pub fn save(&self) -> Result<(), String> {
         let path = config_path()?;
         if let Some(parent) = path.parent() {
@@ -467,6 +483,49 @@ pub fn save_cookie_for(provider: Provider, cookie: &str) -> Result<(), String> {
 pub fn delete_cookie_for(provider: Provider) -> Result<(), String> {
     let mut map = read_keys().unwrap_or_default();
     map.remove(&cookie_key(provider));
+    if map.is_empty() {
+        let path = keys_path()?;
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|e| format!("remove empty keys: {e}"))?;
+        }
+    } else {
+        write_keys_atomic(&map)?;
+    }
+    Ok(())
+}
+
+// ── 按 source id 操作的凭据（Phase 1 新 API，registry-driven） ───────
+
+use crate::providers::Credentials;
+
+pub fn load_credential_for_id(id: &str) -> Result<Option<Credentials>, String> {
+    let map = read_keys()?;
+    let api_key = map.get(id).cloned();
+    let cookie = map.get(&format!("{id}:cookie")).cloned();
+    Ok(if api_key.is_some() || cookie.is_some() {
+        Some(Credentials { api_key, cookie })
+    } else {
+        None
+    })
+}
+
+pub fn save_credential_for_id(id: &str, cred: &Credentials) -> Result<(), String> {
+    let mut map = read_keys().unwrap_or_default();
+    match (&cred.api_key, &cred.cookie) {
+        (Some(k), _) => { map.insert(id.to_string(), k.clone()); }
+        (None, Some(c)) => { map.insert(format!("{id}:cookie"), c.clone()); }
+        (None, None) => {
+            map.remove(id);
+            map.remove(&format!("{id}:cookie"));
+        }
+    }
+    write_keys_atomic(&map)
+}
+
+pub fn delete_credential_for_id(id: &str) -> Result<(), String> {
+    let mut map = read_keys().unwrap_or_default();
+    map.remove(id);
+    map.remove(&format!("{id}:cookie"));
     if map.is_empty() {
         let path = keys_path()?;
         if path.exists() {

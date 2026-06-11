@@ -384,7 +384,12 @@ pub(crate) fn build_settings_window(
     .min_inner_size(440.0, 500.0)
     .resizable(true)
     .decorations(true)
-    .skip_taskbar(true)
+    // **任务栏映射**：设置窗才是用户面对的 app 窗口，应该出现在 Win 任务栏
+    // （这样 ALT+TAB / 任务栏右键能正常操作，icon 也走 bundle.icon）。
+    // 浮窗在 tauri.conf.json 里设了 skipTaskbar:true（小悬浮 overlay 不该
+    // 出现在任务栏）—— 两侧必须保持一反一正，否则 Win 用户会看到一个
+    // "Musage" 任务栏条目对应错误的窗口。
+    .skip_taskbar(false)
     .center()
     .background_color(bg)
     .build()
@@ -393,6 +398,11 @@ pub(crate) fn build_settings_window(
 #[tauri::command]
 pub async fn open_settings_window(app: AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("settings") {
+        // Win11 已存在窗口的恢复链：unminimize 必须在 show 之前 ——
+        // Win 上 show() 对 minimized 窗口是 no-op（不会自动 SW_RESTORE），
+        // 不 unminimize 的话用户最小化设置窗后再从托盘点"设置"会以为
+        // 命令死了。set_focus 收尾把窗口拉前台 + 抢焦点。
+        let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
     } else {
@@ -412,6 +422,9 @@ pub async fn hide_floating_window(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn show_floating_window(app: AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("floating") {
+        // 与 open_settings_window 同样的"先 unminimize 再 show"链 —— 即使
+        // 浮窗 decorations:false 没有最小化按钮，WIN+M / 命令行也能最小化。
+        let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
     }

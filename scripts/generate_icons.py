@@ -78,25 +78,41 @@ def find_font(size: int):
 def make_icon(size: int) -> Image.Image:
     """生成 Musage 图标（指定尺寸原生渲染，不用降采样）。
 
-    Layout：
-      - 1024 canvas 周边留 ~10% 透明 padding（macOS HIG / Apple 官方推荐）
+    Layout（≥32）：
+      - 1024 canvas 周边留 ~7% 透明 padding（macOS HIG / Apple 官方推荐）
         Dock 渲染时白底不撑满槽位，跟 VSCode/WPS 视觉密度对齐
       - 内层放圆角矩形白底 + 居中 ring + 居中 M
-        ring 相对白底 6% inset，不顶到圆角边
+        ring 相对白底 8% inset，不顶到圆角边
+
+    Layout（≤24，Win 任务栏/标题栏 100/150% DPI 帧）：
+      - **无 padding**（full-bleed），**轻圆角**（10%），**大 M**（0.66）
+      - 原 7% padding + 22% radius + 50% M 在 16x16 让 M 只占 ~8 px，
+        笔画细到一锯齿就糊；小尺寸切「无 padding + 大 M」让笔画粗+
+        边缘清，不带 ring（细到 1 px 时 inset+stroke 会糊成虚线）。
+      - 32+ 保留原 dock 风格（padding + ring + M=50%）。
     """
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
-    # macOS 风格圆角矩形 —— 纯白底 + 10% 透明 padding 留出 dock 内边距
-    pad = int(size * ICON_PADDING_RATIO)
-    sq_size = size - 2 * pad  # 白底边长
-    r = int(sq_size * 0.225)
+    is_small = size <= 24
+    if is_small:
+        pad = 0
+        sq_size = size
+        r = max(1, int(sq_size * 0.10))
+        m_scale = 0.66
+    else:
+        pad = int(size * ICON_PADDING_RATIO)
+        sq_size = size - 2 * pad
+        r = int(sq_size * 0.225)
+        m_scale = M_SCALE
+
+    # 圆角白底
     d.rounded_rectangle(
         [(pad, pad), (pad + sq_size - 1, pad + sq_size - 1)],
         radius=r, fill=BG,
     )
 
-    # Ring 装饰：相对白底 inset RING_MARGIN，贴在白底内侧
+    # Ring 装饰：仅 ≥32 画。≤24 帧上 ring 会糊成虚线，不画反而干净。
     if RING_MARGIN > 0 and size >= 32:
         ring_offset = int(sq_size * RING_MARGIN)
         rx0 = pad + ring_offset
@@ -110,7 +126,7 @@ def make_icon(size: int) -> Image.Image:
 
     # 中心 "M" —— anchor="mm" 真正像素级居中
     if size >= 16:
-        font, is_bold = find_font(int(size * M_SCALE))
+        font, is_bold = find_font(int(size * m_scale))
         if font is not None:
             if is_bold:
                 d.text((size / 2, size / 2), "M", font=font, fill=FG, anchor="mm")

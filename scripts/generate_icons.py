@@ -20,7 +20,7 @@ FG = (0, 0, 0, 255)            # 黑色 M
 
 # 字号占边长比例。0.45 对齐 VSCode / WPS 等系统 app icon 的视觉占比，
 # 留出明显外圈 padding —— macOS Dock/Launchpad 看到的 icon 才不会"大一圈"。
-M_SCALE = 0.45
+M_SCALE = 0.55
 # 装饰 ring 系数：设为 0 即不再画环（已删），只保留 M on white。
 # 之前 0.18 边距的 ring 会让 ring 直接顶到圆角矩形边缘，macOS
 # 看到时感觉 icon 内容撑满，对比其它 app 显得"大一圈"。
@@ -75,22 +75,26 @@ def make_icon(size: int) -> Image.Image:
     """生成 Musage 图标（指定尺寸原生渲染，不用降采样）。
 
     Layout：
-      - 圆角矩形白底
-      - 中心 "M"，用 anchor="mm" 保证完美居中
-      - **不再画装饰 ring**：VSCode / WPS 等标准 app icon 都没有 ring，
-        ring 顶到圆角边缘会让 macOS 看到时觉得 icon 内容物"撑满"，
-        视觉上比其它 app 大一圈。已删。
+      - 1024 canvas 周边留 ~5% 透明 padding，让 macOS 渲染时白底不撑满 dock 槽
+        （VSCode / WPS 等标准 icon 都这么做）
+      - 内层放圆角矩形白底 + 居中 M
+      - **不再画装饰 ring**：ring 顶到圆角边缘会让 macOS 看到时觉得
+        icon 内容物"撑满"，视觉上比其它 app 大一圈
     """
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
-    # macOS 风格圆角矩形 —— 纯白底
-    r = int(size * 0.225)
-    d.rounded_rectangle([(0, 0), (size - 1, size - 1)], radius=r, fill=BG)
+    # macOS 风格圆角矩形 —— 纯白底 + 5% 透明 padding 留出 dock 内边距
+    pad = int(size * 0.05)
+    r = int((size - 2 * pad) * 0.225)
+    d.rounded_rectangle(
+        [(pad, pad), (size - 1 - pad, size - 1 - pad)],
+        radius=r, fill=BG,
+    )
 
     # 装饰 ring：RING_MARGIN = 0 时跳过。
     if RING_MARGIN > 0:
-        ring_margin = int(size * RING_MARGIN)
+        ring_margin = pad + int((size - 2 * pad) * RING_MARGIN)
         d.ellipse(
             [(ring_margin, ring_margin), (size - ring_margin, size - ring_margin)],
             outline=RING, width=max(1, int(size * RING_STROKE)),

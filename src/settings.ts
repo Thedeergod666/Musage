@@ -54,6 +54,8 @@ interface AppConfig {
   floating_pin_mode?: FloatingPinMode;
   low_power_mode?: boolean;
   auto_hide_in_fullscreen?: boolean;
+  /// Tavily 简洁模式：只显示主指标 + 进度条，隐藏 5 个 endpoint 细分行
+  tavily_concise_mode?: boolean;
   // 用户加的字段名候选（应对 MiniMax 改 schema）
   schema_overrides?: Record<string, ProviderOverrides>;
 }
@@ -221,6 +223,9 @@ async function loadConfig() {
   ($("#low-power-mode") as HTMLInputElement).checked = cfg.low_power_mode ?? false;
   ($("#auto-hide-in-fullscreen") as HTMLInputElement).checked =
     cfg.auto_hide_in_fullscreen ?? false;
+  // Tavily 简洁模式（默认开）
+  const tavilyConcise = document.getElementById("tavily-concise-mode") as HTMLInputElement | null;
+  if (tavilyConcise) tavilyConcise.checked = cfg.tavily_concise_mode ?? true;
 
   // schema overrides (高级)
   const ov = cfg.schema_overrides ?? {};
@@ -302,6 +307,8 @@ async function saveConfig() {
     floating_pin_mode: pinMode,
     low_power_mode: ($("#low-power-mode") as HTMLInputElement).checked,
     auto_hide_in_fullscreen: ($("#auto-hide-in-fullscreen") as HTMLInputElement).checked,
+    tavily_concise_mode:
+      (document.getElementById("tavily-concise-mode") as HTMLInputElement | null)?.checked ?? true,
     schema_overrides: {
       minimax: {
         five_hour: { count_candidates: fiveHourCandidates },

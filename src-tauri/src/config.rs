@@ -101,10 +101,19 @@ pub struct AppConfig {
     /// 默认 false（保持原有行为：全屏时浮窗仍可能露出）。
     #[serde(default)]
     pub auto_hide_in_fullscreen: bool,
+    /// Tavily 简洁模式：只显示 Free tier 主行（"209/1000 credits"），隐藏
+    /// 5 个 endpoint 细分（search/extract/crawl/map/research）。默认 true
+    /// —— 6 行挤在小窗里太啰嗦；想看明细可去设置面板关掉。
+    #[serde(default = "tavily_concise_default")]
+    pub tavily_concise_mode: bool,
     /// 用户自定义的字段名候选（应对 MiniMax 改 schema）
     /// key = provider.id_str()，value = 该 provider 的 overrides
     #[serde(default)]
     pub schema_overrides: BTreeMap<String, ProviderOverrides>,
+}
+
+const fn tavily_concise_default() -> bool {
+    true
 }
 
 /// 单个 tier（5h / 周 / 月等）的字段名 overrides
@@ -193,6 +202,7 @@ impl Default for AppConfig {
             show_in_tray_on_close: true,
             low_power_mode: false,
             auto_hide_in_fullscreen: false,
+            tavily_concise_mode: true,
             schema_overrides: BTreeMap::new(),
         }
     }

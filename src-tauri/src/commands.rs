@@ -80,6 +80,8 @@ pub async fn save_config(
         let mut guard = state.config.write().await;
         *guard = cfg;
     }
+    // 广播「配置变了」给浮窗，让浮窗按需 re-fetch（比如 Tavily 简洁模式开关）
+    let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
 

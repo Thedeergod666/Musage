@@ -29,6 +29,13 @@ const PROVIDER_META: Record<string, { name: string; logo: string }> = {
 
 type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
 
+/// 浮窗渲染相关的用户偏好（从 config 拉到，config 变时由 init 里的
+/// "musage://config-changed" 监听刷新）
+interface RenderPrefs {
+  tavilyConciseMode: boolean;
+}
+let renderPrefs: RenderPrefs = { tavilyConciseMode: true };
+
 // ── 类型（必须和 src-tauri/src/providers/mod.rs 对齐）──
 
 interface QuotaRow {
@@ -149,6 +156,32 @@ function render(snap: QuotaSnapshot) {
   updateFoot(snap);
 
   startCountdown();
+  // 改完 DOM 后 → 量内容高度，调 Rust 把浮窗 resize 到 fit-content
+  void autoResizeWindow();
+}
+
+/// 按 RenderPrefs 过滤 / 改写 rows（影响渲染前的数据，不动后端）
+function rowsForRender(p: ProviderSnapshot): QuotaRow[] {
+  const id = p.source_id ?? p.provider;
+  if (id === "tavily" && renderPrefs.tavilyConciseMode) {
+    // 简洁模式：只保留主指标行（"209/1000 credits" 那条），隐藏 5 个
+    // endpoint 细分行（search/extract/crawl/map/research）。
+    // 进度条保留在 rowLabel 下方，跟 MiniMax 5h/周 一致。
+    return p.rows.filter((r) => r.used != null && r.total != null);
+  }
+  return p.rows;
+}
+
+/// 自适应高度：把 #app 的实际内容高度发给 Rust，让浮窗 resize 上去。
+async function autoResizeWindow() {
+  await new Promise<void>((r) => requestAnimationFrame(() => r()));
+  const contentH = document.documentElement.scrollHeight;
+  const target = Math.round(contentH + 1);
+  try {
+    await invoke("resize_floating_window", { height: target });
+  } catch (e) {
+    console.debug("[floating] auto-resize 失败", e);
+  }
 }
 
 function renderLoading() {
@@ -270,8 +303,11 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
     if (k) existing.set(k, el);
   });
 
+  // 按用户偏好过滤行（Tavily 简洁模式等）—— 跟下面 diff 逻辑透明衔接
+  const rows = rowsForRender(p);
+
   let rowAnchor: ChildNode | null = null;
-  for (const r of p.rows) {
+  for (const r of rows) {
     const key = rowKey(r);
     let rowEl = existing.get(key);
     if (rowEl) {
@@ -513,6 +549,7 @@ async function init() {
   // 订阅后端推送
   let unlisten: UnlistenFn | null = null;
   let unlistenHover: UnlistenFn | null = null;
+  let unlistenCfg: UnlistenFn | null = null;
   listen<QuotaSnapshot>("musage://snapshot", (e) => {
     render(e.payload);
   }).then((fn) => (unlisten = fn));
@@ -601,13 +638,28 @@ async function init() {
     const cfg = await invoke<{
       floating_pin_mode?: FloatingPinMode;
       low_power_mode?: boolean;
+      tavily_concise_mode?: boolean;
     }>("get_config");
     pinMode = cfg.floating_pin_mode ?? "pin_top";
     setLowPowerAttr(cfg.low_power_mode ?? false);
+    renderPrefs = { tavilyConciseMode: cfg.tavily_concise_mode ?? true };
   } catch (e) {
     console.error("读 config 失败", e);
   }
   setupHoverRaise(pinMode);
+
+  // 配置变化时（设置面板改 Tavily 简洁模式等）→ 重新拉 config + snapshot
+  // 后端 save_config 已经 emit `musage://config-changed`。
+  listen("musage://config-changed", async () => {
+    try {
+      const cfg = await invoke<{ tavily_concise_mode?: boolean }>("get_config");
+      renderPrefs = { tavilyConciseMode: cfg.tavily_concise_mode ?? true };
+      const snap = await invoke<QuotaSnapshot>("get_snapshot");
+      if (snap.providers.length > 0) render(snap);
+    } catch (e) {
+      console.error("[floating] 重新读 config 失败", e);
+    }
+  }).then((fn) => (unlistenCfg = fn));
 
   // 设置面板改了模式时，重新挂/摘 hover 监听。
   // （设置面板那边调 set_floating_pin_mode 会 emit 这个事件）
@@ -622,6 +674,7 @@ async function init() {
     if (unlisten) unlisten();
     if (unlistenHover) unlistenHover();
     if (unlistenLowPower) unlistenLowPower();
+    if (unlistenCfg) unlistenCfg();
     if (countdownTimer !== null) clearInterval(countdownTimer);
   });
 }

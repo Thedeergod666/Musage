@@ -89,6 +89,31 @@
       .provider-panel { display: none; margin-top: 12px; }
       .provider-panel.active { display: block; }
 
+      /* Provider 排序列表 */
+      .order-section { background: #15171c; border: 1px solid #2a2d35; border-radius: 6px; padding: 4px 0; }
+      .order-list { display: flex; flex-direction: column; }
+      .order-row {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 8px 12px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      }
+      .order-row:last-child { border-bottom: none; }
+      .order-name { font-size: 13px; color: #e0e0e0; font-weight: 500; }
+      .order-btns { display: flex; gap: 4px; }
+      .order-btns button {
+        flex: 0 0 auto;
+        width: 28px; height: 28px;
+        padding: 0;
+        font-size: 14px;
+        line-height: 1;
+        background: #2a2d35;
+        border: 1px solid #3a3d45;
+        border-radius: 5px;
+      }
+      .order-btns button:hover:not(:disabled) { background: #3a4250; }
+      .order-btns button:disabled { opacity: 0.3; cursor: not-allowed; }
+      .provider-panel.active { display: block; }
+
       .provider-section {
         background: #15171c;
         border: 1px solid #2a2d35;
@@ -211,6 +236,17 @@
         <button class="tab" data-p="tavily">
           <span class="tab-dot"></span>Tavily
         </button>
+      </div>
+    </div>
+
+    <!-- Provider 排序（拖拽/上下按钮） -->
+    <div class="field">
+      <label>浮窗顺序</label>
+      <div class="order-section">
+        <div id="provider-order-list" class="order-list"></div>
+        <div class="help">
+          上下按钮调整 provider 在浮窗里从上到下的排列顺序。改完点「保存配置」生效。
+        </div>
       </div>
     </div>
 

@@ -19,6 +19,9 @@ interface ProviderConfig {
   refresh_interval_secs?: number | null;
 }
 
+/// 4 个 provider 面板的 id 列表。决定 #3/#4 UI 循环读哪些元素。
+const PROVIDER_IDS = ["minimax", "deepseek", "xiaomimimo", "tavily"] as const;
+
 /// Phase 1 新增：注册表元信息（后端 list_sources 返回）。
 /// 当前 settings.ts 直接用 list_sources 返回 SourceMeta[] 来构建面板，
 /// 这里的接口保留给未来的动态渲染。设置面板硬编码 4 个 tab 还在
@@ -58,6 +61,8 @@ interface AppConfig {
   auto_hide_in_fullscreen?: boolean;
   /// Tavily 简洁模式：只显示主指标 + 进度条，隐藏 5 个 endpoint 细分行
   tavily_concise_mode?: boolean;
+  /// Provider 在浮窗里的渲染顺序。空数组 = 用 builtin_sources() 注册表顺序
+  provider_order?: string[];
   // 用户加的字段名候选（应对 MiniMax 改 schema）
   schema_overrides?: Record<string, ProviderOverrides>;
 }
@@ -228,17 +233,20 @@ async function loadConfig() {
   // Tavily 简洁模式（默认开）
   const tavilyConcise = document.getElementById("tavily-concise-mode") as HTMLInputElement | null;
   if (tavilyConcise) tavilyConcise.checked = cfg.tavily_concise_mode ?? true;
-  // 各 provider 「在浮窗显示」开关（缺省视为 true）
-  const enabledMap: Array<[string, string]> = [
-    ["minimax", "enabled-minimax"],
-    ["deepseek", "enabled-deepseek"],
-    ["xiaomimimo", "enabled-xiaomimimo"],
-    ["tavily", "enabled-tavily"],
-  ];
-  for (const [id, elId] of enabledMap) {
-    const el = document.getElementById(elId) as HTMLInputElement | null;
+  // 各 provider 「在浮窗显示」开关（缺省视为 true）+ 轮询间隔覆盖
+  for (const id of PROVIDER_IDS) {
+    const el = document.getElementById(`enabled-${id}`) as HTMLInputElement | null;
     if (el) el.checked = cfg.providers?.[id]?.enabled ?? true;
+    const intervalEl = document.getElementById(`interval-${id}`) as HTMLInputElement | null;
+    if (intervalEl) {
+      const v = cfg.providers?.[id]?.refresh_interval_secs;
+      intervalEl.value = v != null ? String(v) : "";
+      intervalEl.placeholder = `默认 ${cfg.refresh_interval_secs} 秒（顶部"轮询间隔"）`;
+    }
   }
+
+  // Provider 排序（拖拽/上下按钮）
+  renderProviderOrder(cfg.provider_order ?? []);
 
   // schema overrides (高级)
   const ov = cfg.schema_overrides ?? {};
@@ -301,26 +309,41 @@ async function saveConfig() {
     existing.floating_pin_mode ??
     "pin_top";
 
+  // 读每个 provider 的轮询间隔覆盖（空字符串 = None = 用全局）
+  function readProviderInterval(id: ProviderId): number | null {
+    const el = document.getElementById(`interval-${id}`) as HTMLInputElement | null;
+    if (!el) return null;
+    const raw = el.value.trim();
+    if (raw === "") return null;
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < 10) return 10;  // 后端会再 clamp 一次
+    return n;
+  }
+
   const cfg: AppConfig = {
     providers: {
       minimax: {
         enabled:
           (document.getElementById("enabled-minimax") as HTMLInputElement | null)?.checked ?? true,
         region: ($("#region") as HTMLSelectElement).value as "cn" | "en",
+        refresh_interval_secs: readProviderInterval("minimax"),
       },
       deepseek: {
         enabled:
           (document.getElementById("enabled-deepseek") as HTMLInputElement | null)?.checked ?? true,
+        refresh_interval_secs: readProviderInterval("deepseek"),
       },
       xiaomimimo: {
         enabled:
           (document.getElementById("enabled-xiaomimimo") as HTMLInputElement | null)?.checked ??
           true,
         xiaomi_region: ($("#xiaomi-region") as HTMLSelectElement).value as "cn" | "sgp" | "ams",
+        refresh_interval_secs: readProviderInterval("xiaomimimo"),
       },
       tavily: {
         enabled:
           (document.getElementById("enabled-tavily") as HTMLInputElement | null)?.checked ?? true,
+        refresh_interval_secs: readProviderInterval("tavily"),
       },
     },
     refresh_interval_secs: parseInt(($("#interval") as HTMLInputElement).value, 10) || 60,
@@ -332,6 +355,7 @@ async function saveConfig() {
     auto_hide_in_fullscreen: ($("#auto-hide-in-fullscreen") as HTMLInputElement).checked,
     tavily_concise_mode:
       (document.getElementById("tavily-concise-mode") as HTMLInputElement | null)?.checked ?? true,
+    provider_order: readProviderOrder(),
     schema_overrides: {
       minimax: {
         five_hour: { count_candidates: fiveHourCandidates },
@@ -419,6 +443,84 @@ function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
 }
 
 // ── 工具 ──
+
+/// Provider 排序（拖拽/上下按钮）
+/// DOM 结构：每个 provider 一个 row（[id="provider-order-row-{id}"]），
+/// 包含 ↑ ↓ 按钮，移位后重新调换 DOM 顺序。保存时按当前 DOM 顺序生成
+/// provider_order 数组。
+const PROVIDER_DISPLAY_NAME: Record<ProviderId, string> = {
+  minimax: "MiniMax",
+  deepseek: "DeepSeek",
+  xiaomimimo: "Xiaomi MiMo",
+  tavily: "Tavily",
+};
+
+function renderProviderOrder(order: string[]) {
+  const list = document.getElementById("provider-order-list");
+  if (!list) return;
+  // 用 config.order 做主序，没列出的 provider 沉到末尾（用 builtin 顺序）
+  const builtin: ProviderId[] = ["minimax", "deepseek", "xiaomimimo", "tavily"];
+  const ordered: ProviderId[] = [];
+  for (const id of order) {
+    if ((builtin as string[]).includes(id) && !(ordered as string[]).includes(id)) {
+      ordered.push(id as ProviderId);
+    }
+  }
+  for (const id of builtin) {
+    if (!(ordered as string[]).includes(id)) ordered.push(id);
+  }
+  list.innerHTML = ordered
+    .map(
+      (id, i) => `
+      <div class="order-row" data-id="${id}">
+        <span class="order-name">${PROVIDER_DISPLAY_NAME[id]}</span>
+        <span class="order-btns">
+          <button type="button" data-move="up"   ${i === 0 ? "disabled" : ""} aria-label="上移">↑</button>
+          <button type="button" data-move="down" ${i === ordered.length - 1 ? "disabled" : ""} aria-label="下移">↓</button>
+        </span>
+      </div>`,
+    )
+    .join("");
+  // 绑按钮
+  list.querySelectorAll<HTMLButtonElement>("button[data-move]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const row = btn.closest<HTMLElement>(".order-row");
+      if (!row) return;
+      const dir = btn.dataset.move;
+      const sibling = dir === "up" ? row.previousElementSibling : row.nextElementSibling;
+      if (sibling) {
+        if (dir === "up") list.insertBefore(row, sibling);
+        else list.insertBefore(sibling, row);
+        // 重新禁用边界按钮
+        refreshOrderButtons();
+      }
+    });
+  });
+  refreshOrderButtons();
+}
+
+function refreshOrderButtons() {
+  const list = document.getElementById("provider-order-list");
+  if (!list) return;
+  const rows = list.querySelectorAll<HTMLElement>(".order-row");
+  rows.forEach((row, i) => {
+    const up = row.querySelector<HTMLButtonElement>('button[data-move="up"]');
+    const down = row.querySelector<HTMLButtonElement>('button[data-move="down"]');
+    if (up) up.disabled = i === 0;
+    if (down) down.disabled = i === rows.length - 1;
+  });
+}
+
+function readProviderOrder(): string[] {
+  const list = document.getElementById("provider-order-list");
+  if (!list) return [];
+  const ids: string[] = [];
+  list.querySelectorAll<HTMLElement>(".order-row").forEach((row) => {
+    const id = row.dataset.id;
+    if (id) ids.push(id);
+  });
+  return ids;
+}
 
 let flashTimer: number | null = null;
 function flash(msg: string, isError = false) {

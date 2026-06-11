@@ -18,13 +18,14 @@ BG = (255, 255, 255, 255)     # 纯白
 RING = (0, 0, 0, 200)          # 黑环（半透明一点不那么硬）
 FG = (0, 0, 0, 255)            # 黑色 M
 
-# 字号占边长比例。0.50 比之前的 0.58 留出明显 padding，
-# 避免 macOS 看着偏大；小尺寸（16px）下 M 笔画也不会因为贴边而糊。
-M_SCALE = 0.50
-# Ring 距离边距比例。0.18 给 M 留 ~8% 视觉余量。
-RING_MARGIN = 0.18
-# Ring 描边比例。1/48 = 2.08% 边粗，足够细不喧宾夺主。
-RING_STROKE = 1 / 48
+# 字号占边长比例。0.45 对齐 VSCode / WPS 等系统 app icon 的视觉占比，
+# 留出明显外圈 padding —— macOS Dock/Launchpad 看到的 icon 才不会"大一圈"。
+M_SCALE = 0.45
+# 装饰 ring 系数：设为 0 即不再画环（已删），只保留 M on white。
+# 之前 0.18 边距的 ring 会让 ring 直接顶到圆角矩形边缘，macOS
+# 看到时感觉 icon 内容撑满，对比其它 app 显得"大一圈"。
+RING_MARGIN = 0      # 0 = 不画 ring
+RING_STROKE = 0
 
 
 def find_font(size: int):
@@ -75,8 +76,10 @@ def make_icon(size: int) -> Image.Image:
 
     Layout：
       - 圆角矩形白底
-      - 黑色细环装饰
-      - 中心 "M"，用 anchor="mm" 保证完美居中（不受字体 bbox 偏移影响）
+      - 中心 "M"，用 anchor="mm" 保证完美居中
+      - **不再画装饰 ring**：VSCode / WPS 等标准 app icon 都没有 ring，
+        ring 顶到圆角边缘会让 macOS 看到时觉得 icon 内容物"撑满"，
+        视觉上比其它 app 大一圈。已删。
     """
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
@@ -85,12 +88,13 @@ def make_icon(size: int) -> Image.Image:
     r = int(size * 0.225)
     d.rounded_rectangle([(0, 0), (size - 1, size - 1)], radius=r, fill=BG)
 
-    # 外圈细环（黑色，装饰）
-    ring_margin = int(size * RING_MARGIN)
-    d.ellipse(
-        [(ring_margin, ring_margin), (size - ring_margin, size - ring_margin)],
-        outline=RING, width=max(1, int(size * RING_STROKE)),
-    )
+    # 装饰 ring：RING_MARGIN = 0 时跳过。
+    if RING_MARGIN > 0:
+        ring_margin = int(size * RING_MARGIN)
+        d.ellipse(
+            [(ring_margin, ring_margin), (size - ring_margin, size - ring_margin)],
+            outline=RING, width=max(1, int(size * RING_STROKE)),
+        )
 
     # 中心 "M" —— anchor="mm" 真正像素级居中
     if size >= 16:

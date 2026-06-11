@@ -522,6 +522,25 @@ function readProviderOrder(): string[] {
   return ids;
 }
 
+/// 只保存 provider_order（不触碰其它字段），让用户调完顺序后不必滚到底部
+/// 点全局"保存"也能直接落盘 —— 浮窗顺序是用户最高频调的。
+async function saveProviderOrderOnly() {
+  try {
+    const order = readProviderOrder();
+    const existing = await invoke<AppConfig>("get_config");
+    await invoke("save_config", {
+      cfg: { ...existing, provider_order: order },
+    });
+    flash(`✓ 顺序已保存（${order.join(" → ")}）`);
+  } catch (e) {
+    flash(`✗ 保存顺序失败: ${e}`, true);
+  }
+}
+
+function resetProviderOrder() {
+  renderProviderOrder([]);  // 空 = builtin 注册表顺序
+}
+
 let flashTimer: number | null = null;
 function flash(msg: string, isError = false) {
   const el = $("#flash") as HTMLElement;
@@ -937,6 +956,8 @@ document.getElementById("logs-refresh")?.addEventListener("click", () => void lo
 document.getElementById("logs-clear")?.addEventListener("click", () => void clearLogs());
 document.getElementById("logs-copy")?.addEventListener("click", () => void copyLogs());
 document.getElementById("logs-filter")?.addEventListener("change", () => void loadLogs());
+document.getElementById("save-provider-order")?.addEventListener("click", () => void saveProviderOrderOnly());
+document.getElementById("reset-provider-order")?.addEventListener("click", () => resetProviderOrder());
 
 (async () => {
   try {

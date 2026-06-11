@@ -360,26 +360,43 @@ pub async fn get_api_key_for(provider: Provider) -> Result<Option<String>, Strin
     config::load_api_key_for(provider)
 }
 
+/// 设置窗 builder —— commands.rs 的 open_settings_window + lib.rs 的首启引导
+/// 都走这里，防止两处 builder 配置漂移（之前是 byte-for-byte 复制两份）。
+///
+/// **Win11 闪白修复（2026-06-11）**：不设 background_color 时，WebView2 surface
+/// 在第一帧 HTML/CSS 抵达前是系统默认白色，而 settings.css 的 body 背景是
+/// `#1a1c22`，用户看到的是「白窗 → 一帧后变深色 = 闪一下」。`background_color`
+/// 在 native 层（窗口 chrome + WebView2 surface）就预先涂成 `#1a1c22`，HTML
+/// 还没解析的那几十毫秒里画的就是深色，肉眼无感。注意：Windows 8+ 上
+/// `Color` 的 alpha 通道会被 webview 层忽略（见 tauri_utils config 注释），
+/// `0xff` 只是给阅读代码的人看的。
+pub(crate) fn build_settings_window(
+    app: &AppHandle,
+) -> tauri::Result<tauri::WebviewWindow> {
+    let bg = tauri::webview::Color(0x1a, 0x1c, 0x22, 0xff);
+    tauri::WebviewWindowBuilder::new(
+        app,
+        "settings",
+        tauri::WebviewUrl::App("settings.html".into()),
+    )
+    .title("Musage · 设置")
+    .inner_size(540.0, 620.0)
+    .min_inner_size(440.0, 500.0)
+    .resizable(true)
+    .decorations(true)
+    .skip_taskbar(true)
+    .center()
+    .background_color(bg)
+    .build()
+}
+
 #[tauri::command]
 pub async fn open_settings_window(app: AppHandle) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("settings") {
         let _ = w.show();
         let _ = w.set_focus();
     } else {
-        tauri::WebviewWindowBuilder::new(
-            &app,
-            "settings",
-            tauri::WebviewUrl::App("settings.html".into()),
-        )
-        .title("Musage · 设置")
-        .inner_size(540.0, 620.0)
-        .min_inner_size(440.0, 500.0)
-        .resizable(true)
-        .decorations(true)
-        .skip_taskbar(true)
-        .center()
-        .build()
-        .map_err(|e| format!("create settings: {e}"))?;
+        build_settings_window(&app).map_err(|e| format!("create settings: {e}"))?;
     }
     Ok(())
 }

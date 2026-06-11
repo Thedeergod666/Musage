@@ -166,19 +166,10 @@ pub fn run() {
                     .is_some()
             });
             if !any_key {
-                let _ = tauri::WebviewWindowBuilder::new(
-                    app.handle(),
-                    "settings",
-                    tauri::WebviewUrl::App("settings.html".into()),
-                )
-                .title("Musage · 设置")
-                .inner_size(540.0, 620.0)
-                .min_inner_size(440.0, 500.0)
-                .resizable(true)
-                .decorations(true)
-                .skip_taskbar(true)
-                .center()
-                .build();
+                // 首启引导：走和 open_settings_window 同一个 builder，避免
+                // 两处配置漂移（窗口大小 / decorations / background_color 等
+                // 必须一致，否则两个入口的设置窗看上去会不一样）。
+                let _ = commands::build_settings_window(app.handle());
             }
 
             Ok(())

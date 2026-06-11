@@ -15,6 +15,8 @@ interface ProviderConfig {
   enabled: boolean;
   region?: "cn" | "en" | null;
   xiaomi_region?: "cn" | "sgp" | "ams" | null;
+  /// 可选：覆盖全局轮询间隔（秒）。None = 用全局 default
+  refresh_interval_secs?: number | null;
 }
 
 /// Phase 1 新增：注册表元信息（后端 list_sources 返回）。
@@ -226,6 +228,17 @@ async function loadConfig() {
   // Tavily 简洁模式（默认开）
   const tavilyConcise = document.getElementById("tavily-concise-mode") as HTMLInputElement | null;
   if (tavilyConcise) tavilyConcise.checked = cfg.tavily_concise_mode ?? true;
+  // 各 provider 「在浮窗显示」开关（缺省视为 true）
+  const enabledMap: Array<[string, string]> = [
+    ["minimax", "enabled-minimax"],
+    ["deepseek", "enabled-deepseek"],
+    ["xiaomimimo", "enabled-xiaomimimo"],
+    ["tavily", "enabled-tavily"],
+  ];
+  for (const [id, elId] of enabledMap) {
+    const el = document.getElementById(elId) as HTMLInputElement | null;
+    if (el) el.checked = cfg.providers?.[id]?.enabled ?? true;
+  }
 
   // schema overrides (高级)
   const ov = cfg.schema_overrides ?? {};
@@ -291,13 +304,23 @@ async function saveConfig() {
   const cfg: AppConfig = {
     providers: {
       minimax: {
-        enabled: true,
+        enabled:
+          (document.getElementById("enabled-minimax") as HTMLInputElement | null)?.checked ?? true,
         region: ($("#region") as HTMLSelectElement).value as "cn" | "en",
       },
-      deepseek: { enabled: true },
+      deepseek: {
+        enabled:
+          (document.getElementById("enabled-deepseek") as HTMLInputElement | null)?.checked ?? true,
+      },
       xiaomimimo: {
-        enabled: true,
+        enabled:
+          (document.getElementById("enabled-xiaomimimo") as HTMLInputElement | null)?.checked ??
+          true,
         xiaomi_region: ($("#xiaomi-region") as HTMLSelectElement).value as "cn" | "sgp" | "ams",
+      },
+      tavily: {
+        enabled:
+          (document.getElementById("enabled-tavily") as HTMLInputElement | null)?.checked ?? true,
       },
     },
     refresh_interval_secs: parseInt(($("#interval") as HTMLInputElement).value, 10) || 60,

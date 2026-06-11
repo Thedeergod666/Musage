@@ -242,6 +242,17 @@
           <option value="en">🌐 国际 (api.minimax.io)</option>
         </select>
       </div>
+
+      <div class="field">
+        <label>浮窗显示</label>
+        <div class="check">
+          <input type="checkbox" id="enabled-minimax" />
+          <label for="enabled-minimax" style="margin: 0; color: #e0e0e0;">
+            在浮窗中显示 MiniMax 卡片
+          </label>
+        </div>
+        <div class="help">关掉后 poller 不再拉取，浮窗也不显示这张卡。</div>
+      </div>
     </div>
 
     <!-- DeepSeek Panel -->
@@ -262,6 +273,16 @@
         <div class="help">
           🔒 密钥以 <code>0600</code> 权限存到本机 <code>keys.json</code>（与 MiniMax 的 key 互不影响）。
           <br/>从 <a href="https://platform.deepseek.com/api_keys" target="_blank" style="color:#4a90e2">platform.deepseek.com</a> 获取。
+        </div>
+      </div>
+
+      <div class="field">
+        <label>浮窗显示</label>
+        <div class="check">
+          <input type="checkbox" id="enabled-deepseek" />
+          <label for="enabled-deepseek" style="margin: 0; color: #e0e0e0;">
+            在浮窗中显示 DeepSeek 卡片
+          </label>
         </div>
       </div>
     </div>
@@ -320,6 +341,16 @@
           集群字段当前用于未来扩展（多账号 / region-specific URL）。当前 cookie auth 已绑定 user，无视。
         </div>
       </div>
+
+      <div class="field">
+        <label>浮窗显示</label>
+        <div class="check">
+          <input type="checkbox" id="enabled-xiaomimimo" />
+          <label for="enabled-xiaomimimo" style="margin: 0; color: #e0e0e0;">
+            在浮窗中显示 Xiaomi MiMo 卡片
+          </label>
+        </div>
+      </div>
     </div>
 
     <!-- Tavily Panel (Phase 1 新增:第一个非 AI provider) -->
@@ -341,6 +372,16 @@
           Tavily 是 AI agent 常用的 search API（<strong>不是</strong> LLM token plan）。
           Musage 会展示主指标 "150/1000 credits" + 5 个 endpoint 细分行。
           <br/>从 <a href="https://app.tavily.com/home" target="_blank" style="color:#4a90e2">app.tavily.com</a> 获取 API key。
+        </div>
+      </div>
+
+      <div class="field">
+        <label>浮窗显示</label>
+        <div class="check">
+          <input type="checkbox" id="enabled-tavily" />
+          <label for="enabled-tavily" style="margin: 0; color: #e0e0e0;">
+            在浮窗中显示 Tavily 卡片
+          </label>
         </div>
       </div>
 

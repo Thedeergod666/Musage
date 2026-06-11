@@ -48,6 +48,15 @@ objc2-core-graphics = { version = "0.3", features = ["CGWindowLevel", "CGGeometr
 # NSRect (= CGRect) 来自 objc2-core-foundation，开启对应 feature 后 NSGeometry alias 才生效。
 objc2-foundation = { version = "0.3", features = ["NSGeometry", "NSString", "objc2-core-foundation"] }
 
+# Win 端 hover tracker 用：GetCursorPos / GetWindowRect / WindowFromPoint。
+# 跟 tao 用的 windows-sys 0.59 对齐（API 一致 + 不需要再升一档）。
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
+] }
+
 [features]
 default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]

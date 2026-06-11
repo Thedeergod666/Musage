@@ -240,7 +240,22 @@ pub struct ProviderSnapshot {
 
 impl ProviderSnapshot {
     /// 构造一个空的成功/失败快照（错误态用）
-    pub fn empty_error(provider: Provider, kind: ErrorKind, error: String) -> Self {
+    ///
+    /// `id` 是 source 的真实字符串 id（"minimax" / "tavily"），不是 `Provider` enum
+    /// 变体名。原因：Tavily 等 Phase 1 起的新 source 没有自己的 enum 变体，
+    /// `provider_from_id` 拿到 Tavily 会 fallback 到 `Provider::Minimax` —— 旧实现
+    /// 直接用 `provider.id_str()` 写 `source_id` 会把 Tavily 错标成 "minimax"，
+    /// 前端 PROVIDER_META 查表时 logo + 名字都串了。
+    /// 现在从 builtin_sources 里查真正的 display_name，没有就 fallback 到 enum。
+    pub fn empty_error(
+        provider: Provider,
+        id: &str,
+        kind: ErrorKind,
+        error: String,
+    ) -> Self {
+        let display_name = find_source(id)
+            .map(|s| s.display_name().to_string())
+            .unwrap_or_else(|| provider.display_name().to_string());
         Self {
             provider,
             success: false,
@@ -250,8 +265,8 @@ impl ProviderSnapshot {
             fetched_at: Some(chrono::Utc::now().timestamp_millis()),
             raw: None,
             is_healthy: false,
-            source_id: Some(provider.id_str().to_string()),
-            source_display_name: Some(provider.display_name().to_string()),
+            source_id: Some(id.to_string()),
+            source_display_name: Some(display_name),
             plan_name: None,
         }
     }

@@ -184,6 +184,7 @@ pub fn run() {
             commands::reset_floating_window,
             commands::set_floating_pin_mode,
             commands::set_floating_hover_raise,
+            commands::resize_floating_window,
             commands::quit_app,
             commands::get_app_version,
             commands::get_recent_logs,

@@ -133,6 +133,17 @@
       /* 日志模块 */
       details.logs summary { cursor: pointer; font-size: 12px; color: #ccc; font-weight: 600; padding: 4px 0; }
       details.logs summary:hover { color: #fff; }
+      .logs-filter {
+        background: #1d2027;
+        color: #ddd;
+        border: 1px solid #2a2d35;
+        border-radius: 5px;
+        padding: 4px 8px;
+        font: inherit;
+        font-size: 11px;
+        cursor: pointer;
+      }
+      .logs-filter:hover { border-color: #4a90e2; }
       .logs-list {
         max-height: 260px;
         overflow-y: auto;
@@ -334,7 +345,14 @@
         持久错误也都会记下来便于排查（去重窗口 60s / 同一 provider + kind）。
       </div>
       <div class="row" style="margin: 6px 0;">
+        <select id="logs-filter" class="logs-filter" title="筛选日志级别">
+          <option value="all">全部</option>
+          <option value="error">仅报错</option>
+          <option value="warn">仅警告</option>
+          <option value="info">仅信息</option>
+        </select>
         <button id="logs-refresh" class="primary">刷新</button>
+        <button id="logs-copy" class="primary" title="复制当前筛选后的日志到剪贴板">复制</button>
         <button id="logs-clear" class="danger">清空</button>
         <span id="logs-count" style="font-size: 11px; color: #888; align-self: center;"></span>
       </div>

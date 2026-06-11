@@ -44,6 +44,12 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  /* provider 多时内容会比窗口高，溢出后滚轮可滚动（auto-resize 已尽量贴内容） */
+  overflow-y: auto;
+  overflow-x: hidden;
+  /* 避免滚动条常驻抢视觉 */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
   cursor: grab;
 
   /* 玻璃材质 */
@@ -389,13 +395,62 @@ body[data-hover] #app .err-server_error     .err-label { color: #ff453a; backgro
 
 .foot {
   margin-top: auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   font-size: 10px;
   color: var(--text-faint);
-  text-align: center;
   padding: 4px 6px 2px;
   text-shadow: var(--text-shadow);
   transition: color 0.28s, text-shadow 0.28s;
 }
+.foot-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* provider 多时 text 可能略长，省略号比撑破布局好 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 「打开设置」按钮 —— 浮窗底部的快速入口，避免只能从托盘右键 */
+.open-settings-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-faint);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 7px;
+  cursor: pointer;
+  text-shadow: var(--text-shadow);
+  letter-spacing: 0.2px;
+  transition: color 0.18s, background-color 0.18s, border-color 0.18s, transform 0.12s;
+}
+.open-settings-btn:hover {
+  color: var(--text-bright);
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+.open-settings-btn:active {
+  transform: scale(0.96);
+}
+.open-settings-icon {
+  font-size: 11px;
+  line-height: 1;
+}
+/* hover 时图标轻微转一下，给"按它会开设置"的暗示 */
+.open-settings-btn:hover .open-settings-icon {
+  transform: rotate(45deg);
+  transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.open-settings-icon { transition: transform 0.25s ease-out; }
 
 /* ═══════════════════════════════════════════════════════════════════
  *  省电模式 —— body[data-low-power]

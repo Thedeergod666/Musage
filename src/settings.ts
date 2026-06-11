@@ -414,7 +414,7 @@ function providerDisplay(p: ProviderId): string {
 //       设置面板手动 `get_recent_logs` 拉。
 // 前端：打开面板时自动拉一次；点 "刷新" 再拉；点 "清空" 调 `clear_logs`。
 //       不做 live push（避免 IPC 噪音 + 设置面板跟浮窗双源同步）。
-//       最新消息在底部（跟终端习惯一致），滚动条会保持位置。
+//       最新消息在顶部（用户一打开就能看到最近错误，不用翻到底）。
 
 interface LogEntry {
   ts: number;
@@ -430,11 +430,20 @@ async function loadLogs() {
   if (!list) return;
   try {
     const entries = await invoke<LogEntry[]>("get_recent_logs", { limit: 200 });
-    renderLogs(entries);
-    if (count) count.textContent = `${entries.length} 条`;
+    const filter = currentLogFilter();
+    const filtered = filter === "all" ? entries : entries.filter((e) => e.level === filter);
+    renderLogs(filtered);
+    // count 数字要反映"当前显示"而非"总条数"，跟筛选状态保持一致
+    if (count) {
+      count.textContent =
+        filter === "all"
+          ? `${entries.length} 条`
+          : `${filtered.length} / ${entries.length} 条`;
+    }
   } catch (e) {
     list.innerHTML = `<div class="logs-empty" style="color:#f44336">✗ 加载失败: ${escapeHtml(String(e))}</div>`;
     if (count) count.textContent = "";
+    console.error("[logs] load failed", e);
   }
 }
 
@@ -442,13 +451,16 @@ function renderLogs(entries: LogEntry[]) {
   const list = document.getElementById("logs-list");
   if (!list) return;
   if (entries.length === 0) {
-    list.innerHTML = `<div class="logs-empty">— 暂无日志 —</div>`;
+    list.innerHTML = `<div class="logs-empty">— 当前筛选下暂无日志 —</div>`;
     return;
   }
   // HTML 转义避免 message 里的 < > & 弄坏 layout
   const esc = (s: string) =>
     s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
-  list.innerHTML = entries
+  // 后端按时间正序返回（oldest → newest）。用户要"最新在最前面" → 翻过来。
+  // 复制后再 reverse，不修改入参（避免影响外面）。
+  const reversed = [...entries].reverse();
+  list.innerHTML = reversed
     .map((e) => {
       const t = formatLogTime(e.ts);
       return `<div class="log-row">
@@ -460,8 +472,8 @@ function renderLogs(entries: LogEntry[]) {
       </div>`;
     })
     .join("");
-  // 滚到底部 —— 最新的在最下面，符合终端/日志习惯
-  list.scrollTop = list.scrollHeight;
+  // 最新在顶部 → 滚到顶（用户打开面板第一眼就看到最新的）
+  list.scrollTop = 0;
 }
 
 function formatLogTime(ms: number): string {
@@ -478,6 +490,39 @@ async function clearLogs() {
     flash("✓ 日志已清空");
   } catch (e) {
     flash(`✗ 清空失败: ${e}`, true);
+    console.error("[logs] clear failed", e);
+  }
+}
+
+/// 当前筛选级别（"all" | "error" | "warn" | "info"），从 select 元素读
+function currentLogFilter(): "all" | "error" | "warn" | "info" {
+  const sel = document.getElementById("logs-filter") as HTMLSelectElement | null;
+  const v = sel?.value ?? "all";
+  if (v === "error" || v === "warn" || v === "info") return v;
+  return "all";
+}
+
+/// 把当前筛选后的日志拼成纯文本，写剪贴板。每行：
+/// `[12:34:56] ERROR minimax 未配置 Key | 未配置 API key`
+async function copyLogs() {
+  try {
+    const entries = await invoke<LogEntry[]>("get_recent_logs", { limit: 200 });
+    const filter = currentLogFilter();
+    const filtered = filter === "all" ? entries : entries.filter((e) => e.level === filter);
+    if (filtered.length === 0) {
+      flash(`⚠ 当前筛选下没有日志可复制`, true);
+      return;
+    }
+    const lines = filtered.map((e) => {
+      const t = formatLogTime(e.ts);
+      return `[${t}] ${e.level.toUpperCase().padEnd(5)} ${e.provider ?? "—"} | ${e.kind ?? "—"} | ${e.message}`;
+    });
+    const text = lines.join("\n");
+    await navigator.clipboard.writeText(text);
+    flash(`✓ 已复制 ${filtered.length} 条日志到剪贴板`);
+  } catch (e) {
+    flash(`✗ 复制失败: ${e}`, true);
+    console.error("[logs] copy failed", e);
   }
 }
 
@@ -749,17 +794,30 @@ $("#auto-hide-in-fullscreen")?.addEventListener("change", async () => {
   }
 });
 
-(async () => {
-  await loadKeyStatus("minimax");
-  await loadKeyStatus("deepseek");
-  await loadKeyStatus("xiaomimimo");
-  await loadTavilyKeyStatus();
-  await loadCookieStatus("xiaomimimo");
-  await loadConfig();
-  setupUpdaterSection();
+// ── 日志按钮绑定：放在 IIFE 外面、脚本顶层 ──
+//
+// 之前在 IIFE 里 await 别的初始化函数（如 loadConfig / loadKeyStatus），
+// 一旦某个 invoke 抛错（网络/未知 provider/tauri command 改了签名），
+// 后续的按钮绑定就不执行 —— 用户看到「点清空没反应」其实是 listener 没绑上。
+// 把按钮绑在脚本顶层（同步），保证永远生效；init 失败也只是数据加载不到，
+// 不会让"清空/刷新/复制"变成死的。
+document.getElementById("logs-refresh")?.addEventListener("click", () => void loadLogs());
+document.getElementById("logs-clear")?.addEventListener("click", () => void clearLogs());
+document.getElementById("logs-copy")?.addEventListener("click", () => void copyLogs());
+document.getElementById("logs-filter")?.addEventListener("change", () => void loadLogs());
 
-  // 日志模块：按钮绑定 + 首次加载
-  document.getElementById("logs-refresh")?.addEventListener("click", () => void loadLogs());
-  document.getElementById("logs-clear")?.addEventListener("click", () => void clearLogs());
-  await loadLogs();
+(async () => {
+  try {
+    await loadKeyStatus("minimax");
+    await loadKeyStatus("deepseek");
+    await loadKeyStatus("xiaomimimo");
+    await loadTavilyKeyStatus();
+    await loadCookieStatus("xiaomimimo");
+    await loadConfig();
+    setupUpdaterSection();
+    await loadLogs();
+  } catch (e) {
+    console.error("[settings] init failed", e);
+    flash(`✗ 初始化失败: ${e}`, true);
+  }
 })();

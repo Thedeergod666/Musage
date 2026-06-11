@@ -322,6 +322,25 @@ fn parse_pin_mode(s: &str) -> Result<FloatingPinMode, String> {
     }
 }
 
+/// 调整浮窗高度以适配内容（前端在 render 后调用）。
+///
+/// 浮窗默认 height=180，多 provider 全堆一起会装不下 —— 用户手动拉能拉
+/// 一点但 maxHeight 也会卡。改用这个 command 在每次 render 后把窗口
+/// resize 到内容实际需要的高度（限在 tauri.conf.json 的 minHeight=100 /
+/// maxHeight=800 范围内）。auto-resize 跟手拉并存：手拉的尺寸会被 debounced
+/// 写盘，但下一次 render 又会贴内容。H5。
+#[tauri::command]
+pub async fn resize_floating_window(app: AppHandle, height: f64) -> Result<(), String> {
+    if let Some(w) = app.get_webview_window("floating") {
+        let scale = w.scale_factor().unwrap_or(1.0);
+        let h_px = (height * scale) as u32;
+        let cur = w.outer_size().map_err(|e| format!("size: {e}"))?;
+        // 保留用户当前的宽度（auto-resize 只调高度，不动宽 —— 宽度由用户拖控制）
+        let _ = w.set_size(tauri::PhysicalSize::new(cur.width, h_px));
+    }
+    Ok(())
+}
+
 pub fn apply_pin_mode_to_window(app: &AppHandle, mode: FloatingPinMode) {
     match mode {
         FloatingPinMode::PinTop => crate::platform::set_window_pin_top(app),
@@ -400,7 +419,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                 let provider = provider_from_id(&id);
                 let kind = classify_error_message(&e);
                 log_provider_error(app, &id, kind, &e);
-                snap.providers.push(ProviderSnapshot::empty_error(provider, kind, e));
+                snap.providers.push(ProviderSnapshot::empty_error(provider, &id, kind, e));
             }
             Err(join_err) => {
                 let provider = provider_from_id(&id);
@@ -408,6 +427,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                 log_provider_error(app, &id, ErrorKind::Other, &msg);
                 snap.providers.push(ProviderSnapshot::empty_error(
                     provider,
+                    &id,
                     ErrorKind::Other,
                     msg,
                 ));

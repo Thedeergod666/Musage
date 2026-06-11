@@ -255,6 +255,16 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
   const headLabel = card.querySelector<HTMLElement>(".err-label");
   if (headLabel) headLabel.remove();
 
+  // H7 修复：错误态 → 成功态过渡时清掉 rowsBox 里残留的错误 UI。
+  // error path 用 `rowsBox.innerHTML = ...` 写过 `.err-msg` / `.err-btn` / `.hint`，
+  // 成功 path 走 diff 只增删 `.row[data-row-key]`，不会碰这些孤儿元素。
+  // 结果：用户导入 key 后，rowsBox 既有新行数据又有旧的"未配置凭据 + 打开设置"，
+  // 重启才好（重启后 buildCardSkeleton 给出空 rowsBox）。
+  // 修法：检测到残留错误元素就清空整个 rowsBox，让下面的 diff 重新填。
+  if (rowsBox.querySelector(".err-msg, .err-btn, .hint")) {
+    rowsBox.innerHTML = "";
+  }
+
   const existing = new Map<string, HTMLElement>();
   rowsBox.querySelectorAll<HTMLElement>(".row[data-row-key]").forEach((el) => {
     const k = el.dataset.rowKey;

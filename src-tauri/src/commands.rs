@@ -22,6 +22,71 @@ use crate::providers::{
 };
 use crate::AppState;
 
+/// 立即更新 provider 顺序 + 落盘 + emit config-changed（前端调，无需走
+/// save_config 全量保存）。前端用这个实现「↑↓ 按钮即时生效」。
+#[tauri::command]
+pub async fn set_provider_order(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    order: Vec<String>,
+) -> Result<(), String> {
+    {
+        let mut cfg = state.config.write().await;
+        cfg.provider_order = order;
+        cfg.save()?;
+    }
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
+}
+
+/// 立即更新单个 provider 的 enabled 标志 + 落盘 + emit。供设置面板
+/// 「在浮窗显示 X」复选框 onchange 即时调用。
+#[tauri::command]
+pub async fn set_provider_enabled(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    id: String,
+    enabled: bool,
+) -> Result<(), String> {
+    {
+        let mut cfg = state.config.write().await;
+        // 缺 key 时插一份默认配置（保持 BTreeMap key 顺序 + 默认值）
+        let entry = cfg
+            .providers
+            .entry(id.clone())
+            .or_insert(crate::config::ProviderConfig {
+                enabled: true,
+                region: None,
+                xiaomi_region: None,
+                refresh_interval_secs: None,
+            });
+        entry.enabled = enabled;
+        cfg.save()?;
+    }
+    // 如果用户关掉了某个 provider，立刻清掉它在 in-memory snapshot 里
+    // 的条目（不然浮窗下次刷新前还会显示旧数据）。
+    if !enabled {
+        let state_arc = app.state::<AppState>();
+        let mut snap = state_arc.snapshot.write().await;
+        snap.providers.retain(|p| {
+            p.source_id.as_deref().unwrap_or(p.provider.id_str()) != id
+        });
+        let emit_snap = snap.clone();
+        drop(snap);
+        // 排序 + emit
+        let cfg2 = state_arc.config.read().await;
+        let mut emit = emit_snap;
+        apply_provider_order(&mut emit, &cfg2);
+        drop(cfg2);
+        let _ = app.emit("musage://snapshot", &emit);
+    } else {
+        // 重新拉一次这个 provider（用户刚开就显示数据）
+        let _ = refresh_single_inner(&app, &id).await;
+    }
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn get_snapshot(state: State<'_, AppState>) -> Result<QuotaSnapshot, String> {
     let snap = state.snapshot.read().await.clone();

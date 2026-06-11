@@ -241,7 +241,16 @@ async function loadConfig() {
   // 各 provider 「在浮窗显示」开关（缺省视为 true）+ 轮询间隔覆盖
   for (const id of PROVIDER_IDS) {
     const el = document.getElementById(`enabled-${id}`) as HTMLInputElement | null;
-    if (el) el.checked = cfg.providers?.[id]?.enabled ?? true;
+    if (el) {
+      el.checked = cfg.providers?.[id]?.enabled ?? true;
+      // 即时生效：勾选/取消 → 调 set_provider_enabled → 后端落盘 + emit
+      // config-changed → 浮窗 re-fetch → 显隐立即反映
+      el.addEventListener("change", () => {
+        void invoke("set_provider_enabled", { id, enabled: el.checked }).catch((e) => {
+          flash(`✗ 切换显示失败: ${e}`, true);
+        });
+      });
+    }
     const intervalEl = document.getElementById(`interval-${id}`) as HTMLInputElement | null;
     if (intervalEl) {
       const v = cfg.providers?.[id]?.refresh_interval_secs;
@@ -496,8 +505,10 @@ function renderProviderOrder(order: string[]) {
       if (sibling) {
         if (dir === "up") list.insertBefore(row, sibling);
         else list.insertBefore(sibling, row);
-        // 重新禁用边界按钮
         refreshOrderButtons();
+        // 即时落盘 + emit config-changed → 浮窗 re-fetch → 顺序立即生效
+        // 不必再让用户点"保存顺序"
+        void saveProviderOrderOnly();
       }
     });
   });

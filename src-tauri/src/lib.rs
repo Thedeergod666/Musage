@@ -186,6 +186,8 @@ pub fn run() {
             commands::set_floating_hover_raise,
             commands::resize_floating_window,
             commands::refresh_single,
+            commands::set_provider_order,
+            commands::set_provider_enabled,
             commands::quit_app,
             commands::get_app_version,
             commands::get_recent_logs,

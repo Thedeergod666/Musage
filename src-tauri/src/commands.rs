@@ -200,24 +200,54 @@ pub async fn has_source_credential(id: String) -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub async fn set_source_credential(id: String, value: String) -> Result<(), String> {
+pub async fn set_source_credential(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    id: String,
+    value: String,
+) -> Result<(), String> {
     let src = find_source(&id).ok_or_else(|| format!("未知的 source id: {id}"))?;
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err("凭据不能为空".to_string());
     }
-    // 鉴权方式决定存哪个字段
     let cred = match src.auth_kind() {
         AuthKind::ApiKey => Credentials { api_key: Some(trimmed.to_string()), cookie: None },
         AuthKind::Cookie => Credentials { api_key: None, cookie: Some(trimmed.to_string()) },
     };
-    config::save_credential_for_id(&id, &cred)
+    config::save_credential_for_id(&id, &cred)?;
+    // 关键：用户刚配完 key 浮窗应当立刻看到数据。per-provider 调度最早
+    // 在下一分钟才 fire（启动时初始化为 now+interval），不手动拉一次用户得
+    // 等 1 分钟甚至更久。refresh_single_inner 内部会更新 in-memory
+    // snapshot + emit，浮窗自动跟着变。
+    let enabled = state.config.read().await.is_enabled_id(&id);
+    if enabled {
+        if let Err(e) = refresh_single_inner(&app, &id).await {
+            tracing::warn!(error = %e, provider = %id, "set_source_credential 后立即拉取失败（不阻塞保存）");
+        }
+    }
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
 }
 
 #[tauri::command]
-pub async fn delete_source_credential(id: String) -> Result<(), String> {
+pub async fn delete_source_credential(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    id: String,
+) -> Result<(), String> {
     let _ = find_source(&id).ok_or_else(|| format!("未知的 source id: {id}"))?;
-    config::delete_credential_for_id(&id)
+    config::delete_credential_for_id(&id)?;
+    // 跟 set_source_credential 对称：删了 key 浮窗应该立刻看到 "未配置"
+    // 错误态，而不是等下一次 poller 周期。
+    let enabled = state.config.read().await.is_enabled_id(&id);
+    if enabled {
+        if let Err(e) = refresh_single_inner(&app, &id).await {
+            tracing::warn!(error = %e, provider = %id, "delete 后立即拉取失败");
+        }
+    }
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
 }
 
 /// 用于设置面板"复制到剪贴板"按钮。返回值仅一次 IPC 用，不在前端持久化。
@@ -236,17 +266,45 @@ pub async fn has_api_key_for(provider: Provider) -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub async fn set_api_key_for(provider: Provider, key: String) -> Result<(), String> {
+pub async fn set_api_key_for(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    provider: Provider,
+    key: String,
+) -> Result<(), String> {
     let trimmed = key.trim();
     if trimmed.is_empty() {
         return Err("key 不能为空".to_string());
     }
-    config::save_api_key_for(provider, trimmed)
+    config::save_api_key_for(provider, trimmed)?;
+    // 跟 set_source_credential 一致：保存后立即拉一次，浮窗即时看到
+    let id = provider.id_str();
+    let enabled = state.config.read().await.is_enabled_id(id);
+    if enabled {
+        if let Err(e) = refresh_single_inner(&app, id).await {
+            tracing::warn!(error = %e, provider = %id, "set_api_key_for 后立即拉取失败");
+        }
+    }
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
 }
 
 #[tauri::command]
-pub async fn delete_api_key_for(provider: Provider) -> Result<(), String> {
-    config::delete_api_key_for(provider)
+pub async fn delete_api_key_for(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    provider: Provider,
+) -> Result<(), String> {
+    config::delete_api_key_for(provider)?;
+    let id = provider.id_str();
+    let enabled = state.config.read().await.is_enabled_id(id);
+    if enabled {
+        if let Err(e) = refresh_single_inner(&app, id).await {
+            tracing::warn!(error = %e, provider = %id, "delete_api_key_for 后立即拉取失败");
+        }
+    }
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
 }
 
 #[tauri::command]
@@ -255,17 +313,44 @@ pub async fn has_cookie_for(provider: Provider) -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub async fn set_cookie_for(provider: Provider, cookie: String) -> Result<(), String> {
+pub async fn set_cookie_for(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    provider: Provider,
+    cookie: String,
+) -> Result<(), String> {
     let trimmed = cookie.trim();
     if trimmed.is_empty() {
         return Err("cookie 不能为空".to_string());
     }
-    config::save_cookie_for(provider, trimmed)
+    config::save_cookie_for(provider, trimmed)?;
+    let id = provider.id_str();
+    let enabled = state.config.read().await.is_enabled_id(id);
+    if enabled {
+        if let Err(e) = refresh_single_inner(&app, id).await {
+            tracing::warn!(error = %e, provider = %id, "set_cookie_for 后立即拉取失败");
+        }
+    }
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
 }
 
 #[tauri::command]
-pub async fn delete_cookie_for(provider: Provider) -> Result<(), String> {
-    config::delete_cookie_for(provider)
+pub async fn delete_cookie_for(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    provider: Provider,
+) -> Result<(), String> {
+    config::delete_cookie_for(provider)?;
+    let id = provider.id_str();
+    let enabled = state.config.read().await.is_enabled_id(id);
+    if enabled {
+        if let Err(e) = refresh_single_inner(&app, id).await {
+            tracing::warn!(error = %e, provider = %id, "delete_cookie_for 后立即拉取失败");
+        }
+    }
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
 }
 
 /// 从 keys.json 读出明文 key（用于"复制到剪贴板"功能）。

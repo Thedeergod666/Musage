@@ -97,17 +97,26 @@ pub fn run() {
                 let cfg = cfg_handle.config.blocking_read().clone();
                 let scale = win.scale_factor().unwrap_or(1.0);
 
-                if let (Some(x), Some(y)) = (cfg.floating_x, cfg.floating_y) {
-                    // 有保存的位置 → 恢复
-                    let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+                // "有效位置"判定：saved x/y 都存在 + 不在 OS 默认左上角
+                // —— 老用户首次跑（升级前）的位置被 OS 放 (0,0) 附近并被
+                // Moved 事件持久化下来，留在 config.json 里。如果直接当
+                // "有保存位置" 恢复，新行为（top-right）永远触发不到。
+                // 把 (<= 50, <= 50) 视作"未设置" + 走 top-right。
+                let saved_pos_valid = matches!(
+                    (cfg.floating_x, cfg.floating_y),
+                    (Some(x), Some(y)) if x > 50 || y > 50
+                );
+
+                if saved_pos_valid {
+                    if let (Some(x), Some(y)) = (cfg.floating_x, cfg.floating_y) {
+                        let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+                    }
                 } else {
-                    // 首次启动 → 默认放到主屏幕右上角，避开 macOS 菜单栏
-                    // （系统托盘浮窗惯例：右上角，距离顶/右各 10px）
+                    // 首次启动 / 老用户的 OS 默认位置 → 默认放到主屏幕右上角
+                    // （系统托盘浮窗惯例：右上角，距离顶/右各 10px，避开 macOS 菜单栏）
                     if let Ok(Some(monitor)) = app.primary_monitor() {
                         let mon_size = monitor.size();
                         let mon_pos = monitor.position();
-                        // 浮窗初始 width 从 tauri.conf.json 拿 (300 物理像素)
-                        // 但 scale > 1 时，PhysicalSize 是物理像素，要换算 logical
                         let cur_w = win
                             .outer_size()
                             .map(|s| s.width as i32)

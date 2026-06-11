@@ -16,7 +16,7 @@
         "label": "floating",
         "title": "Musage",
         "width": 300,
-        "height": 120,
+        "height": 80,
         "minWidth": 180,
         "minHeight": 100,
         "maxWidth": 420,

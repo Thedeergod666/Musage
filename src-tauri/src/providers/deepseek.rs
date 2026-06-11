@@ -26,8 +26,6 @@
 
 use std::pin::Pin;
 
-use serde_json::json;
-
 use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderImpl, ProviderSnapshot, QuotaRow, QuotaSource};
 
 const URL: &str = "https://api.deepseek.com/user/balance";
@@ -163,20 +161,9 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
         return Err(FetchError::parse("DeepSeek 响应缺少 balance_infos".to_string()));
     }
 
-    // 状态行
-    rows.push(QuotaRow {
-        label: "状态".to_string(),
-        utilization: None,
-        remaining: None,
-        used: None,
-        total: None,
-        resets_at: None,
-        unit: None,
-        extra: Some(json!({
-            "is_available": is_available,
-            "display": if is_available { "可用" } else { "余额不足" },
-        })),
-    });
+    // 不再 push "状态" 行 —— `is_available` 仍驱动 `is_healthy`（即右上角
+    // dot 颜色），浮窗靠 dot 表达"可用/不可用"已经够清晰，多一行徽章
+    // 跟 dot 完全重复（dot 变红 + 状态"余额不足" 是同一个信息）。
 
     Ok(ProviderSnapshot {
         provider: Provider::Deepseek,

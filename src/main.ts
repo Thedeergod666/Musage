@@ -41,7 +41,6 @@ interface QuotaRow {
   total?: number | null;
   resets_at: number | null;
   unit: string | null;
-  extra: { is_available?: boolean; display?: string } | null;
 }
 
 interface ProviderSnapshot {
@@ -300,7 +299,6 @@ function rowKey(r: QuotaRow): string {
   if (r.used != null) return `used:${r.label}`;
   if (r.utilization != null) return `pct:${r.label}`;
   if (r.remaining != null) return `amt:${r.label}`;
-  if (r.extra?.display) return `status:${r.label}`;
   return "unknown";
 }
 
@@ -342,14 +340,6 @@ function buildRowSkeleton(r: QuotaRow): HTMLElement {
       <div class="row-label">
         <span></span>
         <span class="pct balance"></span>
-      </div>
-    `;
-  } else if (r.extra?.display) {
-    row.classList.add("status-row");
-    row.innerHTML = `
-      <div class="row-label">
-        <span></span>
-        <span class="status"></span>
       </div>
     `;
   }
@@ -395,13 +385,6 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
     const pct = rowEl.querySelector<HTMLElement>(".pct")!;
     pct.textContent = `${formatAmount(r.remaining)} ${escapeHtml(r.unit ?? "")}`;
     pct.className = "pct balance";
-  } else if (r.extra?.display) {
-    const labelSpan = rowEl.querySelector<HTMLElement>(".row-label > span:first-child")!;
-    labelSpan.textContent = r.label;
-    const ok = r.extra.is_available !== false;
-    const status = rowEl.querySelector<HTMLElement>(".status")!;
-    status.textContent = r.extra.display;
-    status.className = `status ${ok ? "ok" : "alert"}`;
   }
 }
 

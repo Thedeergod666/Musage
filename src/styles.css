@@ -135,6 +135,15 @@ body[data-hover] #app {
   text-shadow: var(--text-shadow);
   transition: color 0.28s, text-shadow 0.28s;
 }
+/* H8：head 右侧包裹 —— 装 status dot + (可选) err-label。
+   把它们封一起让 dot 永远在 head 右上角区域，label 紧贴右侧展开，
+   不会被 flex space-between 推到中间挤掉 dot 位置。 */
+.card-head-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+}
 .card-title {
   font-size: 12px;
   display: inline-flex;

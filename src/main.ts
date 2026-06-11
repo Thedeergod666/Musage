@@ -203,7 +203,9 @@ function buildCardSkeleton(providerId: string): HTMLElement {
         <img class="card-logo" alt="" />
         <span class="card-name"></span>
       </span>
-      <span class="card-dot"></span>
+      <div class="card-head-status">
+        <span class="card-dot"></span>
+      </div>
     </header>
     <div class="rows"></div>
   `;
@@ -261,12 +263,17 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
         ? `<div class="hint">→ 设置面板 · Schema overrides 加新字段名</div>`
         : "";
     card.classList.add("err-card", `err-${kind}`);
-    const head = card.querySelector<HTMLElement>(".card-head")!;
-    let headLabel = head.querySelector<HTMLElement>(".err-label");
+    // H8 修复：err-label 加在 .card-head-status 里（紧贴 .card-dot 的右侧），
+    // 而不是直接 append 到 .card-head —— 后者会触发 flex space-between
+    // 把 dot 推到中间、label 占右端，dot 失去"右上角"位置。
+    // 现在 head 右侧用 .card-head-status 包裹 [dot, label]，dot 永远在
+    // 包裹最左 = head 右上区域左侧，label 紧跟其右。
+    const headStatus = card.querySelector<HTMLElement>(".card-head-status")!;
+    let headLabel = headStatus.querySelector<HTMLElement>(".err-label");
     if (!headLabel) {
       headLabel = document.createElement("span");
       headLabel.className = "err-label";
-      head.appendChild(headLabel);
+      headStatus.appendChild(headLabel);
     }
     headLabel.textContent = label;
     rowsBox.innerHTML = `
@@ -283,7 +290,7 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
   card.classList.forEach((c) => {
     if (c.startsWith("err-") && c !== "err-card") card.classList.remove(c);
   });
-  // 清掉 err-label
+  // 清掉 err-label（H8 修复后，err-label 在 .card-head-status 里，querySelector 仍能找）
   const headLabel = card.querySelector<HTMLElement>(".err-label");
   if (headLabel) headLabel.remove();
 

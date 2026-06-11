@@ -24,7 +24,19 @@ use crate::AppState;
 
 #[tauri::command]
 pub async fn get_snapshot(state: State<'_, AppState>) -> Result<QuotaSnapshot, String> {
-    Ok(state.snapshot.read().await.clone())
+    let snap = state.snapshot.read().await.clone();
+    let cfg = state.config.read().await;
+    // 过滤被关掉的 provider —— 设置面板的「在浮窗显示 X」开关关闭后，
+    // 浮窗不应该再看到这张卡。poller 自己也会跳过 disabled，但旧的成功
+    // 数据还留在 vecdeque 里，所以需要在这里也过滤一次。
+    let mut filtered = snap;
+    filtered.providers.retain(|p| {
+        let id = p.source_id.as_deref().unwrap_or(p.provider.id_str());
+        cfg.is_enabled_id(id)
+    });
+    // 按用户配置的 provider_order 排序（空 = 用 builtin_sources() 顺序）
+    apply_provider_order(&mut filtered, &cfg);
+    Ok(filtered)
 }
 
 #[tauri::command]
@@ -439,6 +451,15 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
 
     snap.fetched_at = Some(chrono::Utc::now().timestamp_millis());
 
+    // 过滤 + 排序 + 推送
+    let state = app.state::<AppState>();
+    let cfg_read = state.config.read().await;
+    snap.providers.retain(|p| {
+        let id = p.source_id.as_deref().unwrap_or(p.provider.id_str());
+        cfg_read.is_enabled_id(id)
+    });
+    apply_provider_order(&mut snap, &cfg_read);
+    drop(cfg_read);
     // 刷新托盘 + 推送
     let _ = app.emit("musage://snapshot", &snap);
     if let Err(e) = crate::tray::update_tray_from_snapshot(app, &snap) {
@@ -456,6 +477,104 @@ fn provider_from_id(id: &str) -> Provider {
         "xiaomimimo" => Provider::Xiaomimimo,
         _ => Provider::Minimax,  // 占位，Phase 2 加 Tavily 变体
     }
+}
+
+/// 按 AppConfig.provider_order 给 snapshot.providers 排序。
+/// - provider_order 为空 → 不动（保留 builtin_sources() 注册表顺序）
+/// - 非空 → 按用户在设置面板拖拽/上下按钮指定的顺序排
+///   不在 order 里的 provider 沉到末尾（usize::MAX）—— 防止用户
+///   删掉一个 provider 后剩下的"消失"。
+fn apply_provider_order(snap: &mut QuotaSnapshot, cfg: &AppConfig) {
+    if cfg.provider_order.is_empty() {
+        return;
+    }
+    snap.providers.sort_by_key(|p| {
+        let source_id = p.source_id.as_deref().unwrap_or(p.provider.id_str());
+        cfg.provider_order
+            .iter()
+            .position(|o| o == source_id)
+            .unwrap_or(usize::MAX)
+    });
+}
+
+/// 拉取单个 provider —— 供 poller 的 per-provider 调度使用（H9）。
+///
+/// 不重新跑全部 enabled source，只跑指定的一个；fetch 完成后
+/// 替换 in-memory snapshot 里对应那条，再 emit + 刷新托盘。
+/// 这样每个 provider 可以有自己的轮询间隔。
+#[tauri::command]
+pub async fn refresh_single(app: AppHandle, id: String) -> Result<(), String> {
+    refresh_single_inner(&app, &id).await
+}
+
+pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), String> {
+    let cfg = app.state::<AppState>().config.read().await.clone();
+    if !cfg.is_enabled_id(id) {
+        return Ok(());  // 已被关掉，跳过
+    }
+    let src = builtin_sources()
+        .into_iter()
+        .find(|s| s.id() == id)
+        .ok_or_else(|| format!("未知的 source id: {id}"))?;
+    let creds = config::load_credential_for_id(id)?;
+    update_source_state(&src, &cfg).await;
+    let provider_snap = match creds {
+        Some(c) => match src.fetch(&c).await {
+            Ok(s) => s,
+            Err(e) => {
+                let provider = provider_from_id(id);
+                let kind = e.kind;
+                log_provider_error(app, id, kind, &e.message);
+                ProviderSnapshot::empty_error(provider, id, kind, e.message)
+            }
+        },
+        None => {
+            let provider = provider_from_id(id);
+            let kind = ErrorKind::UnconfiguredKey;
+            let msg = "未配置凭据（设置面板填入）".to_string();
+            log_provider_error(app, id, kind, &msg);
+            ProviderSnapshot::empty_error(provider, id, kind, msg)
+        }
+    };
+
+    // 替换 in-memory snapshot 里对应那条
+    let state = app.state::<AppState>();
+    let mut snap = state.snapshot.write().await;
+    let source_id = provider_snap
+        .source_id
+        .clone()
+        .unwrap_or_else(|| id.to_string());
+    let legacy_id = provider_snap.provider.id_str();
+    if let Some(idx) = snap.providers.iter().position(|p| {
+        let p_id = p.source_id.as_deref().unwrap_or(p.provider.id_str());
+        p_id == source_id || p.provider.id_str() == legacy_id
+    }) {
+        snap.providers[idx] = provider_snap;
+    } else {
+        snap.providers.push(provider_snap);
+    }
+    snap.fetched_at = Some(chrono::Utc::now().timestamp_millis());
+    drop(snap);
+
+    // 重新读最新 config（可能用户在两次 fetch 之间改了 enabled/order），
+    // 过滤 + 排序后再 emit
+    let state = app.state::<AppState>();
+    let cfg2 = state.config.read().await;
+    let cfg2_snapshot = cfg2.clone();
+    drop(cfg2);
+    let mut snap = state.snapshot.write().await;
+    snap.providers.retain(|p| {
+        let id = p.source_id.as_deref().unwrap_or(p.provider.id_str());
+        cfg2_snapshot.is_enabled_id(id)
+    });
+    apply_provider_order(&mut snap, &cfg2_snapshot);
+    let emit_snap = snap.clone();
+    drop(snap);
+    let _ = app.emit("musage://snapshot", &emit_snap);
+    if let Err(e) = crate::tray::update_tray_from_snapshot(app, &emit_snap) {
+        tracing::warn!(error = %e, "刷新托盘失败 (refresh_single)");
+    }
+    Ok(())
 }
 
 /// 在 fetch 前把 cfg 里的 region / overrides 推给 source（如果 source 实现了的话）。

@@ -39,6 +39,11 @@ pub struct ProviderConfig {
     /// Xiaomi MiMo 用（CN/SGP/AMS，序列化时跳过）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub xiaomi_region: Option<XiaomiRegion>,
+    /// 可选：覆盖全局轮询间隔（秒）。None = 用 AppConfig.refresh_interval_secs。
+    /// Poller 拿这个值 per-provider 调度 —— 用户可以为不常变动的 provider
+    /// 设长间隔（节流），重要的设短。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refresh_interval_secs: Option<u64>,
 }
 
 impl Default for ProviderConfig {
@@ -47,6 +52,7 @@ impl Default for ProviderConfig {
             enabled: true,
             region: None,
             xiaomi_region: None,
+            refresh_interval_secs: None,
         }
     }
 }
@@ -106,6 +112,11 @@ pub struct AppConfig {
     /// —— 6 行挤在小窗里太啰嗦；想看明细可去设置面板关掉。
     #[serde(default = "tavily_concise_default")]
     pub tavily_concise_mode: bool,
+    /// 用户手动指定的 provider 显示/轮询顺序（用 id 字符串）。空 Vec
+    /// = 用 builtin_sources() 的注册表顺序。设置面板拖拽/上下按钮改
+    /// 这个；poller 按这个顺序排，浮窗也按这个顺序渲染卡片。
+    #[serde(default)]
+    pub provider_order: Vec<String>,
     /// 用户自定义的字段名候选（应对 MiniMax 改 schema）
     /// key = provider.id_str()，value = 该 provider 的 overrides
     #[serde(default)]
@@ -162,6 +173,7 @@ impl Default for AppConfig {
                 enabled: true,
                 region: Some(Region::Cn),
                 xiaomi_region: None,
+                refresh_interval_secs: None,
             },
         );
         providers.insert(
@@ -170,6 +182,7 @@ impl Default for AppConfig {
                 enabled: true,
                 region: None,
                 xiaomi_region: None,
+                refresh_interval_secs: None,
             },
         );
         providers.insert(
@@ -178,6 +191,7 @@ impl Default for AppConfig {
                 enabled: true,
                 region: None,
                 xiaomi_region: Some(XiaomiRegion::Cn),
+                refresh_interval_secs: None,
             },
         );
         // Phase 1: Tavily 作为第一个非 AI provider，默认 enabled。
@@ -188,6 +202,7 @@ impl Default for AppConfig {
                 enabled: true,
                 region: None,
                 xiaomi_region: None,
+                refresh_interval_secs: None,
             },
         );
         Self {
@@ -203,6 +218,7 @@ impl Default for AppConfig {
             low_power_mode: false,
             auto_hide_in_fullscreen: false,
             tavily_concise_mode: true,
+            provider_order: Vec::new(),
             schema_overrides: BTreeMap::new(),
         }
     }
@@ -243,7 +259,8 @@ impl AppConfig {
                     enabled: true,
                     region: legacy.region.or(Some(Region::Cn)),
                     xiaomi_region: None,
-                },
+                refresh_interval_secs: None,
+            },
             );
             cfg.refresh_interval_secs = legacy.refresh_interval_secs.unwrap_or(60);
             cfg.floating_x = legacy.floating_x;
@@ -279,17 +296,20 @@ impl AppConfig {
                         enabled: true,
                         region: Some(Region::Cn),
                         xiaomi_region: None,
-                    },
+                refresh_interval_secs: None,
+            },
                     Provider::Deepseek => ProviderConfig {
                         enabled: true,
                         region: None,
                         xiaomi_region: None,
-                    },
+                refresh_interval_secs: None,
+            },
                     Provider::Xiaomimimo => ProviderConfig {
                         enabled: true,
                         region: None,
                         xiaomi_region: Some(XiaomiRegion::Cn),
-                    },
+                refresh_interval_secs: None,
+            },
                 });
         }
         self
@@ -329,17 +349,20 @@ impl AppConfig {
                     enabled,
                     region: Some(Region::Cn),
                     xiaomi_region: None,
-                },
+                refresh_interval_secs: None,
+            },
                 Provider::Deepseek => ProviderConfig {
                     enabled,
                     region: None,
                     xiaomi_region: None,
-                },
+                refresh_interval_secs: None,
+            },
                 Provider::Xiaomimimo => ProviderConfig {
                     enabled,
                     region: None,
                     xiaomi_region: Some(XiaomiRegion::Cn),
-                },
+                refresh_interval_secs: None,
+            },
             });
         entry.enabled = enabled;
     }
@@ -353,6 +376,7 @@ impl AppConfig {
                 enabled: true,
                 region: Some(region),
                 xiaomi_region: None,
+                refresh_interval_secs: None,
             });
         entry.region = Some(region);
     }
@@ -366,6 +390,7 @@ impl AppConfig {
                 enabled: true,
                 region: None,
                 xiaomi_region: Some(region),
+                refresh_interval_secs: None,
             });
         entry.xiaomi_region = Some(region);
     }

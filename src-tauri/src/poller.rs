@@ -1,29 +1,62 @@
 //! 后台轮询：tokio interval，定期拉取并广播到前端 + 刷新托盘
+//!
+//! Phase 2 (H9) 起改为 per-provider 调度 —— 每个 provider 拿自己的
+//! `cfg.providers[id].refresh_interval_secs`（None 时 fallback 到
+//! 全局 `cfg.refresh_interval_secs`），独立 sleep + 独立 fetch。
+//! 用户可以给不常变动的 provider 设长间隔节流。
 
-use std::time::Duration;
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
-use crate::commands::refresh_inner;
+use crate::commands::{refresh_inner, refresh_single};
+use crate::providers::builtin_sources;
 use crate::AppState;
 
 pub fn start(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
-        // 启动后立即拉一次
+        // 启动后立即拉一次（全量）
         if let Err(e) = tick(&app).await {
             tracing::warn!(error = %e, "初次拉取失败");
         }
 
+        // per-provider 下次拉取时间。初始化为 "现在"（避免启动瞬间所有 provider 同时拉）
+        let mut next_fetch: HashMap<String, Instant> = HashMap::new();
+        for src in builtin_sources() {
+            next_fetch.insert(src.id().to_string(), Instant::now());
+        }
+
+        // 每秒检查一次
         loop {
-            // sleep 优先于 interval：interval 的首次 tick 立即 fire，
-            // tick() 失败时循环会空转刷日志（实测 ~15ms 一次）。
-            let secs = {
-                let state = app.state::<AppState>();
-                let cfg = state.config.read().await;
-                cfg.refresh_interval_secs.max(10)
-            };
-            tokio::time::sleep(Duration::from_secs(secs)).await;
-            if let Err(e) = tick(&app).await {
-                tracing::warn!(error = %e, "轮询拉取失败");
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            let cfg = app.state::<AppState>().config.read().await.clone();
+            let now = Instant::now();
+
+            for src in builtin_sources() {
+                let id = src.id();
+                if !cfg.is_enabled_id(id) {
+                    continue;  // 用户关了，不拉
+                }
+                let interval_secs = cfg
+                    .providers
+                    .get(id)
+                    .and_then(|p| p.refresh_interval_secs)
+                    .unwrap_or(cfg.refresh_interval_secs)
+                    .max(10);
+
+                let entry = next_fetch.entry(id.to_string()).or_insert(now);
+                if now < *entry {
+                    continue;  // 还没到点
+                }
+                // 到点 → 拉这个 provider（独立 task，并发）
+                let app_clone = app.clone();
+                let id_owned = id.to_string();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = crate::commands::refresh_single_inner(&app_clone, &id_owned).await {
+                        tracing::warn!(error = %e, provider = %id_owned, "per-provider 拉取失败");
+                    }
+                });
+                *entry = now + Duration::from_secs(interval_secs);
             }
         }
     });

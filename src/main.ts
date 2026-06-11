@@ -183,10 +183,25 @@ function rowsForRender(p: ProviderSnapshot): QuotaRow[] {
 }
 
 /// 自适应高度：把 #app 的实际内容高度发给 Rust，让浮窗 resize 上去。
+///
+/// **不能用 `document.documentElement.scrollHeight`** —— body 是
+/// `height: 100%` + `overflow: hidden`，所以 documentElement.scrollHeight =
+/// `max(body.clientHeight, body.contentHeight)`。设窗口到 N+1 后 body.clientHeight
+/// 涨到 N+1，下一轮 scrollHeight 就变成 N+1，再 +1 = N+2 …… 每次 render 长 1px，
+/// 几小时下来浮窗能涨几十像素。回归：[H5]、浮窗静置桌面越长越高的 bug。
+///
+/// 正确读法：`#app.scrollHeight` —— 这是 #app 内部所有卡片 + padding 的**自然**
+/// 高度，不受窗口 clientHeight 干扰。设到这个值后窗口内刚好能容下所有内容，
+/// 下一轮 scrollHeight 不变，达到稳态。
 async function autoResizeWindow() {
   await new Promise<void>((r) => requestAnimationFrame(() => r()));
-  const contentH = document.documentElement.scrollHeight;
-  const target = Math.round(contentH + 1);
+  const app = document.getElementById("app");
+  if (!app) return;
+  const contentH = app.scrollHeight;
+  // 已经在 1px 容差内就跳过，避免子像素抖动触发的 re-resize
+  const currentH = window.innerHeight;
+  if (Math.abs(currentH - contentH) <= 1) return;
+  const target = Math.round(contentH);
   try {
     await invoke("resize_floating_window", { height: target });
   } catch (e) {

@@ -488,19 +488,31 @@ fn parse_pin_mode(s: &str) -> Result<FloatingPinMode, String> {
 
 /// 调整浮窗高度以适配内容（前端在 render 后调用）。
 ///
-/// 浮窗默认 height=180，多 provider 全堆一起会装不下 —— 用户手动拉能拉
+/// 浮窗默认 height=80，多 provider 全堆一起会装不下 —— 用户手动拉能拉
 /// 一点但 maxHeight 也会卡。改用这个 command 在每次 render 后把窗口
 /// resize 到内容实际需要的高度（限在 tauri.conf.json 的 minHeight=100 /
 /// maxHeight=800 范围内）。auto-resize 跟手拉并存：手拉的尺寸会被 debounced
 /// 写盘，但下一次 render 又会贴内容。H5。
+///
+/// **`height` 是 logical / CSS 像素**（前端读 `app.scrollHeight` 拿到的就是
+/// 这个单位）。Tauri 2 在 macOS / Win / Linux 各自对 `set_size(LogicalSize)`
+/// 的处理一致 —— 内部转物理像素，避免前端用 `scale_factor` 手算带来的舍入误差。
+/// 之前的 `set_size(PhysicalSize::new(w, height*scale))` 在 Retina 上若 scale
+/// 算错就会比预期高 1px，再叠加前端的 +1 就会造成 [H5 静置越长越高] 的反馈环。
 #[tauri::command]
 pub async fn resize_floating_window(app: AppHandle, height: f64) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("floating") {
-        let scale = w.scale_factor().unwrap_or(1.0);
-        let h_px = (height * scale) as u32;
-        let cur = w.outer_size().map_err(|e| format!("size: {e}"))?;
         // 保留用户当前的宽度（auto-resize 只调高度，不动宽 —— 宽度由用户拖控制）
-        let _ = w.set_size(tauri::PhysicalSize::new(cur.width, h_px));
+        // 用 inner_size 的 logical 版本，绕开 macOS 上 outer/inner 的细微差
+        let cur_logical: tauri::LogicalSize<f64> =
+            w.inner_size().map_err(|e| format!("size: {e}"))?.to_logical(
+                w.scale_factor().unwrap_or(1.0),
+            );
+        let width = cur_logical.width;
+        // 限高 —— 前端给的 height 是 scrollHeight，理论上 ≤ maxHeight（800）
+        // 物理大小写进 config 时也会被 clamp，这里再兜一次防止 config 被破坏
+        let height = height.clamp(100.0, 800.0);
+        let _ = w.set_size(tauri::LogicalSize::new(width, height));
     }
     Ok(())
 }

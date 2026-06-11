@@ -86,6 +86,14 @@ fn system_font_paths() -> Vec<std::path::PathBuf> {
     paths
 }
 
+// **Win11 高 DPI 防糊（2026-06-11）**：通知区托盘槽位固定 16 DIP，按系统
+// DPI 缩放后实际像素是 16/20/24/28/32/40/48/56（100/125/150/175/200/250/300/350%）。
+// 32px 源在 100/125/150% 上被 GDI 默认拉伸模式（COLORONCOLOR/最近邻）下采样
+// 到 16/20/24，结果模糊+锯齿；64px 是常见 DPI 档（≤400%）都能干净缩放的最小源。
+// macOS NSStatusItem / Linux AppIndicator 对任意源尺寸都容错，无需提升。
+#[cfg(target_os = "windows")]
+const ICON_SIZE: u32 = 64;
+#[cfg(not(target_os = "windows"))]
 const ICON_SIZE: u32 = 32;
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
@@ -272,12 +280,16 @@ fn pick_content(snap: &QuotaSnapshot) -> Option<TrayContent> {
 ///     ↑ 3px                  ↑ 3px
 /// ```
 fn draw_mini_bars(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64, util_bot: f64) {
-    const PAD_X: i32 = 3;
-    const BAR_W: i32 = ICON_SIZE as i32 - PAD_X * 2; // 26
-    const BAR_H: i32 = 9;
-    const GAP: i32 = 2;
-    const TOP: i32 = 6;
-    const RADIUS: i32 = 2;
+    // 所有像素常量按 32x32 原设计折算到当前 ICON_SIZE，比例：
+    //   PAD_X 3/32, BAR_H 9/32, GAP 2/32, TOP 6/32, RADIUS 2/32
+    // 32→64 时这些值整体翻倍（6/12/4/12/4/52/18/4），布局完全等比。
+    let s = ICON_SIZE as i32;
+    let pad_x = s * 3 / 32;          // 3  →  6
+    let bar_w = s - pad_x * 2;       // 26 → 52
+    let bar_h = s * 9 / 32;          // 9  → 18
+    let gap = s * 2 / 32;            // 2  →  4
+    let top = s * 6 / 32;            // 6  → 12
+    let radius = s * 2 / 32;         // 2  →  4
     let track = Rgba([60u8, 60, 60, 255]);
     let fill = Rgba([255u8, 255, 255, 255]);
 
@@ -285,25 +297,25 @@ fn draw_mini_bars(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64
 
     draw_rounded_bar(
         img,
-        PAD_X,
-        TOP,
-        BAR_W,
-        BAR_H,
+        pad_x,
+        top,
+        bar_w,
+        bar_h,
         pct(util_top),
         track,
         fill,
-        RADIUS,
+        radius,
     );
     draw_rounded_bar(
         img,
-        PAD_X,
-        TOP + BAR_H + GAP,
-        BAR_W,
-        BAR_H,
+        pad_x,
+        top + bar_h + gap,
+        bar_w,
+        bar_h,
         pct(util_bot),
         track,
         fill,
-        RADIUS,
+        radius,
     );
 }
 
@@ -381,8 +393,15 @@ fn draw_deepseek_text(
 ) {
     let Some(font) = load_font() else { return };
 
-    // 大数字：scale 16，居中放上半部分
-    let big_scale = PxScale::from(16.0);
+    // 32x32 原设计：大数字 scale 16 (50% 边长), y=2 (6.25%)；
+    // 小字 scale 9 (28%), y=22 (68.75%)。全部按 ICON_SIZE 折算到当前画布。
+    let s = ICON_SIZE as f32;
+    let big_scale = PxScale::from(s * 16.0 / 32.0); // 16 → 32
+    let big_y = (s * 2.0 / 32.0) as i32;            //  2 →  4
+    let small_scale = PxScale::from(s * 9.0 / 32.0); //  9 → 18
+    let small_y = (s * 22.0 / 32.0) as i32;          // 22 → 44
+
+    // 大数字：居中放上半部分
     let big_text = format_amount_tray(amount);
     let big_scaled = font.as_scaled(big_scale);
     let big_w: f32 = big_text
@@ -390,10 +409,9 @@ fn draw_deepseek_text(
         .map(|c| big_scaled.h_advance(font.glyph_id(c)))
         .sum();
     let big_x = ((ICON_SIZE as f32 - big_w) / 2.0).max(1.0) as i32;
-    draw_text_mut(img, Rgba([255, 255, 255, 255]), big_x, 2, big_scale, font, &big_text);
+    draw_text_mut(img, Rgba([255, 255, 255, 255]), big_x, big_y, big_scale, font, &big_text);
 
-    // 小货币：scale 9，居中放下半部分
-    let small_scale = PxScale::from(9.0);
+    // 小货币：居中放下半部分
     let small_scaled = font.as_scaled(small_scale);
     let small_w: f32 = currency
         .chars()
@@ -404,7 +422,7 @@ fn draw_deepseek_text(
         img,
         Rgba([180, 180, 180, 255]),
         small_x,
-        22,
+        small_y,
         small_scale,
         font,
         currency,

@@ -140,17 +140,21 @@ make_icon(32).save(os.path.join(OUT, "tray-base.png"))
 print("[ok] tray-base.png")
 
 # ── 2. icon.ico（多尺寸，**每个尺寸原生渲染**）──
-# PIL 的 save(sizes=) 是把第一张图缩到所有列出的尺寸；想要原生态辨率
-# 需要 append_images，且每张图都要对应到 sizes 中的一项。
+# PIL 的 ICO 插件有个坑：save(sizes=..., append_images=...) 时，sizes
+# 用来 resize **第一张**图到那些尺寸，append_images 里的图被忽略 → 实际
+# 写出的 .ico 只含第一张图的尺寸（之前 16x16 在前 → Windows 拿到 16x16，
+# dock/任务栏全糊）。修法：把**最大**的图当 base，append_images 按大小
+# 降序塞后面，**不要传 sizes=**。PIL 会用每张图的原生尺寸编码进 ICO。
 ico_sizes = [(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)]
 ico_images = [make_icon(s) for s, _ in ico_sizes]
-ico_images[0].save(
+# 大到小排列 —— 大图作 base，小图 append 进 ICO 容器
+ico_images_sorted = sorted(ico_images, key=lambda img: -img.size[0])
+ico_images_sorted[0].save(
     os.path.join(OUT, "icon.ico"),
     format="ICO",
-    sizes=ico_sizes,
-    append_images=ico_images[1:],
+    append_images=ico_images_sorted[1:],
 )
-print(f"[ok] icon.ico (native sizes: {[s for s, _ in ico_sizes]})")
+print(f"[ok] icon.ico (native sizes: {[img.size for img in ico_images_sorted]})")
 
 # ── 3. icon.png (master for settings UI / fallback) ──
 make_icon(1024).save(os.path.join(OUT, "icon.png"))

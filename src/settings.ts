@@ -365,6 +365,83 @@ function providerDisplay(p: ProviderId): string {
   return p === "minimax" ? "MiniMax" : p === "deepseek" ? "DeepSeek" : "Xiaomi MiMo";
 }
 
+// ── 日志模块（设置面板查看应用运行日志） ──
+//
+// 后端：每次 provider 拉取失败（去重窗口 60s）写一条 LogEntry 到 LogStore，
+//       设置面板手动 `get_recent_logs` 拉。
+// 前端：打开面板时自动拉一次；点 "刷新" 再拉；点 "清空" 调 `clear_logs`。
+//       不做 live push（避免 IPC 噪音 + 设置面板跟浮窗双源同步）。
+//       最新消息在底部（跟终端习惯一致），滚动条会保持位置。
+
+interface LogEntry {
+  ts: number;
+  level: "info" | "warn" | "error";
+  provider: string | null;
+  kind: string | null;
+  message: string;
+}
+
+async function loadLogs() {
+  const list = document.getElementById("logs-list");
+  const count = document.getElementById("logs-count");
+  if (!list) return;
+  try {
+    const entries = await invoke<LogEntry[]>("get_recent_logs", { limit: 200 });
+    renderLogs(entries);
+    if (count) count.textContent = `${entries.length} 条`;
+  } catch (e) {
+    list.innerHTML = `<div class="logs-empty" style="color:#f44336">✗ 加载失败: ${escapeHtml(String(e))}</div>`;
+    if (count) count.textContent = "";
+  }
+}
+
+function renderLogs(entries: LogEntry[]) {
+  const list = document.getElementById("logs-list");
+  if (!list) return;
+  if (entries.length === 0) {
+    list.innerHTML = `<div class="logs-empty">— 暂无日志 —</div>`;
+    return;
+  }
+  // HTML 转义避免 message 里的 < > & 弄坏 layout
+  const esc = (s: string) =>
+    s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+  list.innerHTML = entries
+    .map((e) => {
+      const t = formatLogTime(e.ts);
+      return `<div class="log-row">
+        <span class="log-time">${esc(t)}</span>
+        <span class="log-level ${e.level}">${esc(e.level)}</span>
+        <span class="log-provider">${esc(e.provider ?? "—")}</span>
+        <span class="log-kind">${esc(e.kind ?? "—")}</span>
+        <span class="log-msg">${esc(e.message)}</span>
+      </div>`;
+    })
+    .join("");
+  // 滚到底部 —— 最新的在最下面，符合终端/日志习惯
+  list.scrollTop = list.scrollHeight;
+}
+
+function formatLogTime(ms: number): string {
+  const d = new Date(ms);
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+async function clearLogs() {
+  if (!confirm("确认清空所有日志？")) return;
+  try {
+    await invoke("clear_logs");
+    await loadLogs();
+    flash("✓ 日志已清空");
+  } catch (e) {
+    flash(`✗ 清空失败: ${e}`, true);
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+}
+
 // ── 自动更新面板 ──
 //
 // 从 TS 动态注入，不动 settings.html。包含：
@@ -580,4 +657,9 @@ $("#auto-hide-in-fullscreen")?.addEventListener("change", async () => {
   await loadCookieStatus("xiaomimimo");
   await loadConfig();
   setupUpdaterSection();
+
+  // 日志模块：按钮绑定 + 首次加载
+  document.getElementById("logs-refresh")?.addEventListener("click", () => void loadLogs());
+  document.getElementById("logs-clear")?.addEventListener("click", () => void clearLogs());
+  await loadLogs();
 })();

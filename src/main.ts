@@ -67,6 +67,21 @@ interface QuotaSnapshot {
 const app = document.getElementById("app")!;
 let countdownTimer: number | null = null;
 
+/// 瞬态错误：网络抖动 / 限流 / 服务端错误 → 浮窗只翻红点 + 写日志，
+/// **不**覆盖 rows（保留最后一次成功的数据让用户能继续看用量）。
+/// 其它错误（未配 key / key 错 / 解析失败 / schema 未知）是**持久**错误，
+/// 仍走老 UI 提示用户去操作。
+const TRANSIENT_ERROR_KINDS = new Set(["network", "rate_limited", "server_error"]);
+
+function isTransientError(kind: string | null | undefined): boolean {
+  return kind != null && TRANSIENT_ERROR_KINDS.has(kind);
+}
+
+/// 每个 provider 的"最后一次成功"快照。
+/// 瞬态错误来时，浮窗用这份数据继续渲染 + dot 翻红。
+/// 持久错误（且无历史成功）才走完整的错误 UI。
+const lastGoodSnap = new Map<string, ProviderSnapshot>();
+
 const ERROR_LABELS: Record<string, string> = {
   unconfigured_key: "未配置 Key",
   auth_failed: "Key 无效",
@@ -165,9 +180,31 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
 
   const rowsBox = card.querySelector<HTMLElement>(".rows")!;
 
+  // 成功 → 记录到 lastGood 备用（瞬态错误时复用这份数据继续渲染）
+  if (p.success) {
+    lastGoodSnap.set(p.provider, p);
+    card.dataset.stale = ""; // 清 stale 标记（即使之前是 stale）
+  }
+
   if (!p.success) {
-    // 错误卡片：替换 rowsBox 为错误 UI
     const kind = p.error_kind ?? "other";
+    const good = lastGoodSnap.get(p.provider);
+
+    // ── 瞬态错误（网络抖动 / 限流 / 服务端错误）+ 之前有过成功数据 ──
+    // **不**碰 rowsBox 的 DOM（最后一次成功渲染留下的用量数据原封不动），
+    // 只翻红点 + 标 stale。具体报错已由后端写进 LogStore，浮窗不再展示。
+    if (isTransientError(kind) && good) {
+      card.classList.remove("err-card");
+      card.classList.forEach((c) => {
+        if (c.startsWith("err-") && c !== "err-card") card.classList.remove(c);
+      });
+      const headLabel = card.querySelector<HTMLElement>(".err-label");
+      if (headLabel) headLabel.remove();
+      card.dataset.stale = "1";
+      return;
+    }
+
+    // ── 持久错误 / 还没拉到过任何成功数据：走老 UI ──
     const label = errorKindLabel(kind);
     const needsSettings = kind === "unconfigured_key" || kind === "auth_failed";
     const settingsBtn = needsSettings
@@ -177,9 +214,7 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
       kind === "schema_unknown"
         ? `<div class="hint">→ 设置面板 · Schema overrides 加新字段名</div>`
         : "";
-    // err-* class 让 CSS 决定错误卡样式
     card.classList.add("err-card", `err-${kind}`);
-    // header 里也加个 err-label 标种类
     const head = card.querySelector<HTMLElement>(".card-head")!;
     let headLabel = head.querySelector<HTMLElement>(".err-label");
     if (!headLabel) {
@@ -188,12 +223,12 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
       head.appendChild(headLabel);
     }
     headLabel.textContent = label;
-    // rowsBox 重新填充
     rowsBox.innerHTML = `
       <div class="err-msg">${escapeHtml(p.error ?? "未知错误")}</div>
       ${settingsBtn}
       ${schemaHint}
     `;
+    card.dataset.stale = "";
     return;
   }
 

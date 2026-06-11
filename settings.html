@@ -128,6 +128,46 @@
       .pin-opt-body { display: flex; flex-direction: column; gap: 2px; }
       .pin-opt-title { font-size: 13px; color: #e0e0e0; font-weight: 500; }
       .pin-opt-desc { font-size: 11px; color: #888; line-height: 1.4; }
+
+      /* 日志模块 */
+      details.logs summary { cursor: pointer; font-size: 12px; color: #ccc; font-weight: 600; padding: 4px 0; }
+      details.logs summary:hover { color: #fff; }
+      .logs-list {
+        max-height: 260px;
+        overflow-y: auto;
+        background: #15171c;
+        border: 1px solid #2a2d35;
+        border-radius: 6px;
+        padding: 6px 8px;
+        font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+        font-size: 11px;
+        line-height: 1.45;
+      }
+      .logs-empty { color: #666; text-align: center; padding: 12px 0; }
+      .log-row {
+        display: grid;
+        grid-template-columns: 60px 56px 80px 90px 1fr;
+        gap: 6px;
+        padding: 3px 0;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        align-items: baseline;
+      }
+      .log-row:last-child { border-bottom: none; }
+      .log-time { color: #888; font-size: 10.5px; }
+      .log-level {
+        font-size: 9.5px;
+        font-weight: 700;
+        text-align: center;
+        padding: 1px 4px;
+        border-radius: 3px;
+        text-transform: uppercase;
+      }
+      .log-level.info  { color: #5ac8fa; background: rgba(90, 200, 250, 0.14); }
+      .log-level.warn  { color: #ff9f0a; background: rgba(255, 159, 10, 0.14); }
+      .log-level.error { color: #ff453a; background: rgba(255, 69, 58, 0.16); }
+      .log-provider { color: #ccc; }
+      .log-kind { color: #888; font-style: italic; }
+      .log-msg { color: #ddd; word-break: break-all; }
     </style>
   </head>
   <body>
@@ -256,6 +296,25 @@
         </div>
       </div>
     </div>
+
+    <div class="divider"></div>
+
+    <!-- 日志模块：浮窗上不展示的报错/警告/信息全在这里 -->
+    <details class="logs" id="logs-section" open>
+      <summary>📋 日志（应用运行日志，最近 200 条）</summary>
+      <div class="help">
+        浮窗右上角红点 = 最近一次拉取报错。点击此处查看具体内容。
+        持久错误也都会记下来便于排查（去重窗口 60s / 同一 provider + kind）。
+      </div>
+      <div class="row" style="margin: 6px 0;">
+        <button id="logs-refresh" class="primary">刷新</button>
+        <button id="logs-clear" class="danger">清空</button>
+        <span id="logs-count" style="font-size: 11px; color: #888; align-self: center;"></span>
+      </div>
+      <div class="logs-list" id="logs-list">
+        <div class="logs-empty">— 暂无日志 —</div>
+      </div>
+    </details>
 
     <div class="divider"></div>
 

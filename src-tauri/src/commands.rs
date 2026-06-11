@@ -8,6 +8,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::config::{self, AppConfig, FloatingPinMode, ProviderOverrides};
+use crate::logstore::{LogEntry, LogStore};
 use crate::providers::{deepseek, minimax, xiaomi, ErrorKind, Provider, ProviderImpl, ProviderSnapshot, QuotaSnapshot};
 use crate::AppState;
 
@@ -35,6 +36,61 @@ fn classify_error_message(msg: &str) -> ErrorKind {
         ErrorKind::Other
     }
 }
+
+/// 把一次 provider 失败封装成日志条目写入 [`LogStore`]。
+///
+/// **所有路径的错误（不仅是 transient）都打日志** —— 用户事后能看到完整 history，
+/// 而不是只看到浮窗上的小红点。
+///
+/// 去重：同一 provider 连续 60s 内相同 `kind` 视为同一次抖动，只记 1 条
+/// （避免网络长时间断网时日志被刷爆成 100 条 "network error"）。
+fn log_provider_error(log: &LogStore, provider: Provider, kind: ErrorKind, message: &str) {
+    use std::sync::OnceLock;
+    use std::time::{Duration, Instant};
+
+    // provider + kind → 上次记录时间
+    static LAST: OnceLock<Mutex<std::collections::HashMap<(String, &'static str), Instant>>> =
+        OnceLock::new();
+
+    let map = LAST.get_or_init(|| Mutex::new(std::collections::HashMap::new()));
+    let key = (provider.id_str().to_string(), kind_label(kind));
+    let now = Instant::now();
+
+    let should_log = {
+        let mut g = match map.lock() {
+            Ok(g) => g,
+            Err(_) => return, // 锁毒了不阻塞主流程
+        };
+        match g.get(&key) {
+            Some(prev) if now.duration_since(*prev) < Duration::from_secs(60) => false,
+            _ => {
+                g.insert(key, now);
+                true
+            }
+        }
+    };
+
+    if should_log {
+        log.push(LogEntry::error(provider.id_str(), kind_label(kind), message));
+    }
+}
+
+/// 跟前端 ERROR_LABELS 对齐的小写英文 enum 名（snake_case）。
+fn kind_label(k: ErrorKind) -> &'static str {
+    match k {
+        ErrorKind::UnconfiguredKey => "unconfigured_key",
+        ErrorKind::AuthFailed => "auth_failed",
+        ErrorKind::RateLimited => "rate_limited",
+        ErrorKind::Network => "network",
+        ErrorKind::Parse => "parse",
+        ErrorKind::SchemaUnknown => "schema_unknown",
+        ErrorKind::ServerError => "server_error",
+        ErrorKind::Other => "other",
+    }
+}
+
+// 轻量 Mutex 别名 —— 上面 dedup 表用 std 而不是 tokio 的（不在 async 热路径）
+use std::sync::Mutex;
 
 #[tauri::command]
 pub async fn get_snapshot(state: State<'_, AppState>) -> Result<QuotaSnapshot, String> {
@@ -452,18 +508,23 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
 
     // 收集所有结果（保持按 cfg.enabled_providers() 顺序）
     let mut snap = QuotaSnapshot::default();
+    let log = app.state::<AppState>().log.clone();
     for (provider, task) in tasks {
         match task.await {
             Ok(Ok(s)) => snap.providers.push(s),
             Ok(Err(e)) => {
                 let kind = classify_error_message(&e);
+                // 写日志（去重，60s 窗口）。**所有**错误都打，不只是 transient。
+                log_provider_error(&log, provider, kind, &e);
                 snap.providers.push(ProviderSnapshot::empty_error(provider, kind, e));
             }
             Err(join_err) => {
+                let msg = format!("task join 失败: {join_err}");
+                log_provider_error(&log, provider, ErrorKind::Other, &msg);
                 snap.providers.push(ProviderSnapshot::empty_error(
                     provider,
                     ErrorKind::Other,
-                    format!("task join 失败: {join_err}"),
+                    msg,
                 ));
             }
         }
@@ -478,4 +539,26 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
     }
 
     Ok(snap)
+}
+
+// ── 日志模块：暴露给设置面板 ───────────────────────────────
+
+/// 返回最近 n 条日志（默认 100，最多 200）。按时间正序。
+///
+/// 设置面板打开时一次性拉取 + "刷新" 按钮触发；新产生的事件不主动 push
+/// （避免 IPC 噪音 + 双源同步问题）。用户主动 refresh 即可。
+#[tauri::command]
+pub async fn get_recent_logs(
+    state: State<'_, AppState>,
+    limit: Option<usize>,
+) -> Result<Vec<LogEntry>, String> {
+    let n = limit.unwrap_or(100).min(crate::logstore::max_entries());
+    Ok(state.log.recent(Some(n)))
+}
+
+/// 清空内存 + 删磁盘文件。设置面板的"清空日志"按钮触发。
+#[tauri::command]
+pub async fn clear_logs(state: State<'_, AppState>) -> Result<(), String> {
+    state.log.clear();
+    Ok(())
 }

@@ -14,6 +14,7 @@
 
 mod commands;
 mod config;
+mod logstore;
 mod platform;
 mod poller;
 mod providers;
@@ -24,12 +25,15 @@ use tauri::Manager;
 use tokio::sync::RwLock;
 
 use crate::config::AppConfig;
+use crate::logstore::LogStore;
 use crate::providers::QuotaSnapshot;
 use crate::commands::apply_pin_mode_to_window;
 
 pub struct AppState {
     pub snapshot: Arc<RwLock<QuotaSnapshot>>,
     pub config: Arc<RwLock<AppConfig>>,
+    /// 应用运行日志（错误/警告/信息），详见 [`crate::logstore`]
+    pub log: Arc<LogStore>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -160,6 +164,8 @@ pub fn run() {
         .manage(AppState {
             snapshot: Arc::new(RwLock::new(QuotaSnapshot::default())),
             config: Arc::new(RwLock::new(AppConfig::default())),
+            // 从磁盘 reload 最近 200 条 —— 启动时一次性 IO，不在热路径
+            log: Arc::new(LogStore::load_from_disk()),
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_snapshot,
@@ -184,6 +190,8 @@ pub fn run() {
             commands::set_auto_hide_in_fullscreen,
             commands::quit_app,
             commands::get_app_version,
+            commands::get_recent_logs,
+            commands::clear_logs,
         ])
         .on_window_event(|window, event| {
             // 关闭悬浮窗时拦截，避免退出整个 app

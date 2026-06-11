@@ -15,16 +15,16 @@ import { checkForUpdate, onUpdateState } from "./updater";
 import minimaxLogo from "./assets/minimax-logo.png";
 import deepseekLogo from "./assets/deepseek-icon.png";
 import xiaomimimoLogo from "./assets/xiaomimimo-logo.png";
+import tavilyLogo from "./assets/tavily-logo.svg";
 import "./styles.css";
 
 /// 静态映射：provider id → 官网 logo + 显示名
 /// logo 走 Vite `?url` import 拿到打包后的 URL
-/// Tavily 暂时没有本地 logo（占位 PNG 没生成），用空字符串让 UI 显示一个 fallback
 const PROVIDER_META: Record<string, { name: string; logo: string }> = {
   minimax: { name: "MiniMax", logo: minimaxLogo },
   deepseek: { name: "DeepSeek", logo: deepseekLogo },
   xiaomimimo: { name: "Xiaomi MiMo", logo: xiaomimimoLogo },
-  tavily: { name: "Tavily", logo: "" },
+  tavily: { name: "Tavily", logo: tavilyLogo },
 };
 
 type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
@@ -45,7 +45,7 @@ interface QuotaRow {
 
 interface ProviderSnapshot {
   /** 兼容字段（minimax / deepseek / xiaomimimo）。新代码用 source_id。 */
-  provider: "minimax" | "deepseek" | "xiaomimimo";
+  provider: "minimax" | "deepseek" | "xiaomimimo" | "tavily";
   /** Phase 1 新增。 */
   source_id?: string | null;
   source_display_name?: string | null;

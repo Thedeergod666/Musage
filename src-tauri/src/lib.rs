@@ -95,12 +95,32 @@ pub fn run() {
             // 必须在 show() 之前调用，否则会有 1 帧错位
             if let Some(win) = app.get_webview_window("floating") {
                 let cfg = cfg_handle.config.blocking_read().clone();
+                let scale = win.scale_factor().unwrap_or(1.0);
+
                 if let (Some(x), Some(y)) = (cfg.floating_x, cfg.floating_y) {
+                    // 有保存的位置 → 恢复
                     let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+                } else {
+                    // 首次启动 → 默认放到主屏幕右上角，避开 macOS 菜单栏
+                    // （系统托盘浮窗惯例：右上角，距离顶/右各 10px）
+                    if let Ok(Some(monitor)) = app.primary_monitor() {
+                        let mon_size = monitor.size();
+                        let mon_pos = monitor.position();
+                        // 浮窗初始 width 从 tauri.conf.json 拿 (300 物理像素)
+                        // 但 scale > 1 时，PhysicalSize 是物理像素，要换算 logical
+                        let cur_w = win
+                            .outer_size()
+                            .map(|s| s.width as i32)
+                            .unwrap_or((300.0 * scale) as i32);
+                        let margin = (10.0 * scale) as i32;
+                        let x = mon_pos.x + mon_size.width as i32 - cur_w - margin;
+                        let y = mon_pos.y + margin;
+                        let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+                    }
                 }
+
                 if let (Some(w), Some(h)) = (cfg.floating_w, cfg.floating_h) {
                     // 尊重 tauri.conf.json 里的 minWidth/minHeight（保持同步）
-                    let scale = win.scale_factor().unwrap_or(1.0);
                     let min_w = (180.0 * scale) as u32;
                     let min_h = (100.0 * scale) as u32;
                     let ww = w.max(min_w as i32) as u32;

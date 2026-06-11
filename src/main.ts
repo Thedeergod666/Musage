@@ -755,8 +755,8 @@ async function init() {
   // （设置面板那边调 set_floating_pin_mode 会 emit 这个事件）
   listen<FloatingPinMode>("musage://pin-mode-changed", (e) => {
     // 清掉旧的监听再装新的（幂等）
-    document.removeEventListener("mouseenter", hoverEnterHandler);
-    document.removeEventListener("mouseleave", hoverLeaveHandler);
+    document.body.removeEventListener("mouseenter", hoverEnterHandler);
+    document.body.removeEventListener("mouseleave", hoverLeaveHandler);
     setupHoverRaise(e.payload);
   });
 
@@ -787,10 +787,17 @@ function hoverLeaveHandler() {
 
 function setupHoverRaise(mode: FloatingPinMode) {
   if (mode !== "pin_bottom") return;
-  // 鼠标进浮窗（窗口整体）→ 临时置顶
-  document.addEventListener("mouseenter", hoverEnterHandler);
-  // 鼠标离开浮窗 → 取消置顶，让其它窗口能盖住它
-  document.addEventListener("mouseleave", hoverLeaveHandler);
+  // **挂在 document.body 而不是 document**：Chromium 的 mouseenter/mouseleave
+  // 在 `document` 这个非元素对象上对"鼠标离开窗口"的判定不可靠 —— mouseleave
+  // 不冒泡，只对带 bounding box 的真实元素稳定触发。document.body 是整个窗口
+  // 的根元素（CSS 已经 margin:0 + background:transparent 把 body 撑满），
+  // 鼠标移出浮窗时 mouseleave 100% 在它上面触发。和上面 setHoverAttr 的
+  // CSS hover 监听用同一个 target，行为一致。
+  //
+  // 之前用 document 时，Win 上"hover 临时置顶后鼠标移开浮窗，always-on-top
+  // 一直留着"的 bug 就是 mouseleave 没触发导致的。
+  document.body.addEventListener("mouseenter", hoverEnterHandler);
+  document.body.addEventListener("mouseleave", hoverLeaveHandler);
 }
 
 init();

@@ -142,8 +142,18 @@
         font: inherit;
         font-size: 11px;
         cursor: pointer;
+        /* select 默认很宽，跟几个按钮挤一行会反过来把按钮挤成竖排 */
+        flex: 0 0 auto;
+        min-width: 0;
+        max-width: 140px;
       }
       .logs-filter:hover { border-color: #4a90e2; }
+      /* 日志那行几个按钮 + 计数都用 flex: 0 0 auto，避免被 select 挤崩 */
+      details.logs .row > button,
+      details.logs .row > #logs-count {
+        flex: 0 0 auto;
+        white-space: nowrap;
+      }
       .logs-list {
         max-height: 260px;
         overflow-y: auto;

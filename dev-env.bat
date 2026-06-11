@@ -1,33 +1,31 @@
 @echo off
 REM Musage dev environment loader
-REM Use:  cmd.exe /c "dev-env.bat && tauri dev"
-REM  Or:  cmd /c "dev-env.bat && cargo build"
+REM Use:  cmd /c "dev-env.bat && pnpm tauri:dev"
+REM
+REM Loads Node 20 (D:\Develop\node20), cargo (rustup), and optional
+REM mingw64 (D:\Develop\mingw64) into PATH for the current cmd session.
+REM Sets China-friendly mirrors for npm / crates.io to speed up downloads.
+
 setlocal
 
-REM mingw64 (WinLibs) — needed for `dlltool` when using GNU toolchain.
-REM Install once:  winget install BrechtSanders.WinLibs.POSIX.UCRT --location "D:\Develop\mingw64"
-if exist "D:\Develop\mingw64\bin" set "MINGW_BIN=D:\Develop\mingw64\bin"
+set "PATH=D:\Develop\node20;%PATH%"
+set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+if exist "D:\Develop\mingw64\bin\dlltool.exe" set "PATH=D:\Develop\mingw64\bin;%PATH%"
 
-set "PATH=D:\Develop\node20;D:\Users\33348\.cargo\bin;%MINGW_BIN%;%PATH%"
-
-REM npm/pnpm to use Chinese mirror for speed
 set "npm_config_registry=https://registry.npmmirror.com"
-
-REM Rust: use rsproxy.cn mirror for crates
 set "CARGO_HOME=%USERPROFILE%\.cargo"
 set "CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse"
 set "RUSTUP_DIST_SERVER=https://rsproxy.cn"
 set "RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup"
 
 echo [dev-env] PATH loaded
-where node 2>nul
-where pnpm 2>nul
-where cargo 2>nul
-where rustc 2>nul
-where dlltool 2>nul
+where node
+where pnpm
+where cargo
+where dlltool
 
 endlocal & (
-  set "PATH=D:\Develop\node20;D:\Users\33348\.cargo\bin;%MINGW_BIN%;%PATH%"
+  set "PATH=D:\Develop\node20;%USERPROFILE%\.cargo\bin;%PATH%"
   set "npm_config_registry=https://registry.npmmirror.com"
   set "CARGO_HOME=%USERPROFILE%\.cargo"
   set "CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse"

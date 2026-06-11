@@ -20,10 +20,10 @@ FG = (0, 0, 0, 255)            # 黑色 M
 
 # 画布外圈 padding：macOS HIG / StackOverflow 共识留 ~10% 安全区，
 # 否则 app icon 在 Dock 渲染时比其它大一圈。1024 - 10%*2 = ~820px 白底。
-ICON_PADDING_RATIO = 0.10
+ICON_PADDING_RATIO = 0.15
 # 字号占边长比例。0.50 加上 10% padding 后 M:BG ≈ 50:80 = 62%，
 # 跟 VSCode/WPS 视觉密度对齐
-M_SCALE = 0.50
+M_SCALE = 0.42
 # Ring 装饰：相对于**白底**的边距（不再是相对整个画布）。
 # 0.06 = 白底边距 6%，让 ring 贴在白底内侧、不顶到圆角边
 RING_MARGIN = 0.12

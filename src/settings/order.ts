@@ -1,11 +1,12 @@
 // Provider 浮窗卡片顺序管理
 //
 // v0.6+ 支持：
-// - **拖拽**：每个 `<li draggable>` 可拖拽到任意位置（HTML5 Drag & Drop API）
+// - **自定义拖拽**：mousedown/mousemove/mouseup 实现（不依赖 HTML5 DnD，
+//   在 Tauri WKWebView 里可靠）
 // - **↑↓ 按钮**：保留做快速单步调整 + accessibility
 // - **即时响应**：DOM 交换在 IPC 之前完成（用户看到瞬间移位）；后端
 //   set_provider_order 重排 in-memory snapshot 并 emit snapshot 给浮窗
-// - **不抖动**："1/6" 固定格式 + `font-variant-numeric: tabular-nums`
+// - **不抖动**："1/6" 固定格式 + font-variant-numeric: tabular-nums
 
 import { setProviderOrder } from "./api";
 import {
@@ -18,7 +19,6 @@ import {
 import { getProviderMeta } from "./logos";
 import type { ProviderId, SourceMeta } from "./types";
 
-/// 用 config.order 做主序，没列出的 provider 沉到末尾（用 builtin 顺序）
 export function canonicalizeOrder(order: string[]): ProviderId[] {
   const ordered: ProviderId[] = [];
   for (const id of order) {
@@ -35,14 +35,143 @@ export function canonicalizeOrder(order: string[]): ProviderId[] {
   return ordered;
 }
 
-/// 拖拽状态（模块级单例）
-let draggedId: string | null = null;
-let dragOverId: string | null = null;
-/// renderOrderSection 传入的 sources 引用（drop handler 重建 DOM 需要用）
-let orderSources: SourceMeta[] = [];
+// ── 模块状态 ────────────────────────────────────────────────
 
-/// 顶部的「浮窗卡片顺序」区块：列出当前所有 source + ↑↓ + 拖拽。
-/// 插入到 providers section 的最顶端。
+let orderSources: SourceMeta[] = [];
+let listRef: HTMLOListElement | null = null;
+
+// ── 自定义拖拽（mousedown/mousemove/mouseup）─────────────────
+
+let dragging = false;
+let dragSrcId: string | null = null;
+let dragSrcIdx = -1;
+let dragGhost: HTMLElement | null = null;
+let dragPlaceholder: HTMLElement | null = null;
+let dragStartY = 0;
+let dragOffsetY = 0;
+void dragStartY; // used in onDragMouseDown for reference
+
+function onDragMouseDown(e: MouseEvent) {
+  // 只在左键点击 <li> 时启动
+  if (e.button !== 0) return;
+  const li = (e.target as HTMLElement).closest<HTMLLIElement>("li.order-row");
+  if (!li) return;
+  // 不拦截按钮点击
+  if ((e.target as HTMLElement).closest("button")) return;
+
+  e.preventDefault();
+  dragSrcId = li.dataset.id ?? null;
+  dragSrcIdx = currentProviderOrder.indexOf(dragSrcId!);
+  dragStartY = e.clientY;
+  const rect = li.getBoundingClientRect();
+  dragOffsetY = e.clientY - rect.top;
+
+  // 创建 ghost（半透明浮动克隆）
+  dragGhost = li.cloneNode(true) as HTMLElement;
+  dragGhost.classList.add("order-ghost");
+  dragGhost.style.width = `${rect.width}px`;
+  dragGhost.style.position = "fixed";
+  dragGhost.style.left = `${rect.left}px`;
+  dragGhost.style.top = `${e.clientY - dragOffsetY}px`;
+  dragGhost.style.zIndex = "9999";
+  dragGhost.style.pointerEvents = "none";
+  dragGhost.style.opacity = "0.85";
+  dragGhost.style.transition = "none";
+  document.body.appendChild(dragGhost);
+
+  // 原位 placeholder（虚线占位）
+  dragPlaceholder = el("li", { class: "order-row order-placeholder" });
+  dragPlaceholder.style.height = `${rect.height}px`;
+  li.parentElement?.insertBefore(dragPlaceholder, li);
+  li.style.display = "none";
+
+  dragging = true;
+  document.addEventListener("mousemove", onDragMouseMove);
+  document.addEventListener("mouseup", onDragMouseUp);
+}
+
+function onDragMouseMove(e: MouseEvent) {
+  if (!dragging || !dragGhost || !listRef) return;
+
+  // 移动 ghost
+  dragGhost.style.top = `${e.clientY - dragOffsetY}px`;
+
+  // 找到光标所在的 <li>（不含 placeholder）
+  const items = [...listRef.querySelectorAll("li.order-row:not(.order-placeholder):not([style*='display: none'])")] as HTMLLIElement[];
+  let insertIdx = currentProviderOrder.length; // 默认插到末尾
+
+  for (let i = 0; i < items.length; i++) {
+    const rect = items[i].getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    if (e.clientY < midY) {
+      insertIdx = i;
+      break;
+    }
+  }
+
+  // 移动 placeholder 到 insertIdx
+  if (dragPlaceholder && listRef) {
+    const children = [...listRef.children] as HTMLElement[];
+    // 找到 insertIdx 对应的实际 DOM 位置（跳过隐藏的 src li）
+    const visibleItems = children.filter(
+      (c) => c !== dragPlaceholder && !(c as HTMLElement).style?.display?.includes("none"),
+    );
+    if (insertIdx < visibleItems.length) {
+      listRef.insertBefore(dragPlaceholder, visibleItems[insertIdx]);
+    } else {
+      listRef.appendChild(dragPlaceholder);
+    }
+  }
+}
+
+function onDragMouseUp(_e: MouseEvent) {
+  if (!dragging) return;
+  document.removeEventListener("mousemove", onDragMouseMove);
+  document.removeEventListener("mouseup", onDragMouseUp);
+
+  // 恢复源 li
+  const srcLi = listRef?.querySelector(`li[data-id="${dragSrcId}"]`) as HTMLElement | null;
+  if (srcLi) srcLi.style.display = "";
+
+  // 计算新位置：placeholder 在 list 里的 index
+  let newIdx = 0;
+  if (dragPlaceholder && listRef) {
+    const children = [...listRef.children];
+    newIdx = children.indexOf(dragPlaceholder);
+    if (newIdx < 0) newIdx = currentProviderOrder.length;
+  }
+
+  // 移除 placeholder + ghost
+  dragPlaceholder?.remove();
+  dragGhost?.remove();
+  dragPlaceholder = null;
+  dragGhost = null;
+
+  // 执行移位
+  if (dragSrcIdx >= 0 && newIdx !== dragSrcIdx && dragSrcId) {
+    const moved = currentProviderOrder.splice(dragSrcIdx, 1)[0];
+    // newIdx 是 placeholder 在 visible items 中的位置，需要映射到 currentProviderOrder
+    // 因为 splice 已经移除了 src，后面的 index 都 -1
+    const adjustedIdx = newIdx > dragSrcIdx ? newIdx - 1 : newIdx;
+    currentProviderOrder.splice(adjustedIdx, 0, moved);
+
+    // DOM 重建
+    if (listRef) buildOrderItems(listRef, orderSources);
+
+    // IPC
+    void commitOrder(adjustedIdx, moved);
+  } else {
+    // 没移动，恢复原状
+    if (listRef) buildOrderItems(listRef, orderSources);
+  }
+
+  dragging = false;
+  dragSrcId = null;
+  dragSrcIdx = -1;
+}
+
+// ── 渲染 ────────────────────────────────────────────────────
+
 export function renderOrderSection(
   container: HTMLElement,
   sources: SourceMeta[],
@@ -52,10 +181,11 @@ export function renderOrderSection(
   orderSources = sources;
 
   const list = el("ol", { class: "order-list" }) as HTMLOListElement;
+  listRef = list;
   buildOrderItems(list, sources);
 
-  // document-level 拖拽事件（只绑一次，委托在 order-list 上）
-  bindDragEvents(list);
+  // 绑定 mousedown（自定义拖拽）
+  list.addEventListener("mousedown", onDragMouseDown);
 
   const section = el(
     "section",
@@ -68,7 +198,6 @@ export function renderOrderSection(
   container.prepend(section);
 }
 
-/// 根据 currentProviderOrder 重新生成 `<li>` 元素。
 function buildOrderItems(list: HTMLOListElement, sources: SourceMeta[]) {
   list.innerHTML = "";
   for (let i = 0; i < currentProviderOrder.length; i++) {
@@ -81,13 +210,12 @@ function buildOrderItems(list: HTMLOListElement, sources: SourceMeta[]) {
           class: "order-logo",
           src: providerMeta.logo,
           alt: providerMeta.name,
-          draggable: "false",
         })
       : null;
 
     const li = el(
       "li",
-      { class: "order-row", draggable: "true", "data-id": id },
+      { class: "order-row", "data-id": id },
       el(
         "div",
         { class: "order-row-left" },
@@ -102,7 +230,6 @@ function buildOrderItems(list: HTMLOListElement, sources: SourceMeta[]) {
         el("button", { class: "order-down", "data-id": id, type: "button", title: "下移" }, "↓"),
       ),
     );
-    // 首/末 disabled
     const upBtn = li.querySelector<HTMLButtonElement>(".order-up")!;
     const downBtn = li.querySelector<HTMLButtonElement>(".order-down")!;
     upBtn.disabled = i === 0;
@@ -112,105 +239,11 @@ function buildOrderItems(list: HTMLOListElement, sources: SourceMeta[]) {
   }
 }
 
-/// "1/6" 固定格式（比 "位置 1 / 6" 短，宽度更稳）
 function posLabel(i: number): string {
   return `${i + 1}/${currentProviderOrder.length}`;
 }
 
-// ── 拖拽 ────────────────────────────────────────────────────
-
-function bindDragEvents(list: HTMLOListElement) {
-  list.addEventListener("dragstart", (e) => {
-    const li = (e.target as HTMLElement).closest<HTMLLIElement>("li.order-row");
-    if (!li) return;
-    draggedId = li.dataset.id ?? null;
-    li.classList.add("dragging");
-    // dragImage 用默认即可（浏览器会截图 li）
-    e.dataTransfer!.effectAllowed = "move";
-  });
-
-  list.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    e.dataTransfer!.dropEffect = "move";
-    const li = (e.target as HTMLElement).closest<HTMLLIElement>("li.order-row");
-    if (!li || li.dataset.id === draggedId) return;
-
-    // 之前的 drag-over 清掉
-    if (dragOverId && dragOverId !== li.dataset.id) {
-      const prev = list.querySelector(`.order-row[data-id="${dragOverId}"]`);
-      prev?.classList.remove("drag-over-top", "drag-over-bottom");
-    }
-    dragOverId = li.dataset.id!;
-
-    // 光标在 li 上半/下半 → 标记"插入到前面/后面"
-    const rect = li.getBoundingClientRect();
-    const midY = rect.top + rect.height / 2;
-    li.classList.remove("drag-over-top", "drag-over-bottom");
-    if (e.clientY < midY) {
-      li.classList.add("drag-over-top");
-    } else {
-      li.classList.add("drag-over-bottom");
-    }
-  });
-
-  list.addEventListener("dragleave", (e) => {
-    const li = (e.target as HTMLElement).closest<HTMLLIElement>("li.order-row");
-    if (li) {
-      li.classList.remove("drag-over-top", "drag-over-bottom");
-    }
-  });
-
-  list.addEventListener("drop", (e) => {
-    e.preventDefault();
-    const li = (e.target as HTMLElement).closest<HTMLLIElement>("li.order-row");
-    if (!li || !draggedId || li.dataset.id === draggedId) {
-      cleanupDrag(list);
-      return;
-    }
-
-    const targetId = li.dataset.id!;
-    const fromIdx = currentProviderOrder.indexOf(draggedId);
-    const toIdx = currentProviderOrder.indexOf(targetId);
-    if (fromIdx < 0 || toIdx < 0) {
-      cleanupDrag(list);
-      return;
-    }
-
-    // 判断插入位置：光标在目标上半 → 插到目标前面；下半 → 插到目标后面
-    const rect = li.getBoundingClientRect();
-    const midY = rect.top + rect.height / 2;
-    const insertBefore = e.clientY < midY;
-
-    // 计算新位置
-    let newIdx = insertBefore ? toIdx : toIdx + 1;
-    if (fromIdx < newIdx) newIdx--; // 移除 fromIdx 后后面的 index 会 -1
-
-    // 执行移位
-    const moved = currentProviderOrder.splice(fromIdx, 1)[0];
-    currentProviderOrder.splice(newIdx, 0, moved);
-
-    // DOM 重建（拖拽后整个 list 需要刷新位置编号 + disabled 状态）
-    buildOrderItems(list, orderSources);
-
-    // IPC（异步，不阻塞 UI）
-    void commitOrder(newIdx, moved);
-  });
-
-  list.addEventListener("dragend", () => {
-    cleanupDrag(list);
-  });
-}
-
-function cleanupDrag(list: HTMLOListElement) {
-  draggedId = null;
-  dragOverId = null;
-  list.querySelectorAll(".dragging").forEach((el) => el.classList.remove("dragging"));
-  list.querySelectorAll(".drag-over-top, .drag-over-bottom").forEach((el) => {
-    el.classList.remove("drag-over-top", "drag-over-bottom");
-  });
-}
-
-// ── ↑↓ 按钮（保留做快速单步 + accessibility）─────────────────
+// ── ↑↓ 按钮 ─────────────────────────────────────────────────
 
 export async function moveProviderInOrder(id: string, dir: "up" | "down") {
   const idx = currentProviderOrder.indexOf(id);
@@ -218,7 +251,6 @@ export async function moveProviderInOrder(id: string, dir: "up" | "down") {
   const newIdx = dir === "up" ? idx - 1 : idx + 1;
   if (newIdx < 0 || newIdx >= currentProviderOrder.length) return;
 
-  // DOM 交换（即时响应，不等 IPC）
   const list = document.querySelector<HTMLOListElement>(".order-list");
   if (list) {
     const items = [...list.children] as HTMLLIElement[];
@@ -233,31 +265,24 @@ export async function moveProviderInOrder(id: string, dir: "up" | "down") {
     }
   }
 
-  // 内存里调换
   [currentProviderOrder[idx], currentProviderOrder[newIdx]] = [
     currentProviderOrder[newIdx],
     currentProviderOrder[idx],
   ];
 
-  // 更新位置编号 + disabled（DOM 已经 swap 了，只需更新文本）
   refreshPosLabels();
   void commitOrder(newIdx, id);
 }
 
-/// 调后端 set_provider_order（即时落盘 + 重排 snapshot + emit）。
-/// 失败回滚内存里的顺序 + flash 错误。
 async function commitOrder(finalIdx: number, id: string) {
   try {
     await setProviderOrder(currentProviderOrder);
     flash(`✓ ${id} 已移到位置 ${finalIdx + 1}`);
   } catch (e) {
     flash(`✗ 调整顺序失败: ${e}`, true);
-    // TODO: 回滚（需要记住之前的 order 快照，v1 暂不处理）
   }
 }
 
-/// 刷新所有 "X/N" 标签 + up/down disabled 状态。
-/// DOM 不重建，只改文本内容和按钮状态（不抖动）。
 function refreshPosLabels() {
   for (let i = 0; i < currentProviderOrder.length; i++) {
     const id = currentProviderOrder[i];
@@ -270,7 +295,7 @@ function refreshPosLabels() {
   }
 }
 
-// ── 全局按钮委托 + 拖拽事件 ──────────────────────────────────
+// ── 全局按钮委托 ────────────────────────────────────────────
 
 export function bindOrderButtonsGlobal() {
   document.addEventListener("click", (e) => {
@@ -285,7 +310,6 @@ export function bindOrderButtonsGlobal() {
   });
 }
 
-/// 兼容老 caller（settings.html legacy 里的 per-panel 顺序按钮）
 export function renderProviderOrderPanels(order: string[]) {
   setCurrentProviderOrder(canonicalizeOrder(order));
   refreshPosLabels();

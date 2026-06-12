@@ -51,7 +51,7 @@ button.danger:hover { background: #d35400; }
 .status { font-size: 11px; color: #888; margin-top: 4px; }
 .status.ok { color: #4caf50; }
 .status.alert { color: #f44336; }
-.flash { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); min-height: 18px; font-size: 12px; padding: 6px 12px; background: rgba(0,0,0,0.6); border-radius: 6px; z-index: 100; }
+.flash { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); min-height: 18px; font-size: 12px; padding: 6px 12px; background: rgba(0,0,0,0.6); border-radius: 6px; z-index: 100; display: none; }
 .check { display: flex; align-items: center; gap: 8px; }
 .check input { width: auto; }
 .help { font-size: 11px; color: #888; margin-top: 4px; line-height: 1.5; }
@@ -157,6 +157,21 @@ code { background: #2a2d35; padding: 1px 4px; border-radius: 3px; font-size: 11p
 .order-row.dragging { opacity: 0.4; background: var(--bg-2); }
 .order-row.drag-over-top { box-shadow: inset 0 2px 0 0 var(--accent); }
 .order-row.drag-over-bottom { box-shadow: inset 0 -2px 0 0 var(--accent); }
+/* 自定义拖拽 ghost（浮动半透明克隆） */
+.order-ghost {
+  opacity: 0.85;
+  background: var(--bg-1);
+  border: 1px solid var(--accent);
+  border-radius: var(--r-md);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+  pointer-events: none;
+}
+/* 拖拽占位符（虚线框） */
+.order-placeholder {
+  border: 2px dashed var(--accent) !important;
+  background: transparent !important;
+  opacity: 0.5;
+}
 .order-row-left { display: flex; align-items: center; gap: var(--sp-2); flex: 1; min-width: 0; }
 .order-logo { width: 18px; height: 18px; object-fit: contain; flex: 0 0 auto; }
 .order-pos { font-size: 11px; color: var(--fg-3); font-variant-numeric: tabular-nums; min-width: 28px; text-align: center; }

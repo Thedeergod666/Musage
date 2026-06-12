@@ -82,8 +82,12 @@ export function flash(msg: string, isError = false) {
   const el = $("#flash") as HTMLElement;
   el.textContent = msg;
   el.style.color = isError ? "#f44336" : "#4caf50";
+  el.style.display = "block";
   if (flashTimer !== null) clearTimeout(flashTimer);
-  flashTimer = window.setTimeout(() => (el.textContent = ""), 5000);
+  flashTimer = window.setTimeout(() => {
+    el.textContent = "";
+    el.style.display = "none";
+  }, 2500);
 }
 
 // ── 文本/时间/数字格式 ─────────────────────────────────────

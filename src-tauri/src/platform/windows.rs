@@ -52,49 +52,119 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use windows_sys::Win32::Foundation::{HWND as WIN_HWND, POINT, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, GetCursorPos, GetWindowRect, WindowFromPoint, GA_ROOT,
+    GetAncestor, GetCursorPos, GetWindowRect, SetWindowPos, WindowFromPoint, GA_ROOT, HWND_BOTTOM,
+    HWND_NOTOPMOST, HWND_TOPMOST, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
 };
 
 /// Hover tracker thread 是否已启动（idempotent 防重入）。
 static TRACKER_RUNNING: AtomicBool = AtomicBool::new(false);
 
-/// 鼠标 hover 时是否同步切 always-on-top：仅 PinBottom 模式置 true。
-/// 这个开关只影响 `set_always_on_top` 切换；hover 事件 emit 不受影响
+/// 鼠标 hover 时是否同步切 z-order：仅 PinBottom 模式置 true。
+/// 这个开关只影响 z-order 切换；hover 事件 emit 不受影响
 /// （**永远 emit**），因为前端 iOS 26 玻璃 hover 效果需要它，不分 pin mode。
 static LEVEL_SWITCHING_ACTIVE: AtomicBool = AtomicBool::new(false);
 
+/// 浮窗的 z-order 模式。直接走 `SetWindowPos` 的 3 个目标值之一。
+#[derive(Debug, Clone, Copy)]
+enum ZOrder {
+    /// `HWND_TOPMOST` —— 高于所有其它窗口（含 topmost 类别）。PinTop
+    /// 模式 + PinBottom hover 进窗口时用。
+    TopMost,
+    /// `HWND_BOTTOM` —— 低于所有 normal 窗口，对应 macOS 那套的
+    /// `kCGNormalWindowLevel - 1`（"below normal"）。PinBottom
+    /// 鼠标离开时用。
+    ///
+    /// **为什么不直接用 `set_always_on_top(false)`（即 HWND_NOTOPMOST）**：
+    /// 后者只把 HWND 的 WS_EX_TOPMOST 标志位清掉，**不动 z-order**。
+    /// 浮窗之前在 topmost 位置，清掉 topmost 标志后会落回 "top of
+    /// normal z-order"，**视觉上还是盖在其它 app 之上**，用户感知
+    /// 到的就是"鼠标移开浮窗它没掉下去"。HWND_BOTTOM 是显式"塞到
+    /// 正常 z-order 最底"，跟 macOS 那个 -1 行为对得起来。
+    Bottom,
+    /// `HWND_NOTOPMOST` —— 清 topmost 标志、保留 z-order。Normal
+    /// 模式用：用户没要"始终 topmost"也别强塞 HWND_BOTTOM（那会
+    /// 让窗口被其它所有 app 盖住，对 Normal 模式过度）。
+    NotTopMost,
+}
+
+/// 把浮窗的 z-order 设到指定模式。直接走 `SetWindowPos`，绕开
+/// Tauri/tao 的 `set_always_on_top` 抽象层 —— 后者只能 toggle topmost
+/// 标志位，不能塞到 HWND_BOTTOM。
+///
+/// 必须在主线程调（`SetWindowPos` 影响窗口 Z 顺序，Win 通常要求）。
+/// 调用方（hover tracker / pin mode 设置）都通过 `app.run_on_main_thread`
+/// 派发；这里 unsafe 由调用方担保。
+unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
+    let insert_after = match z {
+        ZOrder::TopMost => HWND_TOPMOST,
+        ZOrder::Bottom => HWND_BOTTOM,
+        ZOrder::NotTopMost => HWND_NOTOPMOST,
+    };
+    // windows-sys 0.59 的 SetWindowPos 第二参是 `HWND`（=`*mut c_void`），
+    // 不是 `Option<HWND>`（tao 那种 high-level `windows` crate 才包 Option），
+    // 直接传 raw pointer 就行。
+    let _ = SetWindowPos(
+        hwnd,
+        insert_after,
+        0,
+        0,
+        0,
+        0,
+        SWP_ASYNCWINDOWPOS | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+    );
+}
+
 // ── 公开 API ──
 
-/// PinBottom 模式启动时调：把 always-on-top 关掉，并开启 hover 切
-/// always-on-top。tracker 已由 `start_hover_emitter` 在 app 启动时拉起，
-/// 这里只翻开关。
+/// PinBottom 模式启动时调：把窗口塞到 HWND_BOTTOM（z-order 最底，
+/// 对应 macOS 那个 `LEVEL_BELOW_NORMAL`），并开启 hover 切 z-order。
+/// tracker 已由 `start_hover_emitter` 在 app 启动时拉起，这里只翻开关。
 pub fn set_window_pin_bottom<R: Runtime>(app: &AppHandle<R>) {
-    if let Some(win) = app.get_webview_window("floating") {
-        let _ = win.set_always_on_top(false);
-    }
+    let app2 = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(win) = app2.get_webview_window("floating") {
+            if let Ok(hwnd) = win.hwnd() {
+                unsafe { apply_z_order(hwnd.0, ZOrder::Bottom) };
+                tracing::trace!("PinBottom: set z-order Bottom");
+            }
+        }
+    });
     LEVEL_SWITCHING_ACTIVE.store(true, Ordering::SeqCst);
     // 防御：lib.rs setup 之外的路径走到这（理论上不会），保底拉起 tracker
     start_hover_emitter(app.clone());
 }
 
-/// PinTop 模式：always-on-top 开，关闭 hover 切换（窗口已经始终置顶）。
-/// hover 事件 emit 不变，前端玻璃效果继续受惠。
+/// PinTop 模式：z-order 切到 TopMost，关闭 hover 切换（窗口已经始终
+/// 置顶）。hover 事件 emit 不变，前端玻璃效果继续受惠。
 pub fn set_window_pin_top<R: Runtime>(app: &AppHandle<R>) {
     LEVEL_SWITCHING_ACTIVE.store(false, Ordering::SeqCst);
-    if let Some(win) = app.get_webview_window("floating") {
-        let _ = win.set_always_on_top(true);
-    }
+    let app2 = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(win) = app2.get_webview_window("floating") {
+            if let Ok(hwnd) = win.hwnd() {
+                unsafe { apply_z_order(hwnd.0, ZOrder::TopMost) };
+                tracing::trace!("PinTop: set z-order TopMost");
+            }
+        }
+    });
 }
 
-/// Normal 模式：always-on-top 关，关闭 hover 切换。
+/// Normal 模式：z-order 切到 NotTopMost（清 topmost 标志、保留 z-order），
+/// 关闭 hover 切换。
 pub fn set_window_normal<R: Runtime>(app: &AppHandle<R>) {
     LEVEL_SWITCHING_ACTIVE.store(false, Ordering::SeqCst);
-    if let Some(win) = app.get_webview_window("floating") {
-        let _ = win.set_always_on_top(false);
-    }
+    let app2 = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(win) = app2.get_webview_window("floating") {
+            if let Ok(hwnd) = win.hwnd() {
+                unsafe { apply_z_order(hwnd.0, ZOrder::NotTopMost) };
+                tracing::trace!("Normal: set z-order NotTopMost");
+            }
+        }
+    });
 }
 
-/// hover 切 always-on-top 的"前端兜底信号"：Win 上 tracker 已自行处理，
+/// hover 切 z-order 的"前端兜底信号"：Win 上 tracker 已自行处理，
 /// 此处 no-op。保留是为了让 commands.rs 在跨平台调用时不必 `#[cfg]`。
 pub fn set_window_hover_raise<R: Runtime>(_app: &AppHandle<R>, _hovering: bool) {
     // no-op —— tracker 自己处理
@@ -141,12 +211,18 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
                     tracing::trace!(error = %e, "emit hover 失败");
                 }
 
-                // (2) PinBottom 模式：同步切 always-on-top
+                // (2) PinBottom 模式：同步切 z-order
                 if LEVEL_SWITCHING_ACTIVE.load(Ordering::SeqCst) {
-                    tracing::trace!(inside, "PinBottom hover 切 always-on-top");
-                    if let Some(win) = app.get_webview_window("floating") {
-                        let _ = win.set_always_on_top(inside);
-                    }
+                    let z = if inside { ZOrder::TopMost } else { ZOrder::Bottom };
+                    tracing::trace!(?z, "PinBottom hover 切 z-order");
+                    let app2 = app.clone();
+                    let _ = app.run_on_main_thread(move || {
+                        if let Some(win) = app2.get_webview_window("floating") {
+                            if let Ok(hwnd) = win.hwnd() {
+                                unsafe { apply_z_order(hwnd.0, z) };
+                            }
+                        }
+                    });
                 }
             }
         })

@@ -216,11 +216,13 @@ pub async fn set_source_credential(
         AuthKind::Cookie => Credentials { api_key: None, cookie: Some(trimmed.to_string()) },
     };
     config::save_credential_for_id(&id, &cred)?;
+    tracing::debug!(provider = %id, "set_source_credential: saved to keys.json");
     // 关键：用户刚配完 key 浮窗应当立刻看到数据。per-provider 调度最早
     // 在下一分钟才 fire（启动时初始化为 now+interval），不手动拉一次用户得
     // 等 1 分钟甚至更久。refresh_single_inner 内部会更新 in-memory
     // snapshot + emit，浮窗自动跟着变。
     let enabled = state.config.read().await.is_enabled_id(&id);
+    tracing::debug!(provider = %id, enabled, "set_source_credential: refresh decision");
     if enabled {
         if let Err(e) = refresh_single_inner(&app, &id).await {
             tracing::warn!(error = %e, provider = %id, "set_source_credential 后立即拉取失败（不阻塞保存）");
@@ -577,6 +579,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
 
         // 1. 同步加载凭据（避免在 tokio::spawn 里 await I/O）
         let creds_res = config::load_credential_for_id(id);
+        tracing::trace!(provider = %id, has_creds = creds_res.as_ref().ok().and_then(|c| c.as_ref()).is_some(), "refresh_inner load_credential");
 
         // 2. 让 source 更新自己的 state（region / overrides）
         update_source_state(src, cfg).await;

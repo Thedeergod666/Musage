@@ -16,6 +16,7 @@ import minimaxLogo from "./assets/minimax-logo.png";
 import deepseekLogo from "./assets/deepseek-icon.png";
 import xiaomimimoLogo from "./assets/xiaomimimo-logo.png";
 import tavilyLogo from "./assets/tavily-logo.svg";
+import zenmuxLogo from "./assets/zenmux-logo.svg";
 import "./styles.css";
 
 /// 静态映射：provider id → 官网 logo + 显示名
@@ -25,7 +26,7 @@ const PROVIDER_META: Record<string, { name: string; logo: string }> = {
   deepseek: { name: "DeepSeek", logo: deepseekLogo },
   xiaomimimo: { name: "Xiaomi MiMo", logo: xiaomimimoLogo },
   tavily: { name: "Tavily", logo: tavilyLogo },
-  zenmux: { name: "ZenMux", logo: "" },  // 暂无 logo，纯文字
+  zenmux: { name: "ZenMux", logo: zenmuxLogo },
 };
 
 type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";

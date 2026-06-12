@@ -35,8 +35,13 @@ type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
 /// "musage://config-changed" 监听刷新）
 interface RenderPrefs {
   tavilyConciseMode: boolean;
+  /// ZenMux PAYG 模式：只显示余额行，隐藏 充值/奖励 细分行。默认 true。
+  zenmuxPaygConciseMode: boolean;
 }
-let renderPrefs: RenderPrefs = { tavilyConciseMode: true };
+let renderPrefs: RenderPrefs = {
+  tavilyConciseMode: true,
+  zenmuxPaygConciseMode: true,
+};
 
 // ── 类型（必须和 src-tauri/src/providers/mod.rs 对齐）──
 
@@ -219,6 +224,13 @@ function rowsForRender(p: ProviderSnapshot): QuotaRow[] {
     // 导致浮窗空卡片。
     return p.rows.length > 0 ? [p.rows[0]] : [];
   }
+  if (id === "zenmux" && renderPrefs.zenmuxPaygConciseMode) {
+    // ZenMux PAYG 简洁模式：只保留余额行，隐藏「充值 / 奖励」细分。
+    // 检测：PAYG 模式第一行 remaining 字段非空且 utilization 为空；
+    // subscription 模式第一行 utilization 非空（不受此 toggle 影响）。
+    const main = p.rows.find((r) => r.remaining != null && r.utilization == null);
+    return main ? [main] : p.rows;
+  }
   return p.rows;
 }
 
@@ -308,6 +320,16 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
   if (p.success) {
     lastGoodSnap.set(p.provider, p);
     card.dataset.stale = ""; // 清 stale 标记（即使之前是 stale）
+  }
+
+  // ZenMux PAYG 模式：第 1 行有 remaining 但无 utilization 时 → 加 class
+  // 让 CSS 把所有行 (含充值/奖励) 统一成余额样式（17px、白色、hover 不变色）。
+  // subscription 模式第 1 行有 utilization → 不加 class，保留 MiniMax-style。
+  if (id === "zenmux" && p.success) {
+    const isPayg = p.rows[0]?.remaining != null && p.rows[0]?.utilization == null;
+    card.classList.toggle("zenmux-payg", isPayg);
+  } else {
+    card.classList.remove("zenmux-payg");
   }
 
   if (!p.success) {
@@ -734,18 +756,27 @@ async function init() {
     }>("get_config");
     pinMode = cfg.floating_pin_mode ?? "pin_top";
     setLowPowerAttr(cfg.low_power_mode ?? false);
-    renderPrefs = { tavilyConciseMode: cfg.tavily_concise_mode ?? true };
+    renderPrefs = {
+      tavilyConciseMode: cfg.tavily_concise_mode ?? true,
+      zenmuxPaygConciseMode: cfg.zenmux_payg_concise_mode ?? true,
+    };
   } catch (e) {
     console.error("读 config 失败", e);
   }
   setupHoverRaise(pinMode);
 
-  // 配置变化时（设置面板改 Tavily 简洁模式等）→ 重新拉 config + snapshot
+  // 配置变化时（设置面板改 Tavily / ZenMux 简洁模式等）→ 重新拉 config + snapshot
   // 后端 save_config 已经 emit `musage://config-changed`。
   listen("musage://config-changed", async () => {
     try {
-      const cfg = await invoke<{ tavily_concise_mode?: boolean }>("get_config");
-      renderPrefs = { tavilyConciseMode: cfg.tavily_concise_mode ?? true };
+      const cfg = await invoke<{
+        tavily_concise_mode?: boolean;
+        zenmux_payg_concise_mode?: boolean;
+      }>("get_config");
+      renderPrefs = {
+        tavilyConciseMode: cfg.tavily_concise_mode ?? true,
+        zenmuxPaygConciseMode: cfg.zenmux_payg_concise_mode ?? true,
+      };
       const snap = await invoke<QuotaSnapshot>("get_snapshot");
       if (snap.providers.length > 0) render(snap);
     } catch (e) {

@@ -280,6 +280,23 @@ body[data-hover] #app .bar-fill::after { opacity: 1; }
   letter-spacing: -0.3px;
 }
 
+/* ── ZenMux PAYG 模式：余额 / 充值 / 奖励 统一样式 ──
+ *
+ * 默认 .balance-row 走 17px + 蓝色 (.pct.balance → --c-data-info)，
+ * .credits-row 走 22px + 白色。三行不一致 + 余额 hover 翻蓝不符合需求。
+ * 这里把整张卡的三行统一成 17px + 白色（hover 不变蓝），与余额行视觉对齐。
+ * 覆盖在 .pct.balance 之后，靠更高 specificity 胜出。
+ */
+.card.zenmux-payg .pct {
+  font-size: 17px !important;
+  letter-spacing: -0.3px;
+  color: var(--text-bright) !important;
+}
+/* 防 body[data-hover] 把 .pct.credits/.pct.balance 的颜色规则再覆盖回来 */
+body[data-hover] #app .card.zenmux-payg .pct {
+  color: var(--text-bright) !important;
+}
+
 /* ── 状态行（DeepSeek） ── */
 
 .status-row {

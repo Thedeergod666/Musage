@@ -73,6 +73,8 @@ interface AppConfig {
   zenmux_base_url?: string | null;
   /// ZenMux 监控模式：payg（钱包余额，默认）/ subscription（订阅用量窗口）
   zenmux_mode?: "payg" | "subscription";
+  /// ZenMux PAYG 模式「只显示余额」开关：默认 true。关掉时多显示 2 行细分（充值 / 奖励）。
+  zenmux_payg_concise_mode?: boolean;
   // 用户加的字段名候选（应对 MiniMax 改 schema）
   schema_overrides?: Record<string, ProviderOverrides>;
 }
@@ -244,11 +246,13 @@ async function loadConfig() {
   const tavilyConcise = document.getElementById("tavily-concise-mode") as HTMLInputElement | null;
   if (tavilyConcise) tavilyConcise.checked = cfg.tavily_concise_mode ?? true;
 
-  // ZenMux 自定义 URL + mode
+  // ZenMux 自定义 URL + mode + PAYG 简洁模式
   const zenmuxUrlInput = document.getElementById("zenmux-base-url") as HTMLInputElement | null;
   if (zenmuxUrlInput) zenmuxUrlInput.value = cfg.zenmux_base_url ?? "";
   const zenmuxModeSel = document.getElementById("zenmux-mode") as HTMLSelectElement | null;
   if (zenmuxModeSel) zenmuxModeSel.value = cfg.zenmux_mode ?? "payg";
+  const zenmuxConcise = document.getElementById("zenmux-payg-concise-mode") as HTMLInputElement | null;
+  if (zenmuxConcise) zenmuxConcise.checked = cfg.zenmux_payg_concise_mode ?? true;
   // 各 provider 「在浮窗显示」开关（缺省视为 true）+ 轮询间隔覆盖
   for (const id of PROVIDER_IDS) {
     const el = document.getElementById(`enabled-${id}`) as HTMLInputElement | null;
@@ -386,6 +390,8 @@ async function saveConfig() {
         | "payg"
         | "subscription"
         | undefined) ?? "payg",
+    zenmux_payg_concise_mode:
+      (document.getElementById("zenmux-payg-concise-mode") as HTMLInputElement | null)?.checked ?? true,
     refresh_interval_secs: parseInt(($("#interval") as HTMLInputElement).value, 10) || 60,
     autostart: ($("#autostart") as HTMLInputElement).checked,
     floating_x: existing.floating_x ?? null,

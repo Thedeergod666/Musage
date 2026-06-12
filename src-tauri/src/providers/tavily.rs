@@ -15,7 +15,7 @@
 //! ```json
 //! {
 //!   "account": {
-//!     "current_plan": "Research",
+//!     "current_plan": "Researcher",
 //!     "current_billing_period": { "start": "2026-06-01", "end": "2026-07-01" },
 //!     "plan_usage": { "key": { "usage": 0, "limit": null } }
 //!   },
@@ -39,9 +39,10 @@
 
 use std::pin::Pin;
 
+use chrono::{NaiveDate, NaiveTime};
 use serde_json::Value;
 
-use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource};
+use super::{shared_client, AuthKind, Credentials, FetchError, ProviderSnapshot, QuotaRow, QuotaSource};
 
 const URL: &str = "https://api.tavily.com/usage";
 
@@ -126,13 +127,40 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         .ok_or_else(|| FetchError::parse("Tavily 响应缺少 key 字段".to_string()))?;
 
     let used = num_f64(key, "usage");
-    let limit = num_f64(key, "limit");
+    let mut limit = num_f64(key, "limit");
+
+    // Tavily API 对 Researcher plan 返回 "limit": null，
+    // 但实际有 1000 credits/月上限。按 plan_name 兜底。
+    if limit.is_none() {
+        let plan = raw
+            .pointer("/account/current_plan")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        limit = match plan {
+            "Research" | "Researcher" => Some(1000.0),
+            _ => None,
+        };
+    }
 
     // plan_name 来自 account.current_plan（不在就 None，让前端不显示副标题）
     let plan_name = raw
         .pointer("/account/current_plan")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+
+    // ── 套餐重置时间：从 account.current_billing_period.end 提取 ──
+    let resets_at: Option<i64> = raw
+        .pointer("/account/current_billing_period/end")
+        .and_then(|v| v.as_str())
+        .and_then(|s| {
+            NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .ok()
+                .map(|d| {
+                    d.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap())
+                        .and_utc()
+                        .timestamp_millis()
+                })
+        });
 
     let mut rows = Vec::new();
 
@@ -145,7 +173,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
                 remaining: Some((l - u).max(0.0)),
                 used: Some(u),
                 total: Some(l),
-                resets_at: None,
+                resets_at,
                 unit: Some("credits".to_string()),
                 extra: None,
             });
@@ -157,7 +185,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
                 remaining: None,
                 used: Some(u),
                 total: None,
-                resets_at: None,
+                resets_at,
                 unit: Some("credits".to_string()),
                 extra: None,
             });
@@ -170,7 +198,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
             remaining: None,
             used: Some(u),
             total: None,
-            resets_at: None,
+            resets_at,
             unit: Some("credits".to_string()),
             extra: None,
         });
@@ -266,6 +294,13 @@ mod tests {
         assert_eq!(main.used, Some(150.0));
         assert_eq!(main.total, Some(1000.0));
         assert!((main.utilization.unwrap() - 15.0).abs() < 0.001);
+        // resets_at: 2026-07-01 00:00 UTC → millis
+        let expected_reset = NaiveDate::from_ymd_opt(2026, 7, 1)
+            .unwrap()
+            .and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap())
+            .and_utc()
+            .timestamp_millis();
+        assert_eq!(main.resets_at, Some(expected_reset));
         // Endpoint rows
         assert_eq!(snap.rows[1].label, "search");
         assert_eq!(snap.rows[1].used, Some(80.0));
@@ -287,25 +322,46 @@ mod tests {
     }
 
     #[test]
+    fn parse_research_plan_limit_fallback() {
+        // Researcher plan API 返回 limit=null，但实际有 1000 credits 上限
+        let raw = json!({
+            "account": {
+                "current_plan": "Researcher",
+                "current_billing_period": { "start": "2026-06-01", "end": "2026-07-01" }
+            },
+            "key": { "usage": 765, "limit": null }
+        });
+        let snap = parse(&raw).expect("parse");
+        let main = &snap.rows[0];
+        assert_eq!(main.used, Some(765.0));
+        assert_eq!(main.total, Some(1000.0));
+        assert!((main.utilization.unwrap() - 76.5).abs() < 0.001);
+        // resets_at 也应被设置
+        assert!(main.resets_at.is_some());
+    }
+
+    #[test]
     fn parse_no_plan() {
         let raw = json!({
             "key": { "usage": 10, "limit": 100 }
         });
         let snap = parse(&raw).expect("parse");
         assert!(snap.plan_name.is_none());
+        // 无 billing period → resets_at 应为 None
+        assert!(snap.rows[0].resets_at.is_none());
     }
 
     #[test]
     fn parse_missing_key_field_is_error() {
         let raw = json!({ "account": {} });
         let err = parse(&raw).unwrap_err();
-        assert_eq!(err.kind, ErrorKind::Parse);
+        assert_eq!(err.kind, FetchError::parse("test").kind);
     }
 
     #[test]
     fn parse_empty_key_is_error() {
         let raw = json!({ "key": {} });
         let err = parse(&raw).unwrap_err();
-        assert_eq!(err.kind, ErrorKind::Parse);
+        assert_eq!(err.kind, FetchError::parse("test").kind);
     }
 }

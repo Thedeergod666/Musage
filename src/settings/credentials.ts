@@ -18,9 +18,10 @@ import {
   setApiKeyFor,
   setCookieFor,
   setSourceCredential,
+  refreshNow,
 } from "./api";
-import { $, flash, providerDisplay } from "./utils";
-import type { ProviderId } from "./types";
+import { $, el, flash, providerDisplay } from "./utils";
+import type { ProviderId, SourceMeta } from "./types";
 
 // ── 旧 enum-based API（minimax / deepseek / xiaomimimo api_key）──
 
@@ -214,4 +215,257 @@ export async function copyZenmuxKey() {
   } catch (e) {
     flash(`✗ 复制失败: ${e}`, true);
   }
+}
+
+// ────────────────────────────────────────────────────────────────
+// v0.6+ 动态渲染：registry-driven 凭据块
+//
+// `renderCredentialBlock(meta)` 给 createProviderPanel() 用，根据
+// `meta.auth_kind` 决定 input vs textarea + 按钮组。事件用 document-level
+// 委托（data-id 路由），避免每个 panel 都 addEventListener 100 遍。
+// ────────────────────────────────────────────────────────────────
+
+/// 按 meta.auth_kind 创建凭据输入 + 状态徽章 + 保存/删除/（可选）复制按钮
+export function renderCredentialBlock(meta: SourceMeta): HTMLElement {
+  const block = el("div", { class: "cred-block" });
+
+  if (meta.auth_kind === "api_key") {
+    // ── input + 📋 复制 + 状态 + 保存/删除 ──
+    const input = el("input", {
+      type: "password",
+      id: `api-key-${meta.id}`,
+      "data-id": meta.id,
+      placeholder: apiKeyPlaceholder(meta.id),
+      autocomplete: "off",
+    }) as HTMLInputElement;
+    const copy = el("button", {
+      id: `copy-key-${meta.id}`,
+      "data-id": meta.id,
+      "data-action": "copy-key",
+      title: "复制到剪贴板",
+    }, "📋");
+    block.appendChild(
+      el("div", { class: "input-row" }, input, copy),
+    );
+    block.appendChild(
+      el("div", {
+        class: "status",
+        id: `api-key-status-${meta.id}`,
+        "data-id": meta.id,
+      }, "—"),
+    );
+    block.appendChild(
+      el("div", { class: "row" },
+        el("button", { class: "primary", id: `save-key-${meta.id}`, "data-id": meta.id, "data-action": "save-key" }, "保存"),
+        el("button", { class: "danger", id: `del-key-${meta.id}`, "data-id": meta.id, "data-action": "del-key" }, "删除"),
+      ),
+    );
+    block.appendChild(
+      el("div", { class: "help" },
+        ...apiKeyHelpNodes(meta.id),
+      ),
+    );
+  } else {
+    // ── cookie 模式（仅 Xiaomi 走）──
+    const textarea = el("textarea", {
+      id: `cookie-${meta.id}`,
+      "data-id": meta.id,
+      rows: "4",
+      placeholder: 'api-platform_serviceToken="..."; userId=...; api-platform_slh="..."; api-platform_ph="..."',
+    }) as HTMLTextAreaElement;
+    block.appendChild(
+      el("div", { class: "field" },
+        el("label", {}, "Cookie header 值"),
+        textarea,
+        el("div", { class: "status", id: `cookie-status-${meta.id}`, "data-id": meta.id }, "—"),
+      ),
+    );
+    block.appendChild(
+      el("div", { class: "row" },
+        el("button", { class: "primary", id: `save-cookie-${meta.id}`, "data-id": meta.id, "data-action": "save-cookie" }, "保存 Cookie"),
+        el("button", { class: "danger", id: `del-cookie-${meta.id}`, "data-id": meta.id, "data-action": "del-cookie" }, "删除 Cookie"),
+      ),
+    );
+    block.appendChild(
+      el("div", { class: "help" },
+        ...cookieHelpNodes(),
+      ),
+    );
+  }
+  return block;
+}
+
+// ── 各 provider 的占位符 + 帮助文本 ────────────────────────────
+
+function apiKeyPlaceholder(id: string): string {
+  switch (id) {
+    case "minimax":    return "sk-cp-...";
+    case "deepseek":   return "sk-...";
+    case "xiaomimimo": return "tp-...";
+    case "tavily":     return "tvly-...";
+    case "zenmux":     return "sk-...";
+    default:           return "...";
+  }
+}
+
+/// 返回 help 文本的节点数组（含 inline 链接用 a 元素）
+function apiKeyHelpNodes(id: string): (Node | string)[] {
+  switch (id) {
+    case "minimax":
+      return [
+        "🔒 密钥以 ",
+        el("code", {}, "0600"),
+        " 权限存到本机 ",
+        el("code", {}, "keys.json"),
+        "（与 config 同目录，不走系统钥匙串，启动零弹窗）。",
+        el("br"),
+        "从 ",
+        el("a", { href: "https://platform.minimaxi.com/user-center/basic-information/interface-key", target: "_blank", class: "link-ext" }, "platform.minimaxi.com"),
+        " 获取。",
+      ];
+    case "deepseek":
+      return [
+        "🔒 密钥以 ",
+        el("code", {}, "0600"),
+        " 权限存到本机 ",
+        el("code", {}, "keys.json"),
+        "（与 MiniMax 的 key 互不影响）。",
+        el("br"),
+        "从 ",
+        el("a", { href: "https://platform.deepseek.com/api_keys", target: "_blank", class: "link-ext" }, "platform.deepseek.com"),
+        " 获取。",
+      ];
+    case "xiaomimimo":
+      return [
+        "🔒 Token Plan 专用 key（",
+        el("code", {}, "tp-"),
+        " 开头，区别于 pay-as-you-go 的 ",
+        el("code", {}, "sk-"),
+        "）。",
+        el("br"),
+        "从 ",
+        el("a", { href: "https://platform.xiaomimimo.com/tokenplan/subscription", target: "_blank", class: "link-ext" }, "platform.xiaomimimo.com"),
+        " 订阅后获取。",
+      ];
+    case "tavily":
+      return [
+        "Tavily 是 AI agent 常用的 search API（",
+        el("strong", {}, "不是"),
+        " LLM token plan）。",
+        el("br"),
+        "从 ",
+        el("a", { href: "https://app.tavily.com/home", target: "_blank", class: "link-ext" }, "app.tavily.com"),
+        " 获取 API key。",
+      ];
+    case "zenmux":
+      return [
+        "ZenMux 是 AI model gateway（聚合 Claude / GPT / Gemini 等）。",
+        el("br"),
+        "从 ",
+        el("a", { href: "https://zenmux.ai/platform/management", target: "_blank", class: "link-ext" }, "zenmux.ai/platform/management"),
+        " 创建。",
+      ];
+    default:
+      return ["API key 存到本机 keys.json。"];
+  }
+}
+
+function cookieHelpNodes(): (Node | string)[] {
+  return [
+    "⚠️ Xiaomi 用量走 dashboard admin API，需要浏览器登录态。",
+    el("br"),
+    el("strong", {}, "获取方法"),
+    "：Chrome 登录 ",
+    el("a", { href: "https://platform.xiaomimimo.com/console/plan-manage", target: "_blank", class: "link-ext" }, "platform.xiaomimimo.com"),
+    " → F12 → Network → 任意 ",
+    el("code", {}, "/api/v1/tokenPlan/*"),
+    " 请求 → 右键 → Copy → Copy request headers → 找 ",
+    el("code", {}, "cookie:"),
+    " 这一行整段粘贴到上面。",
+    el("br"),
+    "Cookie 登出后失效，过期时 (HTTP 401) 错误信息会引导重粘。",
+  ];
+}
+
+// ── 统一 id-based 凭据操作（动态 panel 按钮事件委托走这里）──
+
+export async function loadCredentialStatus(id: string) {
+  const has = await hasSourceCredential(id);
+  const status = document.getElementById(`api-key-status-${id}`)
+    ?? document.getElementById(`cookie-status-${id}`);
+  if (status) {
+    status.textContent = has ? "✓ 已保存到本机" : "未设置";
+    status.className = `status ${has ? "ok" : ""}`;
+  }
+}
+
+export async function saveCredentialAction(id: string, action: "key" | "cookie") {
+  const inputId = action === "key" ? `api-key-${id}` : `cookie-${id}`;
+  const input = document.getElementById(inputId) as HTMLInputElement | HTMLTextAreaElement | null;
+  if (!input) return;
+  const value = input.value.trim();
+  if (!value) {
+    flash("⚠ 请先粘贴", true);
+    return;
+  }
+  try {
+    await setSourceCredential(id, value);
+    input.value = "";
+    await loadCredentialStatus(id);
+    flash(`✓ ${providerDisplay(id as ProviderId)} 已保存`);
+    await refreshNow();
+  } catch (e) {
+    flash(`✗ 保存失败: ${e}`, true);
+  }
+}
+
+export async function deleteCredentialAction(id: string, action: "key" | "cookie") {
+  const label = action === "key" ? "API key" : "Cookie";
+  if (!confirm(`确认删除 ${providerDisplay(id as ProviderId)} 的 ${label}？`)) return;
+  // 后端 delete_source_credential 会同时清 api_key 和 cookie，统一用一个入口
+  await deleteSourceCredential(id);
+  await loadCredentialStatus(id);
+  flash("✓ 已删除");
+}
+
+export async function copyCredentialAction(id: string) {
+  try {
+    const value = await getSourceCredential(id);
+    if (!value) {
+      flash(`⚠ ${providerDisplay(id as ProviderId)} 未设置 key`, true);
+      return;
+    }
+    await navigator.clipboard.writeText(value);
+    flash(`✓ ${providerDisplay(id as ProviderId)} key 已复制到剪贴板`);
+  } catch (e) {
+    flash(`✗ 复制失败: ${e}`, true);
+  }
+}
+
+/// document-level 委托：处理动态 panel 里的 save-key / del-key / copy-key / save-cookie / del-cookie
+/// 在 main.ts init() 末尾调一次就行。
+export function bindCredentialButtonsGlobal() {
+  document.addEventListener("click", (e) => {
+    const t = e.target as HTMLElement;
+    const action = t.dataset.action;
+    const id = t.dataset.id;
+    if (!action || !id) return;
+    switch (action) {
+      case "save-key":
+        void saveCredentialAction(id, "key");
+        break;
+      case "del-key":
+        void deleteCredentialAction(id, "key");
+        break;
+      case "copy-key":
+        void copyCredentialAction(id);
+        break;
+      case "save-cookie":
+        void saveCredentialAction(id, "cookie");
+        break;
+      case "del-cookie":
+        void deleteCredentialAction(id, "cookie");
+        break;
+    }
+  });
 }

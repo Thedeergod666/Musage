@@ -77,9 +77,34 @@ function setupSkeleton() {
   });
 }
 
-// 顺序很重要：先 clone legacy template（让 .tab / .provider-panel 等元素进 DOM），
-// 然后才能 bind tab 切换 + 后续 loadXxx() 查到 #id
+// 顺序很重要：先 clone legacy template（让 logs / schema overrides / 浮窗
+// section / test-save 这些非-provider 内容进 DOM），然后 renderProvidersSection
+// 动态渲染 5 个 provider panel（覆盖/替换 .provider-section[data-id] 块）。
 setupSkeleton();
+
+/** Stage 4 起：动态渲染 5 个 provider panel（registry-driven）*/
+async function renderProviders() {
+  const { renderProvidersSection } = await import("./providers");
+  const { bindCredentialButtonsGlobal } = await import("./credentials");
+  const { bindOrderButtonsGlobal } = await import("./order");
+
+  // 找到 legacy template clone 出来的非-provider 内容（logs / 浮窗 / test-save）
+  // 所在的容器，append 在它们之后。
+  const target = document.querySelector<HTMLElement>(
+    '.section-view[data-section="providers"]',
+  );
+  if (!target) return;
+
+  // 1) 绑动态事件（document-level 委托，只绑一次）
+  bindCredentialButtonsGlobal();
+  bindOrderButtonsGlobal();
+
+  // 2) 动态渲染 5 panel
+  await renderProvidersSection(target);
+}
+
+void renderProviders();
+
 setupTabs();
 
 // 保存配置（"保存" 按钮）

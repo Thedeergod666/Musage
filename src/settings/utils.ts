@@ -37,6 +37,27 @@ export const $ = <T extends HTMLElement>(s: string): T => {
   return el;
 };
 
+/// DOM helper：createElement + setAttribute + 拼接 children 的 6 行简写。
+/// 用法：el("div", { class: "foo", "data-id": "minimax" }, "text", childEl)
+/// 不用 React/Preact 也能 1 行起 1 个带 attr 的元素 —— 阶段 4 动态渲染用。
+export function el<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  attrs?: Record<string, string>,
+  ...children: (Node | string)[]
+): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag);
+  if (attrs) {
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === "class") e.className = v;
+      else e.setAttribute(k, v);
+    }
+  }
+  for (const c of children) {
+    e.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+  }
+  return e;
+}
+
 // ── Tab 切换 ────────────────────────────────────────────────
 
 export function setupTabs() {

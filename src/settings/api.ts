@@ -106,6 +106,14 @@ export async function setAutoHideInFullscreen(enabled: boolean): Promise<void> {
   await invoke("set_auto_hide_in_fullscreen", { enabled });
 }
 
+/// v0.6+ 新增：即时切换托盘图标样式（logo / bars / percent）。
+/// 后端会落盘 + 立即重渲托盘（不等下次 poller）。
+export async function setTrayIconStyle(
+  style: "logo" | "bars" | "percent",
+): Promise<void> {
+  await invoke("set_tray_icon_style", { style });
+}
+
 export async function setProviderEnabled(
   id: string,
   enabled: boolean,

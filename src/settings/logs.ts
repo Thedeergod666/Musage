@@ -5,10 +5,49 @@
 // 前端：打开面板时自动拉一次；点 "刷新" 再拉；点 "清空" 调 `clear_logs`。
 //       不做 live push（避免 IPC 噪音 + 设置面板跟浮窗双源同步）。
 //       最新消息在顶部（用户一打开就能看到最近错误，不用翻到底）。
+//
+// v0.6+ 起 logs 单独成 section（renderLogsSection），不再塞 legacy template。
 
 import { clearLogs as clearLogsIPC, getRecentLogs } from "./api";
-import { escapeHtml, flash, formatLogTime } from "./utils";
+import { el, escapeHtml, flash, formatLogTime } from "./utils";
 import type { LogEntry } from "./types";
+
+/// v0.6+ 把 logs 渲染到独立 section。
+/// 暴露 loadLogs / clearLogs / copyLogs / handleLogFilter 给按钮事件。
+export function renderLogsSection(container: HTMLElement) {
+  // 筛选 select
+  const filter = el("select", {
+    id: "logs-filter",
+    class: "logs-filter",
+    title: "筛选日志级别",
+  }) as HTMLSelectElement;
+  filter.appendChild(el("option", { value: "all" }, "全部"));
+  filter.appendChild(el("option", { value: "error" }, "仅报错"));
+  filter.appendChild(el("option", { value: "warn" }, "仅警告"));
+  filter.appendChild(el("option", { value: "info" }, "仅信息"));
+  filter.addEventListener("change", () => void loadLogs());
+
+  // 按钮
+  const refresh = el("button", { id: "logs-refresh", class: "primary" }, "刷新");
+  refresh.addEventListener("click", () => void loadLogs());
+  const copy = el("button", { id: "logs-copy", class: "primary", title: "复制当前筛选后的日志到剪贴板" }, "复制");
+  copy.addEventListener("click", () => void copyLogs());
+  const clear = el("button", { id: "logs-clear", class: "danger" }, "清空");
+  clear.addEventListener("click", () => void clearLogs());
+  const count = el("span", { id: "logs-count" });
+
+  // 列表
+  const list = el("div", { class: "logs-list", id: "logs-list" });
+
+  container.appendChild(
+    el("section", { class: "section-card", id: "logs-section" },
+      el("h2", {}, "📋 日志"),
+      el("div", { class: "help" }, "浮窗右上角红点 = 最近一次拉取报错。点击此处查看具体内容。"),
+      el("div", { class: "row row-tight" }, filter, refresh, copy, clear, count),
+      list,
+    ),
+  );
+}
 
 export async function loadLogs() {
   const list = document.getElementById("logs-list");

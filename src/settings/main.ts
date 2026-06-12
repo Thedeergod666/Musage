@@ -35,6 +35,51 @@ import { flash } from "./utils";
 
 // ── 顶层同步：Tab + 按钮绑定 ─────────────────────────────────
 
+/**
+ * Stage 3 视觉骨架：clone legacy template 到 providers section + sidebar 切换
+ *
+ * - `<template id="legacy-providers">` 里有 v0.5.x 整个 settings.html body
+ *   的 DOM（5 provider panel + logs + schema overrides + interval/autostart
+ *   + floating + test/save）—— 保留所有 #id 让 settings/* 子模块继续工作
+ * - clone 到 `.section-view[data-section="providers"]` 后，$() 查得到
+ *   #interval / #autostart / .provider-panel 等所有元素
+ * - sidebar 切换：点击 nav-item → 切 .active + 显隐对应 .section-view
+ * - 其他 5 个 section 暂为空占位（"即将在 Stage 4-5 实现"）
+ *
+ * **Stage 4 起**：这里 clone 的 legacy DOM 会被拆成动态渲染（list_sources
+ * 驱动），这一整段函数可以删掉。
+ */
+function setupSkeleton() {
+  const template = document.getElementById(
+    "legacy-providers",
+  ) as HTMLTemplateElement | null;
+  const target = document.querySelector<HTMLElement>(
+    '.section-view[data-section="providers"]',
+  );
+  if (template && target) {
+    target.appendChild(template.content.cloneNode(true));
+  }
+
+  // sidebar 切换
+  const navItems = document.querySelectorAll<HTMLButtonElement>(".nav-item");
+  const sections = document.querySelectorAll<HTMLElement>(".section-view");
+  navItems.forEach((item) => {
+    item.addEventListener("click", () => {
+      const targetSection = item.dataset.section;
+      if (!targetSection) return;
+      navItems.forEach((n) =>
+        n.classList.toggle("active", n.dataset.section === targetSection),
+      );
+      sections.forEach((s) => {
+        s.hidden = s.dataset.section !== targetSection;
+      });
+    });
+  });
+}
+
+// 顺序很重要：先 clone legacy template（让 .tab / .provider-panel 等元素进 DOM），
+// 然后才能 bind tab 切换 + 后续 loadXxx() 查到 #id
+setupSkeleton();
 setupTabs();
 
 // 保存配置（"保存" 按钮）

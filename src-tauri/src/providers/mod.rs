@@ -17,6 +17,7 @@
 
 pub mod deepseek;
 pub mod minimax;
+pub mod openrouter;
 pub mod tavily;
 pub mod xiaomi;
 pub mod zenmux;
@@ -365,6 +366,7 @@ pub fn builtin_sources() -> Vec<Box<dyn QuotaSource>> {
         Box::new(xiaomi::XiaomimimoSource::default()),
         Box::new(tavily::TavilySource::default()),
         Box::new(zenmux::ZenmuxSource::default()),
+        Box::new(openrouter::OpenrouterSource::default()),
     ]
 }
 

@@ -297,6 +297,14 @@ body[data-hover] #app .card.zenmux-payg .pct {
   color: var(--text-bright) !important;
 }
 
+/* ── OpenRouter：余额 hover 不变蓝 ──
+ * DeepSeek 的余额走 .pct.balance → --c-data-info（蓝），hover 翻蓝。
+ * OpenRouter 要求 hover 仍白（跟 ZenMux 一致）。
+ */
+body[data-hover] #app .card[data-provider="openrouter"] .pct {
+  color: var(--text-bright) !important;
+}
+
 /* ── 状态行（DeepSeek） ── */
 
 .status-row {

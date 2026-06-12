@@ -198,10 +198,24 @@ export async function saveConfig() {
             ?.checked ?? true,
         refresh_interval_secs: readProviderInterval("zenmux"),
       },
+      openrouter: {
+        enabled:
+          (document.getElementById("enabled-openrouter") as HTMLInputElement | null)
+            ?.checked ?? true,
+        refresh_interval_secs: readProviderInterval("openrouter"),
+      },
     },
     zenmux_base_url:
       (document.getElementById("zenmux-base-url") as HTMLInputElement | null)
         ?.value.trim() || null,
+    zenmux_mode:
+      ((document.getElementById("zenmux-mode") as HTMLSelectElement | null)?.value as
+        | "payg"
+        | "subscription"
+        | undefined) ?? "payg",
+    zenmux_payg_concise_mode:
+      (document.getElementById("zenmux-payg-concise-mode") as HTMLInputElement | null)
+        ?.checked ?? true,
     refresh_interval_secs:
       parseInt(($("#interval") as HTMLInputElement).value, 10) || 60,
     autostart: ($("#autostart") as HTMLInputElement).checked,

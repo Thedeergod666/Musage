@@ -10,6 +10,7 @@ import deepseekLogo from "../assets/deepseek-icon.png";
 import xiaomimimoLogo from "../assets/xiaomimimo-logo.png";
 import tavilyLogo from "../assets/tavily-logo.svg";
 import zenmuxLogo from "../assets/zenmux-logo.svg";
+import openrouterLogo from "../assets/openrouter-logo.png";
 
 export interface ProviderMeta {
   name: string;
@@ -25,6 +26,7 @@ export const PROVIDER_META: Record<string, ProviderMeta> = {
   xiaomimimo: { name: "Xiaomi MiMo", logo: xiaomimimoLogo, accent: "var(--id-xiaomimimo)" },
   tavily: { name: "Tavily", logo: tavilyLogo, accent: "var(--id-tavily)" },
   zenmux: { name: "ZenMux", logo: zenmuxLogo, accent: "var(--id-zenmux)" },
+  openrouter: { name: "OpenRouter", logo: openrouterLogo, accent: "var(--id-openrouter)" },
 };
 
 export function getProviderMeta(id: string): ProviderMeta | undefined {

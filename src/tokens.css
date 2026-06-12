@@ -38,6 +38,7 @@
   --id-xiaomimimo: #ff6a00;
   --id-tavily: #00d4a8;
   --id-zenmux: #9b59ff;
+  --id-openrouter: #5ac8fa;
 
   /* ── 间距（4px grid） ── */
   --sp-1: 4px;
@@ -75,9 +76,11 @@
 .tab-dot[data-id="xiaomimimo"] { background: var(--id-xiaomimimo); }
 .tab-dot[data-id="tavily"]     { background: var(--id-tavily); }
 .tab-dot[data-id="zenmux"]     { background: var(--id-zenmux); }
+.tab-dot[data-id="openrouter"] { background: var(--id-openrouter); }
 
 .nav-dot[data-id="minimax"]    { background: var(--id-minimax); }
 .nav-dot[data-id="deepseek"]   { background: var(--id-deepseek); }
 .nav-dot[data-id="xiaomimimo"] { background: var(--id-xiaomimimo); }
 .nav-dot[data-id="tavily"]     { background: var(--id-tavily); }
 .nav-dot[data-id="zenmux"]     { background: var(--id-zenmux); }
+.nav-dot[data-id="openrouter"] { background: var(--id-openrouter); }

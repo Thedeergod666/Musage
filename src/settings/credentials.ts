@@ -304,6 +304,7 @@ function apiKeyPlaceholder(id: string): string {
     case "xiaomimimo": return "tp-...";
     case "tavily":     return "tvly-...";
     case "zenmux":     return "sk-...";
+    case "openrouter": return "sk-or-v1-...";
     default:           return "...";
   }
 }
@@ -364,6 +365,20 @@ function apiKeyHelpNodes(id: string): (Node | string)[] {
         "从 ",
         el("a", { href: "https://zenmux.ai/platform/management", target: "_blank", class: "link-ext" }, "zenmux.ai/platform/management"),
         " 创建。",
+      ];
+    case "openrouter":
+      return [
+        "OpenRouter 是 AI model gateway（聚合 130+ 模型）。",
+        el("br"),
+        "用普通 API key（",
+        el("code", {}, "sk-or-v1-"),
+        " 开头）即可，",
+        el("strong", {}, "不需要"),
+        " Management key。",
+        el("br"),
+        "从 ",
+        el("a", { href: "https://openrouter.ai/settings/keys", target: "_blank", class: "link-ext" }, "openrouter.ai/settings/keys"),
+        " 获取。",
       ];
     default:
       return ["API key 存到本机 keys.json。"];

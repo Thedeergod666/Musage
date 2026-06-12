@@ -19,6 +19,7 @@ const EXTRAS: Record<string, ExtraBlock[]> = {
   xiaomimimo: [renderXiaomiRegionSelect],
   tavily: [renderConciseModeCheckbox],
   zenmux: [renderBaseUrlInput, renderZenmuxMode],
+  openrouter: [renderOpenrouterHelp],
   // deepseek: 无额外字段
 };
 
@@ -158,6 +159,22 @@ function renderZenmuxMode(_meta: SourceMeta, _cfg: AppConfig): HTMLElement {
       { class: "check", id: "zenmux-payg-concise-wrap", style: "margin-top: 8px;" },
       cb,
       el("label", { for: "zenmux-payg-concise-mode" }, "只显示余额（不显示充值 / 奖励）"),
+    ),
+  );
+}
+
+/// OpenRouter 帮助文案（无需额外字段，只需说明 key 格式）
+function renderOpenrouterHelp(_meta: SourceMeta, _cfg: AppConfig): HTMLElement {
+  return el(
+    "div",
+    { class: "field" },
+    el(
+      "div",
+      { class: "help" },
+      "OpenRouter 余额 = 账户 credit 余额。普通 API key（`sk-or-v1-...`）即可，",
+      "不需要 Management key。端点 ",
+      el("a", { href: "https://openrouter.ai/docs/api/reference/limits", target: "_blank", class: "link-ext" }, "GET /api/v1/key"),
+      "。",
     ),
   );
 }

@@ -9,7 +9,8 @@ export type ProviderId =
   | "deepseek"
   | "xiaomimimo"
   | "tavily"
-  | "zenmux";
+  | "zenmux"
+  | "openrouter";
 
 export type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
 
@@ -28,6 +29,7 @@ export const PROVIDER_IDS = [
   "xiaomimimo",
   "tavily",
   "zenmux",
+  "openrouter",
 ] as const;
 
 /// Phase 1 起新 source 的元信息（后端 list_sources 返回）。

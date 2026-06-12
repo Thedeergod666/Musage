@@ -17,6 +17,7 @@ import deepseekLogo from "./assets/deepseek-icon.png";
 import xiaomimimoLogo from "./assets/xiaomimimo-logo.png";
 import tavilyLogo from "./assets/tavily-logo.svg";
 import zenmuxLogo from "./assets/zenmux-logo.svg";
+import openrouterLogo from "./assets/openrouter-logo.png";
 import "./styles.css";
 
 /// 静态映射：provider id → 官网 logo + 显示名
@@ -27,6 +28,7 @@ const PROVIDER_META: Record<string, { name: string; logo: string }> = {
   xiaomimimo: { name: "Xiaomi MiMo", logo: xiaomimimoLogo },
   tavily: { name: "Tavily", logo: tavilyLogo },
   zenmux: { name: "ZenMux", logo: zenmuxLogo },
+  openrouter: { name: "OpenRouter", logo: openrouterLogo },
 };
 
 type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
@@ -59,7 +61,7 @@ interface QuotaRow {
 
 interface ProviderSnapshot {
   /** 兼容字段（minimax / deepseek / xiaomimimo）。新代码用 source_id。 */
-  provider: "minimax" | "deepseek" | "xiaomimimo" | "tavily" | "zenmux";
+  provider: "minimax" | "deepseek" | "xiaomimimo" | "tavily" | "zenmux" | "openrouter";
   /** Phase 1 新增。 */
   source_id?: string | null;
   source_display_name?: string | null;
@@ -490,19 +492,30 @@ function buildRowSkeleton(r: QuotaRow): HTMLElement {
 }
 
 function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
-  // Phase 1: credits 行（"150/1000 credits"）
+  // Phase 1: credits 行（MiniMax 风格：大 % + used/total 副文字 + 进度条 + row-foot）
   if (r.used != null && r.total != null) {
-    const cls = colorClass(r.utilization ?? (r.used / r.total) * 100);
+    const util = r.utilization ?? (r.used / r.total) * 100;
+    const cls = colorClass(util);
+    // 左侧：used/total（如 "253/1000"）
     const labelSpan = rowEl.querySelector<HTMLElement>(".row-label > span:first-child")!;
-    labelSpan.textContent = r.label;
+    labelSpan.textContent = `${Math.round(r.used)}/${Math.round(r.total)}`;
+    // 右侧：大字 utilization %（如 "25%"）
     const pct = rowEl.querySelector<HTMLElement>(".pct")!;
-    pct.textContent = `${Math.round(r.used)}/${Math.round(r.total)} ${escapeHtml(r.unit ?? "")}`;
-    pct.className = `pct credits ${cls}`;
+    pct.textContent = formatPct(util);
+    pct.className = `pct ${cls}`;
+    // 进度条
     const bar = rowEl.querySelector<HTMLElement>(".bar-fill")!;
     bar.className = `bar-fill ${cls}`;
-    bar.style.width = `${barWidth(r.utilization)}%`;
-    if (r.resets_at) rowEl.dataset.resetsAt = String(r.resets_at);
-    else delete rowEl.dataset.resetsAt;
+    bar.style.width = `${barWidth(util)}%`;
+    // row-foot：plan_name + 月重置倒计时
+    if (r.resets_at) {
+      rowEl.dataset.resetsAt = String(r.resets_at);
+      // Tavily 月重置：用 "月重置" 前缀，不复用 label（"Free tier"）
+      rowEl.dataset.resetsPrefix = "月重置";
+    } else {
+      delete rowEl.dataset.resetsAt;
+      delete rowEl.dataset.resetsPrefix;
+    }
   } else if (r.used != null) {
     // 只有 used 没有 total
     const labelSpan = rowEl.querySelector<HTMLElement>(".row-label > span:first-child")!;
@@ -569,8 +582,10 @@ function updateCountdowns() {
     if (!Number.isFinite(ms) || ms <= 0) return;
     const foot = row.querySelector<HTMLElement>(".row-foot");
     if (!foot) return;
-    const label = row.querySelector<HTMLElement>(".row-label > span:first-child")?.textContent ?? "";
-    foot.textContent = formatResetWithCountdown(ms, label + " 重置");
+    // 优先用 data-resets-prefix（Tavily 用 "月重置"），否则用 label + " 重置"
+    const prefix = row.dataset.resetsPrefix
+      ?? (row.querySelector<HTMLElement>(".row-label > span:first-child")?.textContent ?? "") + " 重置";
+    foot.textContent = formatResetWithCountdown(ms, prefix);
   });
 }
 

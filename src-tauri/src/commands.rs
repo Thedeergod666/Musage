@@ -383,8 +383,8 @@ pub(crate) fn build_settings_window(
         tauri::WebviewUrl::App("settings.html".into()),
     )
     .title("Musage · 设置")
-    .inner_size(540.0, 620.0)
-    .min_inner_size(440.0, 500.0)
+    .inner_size(780.0, 680.0)
+    .min_inner_size(720.0, 600.0)
     .resizable(true)
     .decorations(true)
     // **任务栏映射**：设置窗才是用户面对的 app 窗口，应该出现在 Win 任务栏

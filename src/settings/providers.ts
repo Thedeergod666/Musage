@@ -18,6 +18,7 @@ import { el } from "./utils";
 import { getProviderExtras } from "./source-extras";
 import { renderOrderSection } from "./order";
 import { renderCredentialBlock, loadCredentialStatus } from "./credentials";
+import { getProviderMeta } from "./logos";
 import { flash } from "./utils";
 import type { AppConfig, SourceMeta } from "./types";
 
@@ -53,7 +54,18 @@ export function createProviderPanel(meta: SourceMeta, cfg: AppConfig): HTMLEleme
     { class: "provider-section", "data-id": meta.id },
   );
 
-  // ── Header: display_name + 在浮窗显示 checkbox + key 状态 ──
+  // 拿 logo 资产（沿用浮窗 [src/main.ts:15-30] 同款 import）
+  const providerMeta = getProviderMeta(meta.id);
+  const logoImg = providerMeta
+    ? el("img", {
+        class: "provider-logo",
+        src: providerMeta.logo,
+        alt: providerMeta.name,
+        title: providerMeta.name,
+      })
+    : null;
+
+  // ── Header: [logo] [display_name] ........ [在浮窗显示 checkbox] ──
   const enabledCheckbox = el("input", {
     type: "checkbox",
     id: `enabled-${meta.id}`,
@@ -71,7 +83,8 @@ export function createProviderPanel(meta: SourceMeta, cfg: AppConfig): HTMLEleme
     el(
       "div",
       { class: "provider-header" },
-      el("h2", {}, `${dotEmoji(meta.id)} ${meta.display_name}`),
+      ...(logoImg ? [logoImg] : []),
+      el("span", { class: "provider-name" }, meta.display_name),
       el(
         "div",
         { class: "provider-enabled" },
@@ -118,18 +131,6 @@ function renderIntervalOverride(id: string, cfg: AppConfig): HTMLElement {
       "留空 = 用顶部「轮询间隔」。至少 10 秒（避免触发 provider rate limit）。",
     ),
   );
-}
-
-/// 跟各 provider 显示色匹配的 emoji（保留旧 tab 视觉）
-function dotEmoji(id: string): string {
-  switch (id) {
-    case "minimax":    return "🟪";
-    case "deepseek":   return "🟦";
-    case "xiaomimimo": return "🟧";
-    case "tavily":     return "🟢";
-    case "zenmux":     return "🟣";
-    default:           return "⚪";
-  }
 }
 
 /// 渲染后批量调 loadCredentialStatus 拉每个 source 的 key 状态。

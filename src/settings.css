@@ -63,7 +63,7 @@ code { background: #2a2d35; padding: 1px 4px; border-radius: 3px; font-size: 11p
 
 .app-shell {
   display: grid;
-  grid-template-columns: 200px 1fr;
+  grid-template-columns: 180px 1fr;
   grid-template-rows: 44px 1fr;
   grid-template-areas:
     "header header"
@@ -115,23 +115,143 @@ code { background: #2a2d35; padding: 1px 4px; border-radius: 3px; font-size: 11p
   border-left: 2px solid var(--accent);
   padding-left: 8px;
 }
-.nav-dot {
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--id-minimax);
+.nav-emoji {
+  font-size: 14px;
+  width: 18px;
+  text-align: center;
   flex: 0 0 auto;
+  filter: grayscale(0.3);
 }
+.nav-item.active .nav-emoji { filter: none; }
 .nav-label { flex: 1; }
 
 .main {
   grid-area: main;
   overflow-y: auto;
-  padding: var(--sp-4);
+  padding: var(--sp-4) var(--sp-5);
 }
 
-.section-view { max-width: 800px; }
+.section-view { max-width: 720px; }
+
+/* ────────────────────────────────────────────────────────────
+ * 浮窗卡片顺序区块 (Stage 4+) —— 更紧凑
+ * ──────────────────────────────────────────────────────────── */
+
+.order-section {
+  background: var(--bg-1);
+  border: 1px solid var(--bg-2);
+  border-radius: var(--r-lg);
+  padding: var(--sp-2) 0;
+  margin-bottom: var(--sp-4);
+}
+.order-section h2 { padding: var(--sp-2) var(--sp-3) var(--sp-1); }
+.order-list { display: flex; flex-direction: column; }
+.order-row {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px var(--sp-3);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  transition: background var(--t-fast) var(--ease);
+}
+.order-row:last-child { border-bottom: none; }
+.order-row:hover { background: rgba(255, 255, 255, 0.02); }
+.order-row-left { display: flex; align-items: center; gap: var(--sp-2); flex: 1; min-width: 0; }
+.order-logo { width: 18px; height: 18px; object-fit: contain; flex: 0 0 auto; }
+.order-pos { font-size: 11px; color: var(--fg-3); font-variant-numeric: tabular-nums; min-width: 56px; }
+.order-name { font-size: 13px; color: var(--fg-0); font-weight: 500; }
+.order-btns { display: flex; gap: 4px; }
+.order-btns button {
+  flex: 0 0 auto;
+  width: 28px; height: 28px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  background: var(--bg-2);
+  border: 1px solid var(--bg-3);
+  border-radius: var(--r-sm);
+  color: var(--fg-1);
+}
+.order-btns button:hover:not(:disabled) { background: var(--bg-3); color: var(--fg-0); }
+.order-btns button:disabled { opacity: 0.3; cursor: not-allowed; }
+
+/* ────────────────────────────────────────────────────────────
+ * Section card (Stage 5+) —— 浮窗 / 应用 / 高级 / 关于都用
+ * ──────────────────────────────────────────────────────────── */
+
+.section-card {
+  background: var(--bg-1);
+  border: 1px solid var(--bg-2);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4) var(--sp-4);
+  margin-bottom: var(--sp-4);
+}
+.section-card h2 {
+  font-size: var(--fs-lg);
+  color: var(--fg-0);
+  font-weight: 600;
+  margin-bottom: var(--sp-3);
+  padding: 0;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+/* ────────────────────────────────────────────────────────────
+ * Provider panel (Stage 4+) —— 浮窗 logo + 启用开关一行
+ * ──────────────────────────────────────────────────────────── */
+
+.provider-section {
+  background: var(--bg-1);
+  border: 1px solid var(--bg-2);
+  border-radius: var(--r-lg);
+  padding: 0;
+  margin-bottom: var(--sp-3);
+  overflow: hidden;
+}
+.provider-section h2 {
+  display: none; /* 旧版 h2 标签（"🟪 MiniMax API Key"）不再用，改用 .provider-header */
+}
+
+/* provider header: [logo] [name] ............ [启用 checkbox] */
+.provider-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--bg-3);
+}
+.provider-logo {
+  width: 22px; height: 22px;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+.provider-name {
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  color: var(--fg-0);
+  flex: 1;
+}
+.provider-enabled {
+  display: flex; align-items: center; gap: 6px;
+  flex: 0 0 auto;
+  font-size: 12px;
+  color: var(--fg-2);
+}
+.provider-enabled input { width: auto; margin: 0; }
+.provider-enabled label { margin: 0; color: var(--fg-2); cursor: pointer; }
+
+/* provider body: 4px 上内边距让 cred-block 不贴 header */
+.provider-section > .cred-block,
+.provider-section > .field,
+.provider-section > .section-card,
+.provider-section > .divider {
+  margin-left: var(--sp-4);
+  margin-right: var(--sp-4);
+}
+.provider-section > .cred-block:first-of-type,
+.provider-section > .field:first-of-type {
+  margin-top: var(--sp-3);
+}
+.provider-section > *:last-child { margin-bottom: var(--sp-3); }
 
 .section-empty {
   padding: var(--sp-6);
@@ -143,6 +263,12 @@ code { background: #2a2d35; padding: 1px 4px; border-radius: 3px; font-size: 11p
   border-radius: var(--r-lg);
   margin-top: var(--sp-4);
 }
+
+/* ────────────────────────────────────────────────────────────
+ * Tray radio (Stage 5) —— 复用 .pin-opt 卡片选择器
+ * ──────────────────────────────────────────────────────────── */
+
+.tray-style { display: flex; flex-direction: column; gap: 6px; }
 
 /* Provider tabs */
 .tabs { display: flex; gap: 4px; background: #15171c; padding: 3px; border-radius: 8px; }
@@ -177,39 +303,8 @@ code { background: #2a2d35; padding: 1px 4px; border-radius: 3px; font-size: 11p
 .provider-panel { display: none; margin-top: 12px; }
 .provider-panel.active { display: block; }
 
-/* Provider 排序列表 */
-.order-section { background: #15171c; border: 1px solid #2a2d35; border-radius: 6px; padding: 4px 0; }
-.order-list { display: flex; flex-direction: column; }
-.order-row {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 8px 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
-}
-.order-row:last-child { border-bottom: none; }
-.order-name { font-size: 13px; color: #e0e0e0; font-weight: 500; }
-.order-btns { display: flex; gap: 4px; }
-.order-btns button {
-  flex: 0 0 auto;
-  width: 28px; height: 28px;
-  padding: 0;
-  font-size: 14px;
-  line-height: 1;
-  background: #2a2d35;
-  border: 1px solid #3a3d45;
-  border-radius: 5px;
-}
-.order-btns button:hover:not(:disabled) { background: #3a4250; }
-.order-btns button:disabled { opacity: 0.3; cursor: not-allowed; }
-.provider-panel.active { display: block; }
-
-.provider-section {
-  background: #15171c;
-  border: 1px solid #2a2d35;
-  border-radius: 8px;
-  padding: 14px;
-  margin-bottom: 14px;
-}
-.provider-section h2 { color: #ccc; margin-bottom: 12px; }
+/* Provider 排序列表 + provider-section 的样式在上面 .order-section / .provider-section 块里
+ * (用 tokens)。旧硬编码色值版本（这里）已删，避免重复。 */
 
 .divider {
   height: 1px;

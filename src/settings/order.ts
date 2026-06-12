@@ -15,6 +15,7 @@ import {
   flash,
   setCurrentProviderOrder,
 } from "./utils";
+import { getProviderMeta } from "./logos";
 import type { ProviderId, SourceMeta } from "./types";
 
 /// 用 config.order 做主序，没列出的 provider 沉到末尾（用 builtin 顺序）
@@ -48,11 +49,20 @@ export function renderOrderSection(
   currentProviderOrder.forEach((id, i) => {
     const meta = sources.find((s) => s.id === id);
     if (!meta) return; // 已删除 / 不存在的 source 跳过
+    const providerMeta = getProviderMeta(id);
+    const logo = providerMeta
+      ? el("img", { class: "order-logo", src: providerMeta.logo, alt: providerMeta.name })
+      : null;
     const li = el(
       "li",
       { class: "order-row" },
-      el("span", { class: "order-pos", "data-id": id }, `位置 ${i + 1} / ${currentProviderOrder.length}`),
-      el("span", { class: "order-name" }, meta.display_name),
+      el(
+        "div",
+        { class: "order-row-left" },
+        ...(logo ? [logo] : []),
+        el("span", { class: "order-pos", "data-id": id }, `位置 ${i + 1} / ${currentProviderOrder.length}`),
+        el("span", { class: "order-name" }, meta.display_name),
+      ),
       el(
         "div",
         { class: "order-btns" },

@@ -50,8 +50,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager, Runtime};
-use windows_sys::Win32::Foundation::{POINT, RECT};
-use windows_sys::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetWindowRect, WindowFromPoint};
+use windows_sys::Win32::Foundation::{HWND as WIN_HWND, POINT, RECT};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    GetAncestor, GetCursorPos, GetWindowRect, WindowFromPoint, GA_ROOT,
+};
 
 /// Hover tracker thread 是否已启动（idempotent 防重入）。
 static TRACKER_RUNNING: AtomicBool = AtomicBool::new(false);
@@ -155,8 +157,20 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
 
 /// Hit test：鼠标位置是否在浮窗**可见**（未被遮挡）区域内。
 ///
-/// - 鼠标先得在窗口 rect 内（`GetWindowRect` → `point_in_rect`）
-/// - 然后该点 topmost window 必须是浮窗自己（`WindowFromPoint` 比对 hwnd）
+/// 严格判定分两步：
+/// 1. 鼠标先得在浮窗 rect 内（`GetWindowRect` → `point_in_rect`）
+/// 2. 鼠标该点 topmost window 走 `GetAncestor(_, GA_ROOT)` 取根窗口
+///    后必须等于浮窗自己 —— 防止"被另一个 app 窗口盖住时误触发"。
+///
+/// **`GetAncestor(..., GA_ROOT)` 而不是裸比 hwnd 的原因**：Tauri 2 在
+/// Win 上把 WebView2 当浮窗的**子窗口** host（不是同一个 hwnd）。
+/// `WindowFromPoint` 拿到鼠标点的 topmost window 时，如果该点是 WebView2
+/// 渲染区域，返回的是 WebView2 的 hwnd，**不是浮窗的 hwnd**。直接比
+/// `topmost == hwnd_ptr` 永远 false —— "鼠标移到浮窗上 + 浮窗不切 topmost"
+/// 就是这个症状的精确表现。`GetAncestor(webview2_hwnd, GA_ROOT)` 沿
+/// parent 链爬到最顶层根窗口（也就是我们的浮窗本身），比 hwnd_ptr 就 match
+/// 上了。macOS 那套没这问题是因为 NSWindow 把 WebKit 渲染内嵌同一窗口，
+/// `windowNumberAtPoint` 拿到的就是浮窗自己的 number。
 ///
 /// 返回 `None` 表示本轮无法判定（窗口未上屏 / Win API 失败），caller
 /// continue 即可，下一轮再判。
@@ -171,11 +185,13 @@ fn is_cursor_inside_floating<R: Runtime>(app: &AppHandle<R>) -> Option<bool> {
     if hwnd_t.0.is_null() {
         return None;
     }
-    let hwnd_ptr: *mut core::ffi::c_void = hwnd_t.0;
+    // 浮窗自己的 raw pointer（同时是 GetAncestor 沿 parent 链爬到 GA_ROOT
+    // 的目标值）
+    let our_hwnd: *mut core::ffi::c_void = hwnd_t.0;
 
     // SAFETY:
-    // - GetCursorPos / GetWindowRect / WindowFromPoint 都是 Win32 kernel
-    //   call，文档明确 thread-safe，可从任意线程调。
+    // - GetCursorPos / GetWindowRect / WindowFromPoint / GetAncestor 都是
+    //   Win32 kernel call，文档明确 thread-safe，可从任意线程调。
     // - POINT/RECT 是值类型，零初始化即合法。
     // - hwnd 来自 webview_window，整个 app 生命周期有效。
     unsafe {
@@ -184,17 +200,27 @@ fn is_cursor_inside_floating<R: Runtime>(app: &AppHandle<R>) -> Option<bool> {
             return None;
         }
         let mut rect: RECT = std::mem::zeroed();
-        if GetWindowRect(hwnd_ptr, &mut rect) == 0 {
+        if GetWindowRect(our_hwnd, &mut rect) == 0 {
             return None;
         }
         if !point_in_rect(pt, &rect) {
             return Some(false);
         }
-        // rect 内 → 检查是否浮窗自己是 topmost。
-        // windows-sys 0.59 的 HWND = `*mut c_void`（type alias，不是 struct），
-        // 所以 WindowFromPoint 直接返回 raw pointer，可以跟 hwnd_ptr 裸比。
-        let topmost = WindowFromPoint(pt);
-        Some(topmost == hwnd_ptr)
+        // rect 内 → 取 topmost window 的**顶层根**（绕过 WebView2 子窗口
+        // 问题）再比对。WindowFromPoint 在 windows-sys 0.59 里返回 `*mut
+        // c_void`（HWND 是 type alias），直接喂 GetAncestor 的 `HWND` 参数
+        // （windows-sys 0.59 的 HWND = `*mut c_void`）即可。
+        let topmost: WIN_HWND = WindowFromPoint(pt);
+        if topmost.is_null() {
+            // 鼠标在屏幕外 / 极边缘 → 不是 inside
+            return Some(false);
+        }
+        let root = GetAncestor(topmost, GA_ROOT);
+        if root.is_null() {
+            // 兜底：取不到根就退到裸比（虽然不太可能）
+            return Some(topmost == our_hwnd);
+        }
+        Some(root == our_hwnd)
     }
 }
 

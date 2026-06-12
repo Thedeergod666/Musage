@@ -88,7 +88,7 @@ export function flash(msg: string, isError = false) {
 
 // ── 文本/时间/数字格式 ─────────────────────────────────────
 
-export function providerDisplay(p: ProviderId): string {
+export function providerDisplay(p: string): string {
   switch (p) {
     case "minimax":
       return "MiniMax";
@@ -100,6 +100,10 @@ export function providerDisplay(p: ProviderId): string {
       return "Tavily";
     case "zenmux":
       return "ZenMux";
+    case "openrouter":
+      return "OpenRouter";
+    default:
+      return p;
   }
 }
 

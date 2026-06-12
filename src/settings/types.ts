@@ -79,6 +79,10 @@ export interface AppConfig {
   provider_order?: string[];
   /// ZenMux 自定义 Management API endpoint URL。null/空 = 用 zenmux.rs 里的默认 URL
   zenmux_base_url?: string | null;
+  /// ZenMux 查看模式（payg / subscription）。Stage 5 新增
+  zenmux_mode?: "payg" | "subscription";
+  /// ZenMux PAYG 简洁模式（只显示余额，不显示充值/奖励）
+  zenmux_payg_concise_mode?: boolean;
   // 用户加的字段名候选（应对 MiniMax 改 schema）
   schema_overrides?: Record<string, ProviderOverrides>;
   /// v0.6+ 托盘图标样式（Rust 端 TrayIconStyle enum）

@@ -154,9 +154,12 @@ code { background: #2a2d35; padding: 1px 4px; border-radius: 3px; font-size: 11p
 }
 .order-row:last-child { border-bottom: none; }
 .order-row:hover { background: rgba(255, 255, 255, 0.02); }
+.order-row.dragging { opacity: 0.4; background: var(--bg-2); }
+.order-row.drag-over-top { box-shadow: inset 0 2px 0 0 var(--accent); }
+.order-row.drag-over-bottom { box-shadow: inset 0 -2px 0 0 var(--accent); }
 .order-row-left { display: flex; align-items: center; gap: var(--sp-2); flex: 1; min-width: 0; }
 .order-logo { width: 18px; height: 18px; object-fit: contain; flex: 0 0 auto; }
-.order-pos { font-size: 11px; color: var(--fg-3); font-variant-numeric: tabular-nums; min-width: 56px; }
+.order-pos { font-size: 11px; color: var(--fg-3); font-variant-numeric: tabular-nums; min-width: 28px; text-align: center; }
 .order-name { font-size: 13px; color: var(--fg-0); font-weight: 500; }
 .order-btns { display: flex; gap: 4px; }
 .order-btns button {

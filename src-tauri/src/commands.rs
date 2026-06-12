@@ -35,6 +35,17 @@ pub async fn set_provider_order(
         cfg.provider_order = order;
         cfg.save()?;
     }
+    // 关键：重排 in-memory snapshot 并 emit 给浮窗，让浮窗立刻按新顺序渲染。
+    // 不这样做的话，浮窗要等下次 poller tick（最长 60s）才能刷新顺序。
+    {
+        let cfg_snap = state.config.read().await;
+        let mut snap = state.snapshot.write().await;
+        apply_provider_order(&mut snap, &cfg_snap);
+        let emit_snap = snap.clone();
+        drop(snap);
+        drop(cfg_snap);
+        let _ = app.emit("musage://snapshot", &emit_snap);
+    }
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }

@@ -16,7 +16,7 @@
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
-use crate::config::{self, AppConfig, FloatingPinMode};
+use crate::config::{self, AppConfig, FloatingPinMode, TrayIconStyle};
 use crate::providers::{
     builtin_sources, find_source, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderSnapshot, QuotaSnapshot, QuotaSource,
 };
@@ -116,7 +116,8 @@ pub async fn refresh_now(
         *guard = snap.clone();
     }
     let _ = app.emit("musage://snapshot", &snap);
-    if let Err(e) = crate::tray::update_tray_from_snapshot(&app, &snap) {
+    let tray_style = cfg.tray_icon_style;
+    if let Err(e) = crate::tray::update_tray_from_snapshot(&app, &snap, tray_style) {
         tracing::warn!(error = %e, "刷新托盘失败");
     }
     Ok(snap)
@@ -654,10 +655,11 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
         cfg_read.is_enabled_id(id)
     });
     apply_provider_order(&mut snap, &cfg_read);
+    let tray_style = cfg_read.tray_icon_style;
     drop(cfg_read);
     // 刷新托盘 + 推送
     let _ = app.emit("musage://snapshot", &snap);
-    if let Err(e) = crate::tray::update_tray_from_snapshot(app, &snap) {
+    if let Err(e) = crate::tray::update_tray_from_snapshot(app, &snap, tray_style) {
         tracing::warn!(error = %e, "刷新托盘失败");
     }
 
@@ -767,10 +769,11 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
         cfg2_snapshot.is_enabled_id(id)
     });
     apply_provider_order(&mut snap, &cfg2_snapshot);
+    let tray_style = cfg2_snapshot.tray_icon_style;
     let emit_snap = snap.clone();
     drop(snap);
     let _ = app.emit("musage://snapshot", &emit_snap);
-    if let Err(e) = crate::tray::update_tray_from_snapshot(app, &emit_snap) {
+    if let Err(e) = crate::tray::update_tray_from_snapshot(app, &emit_snap, tray_style) {
         tracing::warn!(error = %e, "刷新托盘失败 (refresh_single)");
     }
     Ok(())
@@ -868,6 +871,78 @@ fn log_provider_error(app: &AppHandle, provider_id: &str, kind: ErrorKind, messa
         kind.short_label(),
         message,
     ));
+}
+
+// ── 设置面板"即时生效"command 群 ──────────────────────────────────
+//
+// 设置面板"勾选即生效 / 切 radio 即生效"那条路不依赖 `save_config` 全量保存。
+// 每个 command 自己：写 cfg + 落盘 + 必要时 emit 给浮窗 / 调 platform 层。
+//
+// 修复原 settings.ts:978-997 调 `set_low_power_mode` / `set_auto_hide_in_fullscreen`
+// 但后端没注册 → 死按钮（catch 吞错）的 bug。
+
+/// 即时切换省电模式：写 cfg + emit `musage://low-power-mode-changed` 给浮窗
+/// 让它 toggle body[data-low-power]（styles.css 切玻璃材质）。
+#[tauri::command]
+pub async fn set_low_power_mode(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    {
+        let mut cfg = state.config.write().await;
+        if cfg.low_power_mode == enabled {
+            return Ok(());
+        }
+        cfg.low_power_mode = enabled;
+        cfg.save()?;
+    }
+    let _ = app.emit("musage://low-power-mode-changed", enabled);
+    Ok(())
+}
+
+/// 即时切换"全屏时自动隐藏浮窗"：写 cfg + 同步给 platform 层的原子开关
+/// （watcher 始终运行，仅翻开关）。
+#[tauri::command]
+pub async fn set_auto_hide_in_fullscreen(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    {
+        let mut cfg = state.config.write().await;
+        if cfg.auto_hide_in_fullscreen == enabled {
+            return Ok(());
+        }
+        cfg.auto_hide_in_fullscreen = enabled;
+        cfg.save()?;
+    }
+    crate::platform::set_auto_hide_in_fullscreen(&app, enabled);
+    Ok(())
+}
+
+/// 即时切换托盘图标样式：写 cfg + 立即用新 style 重渲托盘（不等下次 poller）。
+#[tauri::command]
+pub async fn set_tray_icon_style(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    style: TrayIconStyle,
+) -> Result<(), String> {
+    {
+        let mut cfg = state.config.write().await;
+        if cfg.tray_icon_style == style {
+            return Ok(());
+        }
+        cfg.tray_icon_style = style;
+        cfg.save()?;
+    }
+    // 立即重渲（不阻塞 cmd 返回）
+    let state2 = app.state::<AppState>();
+    let snap = state2.snapshot.read().await.clone();
+    if let Err(e) = crate::tray::update_tray_from_snapshot(&app, &snap, style) {
+        tracing::warn!(error = %e, "切换托盘样式后重渲失败");
+    }
+    Ok(())
 }
 
 /// 设置面板「📋 日志」拉取最近 N 条（最新在末尾）。

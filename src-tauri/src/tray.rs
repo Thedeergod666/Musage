@@ -20,6 +20,7 @@ use tauri::{
     AppHandle, Manager,
 };
 
+use crate::config::TrayIconStyle;
 use crate::providers::{Provider, ProviderSnapshot, QuotaSnapshot};
 
 // 字体加载：优先用户自选填 `assets/font.ttf`，再走系统字体 fallback，
@@ -60,26 +61,34 @@ fn system_font_paths() -> Vec<std::path::PathBuf> {
     let mut paths = Vec::new();
     #[cfg(target_os = "macos")]
     {
-        // macOS 系统自带的单 face TTF（不动 .ttc，避免 collection 解析坑）
-        paths.push("/System/Library/Fonts/Supplemental/Arial.ttf".into());
+        // macOS 菜单栏渲染到 ~16-18px 实际像素，Regular 字体在那个尺寸下
+        // 字形会糊掉看不清。**优先 Bold/Black 单 face TTF**（不动 .ttc 避免
+        // collection 解析坑），保证 percent 模式的 "5h 83%" 清晰可读。
+        paths.push("/System/Library/Fonts/Supplemental/Arial Black.ttf".into());
         paths.push("/System/Library/Fonts/Supplemental/Arial Bold.ttf".into());
-        paths.push("/System/Library/Fonts/Supplemental/Verdana.ttf".into());
-        paths.push("/System/Library/Fonts/Supplemental/Georgia.ttf".into());
-        paths.push("/System/Library/Fonts/Supplemental/Tahoma.ttf".into());
-        paths.push("/Library/Fonts/Arial.ttf".into());
+        paths.push("/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf".into());
+        paths.push("/System/Library/Fonts/Supplemental/Tahoma Bold.ttf".into());
+        // fallback: 变量字体（ab_glyph 加载后默认走 Regular，仍比没有强）
+        paths.push("/System/Library/Fonts/SFNS.ttf".into());
+        // 最后兜底
+        paths.push("/System/Library/Fonts/Supplemental/Arial.ttf".into());
     }
     #[cfg(target_os = "windows")]
     {
-        paths.push("C:/Windows/Fonts/arial.ttf".into());
+        // Win 优先 arialbd（粗体），保证 tray 文字可见
         paths.push("C:/Windows/Fonts/arialbd.ttf".into());
+        paths.push("C:/Windows/Fonts/arial.ttf".into());
         paths.push("C:/Windows/Fonts/segoeui.ttf".into());
+        paths.push("C:/Windows/Fonts/segoeuib.ttf".into());
         paths.push("C:/Windows/Fonts/tahoma.ttf".into());
         paths.push("C:/Windows/Fonts/consola.ttf".into());
     }
     #[cfg(target_os = "linux")]
     {
-        paths.push("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".into());
+        // Linux Bold 优先（DejaVu Sans-Bold / Liberation Sans-Bold）
         paths.push("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".into());
+        paths.push("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf".into());
+        paths.push("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf".into());
         paths.push("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf".into());
         paths.push("/usr/share/fonts/TTF/DejaVuSans.ttf".into());
     }
@@ -168,11 +177,15 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-pub fn update_tray_from_snapshot(app: &AppHandle, snap: &QuotaSnapshot) -> tauri::Result<()> {
+pub fn update_tray_from_snapshot(
+    app: &AppHandle,
+    snap: &QuotaSnapshot,
+    style: TrayIconStyle,
+) -> tauri::Result<()> {
     let Some(tray) = app.tray_by_id("main-tray") else {
         return Ok(());
     };
-    tray.set_icon(Some(render_icon(snap)))?;
+    tray.set_icon(Some(render_icon(snap, style)))?;
     tray.set_tooltip(Some(tooltip(snap)))?;
     Ok(())
 }
@@ -190,21 +203,32 @@ fn make_placeholder_icon() -> Image<'static> {
     Image::new_owned(img.into_raw(), w, h)
 }
 
-fn render_icon(snap: &QuotaSnapshot) -> Image<'static> {
-    // 透明背景 —— MiniMax 走双进度条，DeepSeek 走单大数字
+/// v0.6+ 托盘图标渲染：根据 [`TrayIconStyle`] 分发。
+///
+/// - `Logo`   ：画 icons/tray-base.png（白底 M），不显示实时数据
+/// - `Bars`   ：MiniMax 双水平进度条
+/// - `Percent`：MiniMax 双行百分比文本（font 缺失时 fallback 到 Bars）
+///
+/// bars / percent 模式在 MiniMax 没有/失败时**退化到 logo**（不再走旧
+/// DeepSeek 大数字 —— v0.6+ 3 选 1 心智模型，深向文本风格作 v2 扩展）。
+fn render_icon(snap: &QuotaSnapshot, style: TrayIconStyle) -> Image<'static> {
+    if style == TrayIconStyle::Logo {
+        return make_placeholder_icon();
+    }
+
     let mut img: image::ImageBuffer<Rgba<u8>, Vec<u8>> =
         image::ImageBuffer::from_fn(ICON_SIZE, ICON_SIZE, |_x, _y| Rgba([0, 0, 0, 0]));
 
-    match pick_content(snap) {
-        Some(TrayContent::MinimaxBars { five_h, weekly }) => {
-            draw_mini_bars(&mut img, five_h, weekly);
-        }
-        Some(TrayContent::DeepseekText { amount, currency }) => {
-            // 单大数字 + 小字货币
-            draw_deepseek_text(&mut img, amount, &currency);
-        }
+    match pick_minimax_rows(snap) {
+        Some((five_h, weekly)) => match style {
+            TrayIconStyle::Bars => draw_mini_bars(&mut img, five_h, weekly),
+            TrayIconStyle::Percent => draw_percent(&mut img, five_h, weekly),
+            TrayIconStyle::Logo => unreachable!("logo handled above"),
+        },
         None => {
-            // 全失败：留空（font 缺失也留空）
+            // bars / percent 模式：MiniMax 没有/失败 → 退化为 logo
+            // 单独重建一张避免在主 img 上画占位
+            return make_placeholder_icon();
         }
     }
 
@@ -212,61 +236,26 @@ fn render_icon(snap: &QuotaSnapshot) -> Image<'static> {
     Image::new_owned(img.into_raw(), w, h)
 }
 
-/// Tray 渲染内容选择结果
-enum TrayContent {
-    /// MiniMax：上 5h utilization（0-100），下 周 utilization（0-100）
-    MinimaxBars { five_h: f64, weekly: f64 },
-    /// DeepSeek：余额数字 + 货币单位（如 128.5 / "CNY"）
-    DeepseekText { amount: f64, currency: String },
-}
-
-/// 选 primary provider 并返回对应渲染内容。
-///
-/// 优先级：MiniMax 成功 > DeepSeek 成功 > None（失败/空）。
-fn pick_content(snap: &QuotaSnapshot) -> Option<TrayContent> {
-    if snap.providers.is_empty() {
-        return None;
-    }
-
-    if let Some(minimax) = snap
+/// 取 MiniMax 行的 5h / 周 utilization（缺则 0.0）。
+/// MiniMax 不存在或失败时返回 None。
+fn pick_minimax_rows(snap: &QuotaSnapshot) -> Option<(f64, f64)> {
+    let m = snap
         .providers
         .iter()
-        .find(|p| p.provider == Provider::Minimax && p.success)
-    {
-        let five_h = minimax
-            .rows
-            .iter()
-            .find(|r| r.label == "5h")
-            .and_then(|r| r.utilization)
-            .unwrap_or(0.0);
-        let weekly = minimax
-            .rows
-            .iter()
-            .find(|r| r.label == "周")
-            .and_then(|r| r.utilization)
-            .unwrap_or(0.0);
-        return Some(TrayContent::MinimaxBars { five_h, weekly });
-    }
-
-    if let Some(deepseek) = snap
-        .providers
+        .find(|p| p.provider == Provider::Minimax && p.success)?;
+    let five_h = m
+        .rows
         .iter()
-        .find(|p| p.provider == Provider::Deepseek && p.success)
-    {
-        let amount = deepseek
-            .rows
-            .iter()
-            .find_map(|r| r.remaining)
-            .unwrap_or(0.0);
-        let currency = deepseek
-            .rows
-            .iter()
-            .find_map(|r| r.unit.clone())
-            .unwrap_or_else(|| "CNY".to_string());
-        return Some(TrayContent::DeepseekText { amount, currency });
-    }
-
-    None
+        .find(|r| r.label == "5h")
+        .and_then(|r| r.utilization)
+        .unwrap_or(0.0);
+    let weekly = m
+        .rows
+        .iter()
+        .find(|r| r.label == "周")
+        .and_then(|r| r.utilization)
+        .unwrap_or(0.0);
+    Some((five_h, weekly))
 }
 
 /// 画两条水平迷你进度条。
@@ -387,66 +376,77 @@ fn fill_rounded_rect(
     }
 }
 
-/// DeepSeek 用：大号余额数字 + 小号货币单位
-fn draw_deepseek_text(
-    img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>,
-    amount: f64,
-    currency: &str,
-) {
-    let Some(font) = load_font() else { return };
+/// v0.6+ MiniMax 用：上行 5h 利用率，下行 周利用率，**右对齐纯白数字，无背景**。
+///
+/// 设计要点（用户 2026-06-12 反馈）：
+/// - **无标签**：5h / 周这种语义已经在固定位置被认知（上行 = 5h，下行 = 周），
+///   加 "5h" 字符浪费像素、稀释对比度
+/// - **右对齐**：跟系统 / 企业微信 / 微信那种徽章风格保持一致，
+///   "33%" / "100%" / "0%" 各种长度都对齐到右边
+/// - **无背板**：纯白文字 + Bold 字体（macOS 优先 Arial Black）字形本身
+///   足够粗，菜单栏透明背景上自然清晰
+/// - **scale 14**：比 v1 的 11 大一档，菜单栏渲染到 ~16px 时字形不糊
+///
+/// font 缺失时 fallback 到 `draw_mini_bars`（保持信息密度，不留空让用户
+/// 困惑 "是不是没数据"）。
+fn draw_percent(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64, util_bot: f64) {
+    let Some(font) = load_font() else {
+        return draw_mini_bars(img, util_top, util_bot);
+    };
 
-    // 32x32 原设计：大数字 scale 16 (50% 边长), y=2 (6.25%)；
-    // 小字 scale 9 (28%), y=22 (68.75%)。全部按 ICON_SIZE 折算到当前画布。
-    let s = ICON_SIZE as f32;
-    let big_scale = PxScale::from(s * 16.0 / 32.0); // 16 → 32
-    let big_y = (s * 2.0 / 32.0) as i32;            //  2 →  4
-    let small_scale = PxScale::from(s * 9.0 / 32.0); //  9 → 18
-    let small_y = (s * 22.0 / 32.0) as i32;          // 22 → 44
+    let s = ICON_SIZE as i32;
+    let scale = PxScale::from(s as f32 * 14.0 / 32.0); // 14 → 28
+    // 两行基线：上行顶部 y=2，下行顶部 y=18。两者之间留 2px 空隙避免粘连。
+    let y_top = s * 2 / 32;  //  2 →  4
+    let y_bot = s * 18 / 32; // 18 → 36
+    let pad_right = s * 2 / 32; // 右边留 2px 内边距
+    let color = Rgba([255, 255, 255, 255]);
 
-    // 大数字：居中放上半部分
-    let big_text = format_amount_tray(amount);
-    let big_scaled = font.as_scaled(big_scale);
-    let big_w: f32 = big_text
-        .chars()
-        .map(|c| big_scaled.h_advance(font.glyph_id(c)))
-        .sum();
-    let big_x = ((ICON_SIZE as f32 - big_w) / 2.0).max(1.0) as i32;
-    draw_text_mut(img, Rgba([255, 255, 255, 255]), big_x, big_y, big_scale, font, &big_text);
+    let top = format!("{}%", util_top.round() as i64);
+    let bot = format!("{}%", util_bot.round() as i64);
 
-    // 小货币：居中放下半部分
-    let small_scaled = font.as_scaled(small_scale);
-    let small_w: f32 = currency
-        .chars()
-        .map(|c| small_scaled.h_advance(font.glyph_id(c)))
-        .sum();
-    let small_x = ((ICON_SIZE as f32 - small_w) / 2.0).max(1.0) as i32;
-    draw_text_mut(
-        img,
-        Rgba([180, 180, 180, 255]),
-        small_x,
-        small_y,
-        small_scale,
-        font,
-        currency,
-    );
+    draw_right_text(img, &top, scale, y_top, pad_right, font, color);
+    draw_right_text(img, &bot, scale, y_bot, pad_right, font, color);
 }
 
-/// 紧凑金额（tray 用）：<100 整数；<1000 1 位小数 k；<1M 整数 k；否则 1 位小数 M。
-/// 32x32 限制字符数 ≤ 5。
-fn format_amount_tray(v: f64) -> String {
-    let abs = v.abs();
-    if abs >= 1_000_000.0 {
-        format!("{:.1}M", (v / 1_000_000.0) as f32)
-    } else if abs >= 10_000.0 {
-        format!("{}k", (v / 1000.0).round() as i64)
-    } else if abs >= 1000.0 {
-        format!("{:.1}k", (v / 1000.0) as f32)
-    } else if abs >= 100.0 {
-        format!("{}", v.round() as i64)
-    } else {
-        // 小数余额（<100）：保留 1 位小数
-        format!("{:.1}", v)
-    }
+/// 在 ICON_SIZE 宽画布上**右对齐**画一行文字，距右边 `pad_right` 像素。
+fn draw_right_text(
+    img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>,
+    text: &str,
+    scale: PxScale,
+    y: i32,
+    pad_right: i32,
+    font: &FontVec,
+    color: Rgba<u8>,
+) {
+    let scaled = font.as_scaled(scale);
+    let w: f32 = text
+        .chars()
+        .map(|c| scaled.h_advance(font.glyph_id(c)))
+        .sum();
+    // 右对齐 x = ICON_SIZE - text_width - pad_right
+    let x = (ICON_SIZE as f32 - w - pad_right as f32).max(1.0) as i32;
+    draw_text_mut(img, color, x, y, scale, font, text);
+}
+
+/// 在 ICON_SIZE 宽画布上居中画一行文字。**已废弃**（percent 模式改右对齐），
+/// 保留供未来 v2 "logo + 居中文字" 等变体。
+#[allow(dead_code)]
+fn draw_centered_text(
+    img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>,
+    text: &str,
+    scale: PxScale,
+    y: i32,
+    font: &FontVec,
+    color: Rgba<u8>,
+) {
+    let scaled = font.as_scaled(scale);
+    let w: f32 = text
+        .chars()
+        .map(|c| scaled.h_advance(font.glyph_id(c)))
+        .sum();
+    let x = ((ICON_SIZE as f32 - w) / 2.0).max(1.0) as i32;
+    draw_text_mut(img, color, x, y, scale, font, text);
 }
 
 fn tooltip(snap: &QuotaSnapshot) -> String {

@@ -1,0 +1,83 @@
+/* Musage 共享设计 token
+ *
+ * v0.6+ 起 settings.css（设置面板）消费这里定义的 CSS 变量。
+ * 浮窗 styles.css 暂不动（玻璃效果 + body[data-hover] 调它风险大），
+ * 留 TODO 注释，将来切 token 一次性迁移。
+ *
+ * 不引用任何具体组件 —— 单文件、零依赖，可被未来窗体 / 主题系统复用。
+ */
+
+:root {
+  /* ── 背景层级（4 级，从外到内） ── */
+  --bg-0: #1a1c22;          /* body 主背景（Win11 闪白修复色，commands.rs:376） */
+  --bg-1: #1f2128;          /* section 卡片背景 */
+  --bg-2: #252830;          /* input / button 默认 */
+  --bg-3: #2f333d;          /* button hover / active */
+  --bg-elevated: #2a2d35;   /* radio 选中态 */
+
+  /* ── 前景层级（5 级） ── */
+  --fg-0: #ffffff;          /* h1 / 活动态文字 */
+  --fg-1: #e0e0e0;          /* 正文 */
+  --fg-2: #aaa;             /* label / h2 */
+  --fg-3: #888;             /* help / status idle */
+  --fg-4: #666;             /* placeholder / disabled */
+
+  /* ── Accent & 状态色 ── */
+  --accent: #4a90e2;        /* primary button + focus ring + 链接 */
+  --accent-hover: #5aa0f2;
+  --ok: #4caf50;
+  --warn: #ff9f0a;
+  --alert: #f44336;
+  --info: #5ac8fa;
+  --danger: #c0392b;
+  --danger-hover: #d35400;
+
+  /* ── Provider 标识色（nav 左侧 dot / tab-dot） ── */
+  --id-minimax: #9b59ff;
+  --id-deepseek: #4a90e2;
+  --id-xiaomimimo: #ff6a00;
+  --id-tavily: #00d4a8;
+  --id-zenmux: #9b59ff;
+
+  /* ── 间距（4px grid） ── */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+
+  /* ── 圆角 ── */
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 8px;
+  --r-pill: 999px;
+
+  /* ── 字号 ── */
+  --fs-xs: 10.5px;
+  --fs-sm: 11px;
+  --fs-md: 12px;
+  --fs-lg: 13px;
+  --fs-xl: 14px;
+  --fs-2xl: 16px;
+
+  /* ── 动效 ── */
+  --t-fast: 120ms;
+  --t-base: 200ms;
+  --t-slow: 320ms;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* ── provider id 颜色（用 attr selector + var() 兜底） ──────────── */
+
+.tab-dot[data-id="minimax"]    { background: var(--id-minimax); }
+.tab-dot[data-id="deepseek"]   { background: var(--id-deepseek); }
+.tab-dot[data-id="xiaomimimo"] { background: var(--id-xiaomimimo); }
+.tab-dot[data-id="tavily"]     { background: var(--id-tavily); }
+.tab-dot[data-id="zenmux"]     { background: var(--id-zenmux); }
+
+.nav-dot[data-id="minimax"]    { background: var(--id-minimax); }
+.nav-dot[data-id="deepseek"]   { background: var(--id-deepseek); }
+.nav-dot[data-id="xiaomimimo"] { background: var(--id-xiaomimimo); }
+.nav-dot[data-id="tavily"]     { background: var(--id-tavily); }
+.nav-dot[data-id="zenmux"]     { background: var(--id-zenmux); }

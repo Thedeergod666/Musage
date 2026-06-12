@@ -81,6 +81,26 @@ impl FloatingPinMode {
     }
 }
 
+/// 托盘图标渲染样式
+///
+/// - `Logo`   ：画 [src-tauri/icons/tray-base.png](crate) 静态应用图标
+///              （白底 + 黑 M + 黑细环），不显示实时数据
+/// - `Bars`   ：MiniMax 双水平进度条（上 = 5h utilization，下 = 周 utilization）
+///              —— v0.5.x 唯一可用的样式
+/// - `Percent`：MiniMax 双行百分比文本（上 "5h 45%"，下 "周 72%"）
+///              —— v0.6+ 默认
+///
+/// 序列化 snake_case 字符串。`#[serde(default)]` 让老 config.json 缺字段时
+/// 走 `Percent`（v0.6 起的行为变更）。
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TrayIconStyle {
+    Logo,
+    Bars,
+    #[default]
+    Percent,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     /// provider id → 配置
@@ -124,6 +144,10 @@ pub struct AppConfig {
     /// key = provider.id_str()，value = 该 provider 的 overrides
     #[serde(default)]
     pub schema_overrides: BTreeMap<String, ProviderOverrides>,
+    /// 托盘图标渲染样式（v0.6+ 新增）。`#[serde(default)]` 让老 config.json
+    /// 缺字段时走 `Percent`（也是新装用户默认值）。
+    #[serde(default)]
+    pub tray_icon_style: TrayIconStyle,
 }
 
 const fn tavily_concise_default() -> bool {
@@ -227,6 +251,7 @@ impl Default for AppConfig {
             tavily_concise_mode: true,
             provider_order: Vec::new(),
             schema_overrides: BTreeMap::new(),
+            tray_icon_style: TrayIconStyle::default(),
         }
     }
 }

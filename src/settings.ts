@@ -71,6 +71,8 @@ interface AppConfig {
   provider_order?: string[];
   /// ZenMux 自定义 Management API endpoint URL。null/空 = 用 zenmux.rs 里的默认 URL
   zenmux_base_url?: string | null;
+  /// ZenMux 监控模式：payg（钱包余额，默认）/ subscription（订阅用量窗口）
+  zenmux_mode?: "payg" | "subscription";
   // 用户加的字段名候选（应对 MiniMax 改 schema）
   schema_overrides?: Record<string, ProviderOverrides>;
 }
@@ -242,9 +244,11 @@ async function loadConfig() {
   const tavilyConcise = document.getElementById("tavily-concise-mode") as HTMLInputElement | null;
   if (tavilyConcise) tavilyConcise.checked = cfg.tavily_concise_mode ?? true;
 
-  // ZenMux 自定义 URL
+  // ZenMux 自定义 URL + mode
   const zenmuxUrlInput = document.getElementById("zenmux-base-url") as HTMLInputElement | null;
   if (zenmuxUrlInput) zenmuxUrlInput.value = cfg.zenmux_base_url ?? "";
+  const zenmuxModeSel = document.getElementById("zenmux-mode") as HTMLSelectElement | null;
+  if (zenmuxModeSel) zenmuxModeSel.value = cfg.zenmux_mode ?? "payg";
   // 各 provider 「在浮窗显示」开关（缺省视为 true）+ 轮询间隔覆盖
   for (const id of PROVIDER_IDS) {
     const el = document.getElementById(`enabled-${id}`) as HTMLInputElement | null;
@@ -377,6 +381,11 @@ async function saveConfig() {
     },
     zenmux_base_url:
       (document.getElementById("zenmux-base-url") as HTMLInputElement | null)?.value.trim() || null,
+    zenmux_mode:
+      ((document.getElementById("zenmux-mode") as HTMLSelectElement | null)?.value as
+        | "payg"
+        | "subscription"
+        | undefined) ?? "payg",
     refresh_interval_secs: parseInt(($("#interval") as HTMLInputElement).value, 10) || 60,
     autostart: ($("#autostart") as HTMLInputElement).checked,
     floating_x: existing.floating_x ?? null,

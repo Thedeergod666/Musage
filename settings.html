@@ -307,21 +307,37 @@
           <button id="del-key-zenmux" class="danger">删除</button>
         </div>
         <div class="help">
-          ZenMux 是 AI model gateway（聚合 MiniMax / Claude / GPT 等）。
-          <strong>推荐用 Management API Key</strong>（在 Console > Management 生成），
-          普通 API key 也可。
-          <br/>从 <a href="https://zenmux.ai/console" target="_blank" class="link-ext">zenmux.ai/console</a> 获取。
+          ZenMux 是 AI model gateway（聚合 Claude / GPT / Gemini 等）。
+          <strong>必须用 Management API Key</strong>（普通 <code>sk-...</code> 调模型的 key 不能用于平台 API），
+          prefix 是 <code>sk-mg-v1-</code>。
+          <br/>从
+          <a href="https://zenmux.ai/platform/management" target="_blank" class="link-ext">zenmux.ai/platform/management</a>
+          创建。
+        </div>
+      </div>
+
+      <div class="field">
+        <label>查看模式</label>
+        <div class="input-row">
+          <select id="zenmux-mode">
+            <option value="payg">💰 钱包余额（PAYG，默认）</option>
+            <option value="subscription">📊 订阅用量（5h / 7d）</option>
+          </select>
+        </div>
+        <div class="help">
+          <strong>PAYG</strong>：监控 Pay-As-You-Go 钱包余额（仿 DeepSeek），适合没订阅 ZenMux 套餐、按量付费的用户。
+          <strong>订阅</strong>：监控 5h / 7d 滚动窗口的订阅用量（仿 MiniMax），适合订阅了套餐的用户。
         </div>
       </div>
 
       <div class="field">
         <label>自定义 API URL（可选）</label>
         <div class="input-row">
-          <input id="zenmux-base-url" type="text" placeholder="默认 https://api.zenmux.ai/api/v1/usage" />
+          <input id="zenmux-base-url" type="text" placeholder="默认 https://zenmux.ai/api/v1/management/payg/balance" />
         </div>
         <div class="help">
-          走 ZenMux Management API（默认 endpoint）。如果 ZenMux 改了路径或你是
-          enterprise 自部署，把完整 URL 贴这里覆盖。
+          默认走 mode 选的端点（PAYG → <code>/payg/balance</code>，订阅 → <code>/subscription/detail</code>）。
+          自部署 / 改了路径才需要改；留空用默认。
         </div>
       </div>
 

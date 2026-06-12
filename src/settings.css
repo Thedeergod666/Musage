@@ -145,7 +145,7 @@ code { background: #2a2d35; padding: 1px 4px; border-radius: 3px; font-size: 11p
   margin-bottom: var(--sp-4);
 }
 .order-section h2 { padding: var(--sp-2) var(--sp-3) var(--sp-1); }
-.order-list { display: flex; flex-direction: column; }
+.order-list { display: flex; flex-direction: column; list-style: none; margin: 0; padding: 0; }
 .order-row {
   display: flex; align-items: center; justify-content: space-between;
   padding: 8px var(--sp-3);

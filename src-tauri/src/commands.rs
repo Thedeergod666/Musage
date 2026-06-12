@@ -30,22 +30,25 @@ pub async fn set_provider_order(
     app: AppHandle,
     order: Vec<String>,
 ) -> Result<(), String> {
+    // 先保存 config（释放 write lock），再读 + 重排 snapshot。
+    // 如果先持有 config.write 再拿 snapshot.write，会和
+    // refresh_single_inner（先拿 snapshot.write 再拿 config.read）死锁。
     {
         let mut cfg = state.config.write().await;
         cfg.provider_order = order;
         cfg.save()?;
     }
-    // 关键：重排 in-memory snapshot 并 emit 给浮窗，让浮窗立刻按新顺序渲染。
-    // 不这样做的话，浮窗要等下次 poller tick（最长 60s）才能刷新顺序。
-    {
+    // 重排 in-memory snapshot 并 emit 给浮窗，让浮窗立刻按新顺序渲染。
+    let reordered_snap = {
         let cfg_snap = state.config.read().await;
         let mut snap = state.snapshot.write().await;
         apply_provider_order(&mut snap, &cfg_snap);
-        let emit_snap = snap.clone();
+        let s = snap.clone();
         drop(snap);
         drop(cfg_snap);
-        let _ = app.emit("musage://snapshot", &emit_snap);
-    }
+        s
+    };
+    let _ = app.emit("musage://snapshot", &reordered_snap);
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }

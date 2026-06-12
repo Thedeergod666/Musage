@@ -200,30 +200,47 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
                     continue;
                 };
 
-                if inside == last_inside {
-                    continue;
-                }
-                last_inside = inside;
-
                 // (1) 永远 emit —— 驱动前端 body[data-hover]，让 CSS hover
                 //     玻璃效果不依赖 WebView2 鼠标事件
-                if let Err(e) = app.emit("musage://floating-hover", inside) {
-                    tracing::trace!(error = %e, "emit hover 失败");
+                if inside != last_inside {
+                    if let Err(e) = app.emit("musage://floating-hover", inside) {
+                        tracing::trace!(error = %e, "emit hover 失败");
+                    }
                 }
 
-                // (2) PinBottom 模式：同步切 z-order
+                // (2) PinBottom 模式：切 z-order
                 if LEVEL_SWITCHING_ACTIVE.load(Ordering::SeqCst) {
-                    let z = if inside { ZOrder::TopMost } else { ZOrder::Bottom };
-                    tracing::trace!(?z, "PinBottom hover 切 z-order");
                     let app2 = app.clone();
-                    let _ = app.run_on_main_thread(move || {
-                        if let Some(win) = app2.get_webview_window("floating") {
-                            if let Ok(hwnd) = win.hwnd() {
-                                unsafe { apply_z_order(hwnd.0, z) };
+                    if inside {
+                        // **关键：inside 时每个 poll cycle 都断言 TopMost**。
+                        // 之前用 last_inside != inside 做 edge trigger，
+                        // 行为是「只有鼠标进出窗口那一帧切 z-order」——
+                        // Win 切完后，OS 调度（用户点其它 app → 其它窗口
+                        // HWND_TOP）会把浮窗 z-order 重新打到 BOTTOM 一带，
+                        // 我们的 tracker 不会 re-assert，浮窗就一直沉底。
+                        // 改成 level trigger：每 50ms 断言一次。
+                        let _ = app.run_on_main_thread(move || {
+                            if let Some(win) = app2.get_webview_window("floating") {
+                                if let Ok(hwnd) = win.hwnd() {
+                                    unsafe { apply_z_order(hwnd.0, ZOrder::TopMost) };
+                                }
                             }
-                        }
-                    });
+                        });
+                    } else if last_inside {
+                        // 鼠标刚离开：edge-trigger 切到 BOTTOM（真正的"置底"）。
+                        // 离开后不再断言，让 OS 正常 z-order 接管。
+                        tracing::trace!("PinBottom: 鼠标离开浮窗 → z-order Bottom");
+                        let _ = app.run_on_main_thread(move || {
+                            if let Some(win) = app2.get_webview_window("floating") {
+                                if let Ok(hwnd) = win.hwnd() {
+                                    unsafe { apply_z_order(hwnd.0, ZOrder::Bottom) };
+                                }
+                            }
+                        });
+                    }
                 }
+
+                last_inside = inside;
             }
         })
         .expect("spawn hover emitter thread");

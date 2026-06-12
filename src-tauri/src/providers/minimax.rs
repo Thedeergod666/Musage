@@ -352,27 +352,35 @@ struct TierInternal {
 /// 新 schema 解析（ccswitch 3.16.2+ / MiniMax 2026-06-01 之后）
 ///
 /// - `k_percent`：剩余百分比字段（0-100）
-/// - `k_status`：状态门控字段（必须 == 1 才算数；2/3 = 不在套餐内）
+/// - `k_status`：状态门控字段（1 = 套餐内）。status=2/3 仍可能带合法 percent：
+///   - percent=100  → 哨兵，套餐外 / 未生效 → 视为无效
+///   - percent=0    → "已用完 / 上限达到"，**仍要返回**让用户看到 100% + 重置时间
+///     （旧逻辑在这里整行 drop，5h 达上限后浮窗 5h 行消失，回归：[bug]）
 /// - `k_reset`：距离重置的**秒数**（不是 epoch ms）
 ///
-/// 返回已用百分比 = 100 - remain%。如 status != 1 或字段缺失返回 None。
+/// 返回已用百分比 = 100 - remain%。
 pub fn parse_tier_percent(
     item: &serde_json::Value,
     k_percent: &str,
     k_status: &str,
     k_reset: &str,
 ) -> Option<TierInternal> {
-    // 1. status 必须 == 1
-    let status = item.get(k_status).and_then(|v| v.as_i64())?;
-    if status != 1 {
-        return None;
-    }
-    // 2. 读取剩余百分比
+    // 1. 读取剩余百分比（核心字段，必须存在且在 0-100 范围内）
     let remain_pct = item.get(k_percent).and_then(num_to_f64)?;
     if !(0.0..=100.0).contains(&remain_pct) {
         return None;
     }
     let utilization = 100.0 - remain_pct;
+    // 2. status 字段：信息性，不影响"是否显示"，只影响"值是否可信"。
+    //    - status=1 或字段缺失：信任 percent
+    //    - status=2/3 + percent=0：5h 达 100% 上限的合法状态，照常返回
+    //    - status=2/3 + percent>0：percent 可能是"不在套餐"的哨兵 100，
+    //      也可能是 percent 真实但 status 标错。为安全仍按原语义 drop。
+    if let Some(s) = item.get(k_status).and_then(|v| v.as_i64()) {
+        if s != 1 && remain_pct > 0.0 {
+            return None;
+        }
+    }
     // 3. reset：智能识别（duration-seconds vs epoch-ms）
     let resets_at = item.get(k_reset).and_then(|v| v.as_i64()).map(smart_reset_to_ms);
     Some(TierInternal { utilization, resets_at })
@@ -460,11 +468,48 @@ mod tests {
     fn parse_tier_percent_status_must_be_1() {
         let item = serde_json::json!({
             "current_interval_remaining_percent": 80,
-            "current_interval_status": 2,  // not in plan
+            "current_interval_status": 2,  // not in plan, percent=80 视为哨兵
             "end_time": 100
         });
-        assert!(parse_tier_percent(item, "current_interval_remaining_percent",
+        assert!(parse_tier_percent(&item, "current_interval_remaining_percent",
                                        "current_interval_status", "end_time").is_none());
+    }
+
+    #[test]
+    fn parse_tier_percent_status_2_or_3_with_zero_percent_still_returns() {
+        // 回归：MiniMax 5h 达 100% 上限时，API 会把 status 翻成 2/3
+        // （exhausted / rate-limited 状态），但 percent 字段仍是 0。
+        // 旧逻辑因 status != 1 整行 drop，浮窗 5h 行消失。新逻辑：percent=0
+        // 时（无论 status 是什么）都返回 100% utilization，让用户看到上限 +
+        // 重置时间。status=4 是"未知状态"的兜底，按同样规则处理。
+        for status in [2, 3, 4] {
+            let item = serde_json::json!({
+                "current_interval_remaining_percent": 0,
+                "current_interval_status": status,
+                "end_time": 14523
+            });
+            let t = parse_tier_percent(&item, "current_interval_remaining_percent",
+                                           "current_interval_status", "end_time")
+                .unwrap_or_else(|| panic!("status={status} + percent=0 must not drop"));
+            assert!((t.utilization - 100.0).abs() < 0.001,
+                    "status={status} utilization={}", t.utilization);
+            // reset 字段也要正常解析
+            assert!(t.resets_at.is_some(), "status={status} resets_at should be Some");
+        }
+    }
+
+    #[test]
+    fn parse_tier_percent_missing_status_trusts_percent() {
+        // 兼容：status 字段缺失（API 改名 / 老 schema）→ 直接信任 percent。
+        // 旧逻辑会因 `let status = ...?` 早返 None，整行消失。
+        let item = serde_json::json!({
+            "current_interval_remaining_percent": 35,
+            "end_time": 14523
+        });
+        let t = parse_tier_percent(&item, "current_interval_remaining_percent",
+                                       "current_interval_status", "end_time")
+            .expect("missing status should fall back to trusting percent");
+        assert!((t.utilization - 65.0).abs() < 0.001);
     }
 
     #[test]
@@ -474,7 +519,7 @@ mod tests {
             "current_interval_status": 1,
             "end_time": 14523  // duration seconds
         });
-        let t = parse_tier_percent(item, "current_interval_remaining_percent",
+        let t = parse_tier_percent(&item, "current_interval_remaining_percent",
                                        "current_interval_status", "end_time").unwrap();
         assert!((t.utilization - 28.0).abs() < 0.001, "utilization = {}", t.utilization);
         let resets = t.resets_at.unwrap();
@@ -493,7 +538,7 @@ mod tests {
             "current_interval_status": 1,
             "end_time": future
         });
-        let t = parse_tier_percent(item, "current_interval_remaining_percent",
+        let t = parse_tier_percent(&item, "current_interval_remaining_percent",
                                        "current_interval_status", "end_time").unwrap();
         assert_eq!(t.resets_at, Some(future));
     }
@@ -505,7 +550,7 @@ mod tests {
             "current_interval_status": 1,
             "end_time": 100
         });
-        assert!(parse_tier_percent(item, "current_interval_remaining_percent",
+        assert!(parse_tier_percent(&item, "current_interval_remaining_percent",
                                        "current_interval_status", "end_time").is_none());
     }
 
@@ -516,7 +561,7 @@ mod tests {
             "current_interval_usage_count": 56,
             "end_time": 14523
         });
-        let t = parse_tier_count(item,
+        let t = parse_tier_count(&item,
             &[("current_interval_total_count", "current_interval_usage_count", "end_time")],
             &[]).unwrap();
         // (200-56)/200 = 0.72 → 72%
@@ -535,7 +580,7 @@ mod tests {
             remaining: "new_remaining".into(),
             end: None,
         }];
-        let t = parse_tier_count(item, &[], &overrides).unwrap();
+        let t = parse_tier_count(&item, &[], &overrides).unwrap();
         assert!((t.utilization - 75.0).abs() < 0.001);
     }
 
@@ -545,7 +590,7 @@ mod tests {
             "current_interval_total_count": 0,
             "current_interval_usage_count": 0
         });
-        assert!(parse_tier_count(item,
+        assert!(parse_tier_count(&item,
             &[("current_interval_total_count", "current_interval_usage_count", "end_time")],
             &[]).is_none());
     }

@@ -4,7 +4,7 @@
 // moveProviderInOrder 集中到这里。
 //
 // v0.6+ 顺序列表从「每个 panel 内部 ↑↓ 按钮」挪到「providers section
-// 顶部独立区块」（renderOrderSection），5 个 provider 共用一个 list。
+// 顶部独立区块」（renderOrderSection），所有 provider 共用一个 list。
 // 这样用户 1 秒看清当前顺序，不用上下翻 5 个 panel。
 
 import { setProviderOrder } from "./api";

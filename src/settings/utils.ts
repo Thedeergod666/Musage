@@ -19,6 +19,7 @@ export const BUILTIN_ORDER: ProviderId[] = [
   "xiaomimimo",
   "tavily",
   "zenmux",
+  "openrouter",
 ];
 
 /// 当前内存里的 provider 顺序（同步 set_provider_order 时维护，

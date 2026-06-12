@@ -25,6 +25,7 @@ const PROVIDER_META: Record<string, { name: string; logo: string }> = {
   deepseek: { name: "DeepSeek", logo: deepseekLogo },
   xiaomimimo: { name: "Xiaomi MiMo", logo: xiaomimimoLogo },
   tavily: { name: "Tavily", logo: tavilyLogo },
+  zenmux: { name: "ZenMux", logo: "" },  // 暂无 logo，纯文字
 };
 
 type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
@@ -52,7 +53,7 @@ interface QuotaRow {
 
 interface ProviderSnapshot {
   /** 兼容字段（minimax / deepseek / xiaomimimo）。新代码用 source_id。 */
-  provider: "minimax" | "deepseek" | "xiaomimimo" | "tavily";
+  provider: "minimax" | "deepseek" | "xiaomimimo" | "tavily" | "zenmux";
   /** Phase 1 新增。 */
   source_id?: string | null;
   source_display_name?: string | null;

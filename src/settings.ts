@@ -9,7 +9,7 @@ import {
   type UpdateState,
 } from "./updater";
 
-type ProviderId = "minimax" | "deepseek" | "xiaomimimo" | "tavily";
+type ProviderId = "minimax" | "deepseek" | "xiaomimimo" | "tavily" | "zenmux";
 type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
 
 interface ProviderConfig {
@@ -21,7 +21,7 @@ interface ProviderConfig {
 }
 
 /// 4 个 provider 面板的 id 列表。决定 #3/#4 UI 循环读哪些元素。
-const PROVIDER_IDS = ["minimax", "deepseek", "xiaomimimo", "tavily"] as const;
+const PROVIDER_IDS = ["minimax", "deepseek", "xiaomimimo", "tavily", "zenmux"] as const;
 
 /// Phase 1 新增：注册表元信息（后端 list_sources 返回）。
 /// 当前 settings.ts 直接用 list_sources 返回 SourceMeta[] 来构建面板，
@@ -69,6 +69,8 @@ interface AppConfig {
   tavily_concise_mode?: boolean;
   /// Provider 在浮窗里的渲染顺序。空数组 = 用 builtin_sources() 注册表顺序
   provider_order?: string[];
+  /// ZenMux 自定义 Management API endpoint URL。null/空 = 用 zenmux.rs 里的默认 URL
+  zenmux_base_url?: string | null;
   // 用户加的字段名候选（应对 MiniMax 改 schema）
   schema_overrides?: Record<string, ProviderOverrides>;
 }
@@ -239,6 +241,10 @@ async function loadConfig() {
   // Tavily 简洁模式（默认开）
   const tavilyConcise = document.getElementById("tavily-concise-mode") as HTMLInputElement | null;
   if (tavilyConcise) tavilyConcise.checked = cfg.tavily_concise_mode ?? true;
+
+  // ZenMux 自定义 URL
+  const zenmuxUrlInput = document.getElementById("zenmux-base-url") as HTMLInputElement | null;
+  if (zenmuxUrlInput) zenmuxUrlInput.value = cfg.zenmux_base_url ?? "";
   // 各 provider 「在浮窗显示」开关（缺省视为 true）+ 轮询间隔覆盖
   for (const id of PROVIDER_IDS) {
     const el = document.getElementById(`enabled-${id}`) as HTMLInputElement | null;
@@ -360,7 +366,17 @@ async function saveConfig() {
           (document.getElementById("enabled-tavily") as HTMLInputElement | null)?.checked ?? true,
         refresh_interval_secs: readProviderInterval("tavily"),
       },
+      zenmux: {
+        enabled:
+          (document.getElementById("enabled-zenmux") as HTMLInputElement | null)?.checked ?? true,
+        refresh_interval_secs: readProviderInterval("zenmux"),
+        // 自定义 URL 写进一个非标准字段；后端 zenmux.rs::set_state 会从 cfg 读
+        // 这里我们把它塞到 provider_id+_extra 里，set_state 负责解析
+        // 实际上我们走更简单路径：写到顶层的 zenmux_base_url
+      },
     },
+    zenmux_base_url:
+      (document.getElementById("zenmux-base-url") as HTMLInputElement | null)?.value.trim() || null,
     refresh_interval_secs: parseInt(($("#interval") as HTMLInputElement).value, 10) || 60,
     autostart: ($("#autostart") as HTMLInputElement).checked,
     floating_x: existing.floating_x ?? null,
@@ -466,7 +482,7 @@ function withTimeout<T>(p: Promise<T>, ms: number, msg: string): Promise<T> {
 /// 之前的实现是单独的「浮窗顺序」section + ↑↓ 按钮，调完要滚到那里再保存。
 /// 改成在每个 provider panel 内部放「位置 X/4」+ ↑↓ 按钮，逻辑分散但
 /// 视觉跟 provider 关联更紧密，调完即时生效。
-const BUILTIN_ORDER: ProviderId[] = ["minimax", "deepseek", "xiaomimimo", "tavily"];
+const BUILTIN_ORDER: ProviderId[] = ["minimax", "deepseek", "xiaomimimo", "tavily", "zenmux"];
 let currentProviderOrder: string[] = [];
 
 function canonicalizeOrder(order: string[]): ProviderId[] {
@@ -538,6 +554,7 @@ function providerDisplay(p: ProviderId): string {
     case "deepseek":   return "DeepSeek";
     case "xiaomimimo": return "Xiaomi MiMo";
     case "tavily":     return "Tavily";
+    case "zenmux":     return "ZenMux";
   }
 }
 
@@ -859,6 +876,57 @@ async function copyTavilyKey() {
   }
 }
 
+// ── ZenMux (同 Tavily 模式: id-based) ────────────────────────────────
+
+async function loadZenmuxKeyStatus() {
+  const has = await invoke<boolean>("has_source_credential", { id: "zenmux" });
+  const el = document.getElementById("api-key-status-zenmux");
+  if (el) {
+    el.textContent = has ? "✓ 已保存到本机" : "未设置";
+    el.className = `status ${has ? "ok" : ""}`;
+  }
+}
+
+async function saveZenmuxKey() {
+  const input = document.getElementById("api-key-zenmux") as HTMLInputElement | null;
+  if (!input) return;
+  const key = input.value.trim();
+  if (!key) {
+    flash("⚠ 请先粘贴 ZenMux API key", true);
+    return;
+  }
+  try {
+    await invoke("set_source_credential", { id: "zenmux", value: key });
+    input.value = "";
+    await loadZenmuxKeyStatus();
+    flash("✓ ZenMux key 已保存");
+    await testConn();
+  } catch (e) {
+    flash(`✗ 保存失败: ${e}`, true);
+  }
+}
+
+async function deleteZenmuxKey() {
+  if (!confirm("确认删除 ZenMux 的 API key？")) return;
+  await invoke("delete_source_credential", { id: "zenmux" });
+  await loadZenmuxKeyStatus();
+  flash("✓ ZenMux key 已删除");
+}
+
+async function copyZenmuxKey() {
+  try {
+    const key = await invoke<string | null>("get_source_credential", { id: "zenmux" });
+    if (!key) {
+      flash("⚠ ZenMux 未设置 key", true);
+      return;
+    }
+    await navigator.clipboard.writeText(key);
+    flash("✓ ZenMux key 已复制到剪贴板");
+  } catch (e) {
+    flash(`✗ 复制失败: ${e}`, true);
+  }
+}
+
 // ── 启动 ──
 
 setupTabs();
@@ -868,14 +936,17 @@ $("#save-key-minimax")?.addEventListener("click", () => saveKey("minimax"));
 $("#save-key-deepseek")?.addEventListener("click", () => saveKey("deepseek"));
 $("#save-key-xiaomimimo")?.addEventListener("click", () => saveKey("xiaomimimo"));
 $("#save-key-tavily")?.addEventListener("click", () => saveTavilyKey());
+$("#save-key-zenmux")?.addEventListener("click", () => saveZenmuxKey());
 $("#del-key-minimax")?.addEventListener("click", () => deleteKey("minimax"));
 $("#del-key-deepseek")?.addEventListener("click", () => deleteKey("deepseek"));
 $("#del-key-xiaomimimo")?.addEventListener("click", () => deleteKey("xiaomimimo"));
 $("#del-key-tavily")?.addEventListener("click", () => deleteTavilyKey());
+$("#del-key-zenmux")?.addEventListener("click", () => deleteZenmuxKey());
 $("#copy-key-minimax")?.addEventListener("click", () => copyKey("minimax"));
 $("#copy-key-deepseek")?.addEventListener("click", () => copyKey("deepseek"));
 $("#copy-key-xiaomimimo")?.addEventListener("click", () => copyKey("xiaomimimo"));
 $("#copy-key-tavily")?.addEventListener("click", () => copyTavilyKey());
+$("#copy-key-zenmux")?.addEventListener("click", () => copyZenmuxKey());
 $("#save-cookie-xiaomimimo")?.addEventListener("click", () => saveCookie("xiaomimimo"));
 $("#del-cookie-xiaomimimo")?.addEventListener("click", () => deleteCookie("xiaomimimo"));
 $("#test")?.addEventListener("click", testConn);
@@ -957,6 +1028,7 @@ document.querySelectorAll<HTMLButtonElement>(".order-down").forEach((btn) => {
     await loadKeyStatus("deepseek");
     await loadKeyStatus("xiaomimimo");
     await loadTavilyKeyStatus();
+    await loadZenmuxKeyStatus();
     await loadCookieStatus("xiaomimimo");
     await loadConfig();
     setupUpdaterSection();

@@ -19,6 +19,7 @@ pub mod deepseek;
 pub mod minimax;
 pub mod tavily;
 pub mod xiaomi;
+pub mod zenmux;
 
 use std::pin::Pin;
 use std::sync::OnceLock;
@@ -30,6 +31,9 @@ use serde::{Deserialize, Serialize};
 /// **新代码请优先用 `&str` id**（如 `"minimax"` / `"tavily"`），让 source 注册表
 /// 成为唯一真相源。本 enum 留着是因为 `config.rs` / `dump` CLI / 已有的 IPC 命令
 /// 还在用，加新 source 不需要改这一层。
+///
+/// Tavily / ZenMux 等 Phase 1 起新增的 source **不进 enum**，走
+/// [`QuotaSource`] trait + [`builtin_sources`] 注册表。
 #[derive(Debug, Default, Clone, Copy, Hash, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Provider {
@@ -360,6 +364,7 @@ pub fn builtin_sources() -> Vec<Box<dyn QuotaSource>> {
         Box::new(deepseek::DeepseekSource::default()),
         Box::new(xiaomi::XiaomimimoSource::default()),
         Box::new(tavily::TavilySource::default()),
+        Box::new(zenmux::ZenmuxSource::default()),
     ]
 }
 

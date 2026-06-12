@@ -85,6 +85,7 @@ code { background: #2a2d35; padding: 1px 4px; border-radius: 3px; font-size: 11p
 .tab[data-p="deepseek"] .tab-dot { background: #4a90e2; }
 .tab[data-p="xiaomimimo"] .tab-dot { background: #ff6a00; }
 .tab[data-p="tavily"] .tab-dot  { background: #00d4a8; }
+.tab[data-p="zenmux"] .tab-dot  { background: #9b59ff; }
 
 .provider-panel { display: none; margin-top: 12px; }
 .provider-panel.active { display: block; }

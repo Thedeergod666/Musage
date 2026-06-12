@@ -24,6 +24,9 @@
         <button class="tab" data-p="tavily">
           <span class="tab-dot"></span>Tavily
         </button>
+        <button class="tab" data-p="zenmux">
+          <span class="tab-dot"></span>ZenMux
+        </button>
       </div>
     </div>
 
@@ -284,6 +287,69 @@
         <div class="help">
           默认开启 —— 6 行在小浮窗里太挤。关掉后会显示 search/extract/crawl/map/research
           五个 endpoint 的细分行。改完点「保存配置」生效。
+        </div>
+      </div>
+    </div>
+
+    <!-- ZenMux Panel -->
+    <div class="provider-panel" data-p="zenmux">
+      <div class="provider-section">
+        <h2>🟣 ZenMux API Key</h2>
+        <div class="field">
+          <div class="input-row">
+            <input id="api-key-zenmux" type="password" placeholder="sk-..." autocomplete="off" />
+            <button id="copy-key-zenmux" title="复制到剪贴板">📋</button>
+          </div>
+          <div class="status" id="api-key-status-zenmux">—</div>
+        </div>
+        <div class="row">
+          <button id="save-key-zenmux" class="primary">保存</button>
+          <button id="del-key-zenmux" class="danger">删除</button>
+        </div>
+        <div class="help">
+          ZenMux 是 AI model gateway（聚合 MiniMax / Claude / GPT 等）。
+          <strong>推荐用 Management API Key</strong>（在 Console > Management 生成），
+          普通 API key 也可。
+          <br/>从 <a href="https://zenmux.ai/console" target="_blank" class="link-ext">zenmux.ai/console</a> 获取。
+        </div>
+      </div>
+
+      <div class="field">
+        <label>自定义 API URL（可选）</label>
+        <div class="input-row">
+          <input id="zenmux-base-url" type="text" placeholder="默认 https://api.zenmux.ai/api/v1/usage" />
+        </div>
+        <div class="help">
+          走 ZenMux Management API（默认 endpoint）。如果 ZenMux 改了路径或你是
+          enterprise 自部署，把完整 URL 贴这里覆盖。
+        </div>
+      </div>
+
+      <div class="field">
+        <label>浮窗显示</label>
+        <div class="check">
+          <input type="checkbox" id="enabled-zenmux" />
+          <label for="enabled-zenmux">
+            在浮窗中显示 ZenMux 卡片
+          </label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>轮询间隔（覆盖）</label>
+        <div class="input-row">
+          <input id="interval-zenmux" type="number" min="10" step="5"
+                 placeholder="默认 60 秒（顶部『轮询间隔』）" />
+          <span class="unit-suffix">秒</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>浮窗排序</label>
+        <div class="input-row order-row">
+          <span class="order-pos" id="order-pos-zenmux">位置 —/—</span>
+          <button class="order-up" data-id="zenmux" type="button">↑</button>
+          <button class="order-down" data-id="zenmux" type="button">↓</button>
         </div>
       </div>
     </div>

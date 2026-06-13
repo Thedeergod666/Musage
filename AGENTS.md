@@ -1,4 +1,4 @@
-# Musage 项目说明 (给未来的 Codex 会话)
+# Musage 项目说明
 
 > 任何新打开此项目的 Codex 会话应先读这个文件。这是当前对话的精炼版。
 
@@ -26,6 +26,30 @@
 | 日志 | tracing + tracing-subscriber |
 | 自动启动 | tauri-plugin-autostart |
 | 前端类型 | `@types/node` 20.x（vite.config.ts 用 `node:url`） |
+| Providers | minimax / deepseek / xiaomimimo / tavily / zenmux / openrouter（6 个） |
+
+## 环境与工具链（2026-06-13 实测，跑 `pnpm tauri build` 必看）
+
+机器上各工具的真实位置，**新会话别再花时间找**：
+
+| 工具 | 路径 | 备注 |
+|---|---|---|
+| Node.js | `D:\Develop\node20\` | npm 10.8.2 |
+| pnpm | `D:\Develop\node20\node_modules\pnpm\` | **没有 `pnpm.cmd` shim**，已通过 `C:\Users\33348\.cargo\bin\pnpm.cmd` shim 解决（内容 1 行：`"D:\Develop\node20\node.exe" "D:\Develop\node20\node_modules\pnpm\bin\pnpm.cjs" %*`）|
+| cargo / rustc | `C:\Users\33348\.cargo\bin\`（`%USERPROFILE%\.cargo\bin`）| GNU 工具链，rustc 1.96 |
+| MinGW | `D:\Develop\mingw64\bin\` | 提供 `dlltool.exe`，**GNU 工具链下 Rust 链接时必须**，否则 `error calling dlltool 'dlltool.exe': program not found` |
+| 镜像 | `registry.npmmirror.com`（npm）/ `rsproxy.cn`（crates）| 已在 `~/.cargo/config.toml` + `dev-env.bat` 配好 |
+
+**关键环境变量**（写 wrapper 时必设对）：
+- `CARGO_HOME` = `C:\Users\33348\.cargo`（cargo **根目录**，不是 `bin/`！写错 cargo 找不到 `config.toml`，会走默认 crates.io 然后超时）
+- `PATH` 必须包含：Node bin + cargo bin + MinGW bin + System32
+
+**用户标准启动命令**（dev-env.bat 加载环境后调用 pnpm）：
+```bash
+cmd /c "dev-env.bat && pnpm tauri:dev"    # 开发
+cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
+```
+> ⚠ **从 MSYS bash / Claude Code shell 调 cmd 时**：`%PATH%` 会被 MSYS 翻译成 `C;D:\...` 这种坏值传给 cmd，cmd 找不到 `where`/`pnpm` 任何命令。**绕开**：`MSYS_NO_PATHCONV=1 cmd /c "..."` + 在 bat 里**硬编码**所有路径，**完全不碰 `%PATH%`**（参考 [musage-build-quirks](memory/musage-build-quirks.md) 第 6/7 条）
 
 ## 关键 API（来自 ccswitch 源码逆向）
 
@@ -144,27 +168,46 @@
 
 **为什么 `?url` 单独不够**：Vite 5 对 SVG 默认是走 `?url` 行为的（也走外部文件），但 `assetsInlineLimit` 是**全局**的兜底。`?url` + `assetsInlineLimit: 0` 配合最稳，前者声明意图，后者兜底任何后续新增的小资源。
 
-## 文件结构
+## 文件结构（2026-06-13 实测，反映当前状态）
 
 ```
-D:\Codes\Musage\
-├── AGENTS.md                 ← 本文件
+D:\Project\Musage\
+├── AGENTS.md                 ← 本文件（项目 handoff 文档）
+├── README.md                 ← 暂无，待写
 ├── package.json
+├── pnpm-lock.yaml
 ├── tsconfig.json
-├── vite.config.ts
+├── vite.config.ts            ← build.assetsInlineLimit: 0（防 CSP 挡 data:）
+├── dev-env.bat               ← 加载 Node/cargo/MinGW + 中国镜像
 ├── index.html                ← 悬浮窗入口
-├── settings.html             ← 设置面板
-├── src/                      ← 前端
-│   ├── main.ts               ← 悬浮窗逻辑（拖动、订阅事件、渲染）
+├── settings.html             ← 设置面板入口
+├── src/                      ← 前端（vanilla TS）
+│   ├── main.ts               ← 悬浮窗逻辑（拖动、订阅、渲染）
+│   ├── updater.ts            ← 应用自动更新
+│   ├── assets.d.ts           ← *.png/svg/?url 模块声明
 │   ├── styles.css
-│   └── settings.ts           ← 设置面板逻辑
+│   ├── assets/               ← provider logo 资源
+│   │   ├── minimax-logo.png
+│   │   ├── deepseek-icon.png
+│   │   ├── deepseek-logo.png
+│   │   ├── xiaomimimo-logo.png
+│   │   ├── openrouter-logo.png
+│   │   ├── tavily-logo.svg   ← 配合 ?url + assetsInlineLimit: 0
+│   │   └── zenmux-logo.svg   ← 同上
+│   └── settings/             ← 设置面板子模块（18 个 .ts 文件）
+│       ├── main.ts / app.ts / config.ts / api.ts
+│       ├── credentials.ts / providers.ts / floating.ts
+│       ├── order.ts / logs.ts / test.ts / about.ts
+│       ├── updater.ts / advanced.ts / types.ts / utils.ts
+│       ├── logos.ts / source-extras.ts
+│       └── ...
 └── src-tauri/                ← Rust 后端
-    ├── Cargo.toml
-    ├── tauri.conf.json
+    ├── Cargo.toml            ← crate-type = ["staticlib", "rlib"]（不用 cdylib）
+    ├── tauri.conf.json       ← bundle targets: "all"（建议改 "nsis"）
     ├── build.rs
     ├── capabilities/default.json
-    ├── icons/                ← 占位图标待生成
-    ├── assets/               ← font.ttf 待选填（无则托盘无文字）
+    ├── icons/                ← 32/128/ico/icns/128@2x/tray-base 占位图标
+    ├── assets/               ← font.ttf 待选填（无则托盘无百分比文字）
     └── src/
         ├── main.rs           ← Windows 入口
         ├── lib.rs            ← Tauri Builder + CLI 分流
@@ -173,10 +216,17 @@ D:\Codes\Musage\
         ├── tray.rs           ← 托盘菜单 + 动态图标（合并了原 icon.rs）
         ├── config.rs         ← AppConfig + keys.json 文件存储
         ├── commands.rs       ← tauri::command 暴露给前端
+        ├── providers/        ← 6 个 provider 实现
+        │   ├── mod.rs / minimax.rs / deepseek.rs / xiaomi.rs
+        │   ├── tavily.rs / zenmux.rs / openrouter.rs
         └── platform/         ← 平台特定代码（仅 macOS 有非 stub 实现）
             ├── mod.rs
             └── macos.rs
 ```
+
+构建产物：
+- 裸 exe：`src-tauri/target/release/musage.exe`（6.7 MB）
+- NSIS 安装包：`src-tauri/target/release/bundle/nsis/Musage_0.1.0_x64-setup.exe`（2.5 MB）
 
 ## 已确立的设计决策
 
@@ -200,19 +250,27 @@ D:\Codes\Musage\
 
 ## 下一步建议
 
-1. 生成占位 icons + 可选 font.ttf
-2. 写 README 启动文档
-3. `pnpm install`（拉前端依赖）
-4. `cargo build`（第一次会下大量 crate 依赖，可能 5-10 分钟）
-5. 修复编译错误（窗口 API 在 Tauri 2 经常小改）
-6. `pnpm tauri dev` 跑起来
-7. 通过 `cargo run -- dump` 探针定位新 schema
-8. 在前端填写 API key 试联调
-9. `pnpm tauri build` 打包 .msi
+1. **README 启动文档**：朋友拿到 exe 怎么装、怎么填 API Key、托盘交互说明
+2. **`cargo run -- dump` 真实 schema 探针**：跑通后端独立 CLI 子命令，验证 [关键 API](#关键-api来自-ccswitch-源码逆向) 文档的 percent-based 解析对真实返回有效
+3. **设置面板对接真实 key**：填入 API Key → 联调 minimax + 其他 5 个 provider
+4. **（可选）固化 NSIS-only**：`tauri.conf.json` 的 `bundle.targets` 改成 `"nsis"`，免得未来会话又撞 WiX timeout
+5. **（可选）`assets/font.ttf`**：托盘图标想画百分比文字时再补
 
 ## 关键文件链接（按重要性）
 
 - **核心 API 解析**：`src-tauri/src/api.rs` ← 改 schema 主要改这里
+- **Provider 实现**：`src-tauri/src/providers/{minimax,tavily,zenmux,deepseek,xiaomi,openrouter}.rs`
 - **托盘 UI**：`src-tauri/src/tray.rs`（合并了原 icon.rs：动态图标 + 文字绘制 + 菜单 + tooltip）
 - **悬浮窗 UI**：`src/main.ts` + `src/styles.css`
-- **设置面板**：`src/settings.ts` + `settings.html`
+- **设置面板**：`src/settings/main.ts` + `settings.html`（子模块见 `src/settings/` 18 个文件）
+- **Logo 资源**：`src/assets/` + `src/assets.d.ts`（含 `?url` 声明，必读 [浮窗 logo 打包后裂开](#浮窗-logo-打包后裂开2026-06-13-修)）
+
+## 关键记忆
+
+跨会话保留的踩坑经验写到了 [musage-build-quirks.md](memory/musage-build-quirks.md)：
+- WiX 镜像不可达 → 用 NSIS
+- `@types/node` 必装
+- pnpm shim 放在 cargo/bin
+- CARGO_HOME 必须 cargo root
+- MinGW dlltool 必在 PATH
+- Tauri CSP + Vite assetsInlineLimit 兼容性（导致 Tavily/ZenMux 裂开）

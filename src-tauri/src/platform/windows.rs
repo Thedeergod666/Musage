@@ -52,8 +52,8 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, Runtime, WindowEvent};
 use windows_sys::Win32::Foundation::{POINT, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetCursorPos, GetWindowRect, SetWindowPos, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOPMOST,
-    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    GetCursorPos, GetWindowRect, SetWindowPos, SetWindowLongW, HWND_BOTTOM, HWND_NOTOPMOST,
+    HWND_TOPMOST, GWL_EXSTYLE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_EX_TOPMOST,
 };
 
 /// Hover tracker thread 是否已启动（idempotent 防重入）。
@@ -87,28 +87,54 @@ enum ZOrder {
     NotTopMost,
 }
 
-/// 把浮窗的 z-order 设到指定模式。直接走 `SetWindowPos`，绕开
-/// Tauri/tao 的 `set_always_on_top` 抽象层 —— 后者只能 toggle topmost
-/// 标志位，不能塞到 HWND_BOTTOM。
+/// 把浮窗的 z-order 设到指定模式。直接走 `SetWindowPos` + 直接设
+/// `WS_EX_TOPMOST` style bit，绕开 Tauri/tao 的 `set_always_on_top`
+/// 抽象层 —— 后者只能 toggle topmost 标志位，不能塞到 HWND_BOTTOM。
 ///
-/// **thread-safety**：`SetWindowPos` 是 Win32 kernel call，文档明确
-/// thread-safe，可从任意线程调（我们 tracker 线程直接调，不再走
-/// `app.run_on_main_thread` —— 上一轮现场 diag 证明 dispatch 队列被
-/// 挤，fire-and-forget 调用的实际生效频率掉到 ~20%）。
+/// **两路并发 re-assert**：
+/// - 路 A：`SetWindowPos(HWND_TOPMOST, ...)` —— 标准 z-order 操纵，
+///   内部会设 `WS_EX_TOPMOST` style bit 但走 SetWindowPos 的 cache
+///   flush 路径
+/// - 路 B：`SetWindowLongW(GWL_EXSTYLE, ex_style | WS_EX_TOPMOST)` + 紧跟
+///   `SetWindowPos` 强制 flush cache —— 直接改 style bit，**绕开
+///   SetWindowPos 的内部优化**
+///
+/// WebView2（怀疑的 demote 源）走的是修改 extended style 的路径，
+/// `SetWindowPos` 走的是 z-order API 路径，两者可能独立。如果
+/// WebView2 清 bit 但 SetWindowPos 的 cache 没及时刷新，单纯调
+/// `SetWindowPos` 拿不回 bit —— `SetWindowLongPtr` 直接改 style 是
+/// 最暴力的兜底。两条路并发，至少一条能赢。
+///
+/// **thread-safety**：`SetWindowPos` + `SetWindowLongW` 都是 Win32
+/// kernel call，文档明确 thread-safe。
 ///
 /// **flags**：
 /// - `SWP_NOMOVE` / `SWP_NOSIZE` —— 不动 rect，只换 z-order
-/// - `SWP_NOACTIVATE` —— 不抢焦点（用户视觉上看到浮窗在最上面，但
-///   焦点仍在他刚点的别处 app 上）
-/// - **不**带 `SWP_ASYNCWINDOWPOS` —— 让 OS 同步处理（post-thread
-///   异步的 `SetWindowPos` 在 owner 线程忙时会被排在 WebView2 IPC
-///   消息后面，本轮 16ms tick 实验改用 sync 拿更确定的"调用→生效"时序）
+/// - `SWP_NOACTIVATE` —— 不抢焦点
+/// - **不**带 `SWP_ASYNCWINDOWPOS` —— 同步处理拿确定时序
 unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
     let insert_after = match z {
         ZOrder::TopMost => HWND_TOPMOST,
         ZOrder::Bottom => HWND_BOTTOM,
         ZOrder::NotTopMost => HWND_NOTOPMOST,
     };
+
+    // 路 B：先直接设 style bit（盖住"有人清了 style 但 SetWindowPos
+    // 还没察觉"的情况）
+    if matches!(z, ZOrder::TopMost) {
+        // WS_EX_TOPMOST = 0x0008（u32 in windows-sys 0.59），
+        // SetWindowLongW 第三参是 i32（实际是 LONG_PTR 但小值 OK）
+        let new_style: i32 = WS_EX_TOPMOST as i32;
+        let prev = SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
+        if prev == 0 {
+            eprintln!(
+                "[musage-zorder-warn] SetWindowLongW(WS_EX_TOPMOST) returned 0 (hwnd={:?})",
+                hwnd
+            );
+        }
+    }
+
+    // 路 A：SetWindowPos 走标准 z-order 操纵 + flush 路 B 的 cache
     let ret = SetWindowPos(
         hwnd,
         insert_after,
@@ -118,8 +144,6 @@ unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
         0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
     );
-    // BOOL = i32：非零 = OS 接受请求，0 = OS 拒绝（罕见，比如 hwnd
-    // 已销毁）。对诊断期一秒值千金，不吞返回值。
     if ret == 0 {
         eprintln!(
             "[musage-zorder-warn] SetWindowPos({:?}) returned 0 (hwnd={:?})",

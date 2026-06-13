@@ -52,9 +52,9 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, Runtime, WindowEvent};
 use windows_sys::Win32::Foundation::{HWND as WIN_HWND, POINT, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, GetCursorPos, GetWindowRect, SetWindowPos, SetWindowLongW, WindowFromPoint,
-    GA_ROOT, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOPMOST, GWL_EXSTYLE, SWP_NOACTIVATE,
-    SWP_NOMOVE, SWP_NOSIZE, WS_EX_TOPMOST,
+    GetAncestor, GetCursorPos, GetWindowLongW, GetWindowRect, SetWindowLongW, SetWindowPos,
+    WindowFromPoint, GA_ROOT, GWL_EXSTYLE, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOPMOST,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_EX_TOPMOST,
 };
 
 /// Hover tracker thread 是否已启动（idempotent 防重入）。
@@ -123,13 +123,21 @@ unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
     // 路 B：先直接设 style bit（盖住"有人清了 style 但 SetWindowPos
     // 还没察觉"的情况）
     if matches!(z, ZOrder::TopMost) {
-        // WS_EX_TOPMOST = 0x0008（u32 in windows-sys 0.59），
-        // SetWindowLongW 第三参是 i32（实际是 LONG_PTR 但小值 OK）
-        let new_style: i32 = WS_EX_TOPMOST as i32;
+        // **必须 OR 不能替换** —— `WS_EX_TOPMOST = 0x0008` 只是 exstyle
+        // 32 位里的一个 bit。窗口正常 exstyle 还含 `WS_EX_LAYERED`（半透明）、
+        // `WS_EX_NOREDIRECTIONBITMAP`、WebView2 内部加的 bit 等。直接
+        // `SetWindowLongW(GWL_EXSTYLE, 0x0008)` 会**全 wipe 掉其它 bit**，
+        // 触发 Tauri 窗口恢复代码 re-assert 那些 bit 时隐式清掉
+        // `WS_EX_TOPMOST` —— 反而让 dual-path 自己的路 B 起反效果。
+        //
+        // 正确做法：先 GetWindowLongW 拿当前 exstyle，OR 上 `WS_EX_TOPMOST`，
+        // SetWindowLongW 写回 —— 保留所有 bit，只 flip 一个。
+        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        let new_style: i32 = ex_style | (WS_EX_TOPMOST as i32);
         let prev = SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
         if prev == 0 {
             eprintln!(
-                "[musage-zorder-warn] SetWindowLongW(WS_EX_TOPMOST) returned 0 (hwnd={:?})",
+                "[musage-zorder-warn] SetWindowLongW(ex|WS_EX_TOPMOST) returned 0 (hwnd={:?})",
                 hwnd
             );
         }

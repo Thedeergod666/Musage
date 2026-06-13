@@ -50,10 +50,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager, Runtime};
-use windows_sys::Win32::Foundation::{HWND as WIN_HWND, POINT, RECT};
+use windows_sys::Win32::Foundation::{POINT, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, GetCursorPos, GetWindowRect, SetWindowPos, WindowFromPoint, GA_ROOT, HWND_BOTTOM,
-    HWND_NOTOPMOST, HWND_TOPMOST, SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    GetCursorPos, GetWindowRect, SetWindowPos, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOPMOST,
+    SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
 };
 
 /// Hover tracker thread 是否已启动（idempotent 防重入）。
@@ -248,45 +248,35 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
 
 // ── 内部 ──
 
-/// Hit test：鼠标位置是否在浮窗**可见**（未被遮挡）区域内。
+/// Hit test：鼠标位置是否在浮窗 rect 内。
 ///
-/// 严格判定分两步：
-/// 1. 鼠标先得在浮窗 rect 内（`GetWindowRect` → `point_in_rect`）
-/// 2. 鼠标该点 topmost window 走 `GetAncestor(_, GA_ROOT)` 取根窗口
-///    后必须等于浮窗自己 —— 防止"被另一个 app 窗口盖住时误触发"。
+/// **之前**：rect 内 + `WindowFromPoint` + `GetAncestor(GA_ROOT)` 严格
+/// 判定 "topmost window 是浮窗自己"，对应 macOS 那套
+/// `windowNumberAtPoint` 行为。意图是"被其它 app 窗口盖住的区域不触发"，
+/// 但在 Win + 透明浮窗上有隐性 bug —— 用户报"点击别处窗口后浮窗
+/// 一直置底"，tracing 不到具体原因，但**症状明确是 WindowFromPoint
+/// 在 Win 上对 focus 在其它窗口的状态下行为不可靠**（可能返回某个
+/// 临时 topmost 窗口 / 不可见 overlay / 其它 app 的隐藏 rect，判
+/// false 后 tracker 永远不 raise）。
 ///
-/// **`GetAncestor(..., GA_ROOT)` 而不是裸比 hwnd 的原因**：Tauri 2 在
-/// Win 上把 WebView2 当浮窗的**子窗口** host（不是同一个 hwnd）。
-/// `WindowFromPoint` 拿到鼠标点的 topmost window 时，如果该点是 WebView2
-/// 渲染区域，返回的是 WebView2 的 hwnd，**不是浮窗的 hwnd**。直接比
-/// `topmost == hwnd_ptr` 永远 false —— "鼠标移到浮窗上 + 浮窗不切 topmost"
-/// 就是这个症状的精确表现。`GetAncestor(webview2_hwnd, GA_ROOT)` 沿
-/// parent 链爬到最顶层根窗口（也就是我们的浮窗本身），比 hwnd_ptr 就 match
-/// 上了。macOS 那套没这问题是因为 NSWindow 把 WebKit 渲染内嵌同一窗口，
-/// `windowNumberAtPoint` 拿到的就是浮窗自己的 number。
+/// **改成**：只用 `point_in_rect`。判断粒度从"topmost z-order 在
+/// 浮窗自己的根"放宽到"鼠标在浮窗屏幕 rect 内"。这是用户心智模型
+/// —— "我把鼠标移到浮窗能看见的地方"。代价：被其它窗口完全覆盖的
+/// 区域也会 raise（不过那种情况浮窗本来就看不见，用户不会去 hover）。
 ///
-/// 返回 `None` 表示本轮无法判定（窗口未上屏 / Win API 失败），caller
-/// continue 即可，下一轮再判。
+/// 跟 macOS 行为略有偏差（macOS 那套更严），但 Win 上以能 raise 为
+/// 第一优先级。返回 `None` 表示本轮无法判定（窗口未上屏 / Win API
+/// 失败），caller continue 即可。
 fn is_cursor_inside_floating<R: Runtime>(app: &AppHandle<R>) -> Option<bool> {
     let win = app.get_webview_window("floating")?;
-    // Tauri 2 `Window::hwnd()` 返回 `windows::Win32::Foundation::HWND`
-    // （`pub struct HWND(pub *mut c_void)`，来自 `windows` crate 0.61）。
-    // 我 Cargo.toml 里的 `windows-sys` 0.59 跟它是不同 crate，类型不互通。
-    // 透 `.0` 拿 raw pointer 喂 windows-sys 0.59 的 Win32 API 就行 —— 两者
-    // 底层都是 `*mut c_void`，只是 Rust 不让跨 crate 隐式转。
     let hwnd_t = win.hwnd().ok()?;
     if hwnd_t.0.is_null() {
         return None;
     }
-    // 浮窗自己的 raw pointer（同时是 GetAncestor 沿 parent 链爬到 GA_ROOT
-    // 的目标值）
     let our_hwnd: *mut core::ffi::c_void = hwnd_t.0;
 
-    // SAFETY:
-    // - GetCursorPos / GetWindowRect / WindowFromPoint / GetAncestor 都是
-    //   Win32 kernel call，文档明确 thread-safe，可从任意线程调。
-    // - POINT/RECT 是值类型，零初始化即合法。
-    // - hwnd 来自 webview_window，整个 app 生命周期有效。
+    // SAFETY: GetCursorPos / GetWindowRect 都是 Win32 kernel call，文档
+    // 明确 thread-safe，可从任意线程调。POINT/RECT 是值类型。
     unsafe {
         let mut pt: POINT = std::mem::zeroed();
         if GetCursorPos(&mut pt) == 0 {
@@ -296,24 +286,7 @@ fn is_cursor_inside_floating<R: Runtime>(app: &AppHandle<R>) -> Option<bool> {
         if GetWindowRect(our_hwnd, &mut rect) == 0 {
             return None;
         }
-        if !point_in_rect(pt, &rect) {
-            return Some(false);
-        }
-        // rect 内 → 取 topmost window 的**顶层根**（绕过 WebView2 子窗口
-        // 问题）再比对。WindowFromPoint 在 windows-sys 0.59 里返回 `*mut
-        // c_void`（HWND 是 type alias），直接喂 GetAncestor 的 `HWND` 参数
-        // （windows-sys 0.59 的 HWND = `*mut c_void`）即可。
-        let topmost: WIN_HWND = WindowFromPoint(pt);
-        if topmost.is_null() {
-            // 鼠标在屏幕外 / 极边缘 → 不是 inside
-            return Some(false);
-        }
-        let root = GetAncestor(topmost, GA_ROOT);
-        if root.is_null() {
-            // 兜底：取不到根就退到裸比（虽然不太可能）
-            return Some(topmost == our_hwnd);
-        }
-        Some(root == our_hwnd)
+        Some(point_in_rect(pt, &rect))
     }
 }
 

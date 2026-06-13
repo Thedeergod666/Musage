@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@9.15.4",
   "description": "MiniMax Token Plan 实时用量监控 - 桌面悬浮窗 + 系统托盘",
   "scripts": {
     "sync-version": "node scripts/sync-version.cjs",

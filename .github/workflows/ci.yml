@@ -9,8 +9,18 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# ── action 全部钉到 commit SHA,避免上游 major 升级突然改语义 ──
+# 更新时跑 `git ls-remote <repo> refs/tags/vX.Y.Z` 拿新 SHA,保留同 minor
+#   actions/checkout           v4.3.1 → 34e114876b0b11c390a56381ad16ebd13914f8d5
+#   actions/setup-node         v4.4.0 → 49933ea5288caeca8642d1e84afbd3f7d6820020
+#   pnpm/action-setup          v4.4.0 → fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+#   Swatinem/rust-cache        v2.9.1 → c19371144df3bb44fab255c43d04cbc2ab54d1c4
+#   actions/upload-artifact    v4.6.2 → ea165f8d65b6e75b540449e92b4886f43607fa02
+#   actions/download-artifact  v4.3.0 → d3f86a106a0bac45b974a628896c90dbdf5c8093
+#   dtolnay/rust-toolchain     stable → 29eef336d9b2848a0b548edc03f92a220660cdb8
+
 jobs:
-  # ── 前端：类型 + 编译 ──
+  # ── 前端:类型 + 编译 ──
   frontend:
     name: frontend (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -19,22 +29,23 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with: { version: 9 }
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        # 钉到 9.15.4,跟 package.json 的 packageManager 严格对齐,避免 corepack 报 mismatch
+        with: { version: 9.15.4 }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
           cache: "pnpm"
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build          # tsc + vite build，不出 bundle
-      - uses: actions/upload-artifact@v4
+      - run: pnpm build          # tsc + vite build,不出 bundle
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dist-${{ matrix.os }}
           path: dist
           retention-days: 3
 
-  # ── 后端：cargo check（不动 bundle，省时间）──
+  # ── 后端:cargo check(不动 bundle,省时间)──
   rust:
     name: rust (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -43,28 +54,46 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      # Tauri 2 在 Linux 链接 webkit2gtk 等系统库。ubuntu-latest runner 默认没装,
+      # 不装的话 cargo check 在解析 `tauri` 的 build script 时就死(< 20s 挂),
+      # 表现就是 CI 一直 fail 但本地 Win/macOS 没事。
+      - name: Install Linux system deps (Tauri 2)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libssl-dev
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          workspaces: src-tauri -> target
+          # v2 语法:只给路径,不要 v1 的 `path -> target` 箭头 —— 那个会被静默忽略
+          workspaces: src-tauri
       - name: cargo check
         working-directory: src-tauri
         run: cargo check --all-targets
         env:
-          # CI 上没必要开 macos-private-api，省 objc2 链接
+          # CI 上没必要开 macos-private-api,省 objc2 链接
           RUSTFLAGS: ""
       - name: cargo test (no-run)
         working-directory: src-tauri
         run: cargo test --no-run
 
-  # ── 前端构建产物在所有平台保持一致：对比 hash ──
+  # ── 前端构建产物在所有平台保持一致:对比 hash ──
   frontend-consistency:
     name: frontend consistency
     needs: frontend
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with: { pattern: dist-* }
       - name: Compare hashes
         run: |

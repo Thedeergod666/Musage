@@ -291,3 +291,38 @@ D:\Project\Musage\
 - CARGO_HOME 必须 cargo root
 - MinGW dlltool 必在 PATH
 - Tauri CSP + Vite assetsInlineLimit 兼容性（导致 Tavily/ZenMux 裂开）
+
+## GitHub Actions CI 配置（2026-06-14 修，从此绿了）
+
+`./github/workflows/ci.yml` 三个 job 跨 3 OS 跑（frontend × 3 + rust × 3 + frontend-consistency）。原配置从项目首推就**全红**，2026-06-14 一次性修了 4 个根因，**改动必须保留**：
+
+### 1. `actions/setup-node@v4` v4.4.0+ 要求 `packageManager`
+- 现象：frontend 三个 job 全死在 `Run actions/setup-node@v4` 步骤（4-9 秒）
+- 根因：v4.4.0+ 的 `cache: "pnpm"` 必须从 `package.json` 的 `packageManager` 字段读 pnpm 版本，没字段直接抛
+- 修法：`package.json` 加 `"packageManager": "pnpm@9.15.4"`
+- 配套：`pnpm/action-setup@v4` 的 `with.version` 也钉到 `9.15.4`，否则 corepack 报 mismatch
+
+### 2. `Swatinem/rust-cache@v2` 不认 v1 的 `path -> target` 语法
+- 现象：rust cache 步骤 0 秒 no-op，每次 cargo 都从零拉
+- 根因：v1 的 `workspaces: src-tauri -> target` 箭头语法在 v2 里被静默忽略
+- 修法：改成 `workspaces: src-tauri`（v2 语法只给路径）
+
+### 3. Tauri 2 在 Linux 缺系统库
+- 现象：rust (ubuntu) cargo check 18 秒内挂（没真正下载，连 build script 都跑不完）
+- 根因：`ubuntu-latest` runner 默认没装 `libwebkit2gtk-4.1-dev` / `libgtk-3-dev` / `libayatana-appindicator3-dev` / `librsvg2-dev`
+- 修法：rust job 第一步加 `apt-get install`（`if: matrix.os == 'ubuntu-latest'`），装 Tauri 2 官方推荐的系统库
+- 本地 Win/macOS 没事，但**所有 Linux 平台打包/调试前必装**这套（参考 Tauri 2 官方 prerequisites）
+
+### 4. 所有 action 钉到 commit SHA
+- 原配置用 `@v4` 浮标，2026-06 时已经落后 2-4 个 major（v6/v7/v8 都有了）
+- 改用 commit SHA + 注释里写明对应 tag（如 `actions/checkout@34e114876b... # v4.3.1`）
+- 升级流程：`git ls-remote https://github.com/<repo> refs/tags/vX.Y.Z` 拿新 SHA，同 minor 升 patch 不改 major
+- 改 SHA 时**只换 SHA 不动注释**的 tag 部分
+
+### 验证
+- 改完 push 一次，等 5-10 分钟看 7 个 job 全绿
+- macos 那个 `macos-private-api` 特性在 CI 上靠 `RUSTFLAGS: ""` 绕过，**Release 打包仍需打开**（本地 `pnpm tauri build` 走完整流程）
+
+### 后续维护
+- macOS / Windows rust job 在 fix 完后仍可能因别的 crate（`objc2` / `windows-sys` feature flags 等）挂——届时看 CI 日志的 `cargo check` 步骤最后 20 行，单独处理
+- 当前 pin 的 tag 全部是 2026-06 时点最新 v4.x / v2.x；如果将来想上 v5+/v6+ 等大版本，逐个 action 升级并跑全套 7 个 job 验证

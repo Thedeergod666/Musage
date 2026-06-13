@@ -210,7 +210,6 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
 
                 // (2) PinBottom 模式：切 z-order
                 if LEVEL_SWITCHING_ACTIVE.load(Ordering::SeqCst) {
-                    let app2 = app.clone();
                     if inside {
                         // **关键：inside 时每个 poll cycle 都断言 TopMost**。
                         // 之前用 last_inside != inside 做 edge trigger，
@@ -219,24 +218,30 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
                         // HWND_TOP）会把浮窗 z-order 重新打到 BOTTOM 一带，
                         // 我们的 tracker 不会 re-assert，浮窗就一直沉底。
                         // 改成 level trigger：每 50ms 断言一次。
-                        let _ = app.run_on_main_thread(move || {
-                            if let Some(win) = app2.get_webview_window("floating") {
-                                if let Ok(hwnd) = win.hwnd() {
-                                    unsafe { apply_z_order(hwnd.0, ZOrder::TopMost) };
-                                }
+                        //
+                        // **直接调 SetWindowPos，绕过 run_on_main_thread**：
+                        // 之前 fire-and-forget dispatch 在 50ms tick × 持续 inside
+                        // 几秒 = 几十上百个 closure 排队，主线程还要处理 WebView2
+                        // IPC / focus 事件 / 自己的 paint，dispatch 队列被挤，
+                        // SetWindowPos 实际生效的概率下降 —— 现场 diag 抓到
+                        // 10 个 inside=true 里有 6 个 topmost=false 案例就是
+                        // 证据。SetWindowPos 本身是 Win32 kernel call，文档
+                        // 明确 thread-safe，可以从任意线程调。
+                        if let Some(win) = app.get_webview_window("floating") {
+                            if let Ok(hwnd) = win.hwnd() {
+                                unsafe { apply_z_order(hwnd.0, ZOrder::TopMost) };
                             }
-                        });
+                        }
                     } else if last_inside {
                         // 鼠标刚离开：edge-trigger 切到 BOTTOM（真正的"置底"）。
                         // 离开后不再断言，让 OS 正常 z-order 接管。
+                        // 同样直接调 SetWindowPos（不通过 main thread dispatch）。
                         tracing::trace!("PinBottom: 鼠标离开浮窗 → z-order Bottom");
-                        let _ = app.run_on_main_thread(move || {
-                            if let Some(win) = app2.get_webview_window("floating") {
-                                if let Ok(hwnd) = win.hwnd() {
-                                    unsafe { apply_z_order(hwnd.0, ZOrder::Bottom) };
-                                }
+                        if let Some(win) = app.get_webview_window("floating") {
+                            if let Ok(hwnd) = win.hwnd() {
+                                unsafe { apply_z_order(hwnd.0, ZOrder::Bottom) };
                             }
-                        });
+                        }
                     }
                 }
 
@@ -292,17 +297,26 @@ fn is_cursor_inside_floating<R: Runtime>(app: &AppHandle<R>) -> Option<bool> {
             return None;
         }
         let inside = point_in_rect(pt, &rect);
-        diag_dump(pt, rect, inside);
+        diag_dump(our_hwnd, pt, rect, inside);
         Some(inside)
     }
 }
 
 static DIAG_LAST_DUMP: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
 
-/// `MUSAGE_HOVER_DIAG=1` 开启后每秒 eprintln 一次 hit test 现场。
+/// `MUSAGE_HOVER_DIAG=1` 开启后每秒 eprintln 一次 hit test + z-order 现场。
 /// 设计成单次调用不阻塞（env check + atomic load），生产路径零开销。
-fn diag_dump(pt: POINT, rect: RECT, inside: bool) {
+///
+/// z-order 字段（`topmost=`）：
+/// - `true`  = `GetWindowLong(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST` 非零，
+///             浮窗当前是 OS topmost
+/// - `false` = 同上为零，浮窗没 topmost（处于普通 z-order，可能是
+///             刚 set_always_on_top(false) 或 BOTTOM）
+/// - `?`     = `GetWindowLong` 失败（窗口已销毁/无效 hwnd）
+fn diag_dump(hwnd: *mut core::ffi::c_void, pt: POINT, rect: RECT, inside: bool) {
     use std::sync::atomic::Ordering;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetWindowLongW, GWL_EXSTYLE};
+
     if std::env::var_os("MUSAGE_HOVER_DIAG").is_none() {
         return;
     }
@@ -315,12 +329,25 @@ fn diag_dump(pt: POINT, rect: RECT, inside: bool) {
         return;
     }
     DIAG_LAST_DUMP.store(now_ms, Ordering::Relaxed);
+
+    // WS_EX_TOPMOST = 0x0008，是 Win 标记 topmost 窗口的 extended-style
+    // bit。GetWindowLongW(GWL_EXSTYLE) 返回扩展样式位，0x0008 bit 置位即
+    // 当前 topmost。
+    let topmost: String = unsafe {
+        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        if ex_style == 0 {
+            "?".to_string()
+        } else {
+            (ex_style & 0x0008 != 0).to_string()
+        }
+    };
+
     eprintln!(
-        "[musage-hover-diag] cursor=({}, {}) rect=[{}, {}, {}, {}] inside={} (rect: left={} top={} right={} bottom={})",
+        "[musage-hover-diag] cursor=({}, {}) rect=[{}, {}, {}, {}] inside={} topmost={}",
         pt.x, pt.y,
         rect.left, rect.top, rect.right, rect.bottom,
         inside,
-        rect.left, rect.top, rect.right, rect.bottom,
+        topmost,
     );
 }
 

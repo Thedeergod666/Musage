@@ -768,6 +768,7 @@ async function init() {
       floating_pin_mode?: FloatingPinMode;
       low_power_mode?: boolean;
       tavily_concise_mode?: boolean;
+      zenmux_payg_concise_mode?: boolean;
     }>("get_config");
     pinMode = cfg.floating_pin_mode ?? "pin_top";
     setLowPowerAttr(cfg.low_power_mode ?? false);

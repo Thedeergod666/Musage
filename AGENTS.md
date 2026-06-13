@@ -25,6 +25,7 @@
 | 异步 | tokio |
 | 日志 | tracing + tracing-subscriber |
 | 自动启动 | tauri-plugin-autostart |
+| 前端类型 | `@types/node` 20.x（vite.config.ts 用 `node:url`） |
 
 ## 关键 API（来自 ccswitch 源码逆向）
 
@@ -93,6 +94,9 @@
 ✅ **`cargo check` 0 错 0 警告**（10 个编译错误全部修复）
 ✅ **`cargo build` 通过**（修了一个 MinGW 16-bit ordinal 限制坑——见下）
 ✅ 占位 icons 已生成（32/128/ico/icns/128@2x/tray-base）
+✅ **首次 `pnpm tauri build` 通过**（2026-06-13，NSIS 安装包 2.5 MB）
+   - 路径：`src-tauri/target/release/bundle/nsis/Musage_0.1.0_x64-setup.exe`
+   - 裸 exe：`src-tauri/target/release/musage.exe`（6.7 MB）
 
 ⚠️ **坑：MinGW 工具链 16-bit 导出表上限**
 - 现象：`cdylib` 链接时 `ld.exe: error: export ordinal too large: 141874`
@@ -106,6 +110,23 @@
 - 联调真实 API（M1 验证，跑 `pnpm tauri dev` 后通过 dump 子命令探新 schema）
 - 设置面板对接真实 key
 - 选填 `assets/font.ttf`（目前托盘图标无百分比文字）
+
+## 构建与打包（2026-06-13 实测）
+
+完整 `pnpm tauri build` 跑通，记录几个坑给后续会话：
+
+1. **`@types/node` 必须装**：`vite.config.ts` 用了 `import ... from "node:url"`，没装 `tsc` 阶段就报 `TS2307`。`package.json` devDependencies 已加。
+2. **MSI 打包（WiX）走不通**：Tauri bundler 要从 `https://github.com/wixtoolset/wix3/releases/...` 下 WiX 3.14.1，国内网络 timeout / Peer disconnected 必现。**改用 NSIS 即可**：
+   ```bash
+   pnpm tauri build --bundles nsis
+   ```
+   NSIS 走 Tauri 自己的 binary-releases 仓库，下载稳定。**建议把 `tauri.conf.json` 的 `"targets": "all"` 改成 `"nsis"`** 固化下来，免得每次都先撞 WiX 再 fall back。
+3. **首发会下几百 MB Rust crates**：5–15 分钟正常，二次构建 ≤2 分钟。
+4. **不要在 dev 模式 (`pnpm tauri dev`) 测完就发**：dev 挂了 Vite dev server，朋友那边跑不起来。
+5. **占位图标 + 蓝色 icon**：是 AGENTS.md 第 95 行提的占位，不影响功能。
+6. **分发物**：
+   - 首选：`src-tauri/target/release/bundle/nsis/Musage_*_x64-setup.exe`（双击安装，自动处理 WebView2）
+   - 备用：裸 `src-tauri/target/release/musage.exe`（需朋友自己装 WebView2 Runtime）
 
 ## 文件结构
 

@@ -168,6 +168,23 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 
 **为什么 `?url` 单独不够**：Vite 5 对 SVG 默认是走 `?url` 行为的（也走外部文件），但 `assetsInlineLimit` 是**全局**的兜底。`?url` + `assetsInlineLimit: 0` 配合最稳，前者声明意图，后者兜底任何后续新增的小资源。
 
+## Win 端 PinBottom 模式 hover-raise 是 best-effort（2026-06-12 写，2026-06-13 调完）
+
+**症状**：PinBottom 模式下，鼠标 hover 进悬浮窗可见区时，浮窗**理应**临时置顶；hover 离开置底；hover 进被别处 app 盖住的区域**不**置顶（macOS-parity "未被遮挡" 语义）。
+
+**实测结果**：Win 11 上**做不到稳定 hover-raise**。
+- 16ms level-trigger（每 50ms 一次 re-assert `SetWindowPos(HWND_TOPMOST)`）在 best-effort 下命中率约 **3/7 inside=true 案例**（剩下 4/7 仍沉底）
+- 加 dual-path（`SetWindowLongW` + `SetWindowPos` 双路并发）没用，OS 持续 demote
+- 加 focus event hook（`WindowEvent::Focused(false)` 时 re-assert）也没用，OS demote 比 focus event 早或晚
+- 加 `WS_EX_NOACTIVATE` 想从源头断 demote-on-focus-loss 链，**反而让事情更糟**（1/9），撤回
+- 加 covered check（`WindowFromPoint + GetAncestor(GA_ROOT)`）能正确识别"被遮挡"，**macOS-parity "未被遮挡" 语义已经落地**，但跟 demote 是两个独立问题
+
+**根因**：Win32 z-order 是**平铺列表**，任何同进程模块（包括 WebView2 / Tauri 自己 re-assert exstyle 的窗口恢复路径）都能调 `SetWindowPos` 改 z-order。`HWND_TOPMOST` 只是一个位置，**不是** macOS 那套 NSWindow level —— 没法持久。OS 焦点调度 + DWM 合成时**持续**demote，没有 user space 路径能稳定压制。
+
+**逃生口**：tray 右键菜单"强制置顶浮窗（Win 逃生口）"走 `AllowSetForegroundWindow(ASFW_ANY) + SetForegroundWindow` —— **会**抢焦点，但**用户主动**点菜单触发的操作 UX 上可接受。代码 [src-tauri/src/tray.rs](src-tauri/src/tray.rs) 的 `"force_top_floating"` 分支。
+
+**建议**：如果将来想再压榨 hover-raise 成功率，唯一剩下的 user space 路径是 **WndProc subclass**（拦截 `WM_WINDOWPOSCHANGING` 在 OS 端把 demote 改回 HWND_TOPMOST），但侵入性大、可能跟 Tauri/tao 自己的 WndProc 打架，得严格测。**先 ship 上面那个能用的版本**。
+
 ## 文件结构（2026-06-13 实测，反映当前状态）
 
 ```

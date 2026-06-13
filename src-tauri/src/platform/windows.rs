@@ -91,27 +91,41 @@ enum ZOrder {
 /// Tauri/tao 的 `set_always_on_top` 抽象层 —— 后者只能 toggle topmost
 /// 标志位，不能塞到 HWND_BOTTOM。
 ///
-/// 必须在主线程调（`SetWindowPos` 影响窗口 Z 顺序，Win 通常要求）。
-/// 调用方（hover tracker / pin mode 设置）都通过 `app.run_on_main_thread`
-/// 派发；这里 unsafe 由调用方担保。
+/// **thread-safety**：`SetWindowPos` 是 Win32 kernel call，文档明确
+/// thread-safe，可从任意线程调（我们 tracker 线程直接调，不再走
+/// `app.run_on_main_thread` —— 上一轮现场 diag 证明 dispatch 队列被
+/// 挤，fire-and-forget 调用的实际生效频率掉到 ~20%）。
+///
+/// **flags**：
+/// - `SWP_NOMOVE` / `SWP_NOSIZE` —— 不动 rect，只换 z-order
+/// - `SWP_NOACTIVATE` —— 不抢焦点（用户视觉上看到浮窗在最上面，但
+///   焦点仍在他刚点的别处 app 上）
+/// - **不**带 `SWP_ASYNCWINDOWPOS` —— 让 OS 同步处理（post-thread
+///   异步的 `SetWindowPos` 在 owner 线程忙时会被排在 WebView2 IPC
+///   消息后面，本轮 16ms tick 实验改用 sync 拿更确定的"调用→生效"时序）
 unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
     let insert_after = match z {
         ZOrder::TopMost => HWND_TOPMOST,
         ZOrder::Bottom => HWND_BOTTOM,
         ZOrder::NotTopMost => HWND_NOTOPMOST,
     };
-    // windows-sys 0.59 的 SetWindowPos 第二参是 `HWND`（=`*mut c_void`），
-    // 不是 `Option<HWND>`（tao 那种 high-level `windows` crate 才包 Option），
-    // 直接传 raw pointer 就行。
-    let _ = SetWindowPos(
+    let ret = SetWindowPos(
         hwnd,
         insert_after,
         0,
         0,
         0,
         0,
-        SWP_ASYNCWINDOWPOS | SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
     );
+    // BOOL = i32：非零 = OS 接受请求，0 = OS 拒绝（罕见，比如 hwnd
+    // 已销毁）。对诊断期一秒值千金，不吞返回值。
+    if ret == 0 {
+        eprintln!(
+            "[musage-zorder-warn] SetWindowPos({:?}) returned 0 (hwnd={:?})",
+            z, hwnd
+        );
+    }
 }
 
 // ── 公开 API ──
@@ -192,9 +206,31 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
         .name("musage-hover-emitter".into())
         .spawn(move || {
             tracing::debug!("hover emitter 启动");
+            // **H1 验证 tick 频率**：之前 50ms（20Hz）现场数据 14 个
+            // inside=true 里有 10 个 topmost=false。Codex 报告假设
+            // 50ms tick 太稀疏，OS 在 re-assert 间隔里"塌"一次。
+            // 缩到 16ms（≈ 1 帧 @ 60Hz）做对比实验 —— 抖动消失 → H1
+            // 命中，把这行 freeze 当成 fix 留着；抖动还在 → H2 / H3，
+            // 下一步看 focus 事件。
+            const TICK: Duration = Duration::from_millis(16);
+
+            // tracker 心跳（H4 排除）：每 50s 一次，证明线程没 panic 死。
+            // 如果某天 stderr 看到 N 秒后没新心跳，说明 spawn 之后的
+            // closure panic 掉了 tracker —— 这种 silent death 之前完全
+            // 没有任何信号。
+            let mut tick_count: u64 = 0;
             let mut last_inside = false;
             loop {
-                std::thread::sleep(Duration::from_millis(50));
+                std::thread::sleep(TICK);
+                tick_count += 1;
+
+                if tick_count % 3125 == 0 {
+                    // ≈ 16ms × 3125 = 50s
+                    eprintln!(
+                        "[musage-tracker-heartbeat] alive, ticks={}, last_inside={}",
+                        tick_count, last_inside
+                    );
+                }
 
                 let Some(inside) = is_cursor_inside_floating(&app) else {
                     continue;

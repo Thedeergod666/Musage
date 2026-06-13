@@ -132,24 +132,12 @@ unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
         //
         // 正确做法：先 GetWindowLongW 拿当前 exstyle，OR 上 `WS_EX_TOPMOST`，
         // SetWindowLongW 写回 —— 保留所有 bit，只 flip 一个。
-        //
-        // **同时加 `WS_EX_NOACTIVATE`**：这个 bit 告诉 OS 浮窗**永远不接收
-        // 焦点**（点击浮窗不抢焦点、tab order 跳过它）。这样 OS 就没有
-        // "focus loss 时 demote topmost" 这条规则的触发条件 —— 浮窗永远
-        // "未失焦"，demote 链断在源头。
-        //
-        // 用户体验上：浮窗点击不抢焦是 PinBottom 模式**期望行为**——
-        // 鼠标 hover 临时置顶，鼠标离开置底，**全程不抢用户当前 app
-        // 的焦点**。PinTop 模式再加 WS_EX_NOACTIVATE 也 OK（浮窗本就
-        // 是数据展示，不接受输入焦点合理）。Normal 模式如果以后也想
-        // 保留此行为，0 成本支持。
         let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
-        let new_style: i32 =
-            ex_style | (WS_EX_TOPMOST as i32) | (WS_EX_NOACTIVATE as i32);
+        let new_style: i32 = ex_style | (WS_EX_TOPMOST as i32);
         let prev = SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
         if prev == 0 {
             eprintln!(
-                "[musage-zorder-warn] SetWindowLongW(ex|WS_EX_TOPMOST|WS_EX_NOACTIVATE) returned 0 (hwnd={:?})",
+                "[musage-zorder-warn] SetWindowLongW(ex|WS_EX_TOPMOST) returned 0 (hwnd={:?})",
                 hwnd
             );
         }

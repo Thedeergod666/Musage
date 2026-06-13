@@ -110,8 +110,24 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let hide_i = MenuItem::with_id(app, "hide", "隐藏悬浮窗", true, None::<&str>)?;
     let settings_i = MenuItem::with_id(app, "settings", "设置...", true, None::<&str>)?;
     let refresh_i = MenuItem::with_id(app, "refresh", "立即刷新", true, None::<&str>)?;
+    // **Win 端 z-order 逃生口**（2026-06-12）：hover-raise 的 16ms tick +
+    // dual-path + 焦点事件 hook 多管齐下，OS 还是持续 demote `WS_EX_TOPMOST`。
+    // 给用户一个**主动**操作：菜单里点 "强制置顶浮窗" 走
+    // `AllowSetForegroundWindow(ASFW_ANY) + SetForegroundWindow`，靠**抢前台**
+    // 把浮窗真顶到最上面（**会**抢焦点，但用户点菜单那一瞬间本来就在
+    // 操作我们 app，UX 可接受）。
+    let force_top_i = MenuItem::with_id(
+        app,
+        "force_top_floating",
+        "强制置顶浮窗（Win 逃生口）",
+        cfg!(target_os = "windows"),
+        None::<&str>,
+    )?;
     let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&show_i, &hide_i, &settings_i, &refresh_i, &quit_i])?;
+    let menu = Menu::with_items(
+        app,
+        &[&show_i, &hide_i, &settings_i, &refresh_i, &force_top_i, &quit_i],
+    )?;
 
     let _tray = TrayIconBuilder::with_id("main-tray")
         .tooltip("Musage - 加载中…")
@@ -146,6 +162,28 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                         tracing::warn!(error = %e, "手动刷新失败");
                     }
                 });
+            }
+            "force_top_floating" => {
+                // 走 Win 私有路径：先解锁前台锁定（ASFW_ANY 允许任何
+                // process 抢前台），再 SetForegroundWindow 抢前台。
+                // **会**把焦点抢过来 —— 这是用户**主动**点菜单触发的
+                // 操作，UX 上可接受（用户此刻在操作我们 app）。
+                if let Some(w) = app.get_webview_window("floating") {
+                    let _ = w.unminimize();
+                    let _ = w.show();
+                    if let Ok(hwnd) = w.hwnd() {
+                        use windows_sys::Win32::UI::WindowsAndMessaging::{
+                            AllowSetForegroundWindow, SetForegroundWindow,
+                        };
+                        unsafe {
+                            let _ = AllowSetForegroundWindow(0x00000001); // ASFW_ANY
+                            let _ = SetForegroundWindow(hwnd.0);
+                        }
+                    }
+                    // 同时把 WS_EX_TOPMOST 持久化（这样即便焦点之后
+                    // 丢失，level-trigger 也能在 16ms 内 re-assert）
+                    let _ = w.set_always_on_top(true);
+                }
             }
             "quit" => {
                 app.exit(0);

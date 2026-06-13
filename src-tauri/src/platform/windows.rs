@@ -267,6 +267,11 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
 /// 跟 macOS 行为略有偏差（macOS 那套更严），但 Win 上以能 raise 为
 /// 第一优先级。返回 `None` 表示本轮无法判定（窗口未上屏 / Win API
 /// 失败），caller continue 即可。
+///
+/// **诊断 hook**：`MUSAGE_HOVER_DIAG=1` 环境变量打开时，每秒一次
+/// eprintln 鼠标位置 + 浮窗 rect + hit test 结果，方便现场抓"浮窗
+/// focus 丢失后为什么 inside 还是 false"。生产环境零开销（一个 env
+/// check + 1 个 atomic load）。
 fn is_cursor_inside_floating<R: Runtime>(app: &AppHandle<R>) -> Option<bool> {
     let win = app.get_webview_window("floating")?;
     let hwnd_t = win.hwnd().ok()?;
@@ -286,8 +291,37 @@ fn is_cursor_inside_floating<R: Runtime>(app: &AppHandle<R>) -> Option<bool> {
         if GetWindowRect(our_hwnd, &mut rect) == 0 {
             return None;
         }
-        Some(point_in_rect(pt, &rect))
+        let inside = point_in_rect(pt, &rect);
+        diag_dump(pt, rect, inside);
+        Some(inside)
     }
+}
+
+static DIAG_LAST_DUMP: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+/// `MUSAGE_HOVER_DIAG=1` 开启后每秒 eprintln 一次 hit test 现场。
+/// 设计成单次调用不阻塞（env check + atomic load），生产路径零开销。
+fn diag_dump(pt: POINT, rect: RECT, inside: bool) {
+    use std::sync::atomic::Ordering;
+    if std::env::var_os("MUSAGE_HOVER_DIAG").is_none() {
+        return;
+    }
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let last = DIAG_LAST_DUMP.load(Ordering::Relaxed);
+    if now_ms - last < 1000 {
+        return;
+    }
+    DIAG_LAST_DUMP.store(now_ms, Ordering::Relaxed);
+    eprintln!(
+        "[musage-hover-diag] cursor=({}, {}) rect=[{}, {}, {}, {}] inside={} (rect: left={} top={} right={} bottom={})",
+        pt.x, pt.y,
+        rect.left, rect.top, rect.right, rect.bottom,
+        inside,
+        rect.left, rect.top, rect.right, rect.bottom,
+    );
 }
 
 #[inline]

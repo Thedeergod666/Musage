@@ -26,6 +26,12 @@ export default defineConfig({
     target: "esnext",
     minify: "esbuild",
     sourcemap: false,
+    // 关掉 Vite 默认的 assetsInlineLimit(<4KB 资源自动内联成 data: URI)。
+    // Tauri CSP `default-src 'self'` 不放行 data:, <img src="data:..."> 会被 block
+    // → 浮窗里的 tavily / zenmux 小 SVG logo 显示成 broken icon。
+    // 全部强制走外部文件后, dev (Vite dev server) 和 prod (Tauri bundled assets)
+    // 行为一致, 都从 /assets/xxx.svg 取。
+    assetsInlineLimit: 0,
     // **多页入口**：index.html（浮窗）+ settings.html（设置）。
     // 不加这个，prod build 只把 index.html 当 entry 处理，settings.html
     // 不会被编译 / 不会复制到 dist/，release 包打开设置窗会 404。

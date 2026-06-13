@@ -15,8 +15,8 @@ import { checkForUpdate, onUpdateState } from "./updater";
 import minimaxLogo from "./assets/minimax-logo.png";
 import deepseekLogo from "./assets/deepseek-icon.png";
 import xiaomimimoLogo from "./assets/xiaomimimo-logo.png";
-import tavilyLogo from "./assets/tavily-logo.svg";
-import zenmuxLogo from "./assets/zenmux-logo.svg";
+import tavilyLogo from "./assets/tavily-logo.svg?url";
+import zenmuxLogo from "./assets/zenmux-logo.svg?url";
 import openrouterLogo from "./assets/openrouter-logo.png";
 import "./styles.css";
 

@@ -50,10 +50,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager, Runtime, WindowEvent};
-use windows_sys::Win32::Foundation::{POINT, RECT};
+use windows_sys::Win32::Foundation::{HWND as WIN_HWND, POINT, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetCursorPos, GetWindowRect, SetWindowPos, SetWindowLongW, HWND_BOTTOM, HWND_NOTOPMOST,
-    HWND_TOPMOST, GWL_EXSTYLE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_EX_TOPMOST,
+    GetAncestor, GetCursorPos, GetWindowRect, SetWindowPos, SetWindowLongW, WindowFromPoint,
+    GA_ROOT, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOPMOST, GWL_EXSTYLE, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, WS_EX_TOPMOST,
 };
 
 /// Hover tracker thread 是否已启动（idempotent 防重入）。
@@ -401,8 +402,9 @@ fn is_cursor_inside_floating<R: Runtime>(app: &AppHandle<R>) -> Option<bool> {
     }
     let our_hwnd: *mut core::ffi::c_void = hwnd_t.0;
 
-    // SAFETY: GetCursorPos / GetWindowRect 都是 Win32 kernel call，文档
-    // 明确 thread-safe，可从任意线程调。POINT/RECT 是值类型。
+    // SAFETY: GetCursorPos / GetWindowRect / WindowFromPoint / GetAncestor
+    // 都是 Win32 kernel call，文档明确 thread-safe，可从任意线程调。
+    // POINT/RECT 是值类型，零初始化即合法。
     unsafe {
         let mut pt: POINT = std::mem::zeroed();
         if GetCursorPos(&mut pt) == 0 {
@@ -412,7 +414,37 @@ fn is_cursor_inside_floating<R: Runtime>(app: &AppHandle<R>) -> Option<bool> {
         if GetWindowRect(our_hwnd, &mut rect) == 0 {
             return None;
         }
-        let inside = point_in_rect(pt, &rect);
+        if !point_in_rect(pt, &rect) {
+            diag_dump(our_hwnd, pt, rect, false);
+            return Some(false);
+        }
+        // macOS-parity "未被遮挡" 判定：rect 内 + 该点 topmost window
+        // 沿 parent 链爬到顶层根后等于浮窗自己 → 算 "inside"。
+        //
+        // **为什么现在能加回来（之前 commit e9e7f87 拿掉过这条）**：
+        // 之前"focus 切走后浮窗一直置底"bug 的真凶是 WebView2 / OS 持续
+        // 清 `WS_EX_TOPMOST` style bit（commit 79dbdbc 双路 fix 修好了）。
+        // 当时拿掉 `WindowFromPoint` 检查是因为"浮窗根本没 topmost"导致
+        // `WindowFromPoint` 返回别的窗口的 hwnd，check 永远 false。**根
+        // 因是 `WS_EX_TOPMOST` 被清**，不是 `WindowFromPoint` 本身错。
+        //
+        // 双路 fix 之后浮窗持续 topmost，`WindowFromPoint` 在浮窗可见
+        // 区域正确返回 WebView2（浮窗的子窗口），`GetAncestor(_, GA_ROOT)`
+        // 爬到浮窗根 = match。被其它 app 完全覆盖的区域 `WindowFromPoint`
+        // 返回那个 app 的 hwnd（不是我们浮窗）→ `GetAncestor` 爬根是别
+        // app → 不 match → false → 不 raise，浮窗保持被覆盖的常态。
+        let topmost: WIN_HWND = WindowFromPoint(pt);
+        if topmost.is_null() {
+            diag_dump(our_hwnd, pt, rect, false);
+            return Some(false);
+        }
+        let root = GetAncestor(topmost, GA_ROOT);
+        let inside = if root.is_null() {
+            // 兜底：取不到根就退到裸比（虽然不太可能）
+            topmost == our_hwnd
+        } else {
+            root == our_hwnd
+        };
         diag_dump(our_hwnd, pt, rect, inside);
         Some(inside)
     }

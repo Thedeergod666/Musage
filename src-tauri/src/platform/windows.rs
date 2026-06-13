@@ -49,11 +49,11 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use tauri::{AppHandle, Emitter, Manager, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime, WindowEvent};
 use windows_sys::Win32::Foundation::{POINT, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetWindowRect, SetWindowPos, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOPMOST,
-    SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
 };
 
 /// Hover tracker thread 是否已启动（idempotent 防重入）。
@@ -196,12 +196,68 @@ pub fn set_auto_hide_in_fullscreen<R: Runtime>(
 ) {
 }
 
-/// 启动 hover emitter 线程。idempotent —— 第二次调用立即返回。
+/// 启动 hover emitter 线程 + 焦点事件 hook。idempotent —— 第二次调用立即返回。
 /// 由 lib.rs setup() 调一次即可。启动后整个 app 生命周期不停。
+///
+/// **两路并进切 z-order**：
+/// - **路 1**（`start_hover_emitter` 主线程）：16ms tick，每 tick 重新
+///   `SetWindowPos(TOPMOST)`，盖住 OS 持续 demote。
+/// - **路 2**（焦点事件 hook，主线程）：`WindowEvent::Focused(false)`
+///   一帧就 re-assert，赶在 OS demote 把状态沉淀前抢回来。
+///
+/// 仅路 1 不够（16ms 已经验证 H1 证伪），加路 2 是 H3 修法。
 pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
     if TRACKER_RUNNING.swap(true, Ordering::SeqCst) {
         return; // 已在跑
     }
+
+    // ── 路 2：焦点事件 hook（H3 修法） ──
+    //
+    // Codex 报告 H3：WebView2 / OS 在 focus loss 时把 `WS_EX_TOPMOST`
+    // 标志位清掉。SetWindowPos 调用本身被 OS 接受（ret != 0），但
+    // style bit 在几 ms 内被覆盖回去 —— 这跟 H1（OS demote 50ms 内）
+    // 是不一样的 race。
+    //
+    // 16ms tick **盖不住**这个 race：focus event 触发后 OS 同步清
+    // bit，下一个 16ms tick 才 re-assert → 16ms 期间窗口是 BOTTOM。
+    // 修：listen 焦点变化事件，**同一帧**就 re-assert。这条路径
+    // 走主线程（window event 派发在主线程），可以保证 SetWindowPos
+    // 在 focus 事件处理栈内同步完成。
+    if let Some(win) = app.get_webview_window("floating") {
+        let app2 = app.clone();
+        win.on_window_event(move |event| {
+            if let WindowEvent::Focused(false) = event {
+                if !LEVEL_SWITCHING_ACTIVE.load(Ordering::SeqCst) {
+                    return; // PinTop / Normal 模式不需要 hover re-assert
+                }
+                if let Some(win) = app2.get_webview_window("floating") {
+                    if let Ok(hwnd) = win.hwnd() {
+                        // 看当前 cursor 位置：in rect → TopMost，out → Bottom
+                        let cursor_in_rect = unsafe {
+                            let mut pt: POINT = std::mem::zeroed();
+                            let mut rect: RECT = std::mem::zeroed();
+                            if GetCursorPos(&mut pt) != 0
+                                && GetWindowRect(hwnd.0, &mut rect) != 0
+                            {
+                                point_in_rect(pt, &rect)
+                            } else {
+                                false
+                            }
+                        };
+                        let z = if cursor_in_rect {
+                            ZOrder::TopMost
+                        } else {
+                            ZOrder::Bottom
+                        };
+                        tracing::trace!(?z, "focus loss → re-assert z-order");
+                        unsafe { apply_z_order(hwnd.0, z) };
+                    }
+                }
+            }
+        });
+    }
+
+    // ── 路 1：hover tracker 线程（H1 + 安全网） ──
     std::thread::Builder::new()
         .name("musage-hover-emitter".into())
         .spawn(move || {

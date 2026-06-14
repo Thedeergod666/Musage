@@ -120,7 +120,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let force_top_i = MenuItem::with_id(
         app,
         "force_top_floating",
-        "强制置顶浮窗（Win 逃生口）",
+        "置顶一下",
         cfg!(target_os = "windows"),
         None::<&str>,
     )?;

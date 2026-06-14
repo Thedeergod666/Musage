@@ -1,22 +1,19 @@
 <svg width="160" height="160" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
   <rect width="160" height="160" rx="32" fill="#0A0B0F"/>
+  <!-- 蓝渐变底 -->
   <circle cx="80" cy="80" r="56" fill="url(#kimi-grad)"/>
-  <!-- 月牙（crescent）：clip-path 把矩形裁成圆形，再用同色"遮挡圆"制造缺口 -->
+  <!-- 月牙 (crescent)：两个圆 + even-odd fill rule 切出月牙 -->
+  <!-- 外圆 cx=72, r=26 → 左月主体；内圆 cx=82, r=22 向右偏移 → 切出右侧缺口 -->
+  <path fill-rule="evenodd" fill="#FFFFFF" d="
+    M 72 54 a 26 26 0 1 0 0.001 0 z
+    M 82 58 a 22 22 0 1 0 0.001 0 z
+  "/>
+  <!-- 一颗小星点缀 -->
+  <circle cx="125" cy="40" r="3.5" fill="#FFFFFF" opacity="0.85"/>
   <defs>
-    <clipPath id="moon-clip">
-      <circle cx="76" cy="80" r="24"/>
-    </clipPath>
     <linearGradient id="kimi-grad" x1="24" y1="24" x2="136" y2="136" gradientUnits="userSpaceOnUse">
       <stop stop-color="#5AC8FA"/>
       <stop offset="1" stop-color="#4A90E2"/>
     </linearGradient>
   </defs>
-  <g clip-path="url(#moon-clip)">
-    <rect x="50" y="55" width="60" height="50" fill="#FFFFFF"/>
-    <circle cx="86" cy="80" r="22" fill="url(#kimi-grad)"/>
-  </g>
-  <!-- 三颗小星点缀 -->
-  <circle cx="120" cy="42" r="3" fill="#FFFFFF" opacity="0.9"/>
-  <circle cx="40" cy="120" r="2.5" fill="#FFFFFF" opacity="0.7"/>
-  <circle cx="125" cy="118" r="2" fill="#FFFFFF" opacity="0.6"/>
 </svg>

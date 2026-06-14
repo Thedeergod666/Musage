@@ -1,13 +1,9 @@
 <svg width="160" height="160" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
   <rect width="160" height="160" rx="32" fill="#0A0B0F"/>
-  <!-- 国区：紫蓝渐变圆角方块 + 白色 Z 标记（与 z.ai 官方 logo 同款，区分国际版黑色底） -->
+  <!-- 紫蓝渐变方块 -->
   <rect x="32" y="32" width="96" height="96" rx="22" fill="url(#zhipu-grad)"/>
-  <!-- Z.ai logo 原始 viewBox 是 30x30；放大 2.6x 得 78x78，居中到 (80,80) → translate(41, 41) -->
-  <g transform="translate(41 41) scale(2.6)">
-    <path d="M15.47,7.1l-1.3,1.85c-0.2,0.29-0.54,0.47-0.9,0.47h-7.1V7.09C6.16,7.1,15.47,7.1,15.47,7.1z" fill="#FFFFFF"/>
-    <polygon fill="#FFFFFF" points="24.3,7.1 13.14,22.91 5.7,22.91 16.86,7.1"/>
-    <path d="M14.53,22.91l1.31-1.86c0.2-0.29,0.54-0.47,0.9-0.47h7.09v2.33H14.53z" fill="#FFFFFF"/>
-  </g>
+  <!-- "智" 字：白字 + 紫蓝描边，centered via text-anchor -->
+  <text x="80" y="105" text-anchor="middle" font-family="-apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="58" font-weight="800" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0.5">智</text>
   <defs>
     <linearGradient id="zhipu-grad" x1="32" y1="32" x2="128" y2="128" gradientUnits="userSpaceOnUse">
       <stop stop-color="#7B61FF"/>

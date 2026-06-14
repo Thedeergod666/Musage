@@ -43,6 +43,12 @@ pub fn start(app: AppHandle) {
         loop {
             tokio::time::sleep(Duration::from_secs(1)).await;
             let cfg = app.state::<AppState>().config.read().await.clone();
+            // 拿 backoff state 的 read guard（在下面循环结束前不释放），
+            // `next_interval_secs` 是 &self 方法，guard deref 即可。
+            // 注意：先 let-bind state，避开"app.state() 是临时值"的借用问题
+            // (State<'_> 在 .await 之后被 drop，guard 借用会失效)
+            let state = app.state::<AppState>();
+            let backoff_guard = state.backoff.read().await;
             let now = Instant::now();
 
             for src in builtin_sources() {
@@ -50,12 +56,14 @@ pub fn start(app: AppHandle) {
                 if !cfg.is_enabled_id(id) {
                     continue;  // 用户关了，不拉
                 }
-                let interval_secs = cfg
+                let cfg_interval_secs = cfg
                     .providers
                     .get(id)
                     .and_then(|p| p.refresh_interval_secs)
                     .unwrap_or(cfg.refresh_interval_secs)
                     .max(10);
+                // 退避后的实际间隔：优先用 backoff 的，没退避用 cfg 默认
+                let interval_secs = backoff_guard.next_interval_secs(id, cfg_interval_secs);
 
                 let entry = next_fetch.entry(id.to_string()).or_insert(now);
                 if now < *entry {

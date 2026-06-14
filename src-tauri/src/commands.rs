@@ -617,7 +617,7 @@ pub fn apply_pin_mode_to_window(app: &AppHandle, mode: FloatingPinMode) {
 pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnapshot, String> {
     // 按 cfg 准备好 sources（避免在 spawn 闭包里 .await 持锁）
     let sources = builtin_sources();
-    let mut tasks: Vec<(String, tokio::task::JoinHandle<Result<ProviderSnapshot, String>>)> =
+    let mut tasks: Vec<(String, u64, tokio::task::JoinHandle<Result<ProviderSnapshot, String>>)> =
         Vec::new();
 
     for src in &sources {
@@ -626,6 +626,14 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
         if !cfg.is_enabled_id(id) {
             continue;
         }
+
+        // 默认间隔（per-provider override 优先）—— backoff 写入时用
+        let default_interval_secs = cfg
+            .providers
+            .get(id)
+            .and_then(|p| p.refresh_interval_secs)
+            .unwrap_or(cfg.refresh_interval_secs)
+            .max(10);
 
         // 1. 同步加载凭据（避免在 tokio::spawn 里 await I/O）
         let creds_res = config::load_credential_for_id(id);
@@ -650,35 +658,50 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                             Err(e) => Err(e.message),  // message 给前端看，kind 由 classify 还原
                         }
                     });
-                tasks.push((id_owned, task));
+                tasks.push((id_owned, default_interval_secs, task));
             }
             Ok(None) => {
                 let id_owned = id.to_string();
                 let task = tokio::spawn(async move {
                     Err("未配置凭据（设置面板填入）".to_string())
                 });
-                tasks.push((id_owned, task));
+                tasks.push((id_owned, default_interval_secs, task));
             }
             Err(e) => {
                 let id_owned = id.to_string();
                 let task = tokio::spawn(async move {
                     Err(format!("读 keys.json 失败: {e}"))
                 });
-                tasks.push((id_owned, task));
+                tasks.push((id_owned, default_interval_secs, task));
             }
         }
     }
 
     // 收集所有结果（按 builtin_sources 顺序，前端卡顺序稳定）
     let mut snap = QuotaSnapshot::default();
-    for (id, task) in tasks {
+    for (id, default_interval_secs, task) in tasks {
         match task.await {
-            Ok(Ok(s)) => snap.providers.push(s),
+            Ok(Ok(s)) => {
+                // 写 backoff：成功 → reset 退避状态
+                {
+                    let state = app.state::<AppState>();
+                    let mut backoff = state.backoff.write().await;
+                    backoff.record(&id, &s, default_interval_secs);
+                }
+                snap.providers.push(s);
+            }
             Ok(Err(e)) => {
                 let provider = provider_from_id(&id);
                 let kind = classify_error_message(&e);
                 log_provider_error(app, &id, kind, &e);
-                snap.providers.push(ProviderSnapshot::empty_error(provider, &id, kind, e));
+                let err_snap = ProviderSnapshot::empty_error(provider, &id, kind, e);
+                // 写 backoff：失败（如果 kind 属于可退避类）→ 翻倍
+                {
+                    let state = app.state::<AppState>();
+                    let mut backoff = state.backoff.write().await;
+                    backoff.record(&id, &err_snap, default_interval_secs);
+                }
+                snap.providers.push(err_snap);
             }
             Err(join_err) => {
                 let provider = provider_from_id(&id);
@@ -782,6 +805,20 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
             ProviderSnapshot::empty_error(provider, id, kind, msg)
         }
     };
+
+    // 写 backoff：让 poller 下次调度知道这个 provider 是不是该延长间隔
+    // (失败 → 翻倍；成功 → reset)。详见 `poller_backoff::BackoffState::record`。
+    let default_interval_secs = cfg
+        .providers
+        .get(id)
+        .and_then(|p| p.refresh_interval_secs)
+        .unwrap_or(cfg.refresh_interval_secs)
+        .max(10);
+    {
+        let state = app.state::<AppState>();
+        let mut backoff = state.backoff.write().await;
+        backoff.record(id, &provider_snap, default_interval_secs);
+    }
 
     // 替换 in-memory snapshot 里对应那条
     let state = app.state::<AppState>();

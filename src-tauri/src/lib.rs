@@ -17,6 +17,7 @@ mod config;
 mod logstore;
 mod platform;
 mod poller;
+mod poller_backoff;
 mod providers;
 mod tray;
 
@@ -26,6 +27,7 @@ use tokio::sync::RwLock;
 
 use crate::config::AppConfig;
 use crate::logstore::LogStore;
+use crate::poller_backoff::BackoffState;
 use crate::providers::{builtin_sources, QuotaSnapshot};
 use crate::commands::apply_pin_mode_to_window;
 
@@ -34,6 +36,11 @@ pub struct AppState {
     pub config: Arc<RwLock<AppConfig>>,
     /// 应用运行日志（错误/警告/信息），详见 [`crate::logstore`]
     pub log: Arc<LogStore>,
+    /// Poller per-provider 指数退避状态。
+    /// - 写：每次 fetch 完（`refresh_inner` / `refresh_single_inner`）
+    /// - 读：poller 调度 tick 时算下次间隔
+    /// 详见 [`crate::poller_backoff`]
+    pub backoff: Arc<RwLock<BackoffState>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -179,6 +186,7 @@ pub fn run() {
             config: Arc::new(RwLock::new(AppConfig::default())),
             // 从磁盘 reload 最近 200 条 —— 启动时一次性 IO，不在热路径
             log: Arc::new(LogStore::load_from_disk()),
+            backoff: Arc::new(RwLock::new(BackoffState::new())),
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_snapshot,

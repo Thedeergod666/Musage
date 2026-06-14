@@ -642,17 +642,22 @@ function barWidth(util: number | null | undefined): number {
 function formatResetWithCountdown(ms: number, prefix: string): string {
   const remainMs = ms - Date.now();
   const dt = new Date(ms);
-  // 重置时间刚好是本地午夜 00:00 → 显示日期比 "00:00" 直观得多
-  //（典型场景：MiniMax 周限额每天本地 00:00 重置，看 80h 后还是 "00:00"
-  // 数不出日子）。日期也走本地，跟 getHours()/getMinutes() 一致 —— 用户
-  // 看到的是自己时区里的日期。
-  const isMidnight = dt.getHours() === 0 && dt.getMinutes() === 0;
-  const time = isMidnight
-    ? `${dt.getMonth() + 1}-${dt.getDate()}`
-    : `${pad2(dt.getHours())}:${pad2(dt.getMinutes())}`;
+  // 剩余 > 1 天 → 显示日期 + "(N天)"，数日子比读 321h30m 直观
+  //（典型：Xiaomi 套餐按月重置；MiniMax 周限额是滚动 7 天，跨日也用日期更清楚）
+  // 剩余 < 1 天 → 显示时分 + "(Nh Mm)"，精度需要到分钟
+  // 跨日边界：> 1 day 用日期，< 1 day 用时分 —— 跟用户对"剩多久"的认知一致
+  // 日期走本地时区，跟 getHours()/getMinutes() 一致（用户看的是自己时区里的时间）
+  const days = Math.floor(remainMs / 86400000);
   if (remainMs <= 0) {
-    return `${prefix} ${time}（已重置）`;
+    const label = `${dt.getMonth() + 1}-${dt.getDate()}`;
+    return `${prefix} ${label}（已重置）`;
   }
+  if (days >= 1) {
+    const label = `${dt.getMonth() + 1}-${dt.getDate()}`;
+    return `${prefix} ${label}（${days}天）`;
+  }
+  // < 1 天：显示时分 + "Nh Mm" 倒计时
+  const time = `${pad2(dt.getHours())}:${pad2(dt.getMinutes())}`;
   const minutes = Math.floor(remainMs / 60000);
   if (minutes < 60) {
     return `${prefix} ${time}（${minutes} 分钟后）`;

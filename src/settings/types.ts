@@ -120,6 +120,15 @@ export interface AppConfig {
   schema_overrides?: Record<string, ProviderOverrides>;
   /// v0.6+ 托盘图标样式（Rust 端 TrayIconStyle enum）
   tray_icon_style?: "logo" | "bars" | "percent";
+  /// 4 档色阈值分界（从小到大，3 个分界点切出 4 段：
+  /// `[..t0]`=ok 绿 / `[t0..t1]`=cyan 青 / `[t1..t2]`=warn 黄 /
+  /// `[t2..]`=alert 红）。默认 [50, 70, 88]。老 config.json 缺这字段
+  /// 时 Rust 端用默认值，前端亦然。
+  color_thresholds?: [number, number, number];
+  /// 钱包/余额行（r.remaining 单独存在的那种）的"低额高亮"阈值。
+  /// null/undefined = 关闭（按现状显示蓝色 / 默认色）；
+  /// 数字 = remaining < 该值时把行翻成 alert 红。
+  wallet_alert_threshold?: number | null;
 }
 
 export interface ProviderSnapshot {

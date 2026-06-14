@@ -222,6 +222,7 @@ pub fn run() {
             commands::set_low_power_mode,
             commands::set_auto_hide_in_fullscreen,
             commands::set_tray_icon_style,
+            commands::set_display_thresholds,
             commands::quit_app,
             commands::get_app_version,
             commands::get_recent_logs,

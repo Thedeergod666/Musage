@@ -153,10 +153,34 @@ pub struct AppConfig {
     /// 缺字段时走 `Percent`（也是新装用户默认值）。
     #[serde(default)]
     pub tray_icon_style: TrayIconStyle,
+    /// 4 档色阈值（用户可调）。从小到大排列 3 个分界点，把 0..100 切成
+    /// 4 段 [ok / cyan / warn / alert]。默认 [50, 70, 88]（与 v0.6 之前的
+    /// main.ts::colorClass 硬编码值保持一致，老 config.json 缺这字段时
+    /// 行为不变）。
+    ///
+    /// 校验约束：`0 < t0 < t1 < t2 < 100`；set_display_thresholds / save_config
+    /// 两路都做。
+    #[serde(default = "default_color_thresholds")]
+    pub color_thresholds: [u8; 3],
+    /// 钱包/余额行（`r.remaining != null` 且无 utilization / used-total 那
+    /// 种）的"低额高亮"阈值。`None` = 关闭，按现状显示（蓝色 / 默认色）；
+    /// `Some(n)` = 当 remaining < n 时把该行翻成 alert 红。
+    ///
+    /// 单纯按数值比较，**不看 unit**：用户按自己 provider 的余额量级调
+    /// （DeepSeek 余额常 < 10 → 设 2；ZenMux/OpenRouter 余额大 → 设 10 / 50）。
+    /// 不区分"钱"和"积分"，避免 unit 字段五花八门（"¥"/"￥"/"CNY"/"credits"
+    /// 等等）的脆弱字符串匹配。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallet_alert_threshold: Option<f64>,
 }
 
 const fn tavily_concise_default() -> bool {
     true
+}
+
+/// 默认色阈值 [50, 70, 88]（与老 main.ts::colorClass 硬编码值一致）
+const fn default_color_thresholds() -> [u8; 3] {
+    [50, 70, 88]
 }
 
 const fn default_show_in_tray_on_close() -> bool {
@@ -261,6 +285,8 @@ impl Default for AppConfig {
             provider_order: Vec::new(),
             schema_overrides: BTreeMap::new(),
             tray_icon_style: TrayIconStyle::default(),
+            color_thresholds: default_color_thresholds(),
+            wallet_alert_threshold: None,
         }
     }
 }

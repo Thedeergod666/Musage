@@ -141,6 +141,17 @@ export async function setTrayIconStyle(
   await invoke("set_tray_icon_style", { style });
 }
 
+/** 即时更新"显示阈值"：色档分界 + 钱包余额告警阈值。即时生效。 */
+export async function setDisplayThresholds(
+  colorThresholds: [number, number, number],
+  walletAlertThreshold: number | null,
+): Promise<void> {
+  await invoke("set_display_thresholds", {
+    colorThresholds,
+    walletAlertThreshold,
+  });
+}
+
 export async function setProviderEnabled(
   id: string,
   enabled: boolean,

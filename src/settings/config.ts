@@ -247,6 +247,11 @@ export async function saveConfig() {
     floating_pin_mode: pinMode,
     low_power_mode: ($("#low-power-mode") as HTMLInputElement).checked,
     auto_hide_in_fullscreen: ($("#auto-hide-in-fullscreen") as HTMLInputElement).checked,
+    // 显示阈值（颜色档 + 钱包告警）在「浮窗」section 里通过 setDisplayThresholds
+    // 即时生效改的，不在「保存」表单里。从 existing 拉过来再回写，避免被
+    // 全量 save_config 覆盖回老值。
+    color_thresholds: existing.color_thresholds ?? [50, 70, 88],
+    wallet_alert_threshold: existing.wallet_alert_threshold ?? null,
     tavily_concise_mode:
       (document.getElementById("tavily-concise-mode") as HTMLInputElement | null)
         ?.checked ?? true,

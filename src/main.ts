@@ -71,10 +71,16 @@ interface RenderPrefs {
   tavilyConciseMode: boolean;
   /// ZenMux PAYG 模式：只显示余额行，隐藏 充值/奖励 细分行。默认 true。
   zenmuxPaygConciseMode: boolean;
+  /// 4 档色阈值分界 [t0, t1, t2]（默认 [50, 70, 88]）。由 colorClass 使用。
+  colorThresholds: [number, number, number];
+  /// 钱包/余额行的低额高亮阈值。null = 关闭（保持默认蓝色）。
+  walletAlertThreshold: number | null;
 }
 let renderPrefs: RenderPrefs = {
   tavilyConciseMode: true,
   zenmuxPaygConciseMode: true,
+  colorThresholds: [50, 70, 88],
+  walletAlertThreshold: null,
 };
 
 // ── 类型（必须和 src-tauri/src/providers/mod.rs 对齐）──
@@ -619,7 +625,14 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
     labelSpan.textContent = r.label;
     const pct = rowEl.querySelector<HTMLElement>(".pct")!;
     pct.textContent = `${formatAmount(r.remaining)} ${escapeHtml(r.unit ?? "")}`;
-    pct.className = "pct balance";
+    // 钱包余额低额高亮：用户在设置面板启用了 wallet_alert_threshold 且
+    // remaining < 阈值时，整行翻红（alert 类），否则保持默认蓝色（balance）。
+    // 默认阈值 = null → 始终走 balance，跟旧行为 byte-for-byte 一致。
+    const walletThr = renderPrefs.walletAlertThreshold;
+    pct.className =
+      walletThr != null && r.remaining < walletThr
+        ? "pct alert"
+        : "pct balance";
   }
 }
 
@@ -682,13 +695,13 @@ function formatAmount(v: number | null | undefined): string {
 
 function colorClass(util: number): string {
   // 4 档离散色 —— 整条 bar + 文字单色，**不**是位置性渐变。
-  //   < 50%    → ok     (绿，安全)
-  //   50-70%   → cyan   (青，过半提醒)
-  //   70-88%   → warn   (黄，警告)
-  //   >= 88%   → alert  (红，告警)
-  if (util < 50) return "ok";
-  if (util < 70) return "cyan";
-  if (util < 88) return "warn";
+  // 分界点来自 renderPrefs.colorThresholds（默认 [50, 70, 88]，
+  // 用户可在设置面板里调）。Rust 端 save_config / set_display_thresholds
+  // 两路都做 0 < t0 < t1 < t2 < 100 校验，这里不再兜底，信赖 cfg 合法。
+  const [t0, t1, t2] = renderPrefs.colorThresholds;
+  if (util < t0) return "ok";
+  if (util < t1) return "cyan";
+  if (util < t2) return "warn";
   return "alert";
 }
 
@@ -860,12 +873,16 @@ async function init() {
       low_power_mode?: boolean;
       tavily_concise_mode?: boolean;
       zenmux_payg_concise_mode?: boolean;
+      color_thresholds?: [number, number, number];
+      wallet_alert_threshold?: number | null;
     }>("get_config");
     pinMode = cfg.floating_pin_mode ?? "pin_top";
     setLowPowerAttr(cfg.low_power_mode ?? false);
     renderPrefs = {
       tavilyConciseMode: cfg.tavily_concise_mode ?? true,
       zenmuxPaygConciseMode: cfg.zenmux_payg_concise_mode ?? true,
+      colorThresholds: cfg.color_thresholds ?? [50, 70, 88],
+      walletAlertThreshold: cfg.wallet_alert_threshold ?? null,
     };
   } catch (e) {
     console.error("读 config 失败", e);
@@ -879,10 +896,14 @@ async function init() {
       const cfg = await invoke<{
         tavily_concise_mode?: boolean;
         zenmux_payg_concise_mode?: boolean;
+        color_thresholds?: [number, number, number];
+        wallet_alert_threshold?: number | null;
       }>("get_config");
       renderPrefs = {
         tavilyConciseMode: cfg.tavily_concise_mode ?? true,
         zenmuxPaygConciseMode: cfg.zenmux_payg_concise_mode ?? true,
+        colorThresholds: cfg.color_thresholds ?? [50, 70, 88],
+        walletAlertThreshold: cfg.wallet_alert_threshold ?? null,
       };
       const snap = await invoke<QuotaSnapshot>("get_snapshot");
       if (snap.providers.length > 0) render(snap);

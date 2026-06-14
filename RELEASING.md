@@ -1,6 +1,6 @@
-# Musage 自动更新 / GitHub Actions 发布指南
+# Musage 发布流程
 
-> 给维护者（你自己）的一份备忘：怎么生成签名密钥、怎么配 GitHub Secrets、怎么发新版本。
+> 给维护者（你自己）的一份 cheat sheet：怎么生成签名密钥、怎么配 GitHub Secrets、怎么发新版本、怎么排查。
 
 ---
 

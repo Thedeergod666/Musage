@@ -26,7 +26,7 @@
 | 日志 | tracing + tracing-subscriber |
 | 自动启动 | tauri-plugin-autostart |
 | 前端类型 | `@types/node` 20.x（vite.config.ts 用 `node:url`） |
-| Providers | minimax / deepseek / xiaomimimo / tavily / zenmux / openrouter（6 个） |
+| Providers | minimax / deepseek / xiaomimimo / tavily / zenmux / openrouter / kimi / zhipu（8 个；v0.1.0 发 6 个，2026-06-14 加 kimi/zhipu） |
 
 ## 环境与工具链（2026-06-13 实测，跑 `pnpm tauri build` 必看）
 
@@ -233,9 +233,10 @@ D:\Project\Musage\
         ├── tray.rs           ← 托盘菜单 + 动态图标（合并了原 icon.rs）
         ├── config.rs         ← AppConfig + keys.json 文件存储
         ├── commands.rs       ← tauri::command 暴露给前端
-        ├── providers/        ← 6 个 provider 实现
+        ├── providers/        ← 8 个 provider 实现（v0.1.0 = 6 个，2026-06-14 加 kimi/zhipu）
         │   ├── mod.rs / minimax.rs / deepseek.rs / xiaomi.rs
         │   ├── tavily.rs / zenmux.rs / openrouter.rs
+        │   ├── kimi.rs / zhipu.rs
         └── platform/         ← 平台特定代码（仅 macOS 有非 stub 实现）
             ├── mod.rs
             └── macos.rs
@@ -276,7 +277,7 @@ D:\Project\Musage\
 ## 关键文件链接（按重要性）
 
 - **核心 API 解析**：`src-tauri/src/api.rs` ← 改 schema 主要改这里
-- **Provider 实现**：`src-tauri/src/providers/{minimax,tavily,zenmux,deepseek,xiaomi,openrouter}.rs`
+- **Provider 实现**：`src-tauri/src/providers/{minimax,deepseek,xiaomi,tavily,zenmux,openrouter,kimi,zhipu}.rs`（v0.1.0 = 6 个，2026-06-14 加 kimi/zhipu）
 - **托盘 UI**：`src-tauri/src/tray.rs`（合并了原 icon.rs：动态图标 + 文字绘制 + 菜单 + tooltip）
 - **悬浮窗 UI**：`src/main.ts` + `src/styles.css`
 - **设置面板**：`src/settings/main.ts` + `settings.html`（子模块见 `src/settings/` 18 个文件）

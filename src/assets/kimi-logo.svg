@@ -1,15 +1,22 @@
 <svg width="160" height="160" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
   <rect width="160" height="160" rx="32" fill="#0A0B0F"/>
   <circle cx="80" cy="80" r="56" fill="url(#kimi-grad)"/>
-  <path d="M55 60c0-8.8 7.2-16 16-16h34c8.8 0 16 7.2 16 16v6c0 5.5-4.5 10-10 10h-46c-5.5 0-10-4.5-10-10v-6z" fill="#FFFFFF" opacity="0.95"/>
-  <circle cx="72" cy="69" r="5" fill="#0A0B0F"/>
-  <circle cx="88" cy="69" r="5" fill="#0A0B0F"/>
-  <path d="M55 92c0 6 4 10 10 10h30c6 0 10-4 10-10v-3H55v3z" fill="#FFFFFF" opacity="0.95"/>
-  <circle cx="135" cy="35" r="12" fill="#FFD54F"/>
+  <!-- 月牙（crescent）：clip-path 把矩形裁成圆形，再用同色"遮挡圆"制造缺口 -->
   <defs>
+    <clipPath id="moon-clip">
+      <circle cx="76" cy="80" r="24"/>
+    </clipPath>
     <linearGradient id="kimi-grad" x1="24" y1="24" x2="136" y2="136" gradientUnits="userSpaceOnUse">
       <stop stop-color="#5AC8FA"/>
       <stop offset="1" stop-color="#4A90E2"/>
     </linearGradient>
   </defs>
+  <g clip-path="url(#moon-clip)">
+    <rect x="50" y="55" width="60" height="50" fill="#FFFFFF"/>
+    <circle cx="86" cy="80" r="22" fill="url(#kimi-grad)"/>
+  </g>
+  <!-- 三颗小星点缀 -->
+  <circle cx="120" cy="42" r="3" fill="#FFFFFF" opacity="0.9"/>
+  <circle cx="40" cy="120" r="2.5" fill="#FFFFFF" opacity="0.7"/>
+  <circle cx="125" cy="118" r="2" fill="#FFFFFF" opacity="0.6"/>
 </svg>

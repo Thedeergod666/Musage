@@ -77,6 +77,7 @@ pub async fn set_provider_enabled(
                 region: None,
                 xiaomi_region: None,
                 refresh_interval_secs: None,
+                xiaomi_display_mode: None,
             });
         entry.enabled = enabled;
         cfg.save()?;

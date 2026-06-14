@@ -425,6 +425,7 @@ impl AppConfig {
                 region: Some(region),
                 xiaomi_region: None,
                 refresh_interval_secs: None,
+                xiaomi_display_mode: None,
             });
         entry.region = Some(region);
     }
@@ -439,6 +440,7 @@ impl AppConfig {
                 region: None,
                 xiaomi_region: Some(region),
                 refresh_interval_secs: None,
+                xiaomi_display_mode: None,
             });
         entry.xiaomi_region = Some(region);
     }

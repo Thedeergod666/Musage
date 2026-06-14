@@ -52,6 +52,20 @@ export async function setSourceCredential(
   await invoke("set_source_credential", { id, value, field });
 }
 
+// ── Xiaomi 显示模式 ──────────────────────────────────────────────
+
+/** 读 Xiaomi 当前显示模式（"all" / "plan_only" / "total_only"） */
+export async function getXiaomiDisplayMode(): Promise<string> {
+  return await invoke<string>("get_xiaomi_display_mode");
+}
+
+/** 切换 Xiaomi 显示模式 —— 即时生效（后端落盘 + refresh 一次） */
+export async function setXiaomiDisplayMode(
+  mode: "all" | "plan_only" | "total_only",
+): Promise<void> {
+  await invoke("set_xiaomi_display_mode", { mode });
+}
+
 export async function deleteSourceCredential(id: string): Promise<void> {
   await invoke("delete_source_credential", { id });
 }

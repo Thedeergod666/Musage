@@ -15,7 +15,7 @@ import { renderAdvancedSection } from "./advanced";
 import { renderLogsSection, loadLogs } from "./logs";
 import { renderAboutSection } from "./about";
 import { setupUpdaterSection } from "./updater";
-import { bindCredentialButtonsGlobal, bindXiaomiLoginEvents } from "./credentials";
+import { bindCredentialButtonsGlobal, bindXiaomiLoginEvents, loadXiaomiDisplayMode } from "./credentials";
 import { bindOrderButtonsGlobal, updateOrderConfig } from "./order";
 import { flash } from "./utils";
 
@@ -79,6 +79,7 @@ async function init() {
     // 拉每个 source 的 key 状态 + 日志 + 注入 updater
     // （cfg 初值已经在 render*Section 里用上了；不用再调 loadConfig）
     await loadAllCredentialStatus(sources);
+    await loadXiaomiDisplayMode();
     await loadLogs();
     setupUpdaterSection();
 

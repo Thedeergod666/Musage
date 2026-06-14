@@ -12,12 +12,14 @@ import {
   deleteSourceCredential,
   getApiKeyFor,
   getSourceCredential,
+  getXiaomiDisplayMode,
   hasApiKeyFor,
   hasCookieFor,
   hasSourceCredential,
   setApiKeyFor,
   setCookieFor,
   setSourceCredential,
+  setXiaomiDisplayMode,
   refreshNow,
 } from "./api";
 import { $, el, flash, providerDisplay } from "./utils";
@@ -389,6 +391,52 @@ function renderMultiAuthBlock(meta: SourceMeta): HTMLElement {
     ),
   );
 
+  // ── 显示模式选择（Xiaomi 专用）──
+  // 切"完整 / 只套餐 / 只总额度"3 档。
+  // 切完即时生效：后端落盘 + refresh 一次（poller 下一分钟才 fire）
+  // 当前选中值在 init 时由 `loadXiaomiDisplayMode` 回填。
+  if (meta.id === "xiaomimimo") {
+    block.appendChild(
+      el("div", { class: "field" },
+        el("label", {}, "📊 浮窗显示模式"),
+        el("div", { class: "radio-group", id: `xiaomi-display-mode-${meta.id}` },
+          el("label", { class: "radio-option" },
+            el("input", {
+              type: "radio",
+              name: "xiaomi-display-mode",
+              value: "all",
+              "data-action": "xiaomi-display-mode",
+            }),
+            el("span", {}, "完整"),
+            el("small", {}, "（3 行，套餐和总额度数字一致时自动合并）"),
+          ),
+          el("label", { class: "radio-option" },
+            el("input", {
+              type: "radio",
+              name: "xiaomi-display-mode",
+              value: "plan_only",
+              "data-action": "xiaomi-display-mode",
+            }),
+            el("span", {}, "只看套餐"),
+            el("small", {}, "（只显示套餐用量 + 重置时间）"),
+          ),
+          el("label", { class: "radio-option" },
+            el("input", {
+              type: "radio",
+              name: "xiaomi-display-mode",
+              value: "total_only",
+              "data-action": "xiaomi-display-mode",
+            }),
+            el("span", {}, "只看总额度"),
+            el("small", {}, "（只显示本月总消耗 + 重置时间）"),
+          ),
+        ),
+        el("div", { class: "help" },
+          "切到'只看总额度'时会复用套餐的月度重置时间（总额度也是按月清零）。",
+        ),
+      ),
+    );
+  }
   return block;
 }
 
@@ -660,4 +708,47 @@ export function bindCredentialButtonsGlobal() {
         break;
     }
   });
+
+  // radio 用 'change' 事件，不用 click（click 在同一个 radio 上不会重复触发，
+  // 但 change 会）
+  document.addEventListener("change", (e) => {
+    const t = e.target as HTMLElement;
+    if (t.dataset.action !== "xiaomi-display-mode") return;
+    const value = (t as HTMLInputElement).value;
+    if (value !== "all" && value !== "plan_only" && value !== "total_only") return;
+    void xiaomiDisplayModeAction(value);
+  });
+}
+
+/// 切换 Xiaomi 显示模式：invoke 后端 → 浮窗即时更新（后端落盘 + refresh 一次）
+async function xiaomiDisplayModeAction(
+  mode: "all" | "plan_only" | "total_only",
+): Promise<void> {
+  try {
+    await setXiaomiDisplayMode(mode);
+    // 不需要显式调 refreshNow：后端 command 内部会 refresh_single
+    const labelMap: Record<typeof mode, string> = {
+      all: "完整",
+      plan_only: "只看套餐",
+      total_only: "只看总额度",
+    };
+    flash(`✓ Xiaomi 显示模式已切到「${labelMap[mode]}」`);
+  } catch (e) {
+    flash(`✗ 切换失败: ${e}`, true);
+  }
+}
+
+/// 初始化 Xiaomi 显示模式的 radio 选中状态。
+/// 在 settings/main.ts init() 调一次（renderProvidersSection 之后），
+/// 渲染完面板后让 radio 反映后端的当前值。
+export async function loadXiaomiDisplayMode(): Promise<void> {
+  const container = document.querySelector<HTMLElement>("[data-id='xiaomimimo']");
+  if (!container) return;  // Xiaomi panel 还没渲染
+  const mode = await getXiaomiDisplayMode().catch(() => "all");
+  const radios = container.querySelectorAll<HTMLInputElement>(
+    "input[data-action='xiaomi-display-mode']"
+  );
+  for (const r of radios) {
+    r.checked = r.value === mode;
+  }
 }

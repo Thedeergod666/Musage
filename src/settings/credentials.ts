@@ -741,10 +741,14 @@ async function xiaomiDisplayModeAction(
 /// 初始化 Xiaomi 显示模式的 radio 选中状态。
 /// 在 settings/main.ts init() 调一次（renderProvidersSection 之后），
 /// 渲染完面板后让 radio 反映后端的当前值。
+///
+/// 后端默认 `total_only` —— 老 config.json 没有 xiaomi_display_mode 字段
+/// → `unwrap_or_default()` 落到 TotalOnly → 这里 fallback 也走 total_only，
+/// 保持前后端默认值一致。
 export async function loadXiaomiDisplayMode(): Promise<void> {
   const container = document.querySelector<HTMLElement>("[data-id='xiaomimimo']");
   if (!container) return;  // Xiaomi panel 还没渲染
-  const mode = await getXiaomiDisplayMode().catch(() => "all");
+  const mode = await getXiaomiDisplayMode().catch(() => "total_only");
   const radios = container.querySelectorAll<HTMLInputElement>(
     "input[data-action='xiaomi-display-mode']"
   );

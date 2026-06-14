@@ -55,18 +55,22 @@ impl XiaomiRegion {
 
 /// 浮窗显示模式：用户可切 完整 / 只套餐 / 只总额度。
 ///
-/// - `All`（默认）：3 行（套餐 + 补偿 + 总额度），套餐/总额度数字一致时自动去重
+/// - `All`：3 行（套餐 + 补偿 + 总额度），套餐/总额度数字一致时自动去重
 /// - `PlanOnly`：只显示套餐 1 行（适合只关心"套餐还剩多少"）
-/// - `TotalOnly`：只显示总额度 1 行（适合有补偿积分的用户看综合消耗），
+/// - `TotalOnly`（默认）：只显示总额度 1 行（适合有补偿积分的用户看综合消耗），
 ///   此时总额度会复用套餐的 resets_at（也是月度重置）
 ///
 /// 序列化成 `"all" | "plan_only" | "total_only"`，跟前端 SourceMeta 同套约定。
+///
+/// 默认值改成 `TotalOnly` 是有意为之 —— 总额度是"本月总消耗"这个**最关键**
+/// 单一指标（不管有没有补偿，都能在 1 行里讲清楚用户的真实用量）。
+/// 想要看明细再切到 All 或 PlanOnly。
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum XiaomiDisplayMode {
-    #[default]
     All,
     PlanOnly,
+    #[default]
     TotalOnly,
 }
 

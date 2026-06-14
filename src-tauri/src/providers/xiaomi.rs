@@ -414,10 +414,28 @@ fn parse(
 
     let mut rows = Vec::new();
 
+    // 抓 3 个 item 的 percent（None = 字段不存在或 % 越界）
+    let plan_pct = pick_item_percent(
+        raw_usage,
+        "/data/usage/items",
+        &custom_names,
+        "plan_total_token",
+    );
+    let comp_pct = pick_item_percent(
+        raw_usage,
+        "/data/usage/items",
+        &custom_names,
+        "compensation_total_token",
+    );
+    let month_pct = pick_item_percent(
+        raw_usage,
+        "/data/monthUsage/items",
+        &custom_names,
+        "month_total_token",
+    );
+
     // ── 1. 套餐（plan_total_token）—— 主指标，dashboard 显示的就是它
-    if let Some(pct) =
-        pick_item_percent(raw_usage, "/data/usage/items", &custom_names, "plan_total_token")
-    {
+    if let Some(pct) = plan_pct {
         rows.push(QuotaRow {
             label: "套餐".to_string(),
             utilization: Some(pct),
@@ -431,12 +449,7 @@ fn parse(
     }
 
     // ── 2. 补偿积分（compensation_total_token）
-    if let Some(pct) = pick_item_percent(
-        raw_usage,
-        "/data/usage/items",
-        &custom_names,
-        "compensation_total_token",
-    ) {
+    if let Some(pct) = comp_pct {
         rows.push(QuotaRow {
             label: "补偿".to_string(),
             utilization: Some(pct),
@@ -449,23 +462,28 @@ fn parse(
         });
     }
 
-    // ── 3. 月度累计（month_total_token）—— 当月合计
-    if let Some(pct) = pick_item_percent(
-        raw_usage,
-        "/data/monthUsage/items",
-        &custom_names,
-        "month_total_token",
-    ) {
-        rows.push(QuotaRow {
-            label: "月度".to_string(),
-            utilization: Some(pct),
-            remaining: None,
-            used: None,
-            total: None,
-            resets_at: None,
-            unit: Some("%".to_string()),
-            extra: None,
-        });
+    // ── 3. 总额度（month_total_token）—— 本月所有额度合计
+    // 去重：套餐和总额度数字基本相等时（典型：月度重置 + 无补偿用户）
+    // 总额度这行不显示，避免"套餐 13% / 总额度 13%"这种重复信息
+    let show_total = match (plan_pct, month_pct) {
+        (Some(p), Some(m)) => (m - p).abs() >= 0.5,
+        (None, Some(_)) => true,   // 没套餐但有总额度（schema 变了）→ 还是显示
+        (Some(_), None) => false,  // 有套餐但没总额度 → 隐式 skipped
+        (None, None) => false,
+    };
+    if show_total {
+        if let Some(pct) = month_pct {
+            rows.push(QuotaRow {
+                label: "总额度".to_string(),
+                utilization: Some(pct),
+                remaining: None,
+                used: None,
+                total: None,
+                resets_at: None,
+                unit: Some("%".to_string()),
+                extra: None,
+            });
+        }
     }
 
     let success = !rows.is_empty();
@@ -632,14 +650,115 @@ mod tests {
         assert_eq!(snap.rows.len(), 3);
         assert_eq!(snap.rows[0].label, "套餐");
         assert_eq!(snap.rows[1].label, "补偿");
-        assert_eq!(snap.rows[2].label, "月度");
+        assert_eq!(snap.rows[2].label, "总额度");  // "月度" 改名
         assert!((snap.rows[0].utilization.unwrap() - 6.0).abs() < 0.001);
         assert!((snap.rows[1].utilization.unwrap() - 5.0).abs() < 0.001);
         assert!((snap.rows[2].utilization.unwrap() - 30.0).abs() < 0.001);
-        // 套餐行带 resets_at；补偿/月度不带
+        // 套餐行带 resets_at；补偿/总额度不带
         assert!(snap.rows[0].resets_at.is_some());
         assert!(snap.rows[1].resets_at.is_none());
         assert!(snap.rows[2].resets_at.is_none());
+    }
+
+    #[test]
+    fn parse_dedup_total_when_equal_to_plan() {
+        // 月度重置 + 无补偿用户：套餐和总额度数字一致 → 总额度这一行 skip
+        let raw = json!({
+            "code": 0,
+            "data": {
+                "monthUsage": {"percent":0.13, "items":[
+                    {"name":"month_total_token","percent":0.13}
+                ]},
+                "usage": {"percent":0.13, "items":[
+                    {"name":"plan_total_token","percent":0.13}
+                    // 注意：没有 compensation_total_token（无补偿用户）
+                ]}
+            }
+        });
+        let snap = parse(&raw, &json!({}), &ProviderOverrides::default());
+        assert!(snap.success, "snap.error = {:?}", snap.error);
+        assert_eq!(snap.rows.len(), 1, "套餐和总额度相等 → 只显示套餐 1 行");
+        assert_eq!(snap.rows[0].label, "套餐");
+        assert!((snap.rows[0].utilization.unwrap() - 13.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_dedup_total_near_equal_but_not_exact() {
+        // 0.3% 差（小于 0.5% 阈值）→ 算"基本相等" → 总额度 skip
+        // 容忍度：避免 dashboard 浮点精度导致 13.0 vs 12.97 这种误判
+        let raw = json!({
+            "code": 0,
+            "data": {
+                "monthUsage": {"percent":0.1301, "items":[
+                    {"name":"month_total_token","percent":0.1301}
+                ]},
+                "usage": {"percent":0.13, "items":[
+                    {"name":"plan_total_token","percent":0.13}
+                ]}
+            }
+        });
+        let snap = parse(&raw, &json!({}), &ProviderOverrides::default());
+        assert!(snap.success);
+        assert_eq!(snap.rows.len(), 1, "差 0.01% < 0.5% 阈值 → 总额度 skip");
+    }
+
+    #[test]
+    fn parse_dedup_total_just_above_threshold() {
+        // 0.6% 差（超过 0.5% 阈值）→ 算"不同" → 总额度显示
+        let raw = json!({
+            "code": 0,
+            "data": {
+                "monthUsage": {"percent":0.136, "items":[
+                    {"name":"month_total_token","percent":0.136}
+                ]},
+                "usage": {"percent":0.13, "items":[
+                    {"name":"plan_total_token","percent":0.13}
+                ]}
+            }
+        });
+        let snap = parse(&raw, &json!({}), &ProviderOverrides::default());
+        assert!(snap.success);
+        assert_eq!(snap.rows.len(), 2, "差 0.6% >= 0.5% 阈值 → 两行都显示");
+        assert_eq!(snap.rows[0].label, "套餐");
+        assert_eq!(snap.rows[1].label, "总额度");
+    }
+
+    #[test]
+    fn parse_total_only_no_plan() {
+        // 极端：套餐字段缺失（schema 改了），只有总额度 → 还是显示总额度
+        let raw = json!({
+            "code": 0,
+            "data": {
+                "monthUsage": {"percent":0.5, "items":[
+                    {"name":"month_total_token","percent":0.5}
+                ]},
+                "usage": {"items":[]}
+            }
+        });
+        let snap = parse(&raw, &json!({}), &ProviderOverrides::default());
+        assert!(snap.success);
+        assert_eq!(snap.rows.len(), 1);
+        assert_eq!(snap.rows[0].label, "总额度");
+    }
+
+    #[test]
+    fn parse_no_total_field() {
+        // 总额度字段缺失 → 只显示套餐和补偿
+        let raw = json!({
+            "code": 0,
+            "data": {
+                "usage": {"items":[
+                    {"name":"plan_total_token","percent":0.5},
+                    {"name":"compensation_total_token","percent":0.2}
+                ]}
+                // monthUsage 整个缺失
+            }
+        });
+        let snap = parse(&raw, &json!({}), &ProviderOverrides::default());
+        assert!(snap.success);
+        assert_eq!(snap.rows.len(), 2);
+        assert_eq!(snap.rows[0].label, "套餐");
+        assert_eq!(snap.rows[1].label, "补偿");
     }
 
     #[test]

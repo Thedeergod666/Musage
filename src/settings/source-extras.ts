@@ -20,7 +20,8 @@ const EXTRAS: Record<string, ExtraBlock[]> = {
   tavily: [renderConciseModeCheckbox],
   zenmux: [renderBaseUrlInput, renderZenmuxMode],
   openrouter: [renderOpenrouterHelp],
-  // deepseek: 无额外字段
+  zhipu: [renderZhipuRegionSelect],
+  // deepseek / kimi: 无额外字段
 };
 
 export function getProviderExtras(id: string): ExtraBlock[] {
@@ -175,6 +176,34 @@ function renderOpenrouterHelp(_meta: SourceMeta, _cfg: AppConfig): HTMLElement {
       "不需要 Management key。端点 ",
       el("a", { href: "https://openrouter.ai/docs/api/reference/limits", target: "_blank", class: "link-ext" }, "GET /api/v1/key"),
       "。",
+    ),
+  );
+}
+
+/// 智谱 GLM 区域选择（cn = 国区 open.bigmodel.cn，en = 国际 api.z.ai）。
+/// schema 完全一致，区别只是 host + API key 在两个平台分开创建。
+function renderZhipuRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
+  const current = cfg.zhipu_region ?? "cn";
+  const select = el("select", { id: "zhipu-region", "data-id": "zhipu-region" });
+  select.appendChild(el("option", { value: "cn" }, "🇨🇳 国区 (open.bigmodel.cn)"));
+  select.appendChild(el("option", { value: "en" }, "🌍 国际 (api.z.ai / Z.ai)"));
+  select.value = current;
+
+  return el(
+    "div",
+    { class: "field" },
+    el("label", { for: "zhipu-region" }, "智谱 GLM 区域"),
+    select,
+    el(
+      "div",
+      { class: "help" },
+      "国区用 ",
+      el("a", { href: "https://bigmodel.cn/user-center/projection-meter", target: "_blank", class: "link-ext" }, "bigmodel.cn"),
+      " 创建的 API key；国际版用 ",
+      el("a", { href: "https://z.ai/manage-apikey/subscription", target: "_blank", class: "link-ext" }, "z.ai"),
+      " 创建的。两个平台的 key ",
+      el("strong", {}, "不通用"),
+      "。schema 一致（unit=3→5h, unit=6→周），只是 host 不同。",
     ),
   );
 }

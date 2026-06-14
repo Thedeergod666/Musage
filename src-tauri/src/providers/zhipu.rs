@@ -48,7 +48,9 @@
 //! 5. **国际版（api.z.ai）**：与国区 schema 完全一致；base_url 二选一
 
 use std::pin::Pin;
+use std::sync::OnceLock;
 
+use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
@@ -56,15 +58,61 @@ use super::{
 };
 
 const URL_CN: &str = "https://open.bigmodel.cn/api/monitor/usage/quota/limit";
-// 国际版（api.z.ai）schema 一致；未来加 region 切换时启用：
-// const URL_EN: &str = "https://api.z.ai/api/monitor/usage/quota/limit";
+const URL_EN: &str = "https://api.z.ai/api/monitor/usage/quota/limit";
+
+/// 智谱 GLM Coding Plan 区域：国区（open.bigmodel.cn，默认）/ 国际（api.z.ai）。
+///
+/// Schema 完全一致，只是 host 不同 + API key 在两个平台分开创建。
+/// 跟 [ZenMux::Mode] 同款思路 —— settings.ts 写顶层 `zhipu_region`，
+/// 这里双路径都读（优先 `providers.zhipu.region`，fallback 顶层）。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ZhipuRegion {
+    /// 国区（open.bigmodel.cn）—— 默认
+    #[default]
+    Cn,
+    /// 国际版（api.z.ai / z.ai）
+    En,
+}
+
+impl ZhipuRegion {
+    fn url(&self) -> &'static str {
+        match self {
+            ZhipuRegion::Cn => URL_CN,
+            ZhipuRegion::En => URL_EN,
+        }
+    }
+
+    /// 短显示名（用于 source_display_name），区分国区/国际。
+    fn display_label(&self) -> &'static str {
+        match self {
+            ZhipuRegion::Cn => "智谱 GLM",
+            ZhipuRegion::En => "Z.ai",
+        }
+    }
+}
+
+fn parse_region(s: &str) -> Option<ZhipuRegion> {
+    match s {
+        "cn" => Some(ZhipuRegion::Cn),
+        "en" => Some(ZhipuRegion::En),
+        _ => None,
+    }
+}
 
 // ── QuotaSource 实现 ─────────────────────────────────────────────
 
-pub struct ZhipuSource;
+pub struct ZhipuSource {
+    /// 用户在设置面板里选的区域（默认 Cn）
+    region: OnceLock<ZhipuRegion>,
+}
 
 impl Default for ZhipuSource {
-    fn default() -> Self { Self }
+    fn default() -> Self {
+        Self {
+            region: OnceLock::new(),
+        }
+    }
 }
 
 impl QuotaSource for ZhipuSource {
@@ -74,10 +122,18 @@ impl QuotaSource for ZhipuSource {
 
     fn set_state<'a>(
         &'a self,
-        _cfg: serde_json::Value,
+        cfg: serde_json::Value,
     ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
-        // Zhipu 走默认 CN endpoint；EN 通过自定义 URL 或未来 cfg 字段切换
-        Box::pin(async move {})
+        Box::pin(async move {
+            // region：先看 `providers.zhipu.region`（如果其他 CC 加了 ProviderConfig.region），
+            // 再看顶层 `zhipu_region`（settings.ts 实际写入的位置）；都没有 = Cn。
+            let region_str = cfg
+                .pointer("/providers/zhipu/region")
+                .and_then(|v| v.as_str())
+                .or_else(|| cfg.get("zhipu_region").and_then(|v| v.as_str()));
+            let region = region_str.and_then(parse_region).unwrap_or(ZhipuRegion::Cn);
+            let _ = self.region.set(region);
+        })
     }
 
     fn fetch<'a>(
@@ -89,13 +145,15 @@ impl QuotaSource for ZhipuSource {
             if api_key.is_empty() {
                 return Err(FetchError::unconfigured("未配置智谱 GLM API key（设置面板填入）"));
             }
-            do_fetch(api_key, URL_CN).await
+            let region = self.region.get().copied().unwrap_or_default();
+            do_fetch(api_key, region).await
         })
     }
 }
 
-async fn do_fetch(api_key: &str, url: &str) -> Result<ProviderSnapshot, FetchError> {
+async fn do_fetch(api_key: &str, region: ZhipuRegion) -> Result<ProviderSnapshot, FetchError> {
     let client = shared_client();
+    let url = region.url();
 
     // ⚠️ 智谱鉴权不加 Bearer —— 直接用裸 key
     let resp = client
@@ -109,12 +167,16 @@ async fn do_fetch(api_key: &str, url: &str) -> Result<ProviderSnapshot, FetchErr
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Err(FetchError::auth("鉴权失败 —— 智谱 GLM API key 无效（注意 key 不要加 Bearer 前缀）"));
+        return Err(FetchError::auth(
+            "鉴权失败 —— 智谱 GLM API key 无效（注意 key 不要加 Bearer 前缀；CN/EN 区域 key 不通用）",
+        ));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
         return Err(FetchError::server(format!(
-            "智谱 GLM 服务异常 (HTTP {status}): {}",
+            "智谱 GLM ({}) 服务异常 (HTTP {}): {}",
+            match region { ZhipuRegion::Cn => "国区", ZhipuRegion::En => "国际" },
+            status,
             body.chars().take(200).collect::<String>()
         )));
     }
@@ -130,7 +192,7 @@ async fn do_fetch(api_key: &str, url: &str) -> Result<ProviderSnapshot, FetchErr
         return Err(FetchError::server(format!("智谱 GLM API error: {msg}")));
     }
 
-    parse(&raw)
+    parse(&raw, region)
 }
 
 /// 解析智谱 quota 响应 → QuotaRow 列表。
@@ -140,7 +202,7 @@ async fn do_fetch(api_key: &str, url: &str) -> Result<ProviderSnapshot, FetchErr
 /// 2. 兜底启发式（unit 缺失或不识别）：无 resetTime 的优先归 5h（5h 桶 0%
 ///    时可能没 reset），其余按 reset 升序填入仍空缺的槽位
 /// 3. 老套餐只回 1 条 TOKENS_LIMIT → 自然降级为只显示 5h
-fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
+fn parse(raw: &Value, region: ZhipuRegion) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
     let data = raw
@@ -199,7 +261,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         raw: Some(raw.clone()),
         is_healthy: true,
         source_id: Some("zhipu".to_string()),
-        source_display_name: Some("智谱 GLM".to_string()),
+        source_display_name: Some(region.display_label().to_string()),
         plan_name,
     })
 }
@@ -285,10 +347,11 @@ mod tests {
                 ]
             }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, ZhipuRegion::Cn).expect("parse");
         assert!(snap.success);
         assert_eq!(snap.source_id.as_deref(), Some("zhipu"));
         assert_eq!(snap.plan_name.as_deref(), Some("pro"));
+        assert_eq!(snap.source_display_name.as_deref(), Some("智谱 GLM"));
         assert_eq!(snap.rows.len(), 2);
 
         let five_h = &snap.rows[0];
@@ -315,7 +378,7 @@ mod tests {
                 ]
             }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, ZhipuRegion::Cn).expect("parse");
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].label, "5h");
         assert!((snap.rows[0].utilization.unwrap() - 2.0).abs() < 0.001);
@@ -327,7 +390,7 @@ mod tests {
             "success": true,
             "data": { "level": "free", "limits": [{ "type": "TIME_LIMIT", "percentage": 5.0 }] }
         });
-        let err = parse(&raw).unwrap_err();
+        let err = parse(&raw, ZhipuRegion::Cn).unwrap_err();
         assert_eq!(err.kind, FetchError::parse("test").kind);
     }
 
@@ -345,7 +408,7 @@ mod tests {
                 ]
             }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, ZhipuRegion::Cn).expect("parse");
         assert_eq!(snap.rows.len(), 2);
         assert_eq!(snap.rows[0].label, "5h");
         assert!((snap.rows[0].utilization.unwrap()).abs() < 0.001);
@@ -367,7 +430,7 @@ mod tests {
                 ]
             }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, ZhipuRegion::Cn).expect("parse");
         assert_eq!(snap.rows.len(), 2);
         // reset 较早的归 5h
         assert_eq!(snap.rows[0].label, "5h");
@@ -389,7 +452,7 @@ mod tests {
                 ]
             }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, ZhipuRegion::Cn).expect("parse");
         assert_eq!(snap.rows.len(), 2);
         assert_eq!(snap.rows[0].label, "5h");
         assert!((snap.rows[0].utilization.unwrap() - 11.0).abs() < 0.001);
@@ -409,22 +472,96 @@ mod tests {
                 ]
             }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, ZhipuRegion::Cn).expect("parse");
         assert_eq!(snap.rows.len(), 2);
     }
 
     #[test]
     fn parse_missing_data_is_error() {
         let raw = json!({ "success": true });
-        let err = parse(&raw).unwrap_err();
+        let err = parse(&raw, ZhipuRegion::Cn).unwrap_err();
         assert_eq!(err.kind, FetchError::parse("test").kind);
     }
 
     #[test]
     fn parse_success_false_is_error() {
         let raw = json!({ "success": false, "msg": "API key invalid" });
-        let err = parse(&raw).unwrap_err();
+        let err = parse(&raw, ZhipuRegion::Cn).unwrap_err();
         // success=false → server error（业务级 4xx）
         assert_eq!(err.kind, FetchError::server("test").kind);
+    }
+
+    #[test]
+    fn parse_region_en_uses_international_label() {
+        // 验证 region 切换影响 source_display_name（CN = "智谱 GLM", EN = "Z.ai"）
+        let raw = json!({
+            "success": true,
+            "data": {
+                "level": "pro",
+                "limits": [
+                    { "type": "TOKENS_LIMIT", "unit": 3, "percentage": 11.0, "nextResetTime": 1_000_000_000_000_i64 }
+                ]
+            }
+        });
+        let snap_cn = parse(&raw, ZhipuRegion::Cn).expect("parse_cn");
+        assert_eq!(snap_cn.source_display_name.as_deref(), Some("智谱 GLM"));
+        let snap_en = parse(&raw, ZhipuRegion::En).expect("parse_en");
+        assert_eq!(snap_en.source_display_name.as_deref(), Some("Z.ai"));
+        // 数据本身一致，只有 display name 不同
+        assert_eq!(snap_cn.rows.len(), snap_en.rows.len());
+    }
+
+    #[test]
+    fn parse_region_strings() {
+        assert_eq!(parse_region("cn"), Some(ZhipuRegion::Cn));
+        assert_eq!(parse_region("en"), Some(ZhipuRegion::En));
+        assert_eq!(parse_region("CN"), None); // 严格小写，frontend 必须传小写
+        assert_eq!(parse_region(""), None);
+    }
+
+    #[test]
+    fn region_url_per_variant() {
+        assert_eq!(ZhipuRegion::Cn.url(), URL_CN);
+        assert_eq!(ZhipuRegion::En.url(), URL_EN);
+    }
+
+    #[test]
+    fn default_region_is_cn() {
+        assert_eq!(ZhipuRegion::default(), ZhipuRegion::Cn);
+    }
+
+    #[tokio::test]
+    async fn set_state_reads_top_level_region() {
+        // settings.ts 实际写到顶层 `zhipu_region`
+        let src = ZhipuSource::default();
+        let cfg = json!({ "zhipu_region": "en" });
+        src.set_state(cfg).await;
+        assert_eq!(src.region.get().copied(), Some(ZhipuRegion::En));
+    }
+
+    #[tokio::test]
+    async fn set_state_reads_provider_region_path() {
+        // 未来如果其他 CC 加了 ProviderConfig.region 也兼容
+        let src = ZhipuSource::default();
+        let cfg = json!({ "providers": { "zhipu": { "region": "en" } } });
+        src.set_state(cfg).await;
+        assert_eq!(src.region.get().copied(), Some(ZhipuRegion::En));
+    }
+
+    #[tokio::test]
+    async fn set_state_defaults_to_cn_when_missing() {
+        let src = ZhipuSource::default();
+        let cfg = json!({}); // 完全没有 zhipu_region
+        src.set_state(cfg).await;
+        assert_eq!(src.region.get().copied(), Some(ZhipuRegion::Cn));
+    }
+
+    #[tokio::test]
+    async fn set_state_ignores_invalid_region() {
+        let src = ZhipuSource::default();
+        let cfg = json!({ "zhipu_region": "BOGUS" });
+        src.set_state(cfg).await;
+        // 非法 region → fallback 到 Cn（不 panic）
+        assert_eq!(src.region.get().copied(), Some(ZhipuRegion::Cn));
     }
 }

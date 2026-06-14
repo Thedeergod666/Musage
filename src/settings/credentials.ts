@@ -477,9 +477,11 @@ function apiKeyHelpNodes(id: string): (Node | string)[] {
         el("code", {}, "id.secret"),
         " 格式）。",
         el("br"),
-        "从 ",
+        "在「区域」下拉里选 CN（",
         el("a", { href: "https://bigmodel.cn/user-center/projection-meter", target: "_blank", class: "link-ext" }, "bigmodel.cn"),
-        " 获取 API key。",
+        "）或 EN（",
+        el("a", { href: "https://z.ai/manage-apikey/subscription", target: "_blank", class: "link-ext" }, "z.ai"),
+        "）。两个平台的 key 不通用。",
       ];
     default:
       return ["API key 存到本机 keys.json。"];

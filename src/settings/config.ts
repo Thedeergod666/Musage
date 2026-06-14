@@ -51,6 +51,12 @@ export async function loadConfig() {
   ) as HTMLInputElement | null;
   if (zenmuxUrlInput) zenmuxUrlInput.value = cfg.zenmux_base_url ?? "";
 
+  // 智谱 GLM 区域
+  const zhipuRegionSelect = document.getElementById(
+    "zhipu-region",
+  ) as HTMLSelectElement | null;
+  if (zhipuRegionSelect) zhipuRegionSelect.value = cfg.zhipu_region ?? "cn";
+
   // 各 provider「在浮窗显示」开关（缺省视为 true）+ 轮询间隔覆盖
   const { PROVIDER_IDS } = await import("./types");
   for (const id of PROVIDER_IDS) {
@@ -228,6 +234,11 @@ export async function saveConfig() {
     zenmux_payg_concise_mode:
       (document.getElementById("zenmux-payg-concise-mode") as HTMLInputElement | null)
         ?.checked ?? true,
+    zhipu_region:
+      ((document.getElementById("zhipu-region") as HTMLSelectElement | null)?.value as
+        | "cn"
+        | "en"
+        | undefined) ?? "cn",
     refresh_interval_secs:
       parseInt(($("#interval") as HTMLInputElement).value, 10) || 60,
     autostart: ($("#autostart") as HTMLInputElement).checked,

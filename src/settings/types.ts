@@ -88,6 +88,8 @@ export interface AppConfig {
   zenmux_mode?: "payg" | "subscription";
   /// ZenMux PAYG 简洁模式（只显示余额，不显示充值/奖励）
   zenmux_payg_concise_mode?: boolean;
+  /// 智谱 GLM 区域：cn = 国区 open.bigmodel.cn（默认），en = 国际 api.z.ai
+  zhipu_region?: "cn" | "en";
   // 用户加的字段名候选（应对 MiniMax 改 schema）
   schema_overrides?: Record<string, ProviderOverrides>;
   /// v0.6+ 托盘图标样式（Rust 端 TrayIconStyle enum）

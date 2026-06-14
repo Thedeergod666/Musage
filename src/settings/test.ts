@@ -55,10 +55,12 @@ export async function testConn() {
             ? `Kimi 5h ${Math.round(fiveHour.utilization ?? 0)}%`
             : "Kimi OK";
         } else if (id === "zhipu") {
+          // CN = "智谱 GLM"，EN = "Z.ai"（后端 source_display_name 决定）
+          const label = p.source_display_name === "Z.ai" ? "Z.ai" : "智谱";
           const fiveHour = p.rows.find((r) => r.label === "5h");
           return fiveHour
-            ? `智谱 5h ${Math.round(fiveHour.utilization ?? 0)}%`
-            : "智谱 OK";
+            ? `${label} 5h ${Math.round(fiveHour.utilization ?? 0)}%`
+            : `${label} OK`;
         }
         return `${id} OK`;
       })

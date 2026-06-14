@@ -13,6 +13,7 @@ import zenmuxLogo from "../assets/zenmux-logo.svg";
 import openrouterLogo from "../assets/openrouter-logo.png";
 import kimiLogo from "../assets/kimi-logo.svg";
 import zhipuLogo from "../assets/zhipu-logo.svg";
+import zhipuEnLogo from "../assets/zhipu-en-logo.svg";
 
 export interface ProviderMeta {
   name: string;
@@ -31,6 +32,7 @@ export const PROVIDER_META: Record<string, ProviderMeta> = {
   openrouter: { name: "OpenRouter", logo: openrouterLogo, accent: "var(--id-openrouter)" },
   kimi: { name: "Kimi", logo: kimiLogo, accent: "var(--id-kimi)" },
   zhipu: { name: "智谱 GLM", logo: zhipuLogo, accent: "var(--id-zhipu)" },
+  zhipu_en: { name: "Z.ai", logo: zhipuEnLogo, accent: "var(--id-zhipu)" },
 };
 
 export function getProviderMeta(id: string): ProviderMeta | undefined {

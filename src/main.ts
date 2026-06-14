@@ -20,10 +20,16 @@ import zenmuxLogo from "./assets/zenmux-logo.svg?url";
 import openrouterLogo from "./assets/openrouter-logo.png";
 import kimiLogo from "./assets/kimi-logo.svg?url";
 import zhipuLogo from "./assets/zhipu-logo.svg?url";
+import zhipuEnLogo from "./assets/zhipu-en-logo.svg?url";
 import "./styles.css";
 
 /// 静态映射：provider id → 官网 logo + 显示名
 /// logo 走 Vite `?url` import 拿到打包后的 URL
+///
+/// 智谱 GLM 两个区域共用 id "zhipu"，运行时根据后端返回的
+/// source_display_name（"智谱 GLM" / "Z.ai"）切换 logo：
+/// - CN → zhipuLogo（紫色渐变 + 智字）
+/// - EN → zhipuEnLogo（z.ai 官方 logo SVG）
 const PROVIDER_META: Record<string, { name: string; logo: string }> = {
   minimax: { name: "MiniMax", logo: minimaxLogo },
   deepseek: { name: "DeepSeek", logo: deepseekLogo },
@@ -33,6 +39,7 @@ const PROVIDER_META: Record<string, { name: string; logo: string }> = {
   openrouter: { name: "OpenRouter", logo: openrouterLogo },
   kimi: { name: "Kimi", logo: kimiLogo },
   zhipu: { name: "智谱 GLM", logo: zhipuLogo },
+  "Z.ai": { name: "Z.ai", logo: zhipuEnLogo },
 };
 
 type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
@@ -310,7 +317,12 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
   const title = card.querySelector<HTMLElement>(".card-title")!;
   // Phase 1：用 source_id 路由（registry-driven），provider 字段保兼容
   const id = p.source_id ?? p.provider;
-  const meta = PROVIDER_META[id] ?? { name: p.source_display_name ?? id, logo: "" };
+  // 智谱 GLM 用 source_display_name 二次路由：CN="智谱 GLM" / EN="Z.ai"
+  // 让两张 logo（紫色渐变 vs z.ai 官方）按区域切换。
+  const regionKey = (id === "zhipu" && p.source_display_name)
+    ? p.source_display_name
+    : id;
+  const meta = PROVIDER_META[regionKey] ?? { name: p.source_display_name ?? id, logo: "" };
   const logo = title.querySelector<HTMLImageElement>(".card-logo")!;
   const name = title.querySelector<HTMLElement>(".card-name")!;
   if (logo.src !== meta.logo) logo.src = meta.logo;

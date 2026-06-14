@@ -265,8 +265,14 @@ export function renderCredentialBlock(meta: SourceMeta): HTMLElement {
         ...apiKeyHelpNodes(meta.id),
       ),
     );
+  } else if (meta.auth_kind === "api_key_or_cookie") {
+    // ── 多鉴权（Xiaomi 用）：两个独立块 ──
+    // 优先 API key，401 时自动降级到 Cookie。两个都展示，各自独立保存。
+    // delete 在 v1 是"清掉该 id 全部凭据"（api_key + cookie 都清）——
+    // 用户要保留某一项时只能重输，可接受：v1 UX 重点是"丢 key 就行"。
+    return renderMultiAuthBlock(meta);
   } else {
-    // ── cookie 模式（仅 Xiaomi 走）──
+    // ── 纯 cookie 模式（备用，目前未使用，保留兼容）──
     const textarea = el("textarea", {
       id: `cookie-${meta.id}`,
       "data-id": meta.id,
@@ -292,6 +298,72 @@ export function renderCredentialBlock(meta: SourceMeta): HTMLElement {
       ),
     );
   }
+  return block;
+}
+
+/// 多鉴权 source（`api_key_or_cookie`）的凭据块：两个独立块。
+///
+/// 数据流：
+/// - save-key   按钮 → `setSourceCredential(id, value, "api_key")` → 落 api_key 字段
+/// - save-cookie 按钮 → `setSourceCredential(id, value, "cookie")`  → 落 cookie 字段
+/// - delete-*   按钮 → `deleteSourceCredential(id)` → 清掉该 id 的全部凭据
+///   （v1 限制：会同时清 api_key + cookie）
+///
+/// fetch 路径（[src-tauri/src/providers/xiaomi.rs::decide_auth_strategy]）：
+/// - 两个都填 → 先 Bearer（API key），401 自动退到 Cookie
+/// - 只填一个 → 走对应单轨
+function renderMultiAuthBlock(meta: SourceMeta): HTMLElement {
+  const block = el("div", { class: "cred-block" });
+
+  // ── Block 1: API key（优先）──
+  block.appendChild(
+    el("div", { class: "field" },
+      el("label", {}, "API key（优先尝试）"),
+      el("div", { class: "input-row" },
+        el("input", {
+          type: "password",
+          id: `api-key-${meta.id}`,
+          "data-id": meta.id,
+          placeholder: apiKeyPlaceholder(meta.id),
+          autocomplete: "off",
+        }) as HTMLInputElement,
+      ),
+      el("div", { class: "status", id: `api-key-status-${meta.id}`, "data-id": meta.id }, "—"),
+      el("div", { class: "row" },
+        el("button", { class: "primary", id: `save-key-${meta.id}`, "data-id": meta.id, "data-action": "save-key" }, "保存 API key"),
+        el("button", { class: "danger", id: `del-key-${meta.id}`, "data-id": meta.id, "data-action": "del-key" }, "删除"),
+      ),
+      el("div", { class: "help" },
+        ...apiKeyHelpNodes(meta.id),
+        el("br"),
+        el("strong", {}, "提示："),
+        "Xiaomi 用量 API 当前对 Bearer 返 401，但别担心——",
+        "下面的 Cookie 一旦配好，Bearer 失败时会自动 fallback（你不用手动切）。",
+      ),
+    ),
+  );
+
+  // ── Block 2: Cookie（兜底）──
+  block.appendChild(
+    el("div", { class: "field" },
+      el("label", {}, "Dashboard Cookie（兜底：401 时自动退到这里）"),
+      el("textarea", {
+        id: `cookie-${meta.id}`,
+        "data-id": meta.id,
+        rows: "4",
+        placeholder: 'api-platform_serviceToken="..."; userId=...; api-platform_slh="..."; api-platform_ph="..."',
+      }) as HTMLTextAreaElement,
+      el("div", { class: "status", id: `cookie-status-${meta.id}`, "data-id": meta.id }, "—"),
+      el("div", { class: "row" },
+        el("button", { class: "primary", id: `save-cookie-${meta.id}`, "data-id": meta.id, "data-action": "save-cookie" }, "保存 Cookie"),
+        el("button", { class: "danger", id: `del-cookie-${meta.id}`, "data-id": meta.id, "data-action": "del-cookie" }, "删除"),
+      ),
+      el("div", { class: "help" },
+        ...cookieHelpNodes(),
+      ),
+    ),
+  );
+
   return block;
 }
 
@@ -453,9 +525,19 @@ export async function saveCredentialAction(id: string, action: "key" | "cookie")
     return;
   }
   try {
-    await setSourceCredential(id, value);
+    // 多鉴权 source 必传 field hint，否则两个输入都落 api_key。
+    // 单鉴权 source（auth_kind=api_key / cookie）忽略 field 走默认也安全。
+    await setSourceCredential(id, value, action === "key" ? "api_key" : "cookie");
     input.value = "";
-    await loadCredentialStatus(id);
+    // 立即更新对应字段的"已保存"状态（不等 loadCredentialStatus 兜底），
+    // 多鉴权时 loadCredentialStatus 只能更新第一个找到的 status 元素，
+    // 这里精确到字段。
+    const statusId = action === "key" ? `api-key-status-${id}` : `cookie-status-${id}`;
+    const status = document.getElementById(statusId);
+    if (status) {
+      status.textContent = "✓ 已保存到本机";
+      status.className = "status ok";
+    }
     flash(`✓ ${providerDisplay(id as ProviderId)} 已保存`);
     await refreshNow();
   } catch (e) {

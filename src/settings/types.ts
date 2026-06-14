@@ -42,7 +42,8 @@ export const PROVIDER_IDS = [
 export interface SourceMeta {
   id: string;
   display_name: string;
-  auth_kind: "api_key" | "cookie";
+  /** "api_key" / "cookie" / "api_key_or_cookie"（多鉴权，Xiaomi 用） */
+  auth_kind: "api_key" | "cookie" | "api_key_or_cookie";
   enabled: boolean;
 }
 

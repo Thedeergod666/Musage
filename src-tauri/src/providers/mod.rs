@@ -97,6 +97,10 @@ pub enum AuthKind {
     ApiKey,
     /// 走 `Cookie: <cookie>`
     Cookie,
+    /// 优先 Bearer，401 时降级到 Cookie（Xiaomi 用）。
+    /// 两个输入都展示在设置面板，用户可只填一个；fetch 路径按
+    /// `decide_auth_strategy` 决定。
+    ApiKeyOrCookie,
 }
 
 // ── 错误分类（前端按 kind 选样式 + 操作按钮）───────────────────────────

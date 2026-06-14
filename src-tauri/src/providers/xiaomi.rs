@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderImpl, ProviderSnapshot, QuotaRow, QuotaSource};
-use crate::config::{FieldTriple, ProviderOverrides};
+use crate::config::ProviderOverrides;
 
 /// 公开 endpoint（dashboard admin API，不是 token-plan 子域）
 const USAGE_URL: &str = "https://platform.xiaomimimo.com/api/v1/tokenPlan/usage";
@@ -82,7 +82,9 @@ impl XiaomimimoSource {
 impl QuotaSource for XiaomimimoSource {
     fn id(&self) -> &'static str { "xiaomimimo" }
     fn display_name(&self) -> &'static str { "Xiaomi MiMo" }
-    fn auth_kind(&self) -> AuthKind { AuthKind::Cookie }
+    /// 优先 Bearer（API key），401 时降级到 Cookie。两个输入都展示在设置面板。
+    /// 决策逻辑见 [`decide_auth_strategy`] + [`Xiaomimimo::fetch`]。
+    fn auth_kind(&self) -> AuthKind { AuthKind::ApiKeyOrCookie }
 
     fn set_state<'a>(
         &'a self,
@@ -114,13 +116,86 @@ impl QuotaSource for XiaomimimoSource {
         credentials: &'a Credentials,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>> {
         Box::pin(async move {
-            let cookie = credentials.cookie.as_deref().unwrap_or("").trim();
-            if cookie.is_empty() {
-                return Err(FetchError::unconfigured("未配置 Dashboard cookie（设置面板填入）"));
-            }
             let state = self.state.read().await.clone();
-            Xiaomimimo::do_fetch(cookie, state.region, &state.overrides).await.map(|(_, snap)| snap)
+            let strategy = decide_auth_strategy(credentials);
+            match strategy {
+                AuthStrategy::None => Err(FetchError::unconfigured(
+                    "未配置 API key 或 Dashboard cookie（设置面板填入）"
+                )),
+                AuthStrategy::BearerOnly => {
+                    // 安全：strategy 保证 Some
+                    let key = credentials.api_key.as_deref().unwrap();
+                    Xiaomimimo::do_fetch_bearer(key, state.region, &state.overrides)
+                        .await
+                        .map(|(_, snap)| snap)
+                }
+                AuthStrategy::CookieOnly => {
+                    let cookie = credentials.cookie.as_deref().unwrap();
+                    Xiaomimimo::do_fetch(cookie, state.region, &state.overrides)
+                        .await
+                        .map(|(_, snap)| snap)
+                }
+                AuthStrategy::BearerThenCookie => {
+                    let key = credentials.api_key.as_deref().unwrap();
+                    let cookie = credentials.cookie.as_deref().unwrap();
+                    // 先 Bearer，401/403 退到 Cookie（其他错误原样返）
+                    match Xiaomimimo::do_fetch_bearer(key, state.region, &state.overrides).await {
+                        Ok((_, snap)) => {
+                            tracing::debug!(provider = "xiaomimimo", "Bearer 路径成功");
+                            Ok(snap)
+                        }
+                        Err(e) if matches!(e.kind, ErrorKind::AuthFailed) => {
+                            tracing::info!(
+                                provider = "xiaomimimo",
+                                "Bearer 鉴权失败 ({}), 退到 Cookie 路径",
+                                e.message
+                            );
+                            Xiaomimimo::do_fetch(cookie, state.region, &state.overrides)
+                                .await
+                                .map(|(_, snap)| snap)
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+            }
         })
+    }
+}
+
+// ── 鉴权策略（pure 函数，易测）────────────────────────────────
+
+/// 鉴权策略：根据 Credentials 里有几个非空字段决定走哪条 fetch 路径。
+///
+/// - 两个都有 → 先 Bearer，401 退 Cookie
+/// - 只有 api_key → 只 Bearer
+/// - 只有 cookie → 只 Cookie
+/// - 都没有 → Unconfigured
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AuthStrategy {
+    None,
+    BearerOnly,
+    CookieOnly,
+    BearerThenCookie,
+}
+
+pub(crate) fn decide_auth_strategy(creds: &Credentials) -> AuthStrategy {
+    let has_key = creds
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    let has_cookie = creds
+        .cookie
+        .as_deref()
+        .map(str::trim)
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    match (has_key, has_cookie) {
+        (true, true) => AuthStrategy::BearerThenCookie,
+        (true, false) => AuthStrategy::BearerOnly,
+        (false, true) => AuthStrategy::CookieOnly,
+        (false, false) => AuthStrategy::None,
     }
 }
 
@@ -132,6 +207,77 @@ pub struct Xiaomimimo {
 }
 
 impl Xiaomimimo {
+    /// Bearer 路径：拼 `Authorization: Bearer <api_key>`，401 走 AuthFailed，
+    /// 让上层 [`XiaomimimoSource::fetch`] 的 BearerThenCookie 策略退到 Cookie。
+    ///
+    /// 当前实测（2026-06）：`platform.xiaomimimo.com/api/v1/tokenPlan/usage`
+    /// 对纯 Bearer 返 401（dashboard admin API 走 session 守护）—— 所以
+    /// Bearer 单独填 API key 不会成功，**但**配双鉴权（API key + Cookie）
+    /// 时，401 触发自动 fallback 不会让用户感知。
+    pub async fn do_fetch_bearer(
+        api_key: &str,
+        _region: XiaomiRegion,
+        overrides: &ProviderOverrides,
+    ) -> Result<(serde_json::Value, ProviderSnapshot), FetchError> {
+        if api_key.trim().is_empty() {
+            return Err(FetchError::unconfigured("API key 为空"));
+        }
+        let client = shared_client();
+        let resp = client
+            .get(USAGE_URL)
+            .bearer_auth(api_key)
+            .header("Accept", "application/json")
+            .send()
+            .await
+            .map_err(|e| FetchError::network(format!("网络错误 [{}]: {e}", USAGE_URL)))?;
+        let status = resp.status();
+        if status == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(FetchError::auth(
+                "Xiaomi API key 鉴权失败 (HTTP 401) — 当前用量 API 仅对 dashboard cookie 放行，请改填 Cookie 或两者都填（401 会自动退到 Cookie 路径）",
+            ));
+        }
+        if status == reqwest::StatusCode::FORBIDDEN {
+            return Err(FetchError::auth(
+                "无权限访问 Xiaomi dashboard API (HTTP 403) — API key 可能未订阅 Token Plan，或用量 API 对 Bearer key 关闭",
+            ));
+        }
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(FetchError::server(format!(
+                "Xiaomi dashboard API 异常 (HTTP {status}): {}",
+                body.chars().take(200).collect::<String>()
+            )));
+        }
+        let raw: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| FetchError::parse(format!("响应不是 JSON: {e}")))?;
+        if let Some(code) = raw.get("code").and_then(|v| v.as_i64()) {
+            if code != 0 {
+                let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                return Err(FetchError::server(format!(
+                    "Xiaomi dashboard API code {code}: {msg}"
+                )));
+            }
+        }
+        // detail 失败不阻塞
+        let detail_raw: serde_json::Value = match client
+            .get(DETAIL_URL)
+            .bearer_auth(api_key)
+            .header("Accept", "application/json")
+            .send()
+            .await
+        {
+            Ok(r) if r.status().is_success() => {
+                r.json().await.unwrap_or(serde_json::Value::Null)
+            }
+            _ => serde_json::Value::Null,
+        };
+        // 先借用 raw 算 snap，再 move raw 进 tuple（顺序很关键）
+        let snap = parse(&raw, &detail_raw, overrides);
+        Ok((raw, snap))
+    }
+
     pub async fn do_fetch(
         cookie: &str,
         _region: XiaomiRegion,
@@ -400,7 +546,63 @@ fn parse_datetime_utc_ms(s: &str) -> Option<i64> {
 mod tests {
     use super::*;
     use crate::config::{FieldTriple, TierOverrides};
+    use crate::providers::Credentials;
     use serde_json::json;
+
+    // ── 鉴权策略 ──
+
+    #[test]
+    fn decide_strategy_both_present() {
+        let c = Credentials {
+            api_key: Some("tp-xxx".to_string()),
+            cookie: Some("a=1; b=2".to_string()),
+        };
+        assert_eq!(decide_auth_strategy(&c), AuthStrategy::BearerThenCookie);
+    }
+
+    #[test]
+    fn decide_strategy_bearer_only() {
+        let c = Credentials {
+            api_key: Some("tp-xxx".to_string()),
+            cookie: None,
+        };
+        assert_eq!(decide_auth_strategy(&c), AuthStrategy::BearerOnly);
+    }
+
+    #[test]
+    fn decide_strategy_cookie_only() {
+        let c = Credentials {
+            api_key: None,
+            cookie: Some("a=1; b=2".to_string()),
+        };
+        assert_eq!(decide_auth_strategy(&c), AuthStrategy::CookieOnly);
+    }
+
+    #[test]
+    fn decide_strategy_none() {
+        let c = Credentials::default();
+        assert_eq!(decide_auth_strategy(&c), AuthStrategy::None);
+    }
+
+    #[test]
+    fn decide_strategy_whitespace_only_is_empty() {
+        // trim 后为空字符串 → 当作没配
+        let c = Credentials {
+            api_key: Some("   ".to_string()),
+            cookie: Some("\t\n".to_string()),
+        };
+        assert_eq!(decide_auth_strategy(&c), AuthStrategy::None);
+    }
+
+    #[test]
+    fn decide_strategy_mixed_whitespace() {
+        // api_key 真有值，cookie 全空白 → BearerOnly
+        let c = Credentials {
+            api_key: Some("tp-xxx".to_string()),
+            cookie: Some("   ".to_string()),
+        };
+        assert_eq!(decide_auth_strategy(&c), AuthStrategy::BearerOnly);
+    }
 
     #[test]
     fn parse_full_response_three_rows() {

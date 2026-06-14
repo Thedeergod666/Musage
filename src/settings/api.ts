@@ -32,11 +32,24 @@ export async function hasSourceCredential(id: string): Promise<boolean> {
   return invoke<boolean>("has_source_credential", { id });
 }
 
+/**
+ * 保存 source 的凭据。
+ *
+ * @param id      source id (e.g. "xiaomimimo")
+ * @param value   要保存的值
+ * @param field   可选：明确指定落到哪个字段 ("api_key" / "cookie")
+ *                不传时按 source 的 auth_kind 默认：
+ *                  - "api_key"        → api_key
+ *                  - "cookie"         → cookie
+ *                  - "api_key_or_cookie" → api_key
+ *                多鉴权 source（Xiaomi）必须传 field，否则两输入都落 api_key。
+ */
 export async function setSourceCredential(
   id: string,
   value: string,
+  field?: "api_key" | "cookie",
 ): Promise<void> {
-  await invoke("set_source_credential", { id, value });
+  await invoke("set_source_credential", { id, value, field });
 }
 
 export async function deleteSourceCredential(id: string): Promise<void> {

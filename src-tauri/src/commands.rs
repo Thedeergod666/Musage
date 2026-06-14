@@ -204,6 +204,7 @@ pub async fn list_sources(state: State<'_, AppState>) -> Result<Vec<SourceMeta>,
             auth_kind: match s.auth_kind() {
                 AuthKind::ApiKey => "api_key",
                 AuthKind::Cookie => "cookie",
+                AuthKind::ApiKeyOrCookie => "api_key_or_cookie",
             },
             enabled: cfg.is_enabled_id(s.id()),
         })
@@ -223,18 +224,22 @@ pub async fn set_source_credential(
     app: AppHandle,
     id: String,
     value: String,
+    // 可选：明确指定这个 value 落到哪个字段（"api_key" / "cookie"）。
+    // 不传时按 source 的 `auth_kind()` 默认：
+    //   ApiKey / ApiKeyOrCookie → api_key
+    //   Cookie                   → cookie
+    // 多鉴权 source（ApiKeyOrCookie）必须传 field hint，
+    // 否则两个输入框都保存到 api_key，cookie 永远落不进去。
+    field: Option<String>,
 ) -> Result<(), String> {
     let src = find_source(&id).ok_or_else(|| format!("未知的 source id: {id}"))?;
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err("凭据不能为空".to_string());
     }
-    let cred = match src.auth_kind() {
-        AuthKind::ApiKey => Credentials { api_key: Some(trimmed.to_string()), cookie: None },
-        AuthKind::Cookie => Credentials { api_key: None, cookie: Some(trimmed.to_string()) },
-    };
+    let cred = build_credentials(&src, trimmed, field.as_deref())?;
     config::save_credential_for_id(&id, &cred)?;
-    tracing::debug!(provider = %id, "set_source_credential: saved to keys.json");
+    tracing::debug!(provider = %id, field = ?field, "set_source_credential: saved to keys.json");
     // 关键：用户刚配完 key 浮窗应当立刻看到数据。per-provider 调度最早
     // 在下一分钟才 fire（启动时初始化为 now+interval），不手动拉一次用户得
     // 等 1 分钟甚至更久。refresh_single_inner 内部会更新 in-memory
@@ -248,6 +253,33 @@ pub async fn set_source_credential(
     }
     let _ = app.emit("musage://config-changed", ());
     Ok(())
+}
+
+/// 把 "value 落到 Credentials 哪个字段" 这条规则集中到一处。
+///
+/// `field` 取值：
+/// - `Some("api_key")` / `Some("cookie")` → 强制指定
+/// - `None` → 按 source 的 auth_kind 默认
+/// - `Some(其他)` → 报错（避免 typo 默默走错字段）
+fn build_credentials(
+    src: &Box<dyn QuotaSource>,
+    value: &str,
+    field: Option<&str>,
+) -> Result<Credentials, String> {
+    let target = match field {
+        Some("api_key") => "api_key",
+        Some("cookie") => "cookie",
+        Some(other) => return Err(format!("未知的 field 标识: {other}（应为 api_key 或 cookie）")),
+        None => match src.auth_kind() {
+            AuthKind::ApiKey | AuthKind::ApiKeyOrCookie => "api_key",
+            AuthKind::Cookie => "cookie",
+        },
+    };
+    Ok(match target {
+        "api_key" => Credentials { api_key: Some(value.to_string()), cookie: None },
+        "cookie" => Credentials { api_key: None, cookie: Some(value.to_string()) },
+        _ => unreachable!(),
+    })
 }
 
 #[tauri::command]

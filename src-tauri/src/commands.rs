@@ -223,6 +223,22 @@ pub async fn save_config(
             return Err(format!("钱包告警阈值必须 ≥ 0（实际 {n}）"));
         }
     }
+    // 校验自定义色（同 set_display_thresholds 路径）
+    for (k, v) in &cfg.color_overrides {
+        match k.as_str() {
+            "ok" | "cyan" | "warn" | "alert" => {}
+            other => {
+                return Err(format!(
+                    "未知的色档 key: {other}（仅支持 ok / cyan / warn / alert）"
+                ));
+            }
+        }
+        if !is_valid_hex_color(v) {
+            return Err(format!(
+                "{k} 的颜色值必须是 #RGB / #RRGGBB 形式（实际 {v}）"
+            ));
+        }
+    }
     cfg.save()?;
 
     // 同步 autostart
@@ -1105,21 +1121,26 @@ pub async fn set_tray_icon_style(
     Ok(())
 }
 
-/// 即时更新"显示阈值"：色档分界 [ok/cyan/warn/alert] + 钱包余额告警阈值。
+/// 即时更新"显示阈值"：色档分界 [ok/cyan/warn/alert] + 钱包余额告警阈值 +
+/// 4 档自定义色。
 ///
 /// 走单字段 command 路径（参考 `set_provider_enabled` / `set_tray_icon_style`），
 /// 不走 `save_config` 全量保存。写 cfg + 落盘 + emit `config-changed` 让浮窗
-/// 重新渲染（颜色立刻反映新阈值）。
+/// 重新渲染（颜色立刻反映新阈值/新色）。
 ///
 /// 校验：
 /// - `color_thresholds`：3 个 u8，必须 0 < t0 < t1 < t2 < 100
 /// - `wallet_alert_threshold`：None 关闭；Some(n) 要求 n >= 0
+/// - `color_overrides`：只允许 key ∈ {ok, cyan, warn, alert}，value 必须是
+///   `#RGB` / `#RRGGBB` 形式的 hex（与 `<input type="color">` 输出一致）；
+///   其他 key 一律 reject（防 typo 默默走默认）
 #[tauri::command]
 pub async fn set_display_thresholds(
     state: State<'_, AppState>,
     app: AppHandle,
     color_thresholds: [u8; 3],
     wallet_alert_threshold: Option<f64>,
+    color_overrides: std::collections::BTreeMap<String, String>,
 ) -> Result<(), String> {
     let [t0, t1, t2] = color_thresholds;
     if !(0 < t0 && t0 < t1 && t1 < t2 && t2 < 100) {
@@ -1132,14 +1153,41 @@ pub async fn set_display_thresholds(
             return Err(format!("钱包告警阈值必须 ≥ 0（实际 {n}）"));
         }
     }
+    for (k, v) in &color_overrides {
+        match k.as_str() {
+            "ok" | "cyan" | "warn" | "alert" => {}
+            other => {
+                return Err(format!(
+                    "未知的色档 key: {other}（仅支持 ok / cyan / warn / alert）"
+                ));
+            }
+        }
+        if !is_valid_hex_color(v) {
+            return Err(format!(
+                "{k} 的颜色值必须是 #RGB / #RRGGBB 形式（实际 {v}）"
+            ));
+        }
+    }
     {
         let mut cfg = state.config.write().await;
         cfg.color_thresholds = color_thresholds;
         cfg.wallet_alert_threshold = wallet_alert_threshold;
+        cfg.color_overrides = color_overrides;
         cfg.save()?;
     }
     let _ = app.emit("musage://config-changed", ());
     Ok(())
+}
+
+/// 校验 CSS 颜色串：`#RGB` / `#RRGGBB` 形式的 hex（区分大小写不敏感）。
+/// 与 `<input type="color">` 的输出格式严格对齐。
+fn is_valid_hex_color(s: &str) -> bool {
+    let s = s.trim();
+    if !s.starts_with('#') {
+        return false;
+    }
+    let hex = &s[1..];
+    matches!(hex.len(), 3 | 6) && hex.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// 设置面板「📋 日志」拉取最近 N 条（最新在末尾）。

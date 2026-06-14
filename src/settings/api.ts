@@ -141,14 +141,24 @@ export async function setTrayIconStyle(
   await invoke("set_tray_icon_style", { style });
 }
 
-/** 即时更新"显示阈值"：色档分界 + 钱包余额告警阈值。即时生效。 */
+/**
+ * 即时更新"显示阈值"：色档分界 + 钱包余额告警阈值 + 4 档自定义色。即时生效。
+ *
+ * @param colorThresholds   [t0, t1, t2]，0 < t0 < t1 < t2 < 100
+ * @param walletAlertThreshold  null = 关闭；n = remaining < n 时该行翻红
+ * @param colorOverrides   4 档自定义色：{ok?, cyan?, warn?, alert?} → "#RRGGBB"。
+ *                          缺哪个 key = 哪个 key 走默认；空对象 = 全部默认。
+ *                          key 名错 / hex 不合法会被 Rust 端 reject。
+ */
 export async function setDisplayThresholds(
   colorThresholds: [number, number, number],
   walletAlertThreshold: number | null,
+  colorOverrides: Record<string, string>,
 ): Promise<void> {
   await invoke("set_display_thresholds", {
     colorThresholds,
     walletAlertThreshold,
+    colorOverrides,
   });
 }
 

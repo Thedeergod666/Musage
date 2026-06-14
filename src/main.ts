@@ -75,13 +75,37 @@ interface RenderPrefs {
   colorThresholds: [number, number, number];
   /// 钱包/余额行的低额高亮阈值。null = 关闭（保持默认蓝色）。
   walletAlertThreshold: number | null;
+  /// 用户自定义 4 档色：{ok, cyan, warn, alert} → "#RRGGBB"。空对象 = 走 iOS 默认。
+  /// 改这个会触发 applyColorOverrides() 把 CSS 变量写进 #app。
+  colorOverrides: Record<string, string>;
 }
 let renderPrefs: RenderPrefs = {
   tavilyConciseMode: true,
   zenmuxPaygConciseMode: true,
   colorThresholds: [50, 70, 88],
   walletAlertThreshold: null,
+  colorOverrides: {},
 };
+
+/// 把 renderPrefs.colorOverrides 应用到 #app 的 inline CSS 变量。
+/// 没 override 的键 → 走 iOS 默认（= 删掉 inline var，CSS 自己 fallback）。
+///
+/// 触发时机：
+/// 1. init() 首次读 config 之后
+/// 2. config-changed 事件之后（用户在设置面板改了色 / 点了"全部重置"）
+///
+/// 实现方式：直接 `app.style.setProperty('--c-data-ok', '#xxxxxx')`。
+/// inline style 优先级 > 任何 stylesheet 规则，所以一定能盖过。
+function applyColorOverrides(): void {
+  for (const key of ["ok", "cyan", "warn", "alert"] as const) {
+    const user = renderPrefs.colorOverrides[key];
+    if (user) {
+      app.style.setProperty(`--c-data-${key}`, user);
+    } else {
+      app.style.removeProperty(`--c-data-${key}`);
+    }
+  }
+}
 
 // ── 类型（必须和 src-tauri/src/providers/mod.rs 对齐）──
 
@@ -875,6 +899,7 @@ async function init() {
       zenmux_payg_concise_mode?: boolean;
       color_thresholds?: [number, number, number];
       wallet_alert_threshold?: number | null;
+      color_overrides?: Record<string, string>;
     }>("get_config");
     pinMode = cfg.floating_pin_mode ?? "pin_top";
     setLowPowerAttr(cfg.low_power_mode ?? false);
@@ -883,7 +908,9 @@ async function init() {
       zenmuxPaygConciseMode: cfg.zenmux_payg_concise_mode ?? true,
       colorThresholds: cfg.color_thresholds ?? [50, 70, 88],
       walletAlertThreshold: cfg.wallet_alert_threshold ?? null,
+      colorOverrides: cfg.color_overrides ?? {},
     };
+    applyColorOverrides();
   } catch (e) {
     console.error("读 config 失败", e);
   }
@@ -898,13 +925,16 @@ async function init() {
         zenmux_payg_concise_mode?: boolean;
         color_thresholds?: [number, number, number];
         wallet_alert_threshold?: number | null;
+        color_overrides?: Record<string, string>;
       }>("get_config");
       renderPrefs = {
         tavilyConciseMode: cfg.tavily_concise_mode ?? true,
         zenmuxPaygConciseMode: cfg.zenmux_payg_concise_mode ?? true,
         colorThresholds: cfg.color_thresholds ?? [50, 70, 88],
         walletAlertThreshold: cfg.wallet_alert_threshold ?? null,
+        colorOverrides: cfg.color_overrides ?? {},
       };
+      applyColorOverrides();
       const snap = await invoke<QuotaSnapshot>("get_snapshot");
       if (snap.providers.length > 0) render(snap);
     } catch (e) {

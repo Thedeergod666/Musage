@@ -129,6 +129,10 @@ export interface AppConfig {
   /// null/undefined = 关闭（按现状显示蓝色 / 默认色）；
   /// 数字 = remaining < 该值时把行翻成 alert 红。
   wallet_alert_threshold?: number | null;
+  /// 用户自定义 4 档色（hover 时显示）：{ok, cyan, warn, alert} → "#RRGGBB"。
+  /// 空对象 / 缺字段 = 走 iOS 系统默认色。浮窗 init 时把非空项写进
+  /// #app 的 inline CSS 变量 --c-data-{key}，bar / dot 同步跟着变。
+  color_overrides?: Record<string, string>;
 }
 
 export interface ProviderSnapshot {

@@ -118,15 +118,15 @@ export function renderFloatingSection(container: HTMLElement, cfg: AppConfig) {
   );
 }
 
-/// 「颜色档位阈值」+「钱包余额告警」两个相关配置。
+/// 「颜色档位阈值」+「自定义 4 档色」+「钱包余额告警」三个相关配置。
 ///
-/// 两者都走 set_display_thresholds 单字段 command（参考 set_low_power_mode
-/// 的"勾选即生效"模式），不依赖"保存"按钮。Rust 端会校验 t0<t1<t2<100 和
-/// wallet ≥ 0，失败回退到旧值 + flash 报错。
+/// 全部走 set_display_thresholds 单字段 command（参考 set_low_power_mode
+/// 的"勾选即生效"模式），不依赖"保存"按钮。Rust 端会校验 t0<t1<t2<100 、
+/// wallet ≥ 0、color key ∈ {ok,cyan,warn,alert} 且 value 是 #RGB/#RRGGBB，
+/// 失败回退到旧值 + flash 报错。
 function renderDisplayThresholdsFields(cfg: AppConfig) {
+  // ── 颜色档位阈值（3 个 number input） ──
   const [t0, t1, t2] = cfg.color_thresholds ?? [50, 70, 88];
-
-  // 3 个 number input + "保存" 按钮
   const t0Input = el("input", {
     type: "number", id: "color-t0", min: "0", max: "99", step: "1",
     value: String(t0), title: "ok → cyan 分界（0..100）",
@@ -139,10 +139,34 @@ function renderDisplayThresholdsFields(cfg: AppConfig) {
     type: "number", id: "color-t2", min: "0", max: "99", step: "1",
     value: String(t2), title: "warn → alert 分界",
   }) as HTMLInputElement;
-  const saveThresholdsBtn = el("button", { class: "primary", id: "save-thresholds" }, "保存阈值") as HTMLButtonElement;
-  const resetThresholdsBtn = el("button", { id: "reset-thresholds" }, "恢复默认 [50, 70, 88]") as HTMLButtonElement;
 
-  // 钱包告警（默认关闭）
+  // ── 4 档自定义色（4 个 color picker） ──
+  // iOS 系统默认色（与 main.ts::DEFAULT_PALETTE + styles.css 保持一致）
+  const DEFAULT_PALETTE: Record<"ok" | "cyan" | "warn" | "alert", string> = {
+    ok: "#30d158",
+    cyan: "#5ac8fa",
+    warn: "#ff9f0a",
+    alert: "#ff453a",
+  };
+  const colorKeys = ["ok", "cyan", "warn", "alert"] as const;
+  const colorLabels: Record<typeof colorKeys[number], string> = {
+    ok: "OK (绿 · 安全)",
+    cyan: "CYAN (青 · 过半提醒)",
+    warn: "WARN (黄 · 警告)",
+    alert: "ALERT (红 · 告警)",
+  };
+  const overrides = cfg.color_overrides ?? {};
+  const colorPickers: Record<typeof colorKeys[number], HTMLInputElement> = {} as any;
+  for (const key of colorKeys) {
+    colorPickers[key] = el("input", {
+      type: "color", id: `color-${key}`,
+      value: overrides[key] ?? DEFAULT_PALETTE[key],
+      title: `自定义 ${key.toUpperCase()} 色`,
+    }) as HTMLInputElement;
+    colorPickers[key].addEventListener("change", () => void applyAll());
+  }
+
+  // ── 钱包告警（默认关闭） ──
   const walletCb = el("input", { type: "checkbox", id: "wallet-alert-enabled" }) as HTMLInputElement;
   const walletInput = el("input", {
     type: "number", id: "wallet-alert-threshold", min: "0", step: "0.01",
@@ -154,9 +178,10 @@ function renderDisplayThresholdsFields(cfg: AppConfig) {
     : "";
   walletInput.disabled = !walletCb.checked;
 
-  // 共享的"立即应用"动作：从 3 个 input 读 → 调 setDisplayThresholds
-  // 失败时 flash 报错 + 回填旧值。
-  const applyThresholds = async () => {
+  // ── 共享"立即应用"动作 ──
+  // 一次性从所有 input 读 → 调 setDisplayThresholds。
+  // 失败时 flash 报错 + 回填旧值（不阻塞其他 input 的后续修改）。
+  const applyAll = async () => {
     const v0 = parseInt(t0Input.value, 10);
     const v1 = parseInt(t1Input.value, 10);
     const v2 = parseInt(t2Input.value, 10);
@@ -164,16 +189,22 @@ function renderDisplayThresholdsFields(cfg: AppConfig) {
       flash("✗ 阈值必须是数字", true);
       return;
     }
-    const wallet = walletCb.checked
-      ? parseFloat(walletInput.value)
-      : null;
+    const wallet = walletCb.checked ? parseFloat(walletInput.value) : null;
     if (walletCb.checked && !Number.isFinite(wallet)) {
       flash("✗ 钱包告警阈值必须是数字（或取消勾选关闭）", true);
       return;
     }
+    // 只把"非默认色"的项加进 overrides（保持 config.json 干净）
+    const newOverrides: Record<string, string> = {};
+    for (const key of colorKeys) {
+      const v = colorPickers[key].value.toLowerCase();
+      if (v !== DEFAULT_PALETTE[key].toLowerCase()) {
+        newOverrides[key] = v;
+      }
+    }
     try {
-      await setDisplayThresholds([v0, v1, v2], wallet);
-      flash("✓ 阈值已更新");
+      await setDisplayThresholds([v0, v1, v2], wallet, newOverrides);
+      flash("✓ 显示设置已更新");
     } catch (e) {
       flash(`✗ 保存失败: ${e}`, true);
       // 回填旧值
@@ -183,24 +214,55 @@ function renderDisplayThresholdsFields(cfg: AppConfig) {
       walletInput.value = cfg.wallet_alert_threshold != null
         ? String(cfg.wallet_alert_threshold)
         : "";
+      for (const key of colorKeys) {
+        colorPickers[key].value = overrides[key] ?? DEFAULT_PALETTE[key];
+      }
     }
   };
 
-  saveThresholdsBtn.addEventListener("click", () => void applyThresholds());
-  resetThresholdsBtn.addEventListener("click", () => {
+  // ── 事件绑定 ──
+  for (const input of [t0Input, t1Input, t2Input]) {
+    input.addEventListener("change", () => void applyAll());
+  }
+  walletCb.addEventListener("change", () => {
+    walletInput.disabled = !walletCb.checked;
+    void applyAll();
+  });
+  walletInput.addEventListener("change", () => {
+    if (walletCb.checked) void applyAll();
+  });
+
+  // ── "全部重置"按钮：阈值 / 自定义色 / 钱包告警 一次性还原到出厂值 ──
+  const resetAllBtn = el("button", { class: "primary", id: "reset-all-display" },
+    "↺ 全部重置为默认") as HTMLButtonElement;
+  resetAllBtn.addEventListener("click", () => {
     t0Input.value = "50";
     t1Input.value = "70";
     t2Input.value = "88";
-    void applyThresholds();
+    for (const key of colorKeys) {
+      colorPickers[key].value = DEFAULT_PALETTE[key];
+    }
+    walletCb.checked = false;
+    walletInput.value = "";
+    walletInput.disabled = true;
+    void applyAll();
   });
-  walletCb.addEventListener("change", () => {
-    walletInput.disabled = !walletCb.checked;
-    void applyThresholds();
+
+  // 4 个 color picker 一行排开，每个右边带 label
+  const colorRow = el("div", {
+    class: "row",
+    style: "display: flex; gap: 10px; align-items: center; flex-wrap: wrap;",
   });
-  // wallet input 单独监听，勾选时也要响应（避免必须点保存按钮）
-  walletInput.addEventListener("change", () => {
-    if (walletCb.checked) void applyThresholds();
-  });
+  for (const key of colorKeys) {
+    colorRow.appendChild(
+      el("label", {
+        style: "display: inline-flex; align-items: center; gap: 4px; font-size: 11px;",
+      },
+        colorPickers[key],
+        el("span", {}, colorLabels[key]),
+      ),
+    );
+  }
 
   return [
     el("div", { class: "field" },
@@ -210,11 +272,15 @@ function renderDisplayThresholdsFields(cfg: AppConfig) {
         el("span", { style: "color: var(--text-faint); margin-left: 6px; font-size: 11px;" },
           "ok / cyan / warn / alert"),
       ),
-      el("div", { class: "row", style: "display: flex; gap: 6px; margin-top: 6px;" },
-        saveThresholdsBtn, resetThresholdsBtn,
-      ),
       el("div", { class: "help" },
         "默认 [50, 70, 88]。改动会立即生效（不需点保存）。后端校验 0 < t0 < t1 < t2 < 100。"),
+    ),
+    el("div", { class: "field" },
+      el("label", {}, "🎨 自定义 4 档色（hover 时显示）"),
+      colorRow,
+      el("div", { class: "help" },
+        "默认用 iOS 系统色（绿/青/黄/红）。改任意一个 → 立即生效；" +
+        "浮窗文字 / 进度条 / 状态点 三个地方的颜色会同步跟着变。"),
     ),
     el("div", { class: "field" },
       el("label", {}, "💰 钱包余额告警（剩余多少时变红）"),
@@ -226,6 +292,11 @@ function renderDisplayThresholdsFields(cfg: AppConfig) {
       el("div", { class: "help" },
         "默认关闭（保持现状蓝色）。开启后，对所有「余额 / 剩余积分」行生效，不区分钱 / 积分（" +
         "DeepSeek / ZenMux / OpenRouter 等），按你自己 provider 的余额量级调阈值。"),
+    ),
+    el("div", { class: "field" },
+      el("div", { class: "row" }, resetAllBtn),
+      el("div", { class: "help" },
+        "一键把上述 3 项全部还原到默认：阈值 [50,70,88] / 颜色 iOS 默认色 / 钱包告警关闭。"),
     ),
   ];
 }

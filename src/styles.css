@@ -170,7 +170,9 @@ body[data-hover] #app {
   min-width: 0;
 }
 
-/* 状态点：对应天气 widget 里的"太阳/雨"图标，全程保留色彩 */
+/* 状态点：对应天气 widget 里的"太阳/雨"图标，全程保留色彩。
+ * 颜色走 --c-data-{ok,alert}，被 main.ts 的 color_overrides 改写 inline。
+ * .ok/.alert 的具体规则见上 .pct 同名 section 附近。 */
 .card-dot {
   width: 7px;
   height: 7px;
@@ -178,8 +180,6 @@ body[data-hover] #app {
   display: inline-block;
   flex-shrink: 0;
 }
-.card-dot.ok    { background: #30d158; box-shadow: 0 0 8px rgba(48, 209, 88, 0.7); }
-.card-dot.alert { background: #ff453a; box-shadow: 0 0 8px rgba(255, 69, 58, 0.7); }
 
 /* ── 行容器 ── */
 
@@ -229,6 +229,17 @@ body[data-hover] #app {
 .pct.alert   { color: var(--c-data-alert); }
 .pct.balance { color: var(--c-data-info); }
 
+/* ── 状态点（idle 白 / hover 彩）：走同一个 CSS 变量，颜色被用户
+ * 自定义时（main.ts 写 inline --c-data-ok 等）自动跟着变。box-shadow
+ * 仍用变量做发光（alpha 调到 0.7 的柔和感用 color-mix 实现；
+ * 不支持 color-mix 的 WebView 直接拿全饱和色做光晕，视觉差异很小）。
+ * 注：color-mix 已是 WebView2 / WKWebView / WebKitGTK 主流版本基线，
+ * 不放心可加 --bar-grad-suffix 兜底，但目前没必要。 */
+.card-dot.ok    { background: var(--c-data-ok);
+                  box-shadow: 0 0 8px var(--c-data-ok); }
+.card-dot.alert { background: var(--c-data-alert);
+                  box-shadow: 0 0 8px var(--c-data-alert); }
+
 /* ── Bar：双层 —— 底层白色 idle 可见，::after 渐变彩条 hover fade-in ── */
 
 .bar {
@@ -259,11 +270,15 @@ body[data-hover] #app {
 }
 body[data-hover] #app .bar-fill::after { opacity: 1; }
 
-/* 4 档单色（4-stop positional gradient 太花，回归阈值化） */
-.bar-fill.ok    { --bar-grad: linear-gradient(90deg, #30d158, #5cd673); }
-.bar-fill.cyan  { --bar-grad: linear-gradient(90deg, #5ac8fa, #87d8ff); }
-.bar-fill.warn  { --bar-grad: linear-gradient(90deg, #ff9f0a, #ffb43a); }
-.bar-fill.alert { --bar-grad: linear-gradient(90deg, #ff453a, #ff6c63); }
+/* 4 档单色（4-stop positional gradient 太花，回归阈值化）
+ * 颜色由 --c-data-{ok,cyan,warn,alert} 决定 —— 用户自定义时（main.ts 写
+ * inline CSS var）这里自动跟着变。bar 渐变改为同色起止（视觉上是单色），
+ * 避免 iOS 渐变终点色（#5cd673 等）跟用户自定义色对不上。
+ * idle / 省电模式 (.bar-fill::after 透明度 0 或被强制改白) 不受影响。 */
+.bar-fill.ok    { --bar-grad: linear-gradient(90deg, var(--c-data-ok),    var(--c-data-ok)); }
+.bar-fill.cyan  { --bar-grad: linear-gradient(90deg, var(--c-data-cyan),  var(--c-data-cyan)); }
+.bar-fill.warn  { --bar-grad: linear-gradient(90deg, var(--c-data-warn),  var(--c-data-warn)); }
+.bar-fill.alert { --bar-grad: linear-gradient(90deg, var(--c-data-alert), var(--c-data-alert)); }
 
 .row-foot {
   font-size: 10.5px;

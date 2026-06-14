@@ -172,6 +172,18 @@ pub struct AppConfig {
     /// 等等）的脆弱字符串匹配。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wallet_alert_threshold: Option<f64>,
+    /// 用户自定义的 4 档语义色（hover 时显示的颜色）。
+    /// key = `"ok"` / `"cyan"` / `"warn"` / `"alert"`；value = CSS 颜色串
+    /// （如 `"#30d158"` / `"rgb(48, 209, 88)"`）。空 map = 用 iOS 系统默认色。
+    ///
+    /// 整张 map 一起序列化（`skip_serializing_if = "BTreeMap::is_empty"`，老
+    /// config.json 没这字段时 serde 自动走空 map → 走默认色，零感知）。
+    /// 浮窗在 init 时把这 4 个值 set 到 #app 的 inline CSS 变量
+    /// `--c-data-{ok,cyan,warn,alert}`，同时 --bar-grad-{...} 同步换成对应色
+    /// 单一色（去掉原 iOS 渐变，避免自定义色和渐变终点色不搭）。
+    /// idle（未 hover）状态保持白色，跟改动前一致。
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub color_overrides: BTreeMap<String, String>,
 }
 
 const fn tavily_concise_default() -> bool {
@@ -287,6 +299,7 @@ impl Default for AppConfig {
             tray_icon_style: TrayIconStyle::default(),
             color_thresholds: default_color_thresholds(),
             wallet_alert_threshold: None,
+            color_overrides: BTreeMap::new(),
         }
     }
 }

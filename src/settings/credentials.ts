@@ -21,6 +21,8 @@ import {
   refreshNow,
 } from "./api";
 import { $, el, flash, providerDisplay } from "./utils";
+import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import type { ProviderId, SourceMeta } from "./types";
 
 // ── 旧 enum-based API（minimax / deepseek / xiaomimimo api_key）──
@@ -315,6 +317,29 @@ export function renderCredentialBlock(meta: SourceMeta): HTMLElement {
 function renderMultiAuthBlock(meta: SourceMeta): HTMLElement {
   const block = el("div", { class: "cred-block" });
 
+  // ── 顶部快捷登录（小米专用）──
+  // 一键弹 webview 让用户登录小米账号 → 后端自动提取 cookie 写进 keys.json
+  // → 告别"开 DevTools 复制 header"。**只对 xiaomimimo 启用**，其他多鉴权
+  // source 没接 dashboard 登录链路就显示占位。
+  if (meta.id === "xiaomimimo") {
+    block.appendChild(
+      el("div", { class: "quick-login-banner" },
+        el("div", { class: "quick-login-text" },
+          el("strong", {}, "🚀 不想手动抄 Cookie？"),
+          el("br"),
+          "点下面按钮 → 弹窗登录小米账号 → 后端自动提取 Cookie 写进 keys.json，",
+          "全程不需要碰 DevTools。",
+        ),
+        el("button", {
+          class: "primary big",
+          id: `xiaomi-login-${meta.id}`,
+          "data-id": meta.id,
+          "data-action": "xiaomi-login",
+        }, "🔑 登录小米账号"),
+      ),
+    );
+  }
+
   // ── Block 1: API key（优先）──
   block.appendChild(
     el("div", { class: "field" },
@@ -570,7 +595,43 @@ export async function copyCredentialAction(id: string) {
   }
 }
 
-/// document-level 委托：处理动态 panel 里的 save-key / del-key / copy-key / save-cookie / del-cookie
+/// 一键登录小米账号：弹 webview → 用户登录 → 后端自动提取 cookie。
+///
+/// 数据流：
+/// 1. `invoke("open_xiaomi_login_window")` → 后端开 webview
+/// 2. 用户在 webview 里登录小米账号
+/// 3. 后端监听到 dashboard URL → 提取 cookie → 写 keys.json → 关 webview
+/// 4. 后端 emit `musage://xiaomi-login-success` / `-failed`
+/// 5. 本函数在 init 时绑一次事件监听（见 `bindXiaomiLoginEvents`）
+export async function xiaomiLoginAction(id: string) {
+  if (id !== "xiaomimimo") {
+    flash("⚠ 一键登录只对 Xiaomi 启用", true);
+    return;
+  }
+  try {
+    await invoke("open_xiaomi_login_window");
+    flash("🔑 已打开登录窗口 —— 登录完成后会自动关闭窗口");
+  } catch (e) {
+    flash(`✗ 打开登录窗口失败: ${e}`, true);
+  }
+}
+
+/// 绑一次后端登录事件 → UI 反馈。
+/// 在 main.ts init() 末尾调一次就行（**只绑一次**，多次绑会重复响应）。
+export function bindXiaomiLoginEvents() {
+  // 走 Tauri 2 标准 listen API（不是 window.__TAURI__ 全局，TS 类型干净）
+  void listen<number>("musage://xiaomi-login-success", (e) => {
+    const savedLen = e.payload;
+    flash(`✓ Xiaomi 登录成功，已保存 cookie（${savedLen} 字节）`);
+    // 立即刷新状态徽章
+    void loadCredentialStatus("xiaomimimo");
+  });
+  void listen<string>("musage://xiaomi-login-failed", (e) => {
+    flash(`✗ Xiaomi 登录失败: ${e.payload}`, true);
+  });
+}
+
+/// document-level 委托：处理动态 panel 里的 save-key / del-key / copy-key / save-cookie / del-cookie / xiaomi-login
 /// 在 main.ts init() 末尾调一次就行。
 export function bindCredentialButtonsGlobal() {
   document.addEventListener("click", (e) => {
@@ -593,6 +654,9 @@ export function bindCredentialButtonsGlobal() {
         break;
       case "del-cookie":
         void deleteCredentialAction(id, "cookie");
+        break;
+      case "xiaomi-login":
+        void xiaomiLoginAction(id);
         break;
     }
   });

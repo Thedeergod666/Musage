@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "default permissions",
-  "windows": ["floating", "settings"],
+  "windows": ["floating", "settings", "xiaomi-login"],
   "permissions": [
     "core:default",
     "core:window:allow-show",

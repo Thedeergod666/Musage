@@ -14,7 +14,7 @@ import { renderAdvancedSection } from "./advanced";
 import { renderLogsSection, loadLogs } from "./logs";
 import { renderAboutSection } from "./about";
 import { setupUpdaterSection } from "./updater";
-import { bindCredentialButtonsGlobal } from "./credentials";
+import { bindCredentialButtonsGlobal, bindXiaomiLoginEvents } from "./credentials";
 import { bindOrderButtonsGlobal } from "./order";
 import { flash } from "./utils";
 
@@ -48,6 +48,7 @@ async function init() {
   try {
     // 全局事件委托（只绑一次，document-level）
     bindCredentialButtonsGlobal();
+    bindXiaomiLoginEvents();
     bindOrderButtonsGlobal();
 
     // 拉 cfg + sources（并发）

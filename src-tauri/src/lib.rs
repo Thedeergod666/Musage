@@ -20,6 +20,7 @@ mod poller;
 mod poller_backoff;
 mod providers;
 mod tray;
+mod xiaomi_login;
 
 use std::sync::Arc;
 use tauri::Manager;
@@ -223,6 +224,7 @@ pub fn run() {
             commands::get_app_version,
             commands::get_recent_logs,
             commands::clear_logs,
+            xiaomi_login::open_xiaomi_login_window,
         ])
         .on_window_event(|window, event| {
             // 关闭悬浮窗时拦截，避免退出整个 app

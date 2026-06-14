@@ -14,6 +14,7 @@ concurrency:
 #   actions/checkout           v4.3.1 → 34e114876b0b11c390a56381ad16ebd13914f8d5
 #   actions/setup-node         v4.4.0 → 49933ea5288caeca8642d1e84afbd3f7d6820020
 #   pnpm/action-setup          v4.4.0 → fc06bc1257f339d1d5d8b3a19a8cae5388b55320
+#   actions/cache              v4.3.0 → 0057852bfaa89a56745cba8c7296529d2fc39830
 #   Swatinem/rust-cache        v2.9.1 → c19371144df3bb44fab255c43d04cbc2ab54d1c4
 #   actions/upload-artifact    v4.6.2 → ea165f8d65b6e75b540449e92b4886f43607fa02
 #   actions/download-artifact  v4.3.0 → d3f86a106a0bac45b974a628896c90dbdf5c8093
@@ -36,7 +37,19 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
-          cache: "pnpm"
+          # ⚠ 不要用 `cache: "pnpm"` —— v4.4.0 内部调 setup-pnpm 取 store path,
+          # bundle pnpm 跟 pnpm 9.15.4 config 不兼容,抛 "packages field missing or empty"
+          # 改用手动的 actions/cache 缓存 pnpm store
+      - name: Cache pnpm store
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          # 覆盖三大平台的 pnpm 默认 store 路径(macOS/Linux 是 XDG,Windows 是 LOCALAPPDATA)
+          path: |
+            ~/.local/share/pnpm/store
+            ~/Library/pnpm/store
+            ~/AppData/Local/pnpm/store
+          key: pnpm-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: pnpm-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
       - run: pnpm build          # tsc + vite build,不出 bundle
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

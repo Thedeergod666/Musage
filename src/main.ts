@@ -23,24 +23,45 @@ import zhipuLogo from "./assets/zhipu-logo.svg?url";
 import zhipuEnLogo from "./assets/zhipu-en-logo.svg?url";
 import "./styles.css";
 
-/// 静态映射：provider id → 官网 logo + 显示名
+/// 静态映射：provider id → 官网 logo + 显示名 + accent 色
 /// logo 走 Vite `?url` import 拿到打包后的 URL
 ///
 /// 智谱 GLM 两个区域共用 id "zhipu"，运行时根据后端返回的
 /// source_display_name（"智谱 GLM" / "Z.ai"）切换 logo：
 /// - CN → zhipuLogo（紫色渐变 + 智字）
 /// - EN → zhipuEnLogo（z.ai 官方 logo SVG）
-const PROVIDER_META: Record<string, { name: string; logo: string }> = {
-  minimax: { name: "MiniMax", logo: minimaxLogo },
-  deepseek: { name: "DeepSeek", logo: deepseekLogo },
-  xiaomimimo: { name: "Xiaomi MiMo", logo: xiaomimimoLogo },
-  tavily: { name: "Tavily", logo: tavilyLogo },
-  zenmux: { name: "ZenMux", logo: zenmuxLogo },
-  openrouter: { name: "OpenRouter", logo: openrouterLogo },
-  kimi: { name: "Kimi", logo: kimiLogo },
-  zhipu: { name: "智谱 GLM", logo: zhipuLogo },
-  "Z.ai": { name: "Z.ai", logo: zhipuEnLogo },
+///
+/// 加新 provider 时如果暂时没有 logo 文件，把 `logo` 留空字符串，
+/// `updateCard` 会自动用首字母 + accent 色生成 data: URL fallback。
+/// 等拿到真 logo 直接 `cp` 替换 SVG 文件即可。
+const PROVIDER_META: Record<string, { name: string; logo: string; accent: string }> = {
+  minimax: { name: "MiniMax", logo: minimaxLogo, accent: "#9b59ff" },
+  deepseek: { name: "DeepSeek", logo: deepseekLogo, accent: "#4a90e2" },
+  xiaomimimo: { name: "Xiaomi MiMo", logo: xiaomimimoLogo, accent: "#ff6a00" },
+  tavily: { name: "Tavily", logo: tavilyLogo, accent: "#00d4a8" },
+  zenmux: { name: "ZenMux", logo: zenmuxLogo, accent: "#9b59ff" },
+  openrouter: { name: "OpenRouter", logo: openrouterLogo, accent: "#5ac8fa" },
+  kimi: { name: "Kimi", logo: kimiLogo, accent: "#5ac8fa" },
+  zhipu: { name: "智谱 GLM", logo: zhipuLogo, accent: "#7b61ff" },
+  "Z.ai": { name: "Z.ai", logo: zhipuEnLogo, accent: "#2D2D2D" },
 };
+
+/// 没有 logo 文件时，用首字母 + accent 色生成 data: URL SVG。
+/// 渲染成本几乎为 0（base64 inline），但保证浮窗一定有头像可显示。
+function fallbackLogo(name: string, accent: string): string {
+  const ch = name.trim().charAt(0).toUpperCase() || "?";
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56">
+    <rect width="56" height="56" rx="12" fill="${accent}"/>
+    <text x="28" y="38" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="30" font-weight="700" fill="#fff">${escapeXml(ch)}</text>
+  </svg>`;
+  return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+function escapeXml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!),
+  );
+}
 
 type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
 
@@ -351,10 +372,15 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
   const regionKey = (id === "zhipu" && p.source_display_name)
     ? p.source_display_name
     : id;
-  const meta = PROVIDER_META[regionKey] ?? { name: p.source_display_name ?? id, logo: "" };
+  const meta = PROVIDER_META[regionKey] ?? {
+    name: p.source_display_name ?? id,
+    logo: "",
+    accent: "#888",
+  };
+  const logoSrc = meta.logo || fallbackLogo(meta.name, meta.accent);
   const logo = title.querySelector<HTMLImageElement>(".card-logo")!;
   const name = title.querySelector<HTMLElement>(".card-name")!;
-  if (logo.src !== meta.logo) logo.src = meta.logo;
+  if (logo.src !== logoSrc) logo.src = logoSrc;
   logo.alt = meta.name;
   name.textContent = meta.name;
 

@@ -16,10 +16,11 @@
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
-use crate::config::{self, AppConfig, FloatingPinMode, TrayIconStyle};
+use crate::config::{self, AppConfig, FloatingPinMode, ProviderConfig, TrayIconStyle};
 use crate::providers::{
     builtin_sources, find_source, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderSnapshot, QuotaSnapshot, QuotaSource,
 };
+use crate::providers::xiaomi::XiaomiDisplayMode;
 use crate::AppState;
 
 /// 立即更新 provider 顺序 + 落盘 + emit config-changed（前端调，无需走
@@ -102,6 +103,59 @@ pub async fn set_provider_enabled(
     }
     let _ = app.emit("musage://config-changed", ());
     Ok(())
+}
+
+/// 即时切换 Xiaomi MiMo 浮窗显示模式：完整 / 只套餐 / 只总额度。
+///
+/// 走单字段 command 路径（参考 `set_provider_enabled`），不走 `save_config` 全量保存。
+/// 保存后立即 refresh 一次（poller 下一分钟才 fire，user 等不了）。
+#[tauri::command]
+pub async fn set_xiaomi_display_mode(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    mode: String,
+) -> Result<(), String> {
+    let parsed = match mode.as_str() {
+        "all" => XiaomiDisplayMode::All,
+        "plan_only" => XiaomiDisplayMode::PlanOnly,
+        "total_only" => XiaomiDisplayMode::TotalOnly,
+        other => return Err(format!("未知的 Xiaomi 显示模式: {other}（应为 all / plan_only / total_only）")),
+    };
+    {
+        let mut cfg = state.config.write().await;
+        let entry = cfg
+            .providers
+            .entry("xiaomimimo".to_string())
+            .or_insert(ProviderConfig {
+                enabled: true,
+                region: None,
+                xiaomi_region: None,
+                refresh_interval_secs: None,
+                xiaomi_display_mode: None,
+            });
+        entry.xiaomi_display_mode = Some(parsed);
+        cfg.save()?;
+    }
+    // 立即刷新（让浮窗按新模式显示）
+    let _ = refresh_single_inner(&app, "xiaomimimo").await;
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
+}
+
+/// 读 Xiaomi 当前显示模式（给设置面板初始化用）。
+#[tauri::command]
+pub async fn get_xiaomi_display_mode(state: State<'_, AppState>) -> Result<String, String> {
+    let cfg = state.config.read().await;
+    let mode = cfg
+        .providers
+        .get("xiaomimimo")
+        .and_then(|p| p.xiaomi_display_mode)
+        .unwrap_or_default();
+    Ok(match mode {
+        XiaomiDisplayMode::All => "all".to_string(),
+        XiaomiDisplayMode::PlanOnly => "plan_only".to_string(),
+        XiaomiDisplayMode::TotalOnly => "total_only".to_string(),
+    })
 }
 
 #[tauri::command]

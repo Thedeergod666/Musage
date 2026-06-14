@@ -53,12 +53,31 @@ impl XiaomiRegion {
     }
 }
 
+/// 浮窗显示模式：用户可切 完整 / 只套餐 / 只总额度。
+///
+/// - `All`（默认）：3 行（套餐 + 补偿 + 总额度），套餐/总额度数字一致时自动去重
+/// - `PlanOnly`：只显示套餐 1 行（适合只关心"套餐还剩多少"）
+/// - `TotalOnly`：只显示总额度 1 行（适合有补偿积分的用户看综合消耗），
+///   此时总额度会复用套餐的 resets_at（也是月度重置）
+///
+/// 序列化成 `"all" | "plan_only" | "total_only"`，跟前端 SourceMeta 同套约定。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum XiaomiDisplayMode {
+    #[default]
+    All,
+    PlanOnly,
+    TotalOnly,
+}
+
 // ── QuotaSource 实现（Phase 1）────────────────────────────────────
 
 #[derive(Debug, Clone, Default)]
 pub struct XiaomimimoState {
     pub region: XiaomiRegion,
     pub overrides: ProviderOverrides,
+    /// 用户在设置面板选的显示模式（默认 All = 完整 3 行 + 自动去重）
+    pub display_mode: XiaomiDisplayMode,
 }
 
 pub struct XiaomimimoSource {
@@ -72,10 +91,16 @@ impl Default for XiaomimimoSource {
 }
 
 impl XiaomimimoSource {
-    pub async fn set_state(&self, region: XiaomiRegion, overrides: ProviderOverrides) {
+    pub async fn set_state(
+        &self,
+        region: XiaomiRegion,
+        overrides: ProviderOverrides,
+        display_mode: XiaomiDisplayMode,
+    ) {
         let mut s = self.state.write().await;
         s.region = region;
         s.overrides = overrides;
+        s.display_mode = display_mode;
     }
 }
 
@@ -105,9 +130,15 @@ impl QuotaSource for XiaomimimoSource {
                 .and_then(|so| so.get("xiaomimimo"))
                 .and_then(|m| serde_json::from_value(m.clone()).ok())
                 .unwrap_or_default();
+            let display_mode: XiaomiDisplayMode = cfg.get("providers")
+                .and_then(|p| p.get("xiaomimimo"))
+                .and_then(|m| m.get("xiaomi_display_mode"))
+                .and_then(|d| serde_json::from_value(d.clone()).ok())
+                .unwrap_or_default();
             let mut s = self.state.write().await;
             s.region = region;
             s.overrides = overrides;
+            s.display_mode = display_mode;
         })
     }
 
@@ -117,8 +148,9 @@ impl QuotaSource for XiaomimimoSource {
     ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>> {
         Box::pin(async move {
             let state = self.state.read().await.clone();
+            let display_mode = state.display_mode;
             let strategy = decide_auth_strategy(credentials);
-            match strategy {
+            let fetch_result = match strategy {
                 AuthStrategy::None => Err(FetchError::unconfigured(
                     "未配置 API key 或 Dashboard cookie（设置面板填入）"
                 )),
@@ -157,7 +189,8 @@ impl QuotaSource for XiaomimimoSource {
                         Err(e) => Err(e),
                     }
                 }
-            }
+            };
+            fetch_result.map(|snap| apply_display_mode(snap, display_mode))
         })
     }
 }
@@ -552,6 +585,45 @@ fn pick_item_percent(
     get_item_percent(raw, items_path, default_name)
 }
 
+/// 按用户选的 [`XiaomiDisplayMode`] 过滤 rows，并在 TotalOnly 时给总额度
+/// 注入 resets_at（复用套餐的月度重置时间，因为总额度也是按月清零）。
+///
+/// 放在 parse() 之后、抛给前端之前的过滤层 —— parse() 保持 pure
+/// 行为（不依赖 state），方便单测。
+fn apply_display_mode(snap: ProviderSnapshot, mode: XiaomiDisplayMode) -> ProviderSnapshot {
+    match mode {
+        XiaomiDisplayMode::All => snap,
+        XiaomiDisplayMode::PlanOnly => {
+            // 只留套餐行
+            let rows: Vec<QuotaRow> = snap
+                .rows
+                .into_iter()
+                .filter(|r| r.label == "套餐")
+                .collect();
+            ProviderSnapshot { rows, ..snap }
+        }
+        XiaomiDisplayMode::TotalOnly => {
+            // 只留总额度行；如果 parse() 没给 resets_at（默认就没给），
+            // 复用套餐的月度重置时间（rows[0] 或 fallback 到 detail 里的）——
+            // 但 parse() 之后 detail 已不在 snap 里，所以这里用
+            // snap.rows 里其他行有 resets_at 的就借过来。
+            let plan_resets_at = snap.rows.iter().find_map(|r| r.resets_at);
+            let rows: Vec<QuotaRow> = snap
+                .rows
+                .into_iter()
+                .filter(|r| r.label == "总额度")
+                .map(|mut r| {
+                    if r.resets_at.is_none() {
+                        r.resets_at = plan_resets_at;
+                    }
+                    r
+                })
+                .collect();
+            ProviderSnapshot { rows, ..snap }
+        }
+    }
+}
+
 /// "2026-06-27 23:59:59" → epoch ms（**UTC**，按 dashboard 标注）
 fn parse_datetime_utc_ms(s: &str) -> Option<i64> {
     let dt = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok()?;
@@ -910,5 +982,106 @@ mod tests {
         // 全部不中
         let custom = vec!["x", "y"];
         assert_eq!(pick_item_percent(&raw, "/data/items", &custom, "z"), None);
+    }
+
+    // ── display_mode 过滤 ──
+
+    /// 构造一个测试用的 3 行 snapshot（套餐 + 补偿 + 总额度，套餐带 resets_at）
+    fn snap_with_3_rows() -> ProviderSnapshot {
+        ProviderSnapshot {
+            provider: Provider::Xiaomimimo,
+            success: true,
+            rows: vec![
+                QuotaRow {
+                    label: "套餐".to_string(),
+                    utilization: Some(13.0),
+                    resets_at: Some(1785024000000),  // 2026-06-28 07:20 UTC
+                    unit: Some("%".to_string()),
+                    ..Default::default()
+                },
+                QuotaRow {
+                    label: "补偿".to_string(),
+                    utilization: Some(100.0),
+                    unit: Some("%".to_string()),
+                    ..Default::default()
+                },
+                QuotaRow {
+                    label: "总额度".to_string(),
+                    utilization: Some(42.0),
+                    unit: Some("%".to_string()),
+                    ..Default::default()
+                },
+            ],
+            error: None,
+            error_kind: None,
+            fetched_at: Some(0),
+            raw: None,
+            is_healthy: true,
+            source_id: Some("xiaomimimo".to_string()),
+            source_display_name: Some("Xiaomi MiMo".to_string()),
+            plan_name: None,
+        }
+    }
+
+    #[test]
+    fn display_mode_all_keeps_all_rows() {
+        let snap = snap_with_3_rows();
+        let out = apply_display_mode(snap, XiaomiDisplayMode::All);
+        assert_eq!(out.rows.len(), 3);
+    }
+
+    #[test]
+    fn display_mode_plan_only_keeps_only_plan() {
+        let snap = snap_with_3_rows();
+        let out = apply_display_mode(snap, XiaomiDisplayMode::PlanOnly);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0].label, "套餐");
+        assert!((out.rows[0].utilization.unwrap() - 13.0).abs() < 0.001);
+        // 套餐 resets_at 保留
+        assert_eq!(out.rows[0].resets_at, Some(1785024000000));
+    }
+
+    #[test]
+    fn display_mode_total_only_keeps_only_total_with_plan_resets_at() {
+        // TotalOnly 模式：总额度本来没 resets_at → 借套餐的月度重置时间
+        let snap = snap_with_3_rows();
+        let out = apply_display_mode(snap, XiaomiDisplayMode::TotalOnly);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0].label, "总额度");
+        assert!((out.rows[0].utilization.unwrap() - 42.0).abs() < 0.001);
+        // ★ 关键：resets_at 借过来了
+        assert_eq!(out.rows[0].resets_at, Some(1785024000000));
+    }
+
+    #[test]
+    fn display_mode_total_only_no_plan_resets_at_stays_none() {
+        // 极端：所有行都没 resets_at（detail 缺失）→ 总额度这行也别伪造
+        let mut snap = snap_with_3_rows();
+        snap.rows[0].resets_at = None;  // 套餐也没
+        let out = apply_display_mode(snap, XiaomiDisplayMode::TotalOnly);
+        assert_eq!(out.rows.len(), 1);
+        assert_eq!(out.rows[0].resets_at, None,
+            "套餐无 resets_at → 总额度也保持 None（不编造）");
+    }
+
+    #[test]
+    fn display_mode_preserves_other_fields() {
+        // 过滤不能改 snap 的其他字段（provider / source_id / plan_name / error 等）
+        let snap = snap_with_3_rows();
+        let out = apply_display_mode(snap, XiaomiDisplayMode::PlanOnly);
+        assert_eq!(out.provider, Provider::Xiaomimimo);
+        assert_eq!(out.source_id.as_deref(), Some("xiaomimimo"));
+        assert!(out.is_healthy);
+    }
+
+    #[test]
+    fn display_mode_plan_only_with_no_plan_row() {
+        // 极端：套餐缺失（schema 变了）→ 留个空 snapshot（success=true 但 0 行）
+        let mut snap = snap_with_3_rows();
+        snap.rows.retain(|r| r.label != "套餐");
+        let out = apply_display_mode(snap, XiaomiDisplayMode::PlanOnly);
+        assert_eq!(out.rows.len(), 0);
+        // 仍然算 success（parse 没报错，filter 不会改 success 标志）
+        assert!(out.success);
     }
 }

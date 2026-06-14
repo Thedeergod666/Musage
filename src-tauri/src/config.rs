@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
 use crate::providers::minimax::Region;
-use crate::providers::xiaomi::XiaomiRegion;
+use crate::providers::xiaomi::{XiaomiDisplayMode, XiaomiRegion};
 use crate::providers::Provider;
 
 const CONFIG_FILE: &str = "config.json";
@@ -44,6 +44,10 @@ pub struct ProviderConfig {
     /// 设长间隔（节流），重要的设短。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh_interval_secs: Option<u64>,
+    /// Xiaomi MiMo 用：浮窗显示模式（All / PlanOnly / TotalOnly）。
+    /// None = 默认 All。序列化时跳过 None，老 config.json 不带这字段也能解析。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub xiaomi_display_mode: Option<XiaomiDisplayMode>,
 }
 
 impl Default for ProviderConfig {
@@ -53,6 +57,7 @@ impl Default for ProviderConfig {
             region: None,
             xiaomi_region: None,
             refresh_interval_secs: None,
+            xiaomi_display_mode: None,
         }
     }
 }
@@ -205,6 +210,7 @@ impl Default for AppConfig {
                 region: Some(Region::Cn),
                 xiaomi_region: None,
                 refresh_interval_secs: None,
+                xiaomi_display_mode: None,
             },
         );
         providers.insert(
@@ -214,6 +220,7 @@ impl Default for AppConfig {
                 region: None,
                 xiaomi_region: None,
                 refresh_interval_secs: None,
+                xiaomi_display_mode: None,
             },
         );
         providers.insert(
@@ -223,6 +230,7 @@ impl Default for AppConfig {
                 region: None,
                 xiaomi_region: Some(XiaomiRegion::Cn),
                 refresh_interval_secs: None,
+                xiaomi_display_mode: None,
             },
         );
         // Phase 1: Tavily 作为第一个非 AI provider，默认 enabled。
@@ -234,6 +242,7 @@ impl Default for AppConfig {
                 region: None,
                 xiaomi_region: None,
                 refresh_interval_secs: None,
+                xiaomi_display_mode: None,
             },
         );
         Self {
@@ -292,6 +301,7 @@ impl AppConfig {
                     region: legacy.region.or(Some(Region::Cn)),
                     xiaomi_region: None,
                 refresh_interval_secs: None,
+                xiaomi_display_mode: None,
             },
             );
             cfg.refresh_interval_secs = legacy.refresh_interval_secs.unwrap_or(60);
@@ -329,18 +339,21 @@ impl AppConfig {
                         region: Some(Region::Cn),
                         xiaomi_region: None,
                 refresh_interval_secs: None,
+                xiaomi_display_mode: None,
             },
                     Provider::Deepseek => ProviderConfig {
                         enabled: true,
                         region: None,
                         xiaomi_region: None,
                 refresh_interval_secs: None,
+                xiaomi_display_mode: None,
             },
                     Provider::Xiaomimimo => ProviderConfig {
                         enabled: true,
                         region: None,
                         xiaomi_region: Some(XiaomiRegion::Cn),
                 refresh_interval_secs: None,
+                xiaomi_display_mode: None,
             },
                 });
         }
@@ -382,18 +395,21 @@ impl AppConfig {
                     region: Some(Region::Cn),
                     xiaomi_region: None,
                 refresh_interval_secs: None,
+                xiaomi_display_mode: None,
             },
                 Provider::Deepseek => ProviderConfig {
                     enabled,
                     region: None,
                     xiaomi_region: None,
                 refresh_interval_secs: None,
+                xiaomi_display_mode: None,
             },
                 Provider::Xiaomimimo => ProviderConfig {
                     enabled,
                     region: None,
                     xiaomi_region: Some(XiaomiRegion::Cn),
                 refresh_interval_secs: None,
+                xiaomi_display_mode: None,
             },
             });
         entry.enabled = enabled;

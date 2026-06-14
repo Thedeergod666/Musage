@@ -255,7 +255,7 @@ function render(snap: QuotaSnapshot) {
       }
     } else {
       // 后续：挪到 anchor 之后
-      const desiredNext = reorderAnchor.nextSibling;
+      const desiredNext: Node | null = reorderAnchor.nextSibling;
       if (card !== desiredNext) {
         reorderAnchor.parentNode?.insertBefore(card, desiredNext);
       }

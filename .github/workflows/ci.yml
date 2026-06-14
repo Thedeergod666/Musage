@@ -92,13 +92,15 @@ jobs:
           workspaces: src-tauri
       - name: cargo check
         working-directory: src-tauri
-        run: cargo check --all-targets
+        # ⚠ --locked 必加: 不加的话 fresh cargo 在不同平台可能重解析,
+        # 把 Cargo.lock 里没的 alloc-no-stdlib 3.0.0 拉进来,撞 brotli 8.0.3 的 2.0.4 trait
+        run: cargo check --locked --all-targets
         env:
           # CI 上没必要开 macos-private-api,省 objc2 链接
           RUSTFLAGS: ""
       - name: cargo test (no-run)
         working-directory: src-tauri
-        run: cargo test --no-run
+        run: cargo test --locked --no-run
 
   # ── 前端构建产物在所有平台保持一致:对比 hash ──
   frontend-consistency:

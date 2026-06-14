@@ -192,7 +192,7 @@ function onDragMouseUp(_e: MouseEvent) {
 
   if (orderIdx === dragSrcIdx && !crossedDivider) {
     // 没移动也没跨分隔线，恢复原状
-    if (listRef) buildOrderItems(listRef, orderSources);
+    if (listRef) buildOrderItems(listRef);
     dragging = false;
     dragSrcId = null;
     dragSrcIdx = -1;
@@ -206,7 +206,7 @@ function onDragMouseUp(_e: MouseEvent) {
   currentProviderOrder.splice(adjusted, 0, moved);
 
   // DOM 重建（含 divider）
-  if (listRef) buildOrderItems(listRef, orderSources);
+  if (listRef) buildOrderItems(listRef);
 
   if (crossedDivider) {
     // 跨过分隔线：先落盘 enabled，再落盘 order。Rust 端 set_provider_enabled
@@ -252,7 +252,7 @@ export function renderOrderSection(
 
   const list = el("ol", { class: "order-list" }) as HTMLOListElement;
   listRef = list;
-  buildOrderItems(list, sources);
+  buildOrderItems(list);
 
   // 绑定 mousedown（自定义拖拽）
   list.addEventListener("mousedown", onDragMouseDown);
@@ -271,10 +271,10 @@ export function renderOrderSection(
 /// 接收最新的 cfg（provider panel 改了 enabled 后通知过来）
 export function updateOrderConfig(cfg: AppConfig) {
   orderCfg = cfg;
-  if (listRef) buildOrderItems(listRef, orderSources);
+  if (listRef) buildOrderItems(listRef);
 }
 
-function buildOrderItems(list: HTMLOListElement, sources: SourceMeta[]) {
+function buildOrderItems(list: HTMLOListElement) {
   list.innerHTML = "";
   // 分两段：enabled 在上、disabled 在下，中间一条 divider。
   // 段内各自按 currentProviderOrder 出现顺序排（用户在段内拖拽时已经
@@ -369,7 +369,7 @@ function buildRow(id: string, idx: number, total: number, section: "enabled" | "
             }
           }
           currentProviderOrder.splice(insertAt, 0, id);
-          buildOrderItems(listRef!, orderSources);
+          buildOrderItems(listRef!);
           await setProviderEnabled(id, true);
           await setProviderOrder(currentProviderOrder);
           const cfg = await getConfig();
@@ -382,11 +382,11 @@ function buildRow(id: string, idx: number, total: number, section: "enabled" | "
     });
     li.querySelector(".order-btns")?.appendChild(showBtn);
   }
-  refreshRowButtons(li, idx, total, section);
+  refreshRowButtons(li, idx, total);
   return li;
 }
 
-function refreshRowButtons(li: HTMLElement, idx: number, total: number, section: "enabled" | "disabled") {
+function refreshRowButtons(li: HTMLElement, idx: number, total: number) {
   // enabled 段：上移到顶就禁 up，下移到底就禁 down
   // disabled 段：单独成段，上移到顶就禁 up，下移到底就禁 down（与段内相对位置一致）
   const upBtn = li.querySelector<HTMLButtonElement>(".order-up");

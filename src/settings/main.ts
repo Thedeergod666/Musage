@@ -5,6 +5,7 @@
 // 2. 异步：拉 cfg + sources → 并发渲染 6 个 section 到对应 .section-view
 // 3. 异步：拉每个 source 的 key 状态 + 日志
 
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { setupTabs } from "./utils";
 import { listSources, getConfig } from "./api";
 import { renderProvidersSection, loadAllCredentialStatus } from "./providers";
@@ -15,7 +16,7 @@ import { renderLogsSection, loadLogs } from "./logs";
 import { renderAboutSection } from "./about";
 import { setupUpdaterSection } from "./updater";
 import { bindCredentialButtonsGlobal, bindXiaomiLoginEvents } from "./credentials";
-import { bindOrderButtonsGlobal } from "./order";
+import { bindOrderButtonsGlobal, updateOrderConfig } from "./order";
 import { flash } from "./utils";
 
 // ── 1) 同步：sidebar 切换 + tabs ───────────────────────────────
@@ -80,6 +81,22 @@ async function init() {
     await loadAllCredentialStatus(sources);
     await loadLogs();
     setupUpdaterSection();
+
+    // 订阅后端 config-changed：用户改了「在浮窗显示」或调整了 provider
+    // 顺序时，Rust 会 emit 这个事件；设置面板需要重渲浮窗卡片顺序区域
+    // （enabled/disabled 分区会随之调整）和重读 cfg。
+    let unlistenCfg: UnlistenFn | null = null;
+    listen("musage://config-changed", async () => {
+      try {
+        const cfg = await getConfig();
+        updateOrderConfig(cfg);
+      } catch (e) {
+        console.warn("[settings] config-changed 刷新失败", e);
+      }
+    }).then((fn) => (unlistenCfg = fn));
+    window.addEventListener("beforeunload", () => {
+      if (unlistenCfg) unlistenCfg();
+    });
   } catch (e) {
     console.error("[settings] init failed", e);
     flash(`✗ 初始化失败: ${e}`, true);

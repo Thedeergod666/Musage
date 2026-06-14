@@ -192,6 +192,51 @@ code { background: #2a2d35; padding: 1px 4px; border-radius: 3px; font-size: 11p
 .order-btns button:disabled { opacity: 0.3; cursor: not-allowed; }
 
 /* ────────────────────────────────────────────────────────────
+ * 浮窗卡片顺序：enabled/disabled 分区（v0.6+）
+ * ──────────────────────────────────────────────────────────── */
+
+/* 分隔线 li —— 中间一条 label，两侧短横线 */
+.order-divider {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 10px var(--sp-3) 6px;
+  list-style: none;
+  pointer-events: none;
+  user-select: none;
+}
+.order-divider-line {
+  flex: 1;
+  height: 1px;
+  background: var(--bg-2);
+  opacity: 0.6;
+}
+.order-divider-label {
+  font-size: 11px;
+  color: var(--fg-3);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+/* disabled 段：透明度降一档，让用户一眼看出"这段不在浮窗显示" */
+.order-row-disabled {
+  opacity: 0.55;
+}
+.order-row-disabled .order-name { color: var(--fg-2); font-weight: 400; }
+
+/* "显示"按钮（disabled 段专用）—— 用主色让"恢复显示"动作显眼 */
+.order-btns .order-show {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  width: auto;
+  padding: 0 10px;
+  margin-left: 4px;
+}
+.order-btns .order-show:hover { background: var(--accent-hover, var(--accent)); color: #fff; }
+
+/* ────────────────────────────────────────────────────────────
  * Section card (Stage 5+) —— 浮窗 / 应用 / 高级 / 关于都用
  * ──────────────────────────────────────────────────────────── */
 

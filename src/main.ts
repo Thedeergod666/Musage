@@ -189,6 +189,7 @@ function render(snap: QuotaSnapshot) {
     if (key) existingCards.set(key, el);
   });
 
+  // 第一遍：确保所有 snap 里的 card 都存在 DOM（按 snap 顺序决定插入位置）
   let anchor: ChildNode | null = null;
   for (const p of snap.providers) {
     // Phase 1：用 source_id 路由（registry-driven），provider 字段保兼容
@@ -211,6 +212,34 @@ function render(snap: QuotaSnapshot) {
   // 移除 snap 里没有的卡（provider 被关了）
   for (const orphan of existingCards.values()) {
     orphan.remove();
+  }
+
+  // 第二遍：按 snap.providers 顺序把 DOM 卡片摆到正确位置。
+  // 修复"调整顺序后浮窗不跟随"bug —— 上面第一遍只在新卡时按 snap 顺序插，
+  // 已存在的卡只是 update 不动 DOM；用户在设置面板把 DeepSeek 排到第二位、
+  // Xiaomi MiMo 排到第三位后，set_provider_order 重排 in-memory snapshot
+  // 并 emit 新 snap，但卡片本身在 DOM 里的物理顺序还是旧顺序 → 浮窗看上去
+  // "没动"。这里把每张 card 按 snap 顺序依次挪到 anchor 之后即可重排。
+  // 注：footer 永远在最后（updateFoot 会 append 到 app 末尾），所以
+  // anchor.nextSibling 不会跨过 footer 干扰卡片排布。
+  let reorderAnchor: ChildNode | null = null;
+  for (const p of snap.providers) {
+    const id = p.source_id ?? p.provider;
+    const card = app.querySelector<HTMLElement>(`.card[data-provider="${cssEscape(id)}"]`);
+    if (!card) continue;
+    if (reorderAnchor == null) {
+      // 第一个：挪到 app 的最前
+      if (card !== app.firstChild) {
+        app.insertBefore(card, app.firstChild);
+      }
+    } else {
+      // 后续：挪到 anchor 之后
+      const desiredNext = reorderAnchor.nextSibling;
+      if (card !== desiredNext) {
+        reorderAnchor.parentNode?.insertBefore(card, desiredNext);
+      }
+    }
+    reorderAnchor = card;
   }
 
   // 2. 底部 footer（始终只有 1 个）
@@ -673,6 +702,13 @@ function pad2(n: number): string {
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
+}
+
+/// CSS attr 选择器需要转义特殊字符（id 里可能有 "." / ":" 等）。
+/// 浏览器原生 CSS.escape 2021+ 才有，老 WKWebView 兜底手写最小集。
+function cssEscape(s: string): string {
+  if (typeof (CSS as any).escape === "function") return (CSS as any).escape(s);
+  return s.replace(/([!"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, "\\$1");
 }
 
 // ── 启动 ──

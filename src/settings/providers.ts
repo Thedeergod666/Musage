@@ -38,8 +38,8 @@ export async function renderProvidersSection(container: HTMLElement) {
 
   container.innerHTML = ""; // 清掉占位
 
-  // 1) 顶部：浮窗卡片顺序
-  renderOrderSection(container, sources, cfg.provider_order);
+  // 1) 顶部：浮窗卡片顺序（带 enabled/disabled 分区）
+  renderOrderSection(container, sources, cfg.provider_order, cfg);
 
   // 2) 每个 source 一个 panel
   for (const meta of sources) {

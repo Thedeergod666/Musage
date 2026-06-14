@@ -625,11 +625,16 @@ fn parse_pin_mode(s: &str) -> Result<FloatingPinMode, String> {
 
 /// 调整浮窗高度以适配内容（前端在 render 后调用）。
 ///
-/// 浮窗默认 height=80，多 provider 全堆一起会装不下 —— 用户手动拉能拉
+/// 浮窗默认 height=100，多 provider 全堆一起会装不下 —— 用户手动拉能拉
 /// 一点但 maxHeight 也会卡。改用这个 command 在每次 render 后把窗口
 /// resize 到内容实际需要的高度（限在 tauri.conf.json 的 minHeight=100 /
-/// maxHeight=800 范围内）。auto-resize 跟手拉并存：手拉的尺寸会被 debounced
+/// maxHeight=2400 范围内）。auto-resize 跟手拉并存：手拉的尺寸会被 debounced
 /// 写盘，但下一次 render 又会贴内容。H5。
+///
+/// **maxHeight 为什么是 2400**：8+ provider 全开（旧上限 800 装不下 → 用户
+/// 反馈底部卡片被截）。2400 logical 像素覆盖到 4K 工作区（2160p ≈ 2000+ 可用）。
+/// 真正"别超出屏幕"的兜底由前端 `screen.availHeight - 80` 处理 —— 后端这层只
+/// 是 OS 硬上限的镜像，避免 Tauri 把窗口拉到天文数字。
 ///
 /// **`height` 是 logical / CSS 像素**（前端读 `app.scrollHeight` 拿到的就是
 /// 这个单位）。Tauri 2 在 macOS / Win / Linux 各自对 `set_size(LogicalSize)`
@@ -646,9 +651,10 @@ pub async fn resize_floating_window(app: AppHandle, height: f64) -> Result<(), S
                 w.scale_factor().unwrap_or(1.0),
             );
         let width = cur_logical.width;
-        // 限高 —— 前端给的 height 是 scrollHeight，理论上 ≤ maxHeight（800）
-        // 物理大小写进 config 时也会被 clamp，这里再兜一次防止 config 被破坏
-        let height = height.clamp(100.0, 800.0);
+        // 限高 —— 必须与 tauri.conf.json 的 minHeight/maxHeight 同步，否则
+        // Tauri 会把后端 set_size 拽回 conf 设的范围 → "前端给 1500 但窗口还是 800"。
+        // 真正"别超出 monitor 工作区"由前端 `screen.availHeight` 兜底。
+        let height = height.clamp(100.0, 2400.0);
         let _ = w.set_size(tauri::LogicalSize::new(width, height));
     }
     Ok(())

@@ -324,10 +324,18 @@ async function autoResizeWindow(snap: QuotaSnapshot) {
   lastFitFingerprint = fp;
 
   const contentH = appEl.scrollHeight;
+  // 跟随 monitor 工作区兜底：8+ provider 时 scrollHeight 能轻松超过屏幕高度，
+  // 窗口顶到屏幕边外底部卡片被任务栏盖住。`screen.availHeight` 已扣掉任务栏/Dock
+  // 是 CSS 像素（Chromium/WebView 行为一致），留 80px 给窗口边距和不可视区。
+  // 兜底后窗口最多到工作区高，超出部分由 #app 的 overflow-y:auto 接管滚动。
+  // 后端 commands.rs:resize_floating_window 还有 clamp(100, 2400) 兜底防御 OS 层。
+  const screenH = window.screen?.availHeight ?? 2400;
+  const maxH = Math.max(200, screenH - 80);
   // 已经在 1px 容差内就跳过，避免子像素抖动触发的 re-resize
   const currentH = window.innerHeight;
-  if (Math.abs(currentH - contentH) <= 1) return;
-  const target = Math.round(contentH);
+  const desired = Math.min(contentH, maxH);
+  if (Math.abs(currentH - desired) <= 1) return;
+  const target = Math.round(desired);
   try {
     await invoke("resize_floating_window", { height: target });
   } catch (e) {

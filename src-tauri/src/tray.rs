@@ -106,8 +106,9 @@ const ICON_SIZE: u32 = 64;
 const ICON_SIZE: u32 = 32;
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
-    let show_i = MenuItem::with_id(app, "show", "显示悬浮窗", true, None::<&str>)?;
-    let hide_i = MenuItem::with_id(app, "hide", "隐藏悬浮窗", true, None::<&str>)?;
+    // 显隐合并：菜单里只留一个 "切换悬浮窗"，内部根据当前可见性自动判断
+    // 该 show 还是 hide。跟左键单击同逻辑（on_tray_icon_event 里的 toggle）。
+    let toggle_i = MenuItem::with_id(app, "toggle", "切换悬浮窗", true, None::<&str>)?;
     let settings_i = MenuItem::with_id(app, "settings", "设置...", true, None::<&str>)?;
     let refresh_i = MenuItem::with_id(app, "refresh", "立即刷新", true, None::<&str>)?;
     // **Win 端 z-order 逃生口**（2026-06-12）：hover-raise 的 16ms tick +
@@ -126,7 +127,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
-        &[&show_i, &hide_i, &settings_i, &refresh_i, &force_top_i, &quit_i],
+        &[&toggle_i, &settings_i, &refresh_i, &force_top_i, &quit_i],
     )?;
 
     let _tray = TrayIconBuilder::with_id("main-tray")
@@ -135,16 +136,15 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
-            "show" => {
+            "toggle" => {
                 if let Some(w) = app.get_webview_window("floating") {
-                    let _ = w.unminimize();
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
-            }
-            "hide" => {
-                if let Some(w) = app.get_webview_window("floating") {
-                    let _ = w.hide();
+                    if w.is_visible().unwrap_or(false) {
+                        let _ = w.hide();
+                    } else {
+                        let _ = w.unminimize();
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
                 }
             }
             "settings" => {

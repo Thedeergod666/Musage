@@ -48,6 +48,17 @@ export async function testConn() {
             return `Tavily ${Math.round(main.used)}/${Math.round(main.total)} credits`;
           }
           return "Tavily OK";
+        } else if (id === "kimi") {
+          // Kimi 与 MiniMax 同款 5h/周 百分比行
+          const fiveHour = p.rows.find((r) => r.label === "5h");
+          return fiveHour
+            ? `Kimi 5h ${Math.round(fiveHour.utilization ?? 0)}%`
+            : "Kimi OK";
+        } else if (id === "zhipu") {
+          const fiveHour = p.rows.find((r) => r.label === "5h");
+          return fiveHour
+            ? `智谱 5h ${Math.round(fiveHour.utilization ?? 0)}%`
+            : "智谱 OK";
         }
         return `${id} OK`;
       })

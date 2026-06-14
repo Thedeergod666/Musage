@@ -18,6 +18,8 @@ import xiaomimimoLogo from "./assets/xiaomimimo-logo.png";
 import tavilyLogo from "./assets/tavily-logo.svg?url";
 import zenmuxLogo from "./assets/zenmux-logo.svg?url";
 import openrouterLogo from "./assets/openrouter-logo.png";
+import kimiLogo from "./assets/kimi-logo.svg?url";
+import zhipuLogo from "./assets/zhipu-logo.svg?url";
 import "./styles.css";
 
 /// 静态映射：provider id → 官网 logo + 显示名
@@ -29,6 +31,8 @@ const PROVIDER_META: Record<string, { name: string; logo: string }> = {
   tavily: { name: "Tavily", logo: tavilyLogo },
   zenmux: { name: "ZenMux", logo: zenmuxLogo },
   openrouter: { name: "OpenRouter", logo: openrouterLogo },
+  kimi: { name: "Kimi", logo: kimiLogo },
+  zhipu: { name: "智谱 GLM", logo: zhipuLogo },
 };
 
 type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
@@ -61,7 +65,7 @@ interface QuotaRow {
 
 interface ProviderSnapshot {
   /** 兼容字段（minimax / deepseek / xiaomimimo）。新代码用 source_id。 */
-  provider: "minimax" | "deepseek" | "xiaomimimo" | "tavily" | "zenmux" | "openrouter";
+  provider: "minimax" | "deepseek" | "xiaomimimo" | "tavily" | "zenmux" | "openrouter" | "kimi" | "zhipu";
   /** Phase 1 新增。 */
   source_id?: string | null;
   source_display_name?: string | null;

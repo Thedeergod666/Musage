@@ -20,6 +20,8 @@ export const BUILTIN_ORDER: ProviderId[] = [
   "tavily",
   "zenmux",
   "openrouter",
+  "kimi",
+  "zhipu",
 ];
 
 /// 当前内存里的 provider 顺序（同步 set_provider_order 时维护，
@@ -106,6 +108,10 @@ export function providerDisplay(p: string): string {
       return "ZenMux";
     case "openrouter":
       return "OpenRouter";
+    case "kimi":
+      return "Kimi";
+    case "zhipu":
+      return "智谱 GLM";
     default:
       return p;
   }

@@ -16,11 +16,13 @@
 //! [`builtin_sources`] 路径，但 `dump` CLI 和 `set_api_key_for` 仍按 enum 走。
 
 pub mod deepseek;
+pub mod kimi;
 pub mod minimax;
 pub mod openrouter;
 pub mod tavily;
 pub mod xiaomi;
 pub mod zenmux;
+pub mod zhipu;
 
 use std::pin::Pin;
 use std::sync::OnceLock;
@@ -367,6 +369,8 @@ pub fn builtin_sources() -> Vec<Box<dyn QuotaSource>> {
         Box::new(tavily::TavilySource::default()),
         Box::new(zenmux::ZenmuxSource::default()),
         Box::new(openrouter::OpenrouterSource::default()),
+        Box::new(kimi::KimiSource::default()),
+        Box::new(zhipu::ZhipuSource::default()),
     ]
 }
 

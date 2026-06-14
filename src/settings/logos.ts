@@ -11,6 +11,8 @@ import xiaomimimoLogo from "../assets/xiaomimimo-logo.png";
 import tavilyLogo from "../assets/tavily-logo.svg";
 import zenmuxLogo from "../assets/zenmux-logo.svg";
 import openrouterLogo from "../assets/openrouter-logo.png";
+import kimiLogo from "../assets/kimi-logo.svg";
+import zhipuLogo from "../assets/zhipu-logo.svg";
 
 export interface ProviderMeta {
   name: string;
@@ -27,6 +29,8 @@ export const PROVIDER_META: Record<string, ProviderMeta> = {
   tavily: { name: "Tavily", logo: tavilyLogo, accent: "var(--id-tavily)" },
   zenmux: { name: "ZenMux", logo: zenmuxLogo, accent: "var(--id-zenmux)" },
   openrouter: { name: "OpenRouter", logo: openrouterLogo, accent: "var(--id-openrouter)" },
+  kimi: { name: "Kimi", logo: kimiLogo, accent: "var(--id-kimi)" },
+  zhipu: { name: "智谱 GLM", logo: zhipuLogo, accent: "var(--id-zhipu)" },
 };
 
 export function getProviderMeta(id: string): ProviderMeta | undefined {

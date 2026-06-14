@@ -305,6 +305,8 @@ function apiKeyPlaceholder(id: string): string {
     case "tavily":     return "tvly-...";
     case "zenmux":     return "sk-...";
     case "openrouter": return "sk-or-v1-...";
+    case "kimi":       return "sk-...";
+    case "zhipu":      return "id.secret";
     default:           return "...";
   }
 }
@@ -379,6 +381,33 @@ function apiKeyHelpNodes(id: string): (Node | string)[] {
         "从 ",
         el("a", { href: "https://openrouter.ai/settings/keys", target: "_blank", class: "link-ext" }, "openrouter.ai/settings/keys"),
         " 获取。",
+      ];
+    case "kimi":
+      return [
+        "Kimi 是月之暗面（Moonshot AI）的编程套餐，5h + 周双窗口。",
+        el("br"),
+        "从 ",
+        el("a", { href: "https://platform.moonshot.cn/console/api-keys", target: "_blank", class: "link-ext" }, "platform.moonshot.cn"),
+        " 创建 API key。",
+      ];
+    case "zhipu":
+      return [
+        "智谱 GLM Coding Plan 套餐，5h + 周双窗口。",
+        el("br"),
+        el("strong", {}, "鉴权特殊"),
+        "：",
+        el("code", {}, "Authorization"),
+        " 头",
+        el("strong", {}, "不加"),
+        " ",
+        el("code", {}, "Bearer"),
+        " 前缀 —— 直接用裸 key（",
+        el("code", {}, "id.secret"),
+        " 格式）。",
+        el("br"),
+        "从 ",
+        el("a", { href: "https://bigmodel.cn/user-center/projection-meter", target: "_blank", class: "link-ext" }, "bigmodel.cn"),
+        " 获取 API key。",
       ];
     default:
       return ["API key 存到本机 keys.json。"];

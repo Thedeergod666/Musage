@@ -204,6 +204,18 @@ export async function saveConfig() {
             ?.checked ?? true,
         refresh_interval_secs: readProviderInterval("openrouter"),
       },
+      kimi: {
+        enabled:
+          (document.getElementById("enabled-kimi") as HTMLInputElement | null)
+            ?.checked ?? true,
+        refresh_interval_secs: readProviderInterval("kimi"),
+      },
+      zhipu: {
+        enabled:
+          (document.getElementById("enabled-zhipu") as HTMLInputElement | null)
+            ?.checked ?? true,
+        refresh_interval_secs: readProviderInterval("zhipu"),
+      },
     },
     zenmux_base_url:
       (document.getElementById("zenmux-base-url") as HTMLInputElement | null)

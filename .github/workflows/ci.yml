@@ -52,6 +52,29 @@ jobs:
           restore-keys: pnpm-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
       - run: pnpm build          # tsc + vite build,不出 bundle
+      # 跨平台一致性补丁:esbuild minifier 在 Windows runner 上偶尔会在 minified
+      # JS/CSS 输出里保留 \r(尤其是内联进 bundle 的字符串字面量),导致
+      # dist-<os> 三平台 hash 对不上。只动文本类后缀,不动 png/woff2 等二进制
+      # —— 那些里的 0x0d 是合法字节,改了就坏。
+      - name: Normalize dist line endings (CRLF → LF)
+        shell: bash
+        run: |
+          node -e "
+            const fs = require('fs');
+            const path = require('path');
+            const exts = new Set(['.js','.mjs','.cjs','.css','.html','.svg','.json','.txt','.xml']);
+            function walk(d) {
+              for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+                const p = path.join(d, e.name);
+                if (e.isDirectory()) walk(p);
+                else if (exts.has(path.extname(e.name).toLowerCase())) {
+                  const b = fs.readFileSync(p);
+                  if (b.includes(0x0d)) fs.writeFileSync(p, b.toString('binary').replace(/\r\n?/g, '\n'));
+                }
+              }
+            }
+            walk('dist');
+          "
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: dist-${{ matrix.os }}
@@ -141,7 +164,41 @@ jobs:
             echo "macos:  $HASH_MACOS"
             echo "windows: $HASH_WINDOWS"
           }
-          if [ "$HASH_UBUNTU" != "$HASH_MACOS" ] || [ "$HASH_UBUNTU" != "$HASH_WINDOWS" ]; then
-            echo "::error::frontend dist differs across OS"
-            exit 1
+          if [ "$HASH_UBUNTU" = "$HASH_MACOS" ] && [ "$HASH_UBUNTU" = "$HASH_WINDOWS" ]; then
+            echo "✓ 三大平台 dist 完全一致"
+            exit 0
           fi
+          # ── 失败诊断:逐文件 dump 三个平台的 sha256 ──
+          # 注意:sha256sum 输出 "HASH  PATH" 用两个空格分隔(HASH 64 字符固定宽度),
+          # 直接 sort -k2 会拿到 "  PATH" 含前导空格,join/sort 跨 shell 行为不一致。
+          # 翻转成 path|<pipe>hash(用 | 而不是 tab —— tab 在 BSD join 上不接受,
+          # 用 | 保证 GNU/BSD 行为一致,本机/CI 都能跑;path/hash 里不会有 |)
+          echo "::error::frontend dist differs across OS —— 打印逐文件 hash"
+          for plat in ubuntu macos windows; do
+            ( cd "dl/dist-${plat}-latest" \
+              && find . -type f -print0 \
+                | xargs -0 sha256sum \
+                | awk '{ printf "%s|%s\n", $2, $1 }' \
+                | sort \
+            ) > "/tmp/m-${plat}.tsv"
+          done
+          echo "─── 文件列表差异 (ubuntu vs windows) ───"
+          diff <(cut -d'|' -f1 /tmp/m-ubuntu.tsv) <(cut -d'|' -f1 /tmp/m-windows.tsv) \
+            && echo "(文件列表完全相同 → 差异在文件内容)" \
+            || echo "(文件列表本身就不同 → 见上方 diff)"
+          echo "─── 文件列表差异 (ubuntu vs macos) ───"
+          diff <(cut -d'|' -f1 /tmp/m-ubuntu.tsv) <(cut -d'|' -f1 /tmp/m-macos.tsv) \
+            && echo "(文件列表完全相同 → 差异在文件内容)" \
+            || echo "(文件列表本身就不同 → 见上方 diff)"
+          echo "─── 逐文件 sha256 比对 (列:path | ubuntu | macos | windows) ───"
+          # 三路 join:先把 ubuntu × windows 拼,再 × macos,缺则用 ---MISSING--- 占位
+          join -a 1 -a 2 -e "---MISSING---" -t '|' -o '0,1.2,2.2' \
+            /tmp/m-ubuntu.tsv /tmp/m-windows.tsv \
+            | join -a 1 -a 2 -e "---MISSING---" -t '|' -o '0,1.2,1.3,2.2' \
+              - /tmp/m-macos.tsv \
+            | awk -F'|' '{
+                ok = ($2 == $3 && $2 == $4);
+                tag = ok ? "✓" : "✗";
+                printf "  %s %-50s u=%s  m=%s  w=%s\n", tag, $1, substr($2,1,12), substr($3,1,12), substr($4,1,12);
+              }'
+          exit 1

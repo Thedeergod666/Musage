@@ -141,20 +141,14 @@ jobs:
           WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         with:
-          # 不让 action 自己跑 `pnpm build`，因为我们前面已经跑了 sync-version
-          beforeBuildCommand: pnpm build
           # 不让 action 自己写 tagName：用本 workflow 触发的 tag
           tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', inputs.version) }}
           releaseName: "Musage ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', inputs.version) }}"
           releaseDraft: true
           releaseBody: .github/RELEASE_TEMPLATE.md
-          # 强制更新器：每个 target 都产出 latest.json
-          updaterJson: |
-            {
-              "version": "${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', inputs.version) }}",
-              "notes": "",
-              "pub_date": ""
-            }
+          # 强制更新器：每个 target 跑 tauri build 时自动生成 latest.json（默认 true）
+          # tauri CLI 内部产出,action 原样上传为 release asset,这里不用也不能传模板
+          includeUpdaterJson: true
           args: --target ${{ matrix.target }}
 
   # ────────────────────────────────────────────────────────

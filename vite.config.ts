@@ -50,6 +50,18 @@ export default defineConfig({
     // 反过来 macos arm64 runner 上 Vite 偶尔把 path/platform 信息漏进 hash
     // input,导致同源代码 ubuntu/windows dist 一致、macos dist hash 漂走
     // (CI 18 撞过这个 bug)。改用纯源名后,dist 跨 100% 平台一致。
+    //
+    // **关 modulePreload 全部** —— Tauri 内嵌 WebView2(macOS WKWebView、
+    // Windows WebView2)都原生支持 <link rel="modulepreload">。Vite 默认
+    // 会(1)生成一个含 polyfill IIFE 的共享 chunk,(2)给 index.html 追加
+    // 一堆 <link rel="modulepreload"> 预热所有 import 链。
+    // 关键问题:Vite 决定 modulepreload 列表的算法依赖 module graph 遍历
+    // 顺序,macOS arm64 上偶尔会跟 linux/windows 不一致(CI 18/19/20 撞过),
+    // 反映到 dist/index.html 上就是同样内容但不同 modulepreload 链接/顺序。
+    // 这里 modulePreload 完全不优化(只留个 <script> + <link rel=stylesheet>),
+    // HTML 跨 3 平台 byte-for-byte 一致。Trade-off:首次冷启动多一轮 RTT,
+    // 对 Tauri 本地资源(都是 file:// 或 tauri://)完全可忽略。
+    modulePreload: { polyfill: false, resolveDependencies: () => [] },
     rollupOptions: {
       input: {
         main: `${root}index.html`,

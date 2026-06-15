@@ -13,8 +13,9 @@ dist-ssr/
 
 # Tauri / Rust
 src-tauri/target/
-src-tauri/Cargo.lock
 src-tauri/gen/
+# Cargo.lock: Tauri 是 binary app(不是 lib),必须 commit 锁版本,否则 CI 必炸
+# Tauri 默认模板会 ignore 它,这里要主动 un-ignore
 
 # Tauri updater signing key（私钥，绝不提交！）
 # 用 tauri signer generate 生成

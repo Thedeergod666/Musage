@@ -108,16 +108,16 @@ jobs:
     needs: frontend
     runs-on: ubuntu-latest
     steps:
+      # v4 download-artifact 不支持 `pattern` 参数(v3 的事),不指定 name 时下载所有到 _artifacts/
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with: { pattern: dist-* }
       - name: Compare hashes
         run: |
-          for d in dist-*/; do
+          for d in _artifacts/dist-*/; do
             (cd "$d" && find . -type f | sort | xargs sha256sum) | sha256sum > "$d.sha"
           done
-          cat dist-ubuntu-latest.sha dist-macos-latest.sha dist-windows-latest.sha
+          cat _artifacts/dist-ubuntu-latest.sha _artifacts/dist-macos-latest.sha _artifacts/dist-windows-latest.sha
           # 如果 hash 不一致说明 OS-specific 构建差异
-          if [ "$(cat dist-ubuntu-latest.sha)" != "$(cat dist-macos-latest.sha)" ]; then
+          if [ "$(cat _artifacts/dist-ubuntu-latest.sha)" != "$(cat _artifacts/dist-macos-latest.sha)" ]; then
             echo "::error::frontend dist differs across OS"
             exit 1
           fi

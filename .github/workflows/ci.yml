@@ -52,13 +52,19 @@ jobs:
           restore-keys: pnpm-${{ runner.os }}-
       - run: pnpm install --frozen-lockfile
       - run: pnpm build          # tsc + vite build,不出 bundle
-      # 跨平台一致性补丁:esbuild minifier 在 Windows runner 上偶尔会在 minified
-      # JS/CSS 输出里保留 \r(尤其是内联进 bundle 的字符串字面量),导致
-      # dist-<os> 三平台 hash 对不上。只动文本类后缀,不动 png/woff2 等二进制
-      # —— 那些里的 0x0d 是合法字节,改了就坏。
-      # 同时剥 UTF-8 BOM(U+FEFF):Node 在 Windows 上 fs.writeFileSync(text, 'utf-8')
-      # 偶发会把 BOM 写进 HTML,跟 *nix 上无 BOM 的输出差 3 字节,触发 hash 飘。
-      - name: Normalize dist line endings (CRLF → LF) + strip BOM
+      # 跨平台一致性补丁(三件套,全 idempotent):
+      #   1) 剥 UTF-8 BOM —— Windows 上 Node fs.writeFileSync(text, 'utf-8') 偶发会
+      #      写 BOM 头 3 字节 0xEF 0xBB 0xBF,跟 *nix 上无 BOM 输出差 3 字节
+      #   2) 剥 CR —— esbuild minifier 在 Windows 上偶发在 minified JS/CSS
+      #      里保留 \r,跟 *nix 输出 diff
+      #   3) 反 double-UTF-8 —— Vite/Rollup 的 HTML plugin(transform hook)在
+      #      Windows 上把源 .html 当 Latin-1 解读再当 UTF-8 重编码(CI 18
+      #      撞过),把 "用" (UTF-8 0xE7 0x88 0x91) 写成 0xC3 0xA7 0xC2 0x94
+      #      0xC2 0xA8(3 倍体积)。启发式:读 UTF-8 后看所有 code point 是不是
+      #      都 ≤ 0xFF,如果是说明 double-UTF-8,再用 Latin-1 编码回去得到
+      #      "原 bytes" 写回。Linux/macOS 文件 Chinese chars > 0xFF,跳过不动
+      # 文本类后缀才处理,png/woff2 等二进制里的 0x0d 是合法字节不能动
+      - name: Normalize dist (BOM/CR strip + undo double-UTF-8)
         shell: bash
         run: |
           node -e "
@@ -71,17 +77,35 @@ jobs:
                 if (e.isDirectory()) walk(p);
                 else if (exts.has(path.extname(e.name).toLowerCase())) {
                   let b = fs.readFileSync(p);
-                  // strip leading UTF-8 BOM if present
+                  let changed = false;
+                  // 1) strip leading UTF-8 BOM
                   if (b.length >= 3 && b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf) {
                     b = b.subarray(3);
+                    changed = true;
                   }
-                  // strip CR (CRLF or lone CR)
+                  // 2) strip CR (CRLF or lone CR)
                   if (b.includes(0x0d)) {
-                    fs.writeFileSync(p, b.toString('binary').replace(/\r\n?/g, '\n'));
-                  } else if (b !== fs.readFileSync(p)) {
-                    // BOM was the only diff — rewrite without BOM
-                    fs.writeFileSync(p, b);
+                    b = Buffer.from(b.toString('binary').replace(/\r\n?/g, '\n'), 'binary');
+                    changed = true;
                   }
+                  // 3) undo double-UTF-8: if file is all code points <= 0xFF when
+                  //    decoded as UTF-8, it's been Latin-1-then-UTF-8-d roundtripped
+                  const asUtf8 = b.toString('utf-8');
+                  let isDoubled = true;
+                  for (let i = 0; i < asUtf8.length; i++) {
+                    if (asUtf8.charCodeAt(i) > 0xff) { isDoubled = false; break; }
+                  }
+                  if (isDoubled && /[\x80-\xff]/.test(asUtf8)) {
+                    // The original source was treated as Latin-1 code points then
+                    // re-encoded as UTF-8; recover by encoding this UTF-8 string
+                    // back to Latin-1 (gives the bytes the source had as code points)
+                    const recovered = Buffer.from(asUtf8, 'latin1');
+                    if (recovered.length !== b.length) {
+                      b = recovered;
+                      changed = true;
+                    }
+                  }
+                  if (changed) fs.writeFileSync(p, b);
                 }
               }
             }

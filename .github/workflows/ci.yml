@@ -165,9 +165,6 @@ jobs:
       - name: Compare hashes
         run: |
           # 显式 per-platform 算 hash,不用 glob 避免路径拼接 bug
-          # (之前 for d in dist-*/; do ... > "$d.sha"; done 实际上把 .sha 写到
-          #  dist-ubuntu-latest/.sha 里, 而 cat 读的是 ./dist-ubuntu-latest.sha,
-          #  路径不匹配)
           HASH_UBUNTU=$(cd dl/dist-ubuntu-latest && find . -type f | sort | xargs sha256sum | sha256sum)
           HASH_MACOS=$(cd dl/dist-macos-latest && find . -type f | sort | xargs sha256sum | sha256sum)
           HASH_WINDOWS=$(cd dl/dist-windows-latest && find . -type f | sort | xargs sha256sum | sha256sum)
@@ -181,10 +178,7 @@ jobs:
             exit 0
           fi
           # ── 失败诊断:逐文件 dump 三个平台的 sha256 ──
-          # 注意:sha256sum 输出 "HASH  PATH" 用两个空格分隔(HASH 64 字符固定宽度),
-          # 直接 sort -k2 会拿到 "  PATH" 含前导空格,join/sort 跨 shell 行为不一致。
-          # 翻转成 path|<pipe>hash(用 | 而不是 tab —— tab 在 BSD join 上不接受,
-          # 用 | 保证 GNU/BSD 行为一致,本机/CI 都能跑;path/hash 里不会有 |)
+          # 翻转成 path|<pipe>hash(用 | 而不是 tab —— BSD join 不吃 tab)
           echo "::error::frontend dist differs across OS —— 打印逐文件 hash"
           for plat in ubuntu macos windows; do
             ( cd "dl/dist-${plat}-latest" \

@@ -1,19 +1,5 @@
 <svg width="160" height="160" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="160" height="160" rx="32" fill="#0A0B0F"/>
-  <!-- 蓝渐变底 -->
-  <circle cx="80" cy="80" r="56" fill="url(#kimi-grad)"/>
-  <!-- 月牙 (crescent)：两个圆 + even-odd fill rule 切出月牙 -->
-  <!-- 外圆 cx=72, r=26 → 左月主体；内圆 cx=82, r=22 向右偏移 → 切出右侧缺口 -->
-  <path fill-rule="evenodd" fill="#FFFFFF" d="
-    M 72 54 a 26 26 0 1 0 0.001 0 z
-    M 82 58 a 22 22 0 1 0 0.001 0 z
-  "/>
-  <!-- 一颗小星点缀 -->
-  <circle cx="125" cy="40" r="3.5" fill="#FFFFFF" opacity="0.85"/>
-  <defs>
-    <linearGradient id="kimi-grad" x1="24" y1="24" x2="136" y2="136" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#5AC8FA"/>
-      <stop offset="1" stop-color="#4A90E2"/>
-    </linearGradient>
-  </defs>
+  <rect width="160" height="160" rx="32" fill="#1A1B23"/>
+  <text x="76" y="118" text-anchor="middle" font-family="Arial, 'Helvetica Neue', sans-serif" font-size="110" font-weight="700" fill="#FFFFFF">K</text>
+  <circle cx="116" cy="46" r="7" fill="#5AC8FA"/>
 </svg>

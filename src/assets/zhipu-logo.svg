@@ -1,13 +1,5 @@
 <svg width="160" height="160" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="160" height="160" rx="32" fill="#0A0B0F"/>
-  <!-- 紫蓝渐变方块 -->
-  <rect x="32" y="32" width="96" height="96" rx="22" fill="url(#zhipu-grad)"/>
-  <!-- "智" 字：白字 + 紫蓝描边，centered via text-anchor -->
-  <text x="80" y="105" text-anchor="middle" font-family="-apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="58" font-weight="800" fill="#FFFFFF" stroke="#FFFFFF" stroke-width="0.5">智</text>
-  <defs>
-    <linearGradient id="zhipu-grad" x1="32" y1="32" x2="128" y2="128" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#7B61FF"/>
-      <stop offset="1" stop-color="#4338CA"/>
-    </linearGradient>
-  </defs>
+  <rect width="160" height="160" rx="32" fill="#1A1B23"/>
+  <text x="76" y="118" text-anchor="middle" font-family="Arial, 'Helvetica Neue', sans-serif" font-size="110" font-weight="700" fill="#FFFFFF">Z</text>
+  <circle cx="116" cy="46" r="7" fill="#7B61FF"/>
 </svg>

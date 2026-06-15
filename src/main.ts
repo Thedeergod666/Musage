@@ -78,6 +78,8 @@ interface RenderPrefs {
   /// 用户自定义 4 档色：{ok, cyan, warn, alert} → "#RRGGBB"。空对象 = 走 iOS 默认。
   /// 改这个会触发 applyColorOverrides() 把 CSS 变量写进 #app。
   colorOverrides: Record<string, string>;
+  /// 浮窗底部提示行显隐。默认 false（不显示）。
+  showFooterHint: boolean;
 }
 let renderPrefs: RenderPrefs = {
   tavilyConciseMode: true,
@@ -85,6 +87,7 @@ let renderPrefs: RenderPrefs = {
   colorThresholds: [50, 70, 88],
   walletAlertThreshold: null,
   colorOverrides: {},
+  showFooterHint: false,
 };
 
 /// 把 renderPrefs.colorOverrides 应用到 #app 的 inline CSS 变量。
@@ -185,13 +188,15 @@ function effectiveSnap(p: ProviderSnapshot): ProviderSnapshot {
 ///
 /// 利用率、倒计时文字、logo / name 变化都**不**计入 → 不触发 fit。
 function contentFingerprint(snap: QuotaSnapshot): string {
-  return snap.providers.map((p) => {
+  const providers = snap.providers.map((p) => {
     const eff = effectiveSnap(p);
     const id = eff.source_id ?? eff.provider;
     const state = eff.success ? "ok" : `err:${eff.error_kind ?? "other"}`;
     const rows = rowsForRender(eff);
     return `${id}|${state}|${rows.length}|${rows.map((r) => rowKey(r)).join(",")}`;
   }).join(";");
+  // footer 显隐也影响内容高度，加入 fingerprint 确保切换时触发 fit
+  return `fh:${renderPrefs.showFooterHint ? 1 : 0};${providers}`;
 }
 
 /// 每个 provider 的"最后一次成功"快照。
@@ -407,8 +412,10 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
   const id = p.source_id ?? p.provider;
   // 智谱 GLM 用 source_display_name 二次路由：CN="智谱 GLM" / EN="Z.ai"
   // 让两张 logo（紫色渐变 vs z.ai 官方）按区域切换。
-  const regionKey = (id === "zhipu" && p.source_display_name)
-    ? p.source_display_name
+  // 智谱 GLM 两个区域共用 source_id "zhipu"；只有 EN 区（Z.ai）
+  // 需要切换到 zhipuEnLogo，CN 区直接用 "zhipu" key。
+  const regionKey = (id === "zhipu" && p.source_display_name === "Z.ai")
+    ? "Z.ai"
     : id;
   const meta = PROVIDER_META[regionKey] ?? {
     name: p.source_display_name ?? id,
@@ -474,10 +481,10 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
         ? `<div class="hint">→ 设置面板 · Schema overrides 加新字段名</div>`
         : "";
     card.classList.add("err-card", `err-${kind}`);
-    // H8 修复：err-label 加在 .card-head-status 里（紧贴 .card-dot 的右侧），
-    // 而不是直接 append 到 .card-head —— 后者会触发 flex space-between
-    // 把 dot 推到中间。CSS 用 row-reverse 把 [dot, label] 渲染成
-    // [label, dot]，dot 永远在卡片右上角，label 在其左侧展开。
+    // H8 修复：err-label 加在 .card-head-status 里，CSS 用 row-reverse
+    // 把 [dot, label] 渲染成 [label, dot] —— dot 永远在卡片右上角，
+    // label 在其左侧展开。不要直接 append 到 .card-head（会触发
+    // flex space-between 把 dot 推到中间）。
     const headStatus = card.querySelector<HTMLElement>(".card-head-status")!;
     let headLabel = headStatus.querySelector<HTMLElement>(".err-label");
     if (!headLabel) {
@@ -663,6 +670,11 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
 
 function updateFoot(snap: QuotaSnapshot) {
   let foot = app.querySelector<HTMLElement>(".foot");
+  // 底部提示行默认隐藏，用户在 设置→浮窗 里手动开启
+  if (!renderPrefs.showFooterHint) {
+    if (foot) foot.remove();
+    return;
+  }
   // H9 修复：用 error_kind 枚举判断，不再依赖中文错误串（前者 Rust 改文案不会破）
   const anyUnconfigured = snap.providers.some(
     (p) => !p.success && p.error_kind === "unconfigured_key",
@@ -899,6 +911,7 @@ async function init() {
       color_thresholds?: [number, number, number];
       wallet_alert_threshold?: number | null;
       color_overrides?: Record<string, string>;
+      show_footer_hint?: boolean;
     }>("get_config");
     pinMode = cfg.floating_pin_mode ?? "pin_top";
     setLowPowerAttr(cfg.low_power_mode ?? false);
@@ -908,6 +921,7 @@ async function init() {
       colorThresholds: cfg.color_thresholds ?? [50, 70, 88],
       walletAlertThreshold: cfg.wallet_alert_threshold ?? null,
       colorOverrides: cfg.color_overrides ?? {},
+      showFooterHint: cfg.show_footer_hint ?? false,
     };
     applyColorOverrides();
   } catch (e) {
@@ -925,6 +939,7 @@ async function init() {
         color_thresholds?: [number, number, number];
         wallet_alert_threshold?: number | null;
         color_overrides?: Record<string, string>;
+        show_footer_hint?: boolean;
       }>("get_config");
       renderPrefs = {
         tavilyConciseMode: cfg.tavily_concise_mode ?? true,
@@ -932,6 +947,7 @@ async function init() {
         colorThresholds: cfg.color_thresholds ?? [50, 70, 88],
         walletAlertThreshold: cfg.wallet_alert_threshold ?? null,
         colorOverrides: cfg.color_overrides ?? {},
+        showFooterHint: cfg.show_footer_hint ?? false,
       };
       applyColorOverrides();
       const snap = await invoke<QuotaSnapshot>("get_snapshot");

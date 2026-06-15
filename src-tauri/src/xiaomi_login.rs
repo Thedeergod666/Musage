@@ -20,12 +20,20 @@
 //! 判定"登录完成"的最小规则：URL 命中 `platform.xiaomimimo.com` **且**
 //! 不在 `account.xiaomi.com` / `serviceLogin` / `passport` 路径上。
 //!
+//! ## 并发控制
+//!
+//! `on_page_load` 在 macOS WKWebView 上会多次触发（SSO 回调链 + 页面内
+//! 导航），每次触发都会 spawn 异步任务。用 `AtomicBool` 保证同一时间只有
+//! 一个提取任务在运行，后续触发直接跳过，避免多任务竞争同一个 webview
+//! 窗口导致 "failed to receive message from webview" 错误。
+//!
 //! ## Cookie 白名单
 //!
 //! 不在白名单里的 cookie 一律丢弃（最小权限）。
 //! dashboard API 实际依赖的就这 4 个（参考 `providers/xiaomi.rs` 的注释）。
 //! 平台如果改名 → 改这里就行，UI 不变。
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tauri::webview::Cookie;
@@ -34,6 +42,16 @@ use tokio::time::sleep;
 
 use crate::config;
 use crate::providers::Credentials;
+
+/// 全局提取锁：防止多个 on_page_load 回调同时运行提取任务。
+/// 一旦有任务在提取/等待中，后续回调直接跳过。
+static EXTRACTING: AtomicBool = AtomicBool::new(false);
+
+/// 全局完成标记：提取成功后置 true，后续 on_page_load 回调全部跳过。
+/// 解决 macOS WKWebView 上 on_page_load 多次触发导致的
+/// "failed to receive message from webview" 错误——窗口被第一个成功
+/// 任务关闭后，后续回调不再尝试操作已销毁的 webview。
+static DONE: AtomicBool = AtomicBool::new(false);
 
 /// 登录入口 URL。直接定位到 dashboard 的"订阅管理"页。
 const LOGIN_URL: &str = "https://platform.xiaomimimo.com/console/plan-manage";
@@ -68,12 +86,19 @@ const WANTED_COOKIES: &[&str] = &[
 /// 行为：
 /// 1. 如果已有 `xiaomi-login` 窗口（用户再次点按钮），先关掉
 /// 2. 开新 webview 指向 `LOGIN_URL`
-/// 3. 监听 `on_page_load`：URL 命中 dashboard 启发式 → 等 1s 让
-///    cookies 落定 → 二次校验 URL → 提取 → 保存 → 关闭 → emit
+/// 3. 监听 `on_page_load`：URL 命中 dashboard 启发式 → 等待 + 重试提取
+///    cookie → 保存 → 关闭 → emit 成功事件
+///
+/// macOS WKWebView 上 `on_page_load` 会多次触发（SSO 重定向链 +
+/// 页面内导航），用 `EXTRACTING` 保证只有一个任务在提取。
 ///
 /// 错误通过 `musage://xiaomi-login-failed` 事件返回给前端。
 #[tauri::command]
 pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
+    // 重置提取锁 + 完成标记（新窗口 = 全新流程）
+    EXTRACTING.store(false, Ordering::SeqCst);
+    DONE.store(false, Ordering::SeqCst);
+
     // 已开过 → 先关（重新登录场景）
     if let Some(existing) = app.get_webview_window("xiaomi-login") {
         let _ = existing.close();
@@ -97,30 +122,37 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
         .on_page_load(move |window, payload| {
             let url = payload.url();
             tracing::debug!(%url, "xiaomi login webview page load");
+
+            // 提取已完成（或正在运行）→ 全部跳过，不再操作 webview
+            if DONE.load(Ordering::SeqCst) {
+                return;
+            }
+
             if !is_dashboard_url(url) {
                 return;
             }
-            // 看起来到 dashboard 了 —— 等 1s 让 set-cookie 落定
+
+            // 并发锁：已有任务在跑就跳过
+            if EXTRACTING.compare_exchange(
+                false,
+                true,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            ).is_err() {
+                tracing::debug!("on_page_load: 已有提取任务在运行，跳过");
+                return;
+            }
+
+            tracing::info!(%url, "on_page_load: ✅ 命中 dashboard，启动 cookie 提取");
             let app2 = app_for_callback.clone();
             let window_clone = window.clone();
             tauri::async_runtime::spawn(async move {
-                sleep(Duration::from_secs(1)).await;
+                let result = extract_with_retry(&window_clone, &app2).await;
+                EXTRACTING.store(false, Ordering::SeqCst);
 
-                // 二次校验：1s 内 URL 跳回 SSO 的话就别提了
-                let current_url = match window_clone.url() {
-                    Ok(u) => u,
-                    Err(e) => {
-                        emit_failed(&app2, format!("读 webview URL 失败: {e}"));
-                        return;
-                    }
-                };
-                if !is_dashboard_url(&current_url) {
-                    tracing::debug!(%current_url, "二次校验：URL 又跳走了，不提取 cookie");
-                    return;
-                }
-
-                match extract_and_save(&window_clone).await {
+                match result {
                     Ok(saved_len) => {
+                        DONE.store(true, Ordering::SeqCst);
                         tracing::info!(saved_len, "xiaomi cookie 提取 + 保存成功");
                         // 立即拉一次（让浮窗立刻看到数据）
                         if let Err(e) =
@@ -133,7 +165,12 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
                         // 通知前端
                         let _ = app2.emit("musage://xiaomi-login-success", saved_len);
                     }
-                    Err(e) => emit_failed(&app2, e),
+                    Err(e) => {
+                        // 只有 DONE 为 false 时才报错（避免关闭后的残留任务触发误报）
+                        if !DONE.load(Ordering::SeqCst) {
+                            emit_failed(&app2, e);
+                        }
+                    }
                 }
             });
         })
@@ -143,22 +180,76 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 带重试的 cookie 提取。最多尝试 5 次，间隔递增。
+///
+/// macOS WKWebView 的 cookie store 可能延迟写入（SSO 回调链中
+/// `on_page_load` 触发时 cookie 还没落定），所以需要多次尝试。
+async fn extract_with_retry(
+    window: &tauri::WebviewWindow,
+    app: &AppHandle,
+) -> Result<usize, String> {
+    // 重试策略：1s, 2s, 2s, 3s, 3s（共 11s 覆盖大部分场景）
+    let retry_delays = [1u64, 2, 2, 3, 3];
+
+    for (attempt, delay) in retry_delays.iter().enumerate() {
+        let attempt_num = attempt + 1;
+
+        // 如果另一个任务已经成功，直接退出
+        if DONE.load(Ordering::SeqCst) {
+            return Err("另一个提取任务已成功完成".to_string());
+        }
+
+        sleep(Duration::from_secs(*delay)).await;
+
+        // 检查 URL 是否还在 dashboard
+        let current_url = match window.url() {
+            Ok(u) => u,
+            Err(e) => {
+                // webview 可能已被成功的任务关闭（"failed to receive message"），
+                // 这是预期行为，直接退出
+                tracing::debug!(error = %e, attempt_num, "读 webview URL 失败（窗口可能已关闭）");
+                return Err(format!("读 webview URL 失败: {e}"));
+            }
+        };
+
+        if !is_dashboard_url(&current_url) {
+            tracing::debug!(%current_url, attempt_num, "URL 不在 dashboard，跳过");
+            continue;
+        }
+
+        // 尝试提取
+        match extract_and_save(window).await {
+            Ok(saved_len) => {
+                tracing::info!(saved_len, attempt_num, "cookie 提取成功");
+                return Ok(saved_len);
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, attempt_num, "cookie 提取失败，继续重试");
+            }
+        }
+    }
+
+    // 所有重试都失败
+    Err("Cookie 提取失败——多次重试后仍未在 cookie store 中找到预期的 dashboard cookie。\
+        请检查：1) 登录是否成功完成；2) 是否在 platform.xiaomimimo.com 的 dashboard 页面上。"
+        .to_string())
+}
+
 /// 从 webview 提取 cookie → 过滤白名单 → 拼字符串 → 写 keys.json。
 ///
 /// 返回写入的字节数（便于前端展示"已保存 N 字节"）。
-///
-/// 注意：返回的 cookie 字符串里 `serviceToken` 的 value 是 raw value
-/// （没有 DevTools 显示时加的双引号）。`Cookie:` HTTP header 期望的也是
-/// raw value，所以直接拼即可，不需要再加引号。
 async fn extract_and_save(window: &tauri::WebviewWindow) -> Result<usize, String> {
     let url: Url = LOGIN_URL
         .parse()
         .map_err(|e| format!("parse url: {e}"))?;
+
     // cookies_for_url：拿指定 URL 上下文下的 cookies（含 HttpOnly，
     // 这正是我们需要的 —— 普通 document.cookie 读不到 HttpOnly）
     let raw_cookies: Vec<Cookie<'static>> = window
         .cookies_for_url(url)
         .map_err(|e| format!("webview.cookies_for_url 失败: {e}"))?;
+
+    tracing::debug!(total = raw_cookies.len(), "cookies_for_url 返回");
 
     let relevant: Vec<&Cookie<'static>> = raw_cookies
         .iter()
@@ -166,22 +257,54 @@ async fn extract_and_save(window: &tauri::WebviewWindow) -> Result<usize, String
         .collect();
 
     if relevant.is_empty() {
+        let available: Vec<String> = raw_cookies
+            .iter()
+            .map(|c| {
+                format!(
+                    "{} (domain={}, secure={}, httpOnly={})",
+                    c.name(),
+                    c.domain().unwrap_or("?"),
+                    c.secure().map_or("?".to_string(), |b| b.to_string()),
+                    c.http_only().map_or("?".to_string(), |b| b.to_string()),
+                )
+            })
+            .collect();
         return Err(format!(
-            "没找到 Xiaomi dashboard cookies（共 {} 个 cookie，白名单期望 {} 个：{:?}）。可能：\
-            1) dashboard 还没完整加载（等几秒重试）；\
-            2) 平台改了 cookie 命名（要改 WANTED_COOKIES 白名单）；\
-            3) 你登的不是 platform.xiaomimimo.com 而是子账号。",
+            "没找到 Xiaomi dashboard cookies（共 {} 个 cookie，白名单期望 {} 个：{:?}）。\
+            实际可用：{:?}",
             raw_cookies.len(),
             WANTED_COOKIES.len(),
-            WANTED_COOKIES
+            WANTED_COOKIES,
+            available
         ));
     }
 
-    let cookie_str: String = relevant
+    let mut cookie_parts: Vec<String> = relevant
         .iter()
-        .map(|c| format!("{}={}", c.name(), c.value()))
-        .collect::<Vec<_>>()
-        .join("; ");
+        .map(|c| {
+            // macOS WKWebView 的 cookie store 可能在 value 外层包双引号
+            // （如 `"tokenvalue"`），Cookie: HTTP header 期望 raw value，
+            // 需要去掉。
+            let val = c.value().trim_matches('"');
+            format!("{}={}", c.name(), val)
+        })
+        .collect();
+
+    // macOS WKWebView 的 cookie store 可能不包含 `userId` cookie（它可能
+    // 是由 JS 设置的或域名不同）。但 userId 会出现在 dashboard URL 的
+    // 查询参数里（`?userId=12345`），从中提取并补充到 cookie 字符串。
+    // API 需要 userId 才能返回 200。
+    let has_user_id = cookie_parts.iter().any(|p| p.starts_with("userId="));
+    if !has_user_id {
+        if let Ok(current_url) = window.url() {
+            if let Some(uid) = extract_user_id_from_url(&current_url) {
+                tracing::info!(userId = %uid, "从 URL 参数补充 userId 到 cookie");
+                cookie_parts.push(format!("userId={uid}"));
+            }
+        }
+    }
+
+    let cookie_str = cookie_parts.join("; ");
 
     let cred = Credentials {
         api_key: None,
@@ -196,6 +319,17 @@ async fn extract_and_save(window: &tauri::WebviewWindow) -> Result<usize, String
 fn emit_failed(app: &AppHandle, msg: String) {
     tracing::error!(error = %msg, "xiaomi login flow failed");
     let _ = app.emit("musage://xiaomi-login-failed", msg);
+}
+
+/// 从 URL 查询参数中提取 `userId`。
+/// dashboard URL 格式：`...?userId=12345&...` 或 `...?...&userId=12345`
+fn extract_user_id_from_url(url: &Url) -> Option<String> {
+    for (key, value) in url.query_pairs() {
+        if key == "userId" {
+            return Some(value.into_owned());
+        }
+    }
+    None
 }
 
 // ── 单元测试（pure function） ───────────────────────────────────────

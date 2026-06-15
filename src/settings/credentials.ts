@@ -332,64 +332,73 @@ function renderMultiAuthBlock(meta: SourceMeta): HTMLElement {
           "点下面按钮 → 弹窗登录小米账号 → 后端自动提取 Cookie 写进 keys.json，",
           "全程不需要碰 DevTools。",
         ),
-        el("button", {
-          class: "primary big",
-          id: `xiaomi-login-${meta.id}`,
-          "data-id": meta.id,
-          "data-action": "xiaomi-login",
-        }, "🔑 登录小米账号"),
+        el("div", { class: "row" },
+          el("button", {
+            class: "primary big",
+            id: `xiaomi-login-${meta.id}`,
+            "data-id": meta.id,
+            "data-action": "xiaomi-login",
+          }, "🔑 登录小米账号"),
+          el("button", {
+            class: "danger",
+            id: `xiaomi-clear-cookie-${meta.id}`,
+            "data-id": meta.id,
+            "data-action": "xiaomi-clear-cookie",
+          }, "🗑 清除 Cookie"),
+        ),
       ),
     );
   }
 
-  // ── Block 1: API key（优先）──
-  block.appendChild(
-    el("div", { class: "field" },
-      el("label", {}, "API key（优先尝试）"),
-      el("div", { class: "input-row" },
-        el("input", {
-          type: "password",
-          id: `api-key-${meta.id}`,
-          "data-id": meta.id,
-          placeholder: apiKeyPlaceholder(meta.id),
-          autocomplete: "off",
-        }) as HTMLInputElement,
+  // ── Block 1 + 2: API key + Cookie（hide_credentials 时移至"高级"tab）──
+  if (!meta.hide_credentials) {
+    block.appendChild(
+      el("div", { class: "field" },
+        el("label", {}, "API key（优先尝试）"),
+        el("div", { class: "input-row" },
+          el("input", {
+            type: "password",
+            id: `api-key-${meta.id}`,
+            "data-id": meta.id,
+            placeholder: apiKeyPlaceholder(meta.id),
+            autocomplete: "off",
+          }) as HTMLInputElement,
+        ),
+        el("div", { class: "status", id: `api-key-status-${meta.id}`, "data-id": meta.id }, "—"),
+        el("div", { class: "row" },
+          el("button", { class: "primary", id: `save-key-${meta.id}`, "data-id": meta.id, "data-action": "save-key" }, "保存 API key"),
+          el("button", { class: "danger", id: `del-key-${meta.id}`, "data-id": meta.id, "data-action": "del-key" }, "删除"),
+        ),
+        el("div", { class: "help" },
+          ...apiKeyHelpNodes(meta.id),
+          el("br"),
+          el("strong", {}, "提示："),
+          "Xiaomi 用量 API 当前对 Bearer 返 401，但别担心——",
+          "下面的 Cookie 一旦配好，Bearer 失败时会自动 fallback（你不用手动切）。",
+        ),
       ),
-      el("div", { class: "status", id: `api-key-status-${meta.id}`, "data-id": meta.id }, "—"),
-      el("div", { class: "row" },
-        el("button", { class: "primary", id: `save-key-${meta.id}`, "data-id": meta.id, "data-action": "save-key" }, "保存 API key"),
-        el("button", { class: "danger", id: `del-key-${meta.id}`, "data-id": meta.id, "data-action": "del-key" }, "删除"),
-      ),
-      el("div", { class: "help" },
-        ...apiKeyHelpNodes(meta.id),
-        el("br"),
-        el("strong", {}, "提示："),
-        "Xiaomi 用量 API 当前对 Bearer 返 401，但别担心——",
-        "下面的 Cookie 一旦配好，Bearer 失败时会自动 fallback（你不用手动切）。",
-      ),
-    ),
-  );
+    );
 
-  // ── Block 2: Cookie（兜底）──
-  block.appendChild(
-    el("div", { class: "field" },
-      el("label", {}, "Dashboard Cookie（兜底：401 时自动退到这里）"),
-      el("textarea", {
-        id: `cookie-${meta.id}`,
-        "data-id": meta.id,
-        rows: "4",
-        placeholder: 'api-platform_serviceToken="..."; userId=...; api-platform_slh="..."; api-platform_ph="..."',
-      }) as HTMLTextAreaElement,
-      el("div", { class: "status", id: `cookie-status-${meta.id}`, "data-id": meta.id }, "—"),
-      el("div", { class: "row" },
-        el("button", { class: "primary", id: `save-cookie-${meta.id}`, "data-id": meta.id, "data-action": "save-cookie" }, "保存 Cookie"),
-        el("button", { class: "danger", id: `del-cookie-${meta.id}`, "data-id": meta.id, "data-action": "del-cookie" }, "删除"),
+    block.appendChild(
+      el("div", { class: "field" },
+        el("label", {}, "Dashboard Cookie（兜底：401 时自动退到这里）"),
+        el("textarea", {
+          id: `cookie-${meta.id}`,
+          "data-id": meta.id,
+          rows: "4",
+          placeholder: 'api-platform_serviceToken="..."; userId=...; api-platform_slh="..."; api-platform_ph="..."',
+        }) as HTMLTextAreaElement,
+        el("div", { class: "status", id: `cookie-status-${meta.id}`, "data-id": meta.id }, "—"),
+        el("div", { class: "row" },
+          el("button", { class: "primary", id: `save-cookie-${meta.id}`, "data-id": meta.id, "data-action": "save-cookie" }, "保存 Cookie"),
+          el("button", { class: "danger", id: `del-cookie-${meta.id}`, "data-id": meta.id, "data-action": "del-cookie" }, "删除"),
+        ),
+        el("div", { class: "help" },
+          ...cookieHelpNodes(),
+        ),
       ),
-      el("div", { class: "help" },
-        ...cookieHelpNodes(),
-      ),
-    ),
-  );
+    );
+  }
 
   // ── 显示模式选择（Xiaomi 专用）──
   // 切"完整 / 只套餐 / 只总额度"3 档。
@@ -442,7 +451,7 @@ function renderMultiAuthBlock(meta: SourceMeta): HTMLElement {
 
 // ── 各 provider 的占位符 + 帮助文本 ────────────────────────────
 
-function apiKeyPlaceholder(id: string): string {
+export function apiKeyPlaceholder(id: string): string {
   switch (id) {
     case "minimax":    return "sk-cp-...";
     case "deepseek":   return "sk-...";
@@ -582,16 +591,22 @@ function cookieHelpNodes(): (Node | string)[] {
 
 export async function loadCredentialStatus(id: string) {
   const has = await hasSourceCredential(id);
-  const status = document.getElementById(`api-key-status-${id}`)
-    ?? document.getElementById(`cookie-status-${id}`);
-  if (status) {
-    status.textContent = has ? "✓ 已保存到本机" : "未设置";
-    status.className = `status ${has ? "ok" : ""}`;
+  const text = has ? "✓ 已保存到本机" : "未设置";
+  const cls = `status ${has ? "ok" : ""}`;
+  // 更新主面板 + 高级 tab 的 status 元素
+  for (const suffix of ["", "-adv"]) {
+    const status = document.getElementById(`api-key-status-${id}${suffix}`)
+      ?? document.getElementById(`cookie-status-${id}${suffix}`);
+    if (status) {
+      status.textContent = text;
+      status.className = cls;
+    }
   }
 }
 
-export async function saveCredentialAction(id: string, action: "key" | "cookie") {
-  const inputId = action === "key" ? `api-key-${id}` : `cookie-${id}`;
+export async function saveCredentialAction(id: string, action: "key" | "cookie", advInputId?: string) {
+  // advInputId: 高级 tab 用不同 ID（如 "api-key-xiaomimimo-adv"）
+  const inputId = advInputId ?? (action === "key" ? `api-key-${id}` : `cookie-${id}`);
   const input = document.getElementById(inputId) as HTMLInputElement | HTMLTextAreaElement | null;
   if (!input) return;
   const value = input.value.trim();
@@ -664,6 +679,16 @@ export async function xiaomiLoginAction(id: string) {
   }
 }
 
+/// 清除 Xiaomi cookie 并提示用户重新登录。
+/// 用于 cookie 过期（API 返 401）时，一键清掉旧 cookie + 刷新状态。
+export async function xiaomiClearCookieAction(id: string) {
+  if (id !== "xiaomimimo") return;
+  if (!confirm("确认清除已保存的 Xiaomi Cookie？\n清除后需要重新登录。")) return;
+  await deleteSourceCredential(id);
+  flash("✓ Cookie 已清除，请重新点击「🔑 登录小米账号」");
+  await loadCredentialStatus(id);
+}
+
 /// 绑一次后端登录事件 → UI 反馈。
 /// 在 main.ts init() 末尾调一次就行（**只绑一次**，多次绑会重复响应）。
 export function bindXiaomiLoginEvents() {
@@ -687,9 +712,15 @@ export function bindCredentialButtonsGlobal() {
     const action = t.dataset.action;
     const id = t.dataset.id;
     if (!action || !id) return;
+    // 高级 tab 按钮带 data-advanced="true"，用不同 ID 的 input
+    const isAdv = t.dataset.advanced === "true";
+    const advInputId = isAdv
+      ? (action === "save-key" || action === "del-key" ? `api-key-${id}-adv` : `cookie-${id}-adv`)
+      : undefined;
+
     switch (action) {
       case "save-key":
-        void saveCredentialAction(id, "key");
+        void saveCredentialAction(id, "key", advInputId);
         break;
       case "del-key":
         void deleteCredentialAction(id, "key");
@@ -698,13 +729,16 @@ export function bindCredentialButtonsGlobal() {
         void copyCredentialAction(id);
         break;
       case "save-cookie":
-        void saveCredentialAction(id, "cookie");
+        void saveCredentialAction(id, "cookie", advInputId);
         break;
       case "del-cookie":
         void deleteCredentialAction(id, "cookie");
         break;
       case "xiaomi-login":
         void xiaomiLoginAction(id);
+        break;
+      case "xiaomi-clear-cookie":
+        void xiaomiClearCookieAction(id);
         break;
     }
   });

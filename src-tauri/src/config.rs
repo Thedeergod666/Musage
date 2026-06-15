@@ -140,6 +140,11 @@ pub struct AppConfig {
     /// —— 6 行挤在小窗里太啰嗦；想看明细可去设置面板关掉。
     #[serde(default = "tavily_concise_default")]
     pub tavily_concise_mode: bool,
+    /// 浮窗底部提示行（"X 个 provider · 拖动移动 · 右键菜单"）。
+    /// 默认 false（不显示），用户可在 设置 → 浮窗 里手动开启。
+    /// 开启后窗口首次打开自适应高度会多一行的高度。
+    #[serde(default)]
+    pub show_footer_hint: bool,
     /// 用户手动指定的 provider 显示/轮询顺序（用 id 字符串）。空 Vec
     /// = 用 builtin_sources() 的注册表顺序。设置面板拖拽/上下按钮改
     /// 这个；poller 按这个顺序排，浮窗也按这个顺序渲染卡片。
@@ -294,6 +299,7 @@ impl Default for AppConfig {
             low_power_mode: false,
             auto_hide_in_fullscreen: false,
             tavily_concise_mode: true,
+            show_footer_hint: false,
             provider_order: Vec::new(),
             schema_overrides: BTreeMap::new(),
             tray_icon_style: TrayIconStyle::default(),

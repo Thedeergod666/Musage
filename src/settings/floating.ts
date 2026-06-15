@@ -12,6 +12,7 @@ import {
   setAutoHideInFullscreen,
   resetFloatingWindow,
   setDisplayThresholds,
+  setShowFooterHint,
 } from "./api";
 import type { AppConfig, FloatingPinMode } from "./types";
 
@@ -81,6 +82,19 @@ export function renderFloatingSection(container: HTMLElement, cfg: AppConfig) {
       .catch((e) => flash(`✗ 切换失败: ${e}`, true));
   });
 
+  // ── 底部提示行 checkbox ──
+  const footerHintCb = el("input", {
+    type: "checkbox",
+    id: "show-footer-hint",
+  }) as HTMLInputElement;
+  footerHintCb.checked = cfg.show_footer_hint ?? false;
+  footerHintCb.addEventListener("change", () => {
+    const enabled = footerHintCb.checked;
+    void setShowFooterHint(enabled)
+      .then(() => flash(enabled ? "✓ 底部提示行已开启" : "✓ 底部提示行已关闭"))
+      .catch((e) => flash(`✗ 切换失败: ${e}`, true));
+  });
+
   container.appendChild(
     el("section", { class: "section-card" },
       el("h2", {}, "🪟 浮窗"),
@@ -110,6 +124,14 @@ export function renderFloatingSection(container: HTMLElement, cfg: AppConfig) {
           el("label", { for: "auto-hide-in-fullscreen" }, "全屏时自动隐藏浮窗"),
         ),
         el("div", { class: "help" }, "检测到任何 app 进入全屏（菜单栏自动隐藏）→ 浮窗暂时隐藏；退出全屏 → 自动恢复。目前仅 macOS 生效。"),
+      ),
+      // 底部提示行
+      el("div", { class: "field" },
+        el("div", { class: "check" },
+          footerHintCb,
+          el("label", { for: "show-footer-hint" }, "显示底部提示行（provider 数量 + 快捷操作）"),
+        ),
+        el("div", { class: "help" }, "默认隐藏。开启后浮窗底部会显示「X 个 provider · 拖动移动 · 右键菜单」提示，窗口高度会自动适配。"),
       ),
       el("div", { class: "divider" }),
       // ── 颜色档位阈值（v0.6+ 用户可调） ──

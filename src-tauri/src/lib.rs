@@ -221,6 +221,7 @@ pub fn run() {
             commands::get_xiaomi_display_mode,
             commands::set_low_power_mode,
             commands::set_auto_hide_in_fullscreen,
+            commands::set_show_footer_hint,
             commands::set_tray_icon_style,
             commands::set_display_thresholds,
             commands::quit_app,

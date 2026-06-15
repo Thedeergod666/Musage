@@ -271,9 +271,13 @@ pub async fn save_config(
 pub struct SourceMeta {
     pub id: String,
     pub display_name: String,
-    /// "api_key" | "cookie"
+    /// "api_key" | "cookie" | "api_key_or_cookie"
     pub auth_kind: &'static str,
     pub enabled: bool,
+    /// true = 主面板不渲染凭据字段（移至"高级"tab）。Xiaomi 用：
+    /// API key 对 Bearer 永远 401，手动 cookie 是兜底，都放高级 tab。
+    #[serde(default)]
+    pub hide_credentials: bool,
 }
 
 /// 列出所有内置 source 的元信息 + 当前启用状态。
@@ -291,6 +295,8 @@ pub async fn list_sources(state: State<'_, AppState>) -> Result<Vec<SourceMeta>,
                 AuthKind::ApiKeyOrCookie => "api_key_or_cookie",
             },
             enabled: cfg.is_enabled_id(s.id()),
+            // Xiaomi: API key (Bearer) 永远 401，手动 cookie 是兜底 → 都放高级 tab
+            hide_credentials: s.id() == "xiaomimimo",
         })
         .collect())
 }
@@ -1094,6 +1100,25 @@ pub async fn set_auto_hide_in_fullscreen(
         cfg.save()?;
     }
     crate::platform::set_auto_hide_in_fullscreen(&app, enabled);
+    Ok(())
+}
+
+/// 即时切换浮窗底部提示行显隐：写 cfg + emit config-changed 让浮窗重读。
+#[tauri::command]
+pub async fn set_show_footer_hint(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    {
+        let mut cfg = state.config.write().await;
+        if cfg.show_footer_hint == enabled {
+            return Ok(());
+        }
+        cfg.show_footer_hint = enabled;
+        cfg.save()?;
+    }
+    let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
 

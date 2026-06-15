@@ -45,6 +45,8 @@ export interface SourceMeta {
   /** "api_key" / "cookie" / "api_key_or_cookie"（多鉴权，Xiaomi 用） */
   auth_kind: "api_key" | "cookie" | "api_key_or_cookie";
   enabled: boolean;
+  /** true = 主面板不渲染凭据字段（移至"高级"tab） */
+  hide_credentials?: boolean;
 }
 
 /// Xiaomi MiMo 浮窗显示模式：
@@ -106,6 +108,8 @@ export interface AppConfig {
   auto_hide_in_fullscreen?: boolean;
   /// Tavily 简洁模式：只显示主指标 + 进度条，隐藏 5 个 endpoint 细分行
   tavily_concise_mode?: boolean;
+  /// 浮窗底部提示行（默认隐藏，用户手动开启）
+  show_footer_hint?: boolean;
   /// Provider 在浮窗里的渲染顺序。空数组 = 用 builtin_sources() 注册表顺序
   provider_order?: string[];
   /// ZenMux 自定义 Management API endpoint URL。null/空 = 用 zenmux.rs 里的默认 URL

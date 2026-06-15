@@ -85,6 +85,17 @@ jobs:
             file \
             libssl-dev
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      # tauri::generate_context!() 宏 cargo check 时就验 frontendDist = "../dist" 存在
+      # 本地 pnpm tauri build 隐式跑了 pnpm build,CI 单独跑 cargo check 没这步 → 编译期 panic
+      # 显式加 pnpm install + pnpm build 让 dist/ 存在
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with: { version: 9.15.4 }
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+          cache: "pnpm"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
@@ -109,20 +120,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # v4 download-artifact 拿掉了 pattern 参数,最稳的是逐个 artifact 显式下载
+      # 用 dl/ 前缀避免跟 src 的 dist 路径冲突
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with: { name: dist-ubuntu-latest, path: dist-ubuntu-latest }
+        with: { name: dist-ubuntu-latest, path: dl/dist-ubuntu-latest }
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with: { name: dist-macos-latest, path: dist-macos-latest }
+        with: { name: dist-macos-latest, path: dl/dist-macos-latest }
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with: { name: dist-windows-latest, path: dist-windows-latest }
+        with: { name: dist-windows-latest, path: dl/dist-windows-latest }
       - name: Compare hashes
         run: |
-          for d in dist-*/; do
-            (cd "$d" && find . -type f | sort | xargs sha256sum) | sha256sum > "$d.sha"
-          done
-          cat dist-ubuntu-latest.sha dist-macos-latest.sha dist-windows-latest.sha
-          # 如果 hash 不一致说明 OS-specific 构建差异
-          if [ "$(cat dist-ubuntu-latest.sha)" != "$(cat dist-macos-latest.sha)" ]; then
+          # 显式 per-platform 算 hash,不用 glob 避免路径拼接 bug
+          # (之前 for d in dist-*/; do ... > "$d.sha"; done 实际上把 .sha 写到
+          #  dist-ubuntu-latest/.sha 里, 而 cat 读的是 ./dist-ubuntu-latest.sha,
+          #  路径不匹配)
+          HASH_UBUNTU=$(cd dl/dist-ubuntu-latest && find . -type f | sort | xargs sha256sum | sha256sum)
+          HASH_MACOS=$(cd dl/dist-macos-latest && find . -type f | sort | xargs sha256sum | sha256sum)
+          HASH_WINDOWS=$(cd dl/dist-windows-latest && find . -type f | sort | xargs sha256sum | sha256sum)
+          {
+            echo "ubuntu: $HASH_UBUNTU"
+            echo "macos:  $HASH_MACOS"
+            echo "windows: $HASH_WINDOWS"
+          }
+          if [ "$HASH_UBUNTU" != "$HASH_MACOS" ] || [ "$HASH_UBUNTU" != "$HASH_WINDOWS" ]; then
             echo "::error::frontend dist differs across OS"
             exit 1
           fi

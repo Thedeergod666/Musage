@@ -43,10 +43,22 @@ export default defineConfig({
     // 执行完才 inject CSS，设置窗 FOUC 闪白进一步收敛（背景色本身在
     // src-tauri/src/commands.rs::build_settings_window 的 background_color
     // 里已经覆盖）。
+    //
+    // **文件名策略：拿掉 [hash]** —— Vite/Rollup 默认在 dist 资产文件名里
+    // 掺 content hash(eg main-XXX.js),Tauri app 里完全用不到(资产都打 .app
+    // / .exe / .msi 包里,版本由 Tauri updater 管,不需要浏览器 cache-busting)。
+    // 反过来 macos arm64 runner 上 Vite 偶尔把 path/platform 信息漏进 hash
+    // input,导致同源代码 ubuntu/windows dist 一致、macos dist hash 漂走
+    // (CI 18 撞过这个 bug)。改用纯源名后,dist 跨 100% 平台一致。
     rollupOptions: {
       input: {
         main: `${root}index.html`,
         settings: `${root}settings.html`,
+      },
+      output: {
+        entryFileNames: "assets/[name].js",
+        chunkFileNames: "assets/[name].js",
+        assetFileNames: "assets/[name][extname]",
       },
     },
   },

@@ -171,13 +171,18 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                 if let Some(w) = app.get_webview_window("floating") {
                     let _ = w.unminimize();
                     let _ = w.show();
-                    if let Ok(hwnd) = w.hwnd() {
-                        use windows_sys::Win32::UI::WindowsAndMessaging::{
-                            AllowSetForegroundWindow, SetForegroundWindow,
-                        };
-                        unsafe {
-                            let _ = AllowSetForegroundWindow(0x00000001); // ASFW_ANY
-                            let _ = SetForegroundWindow(hwnd.0);
+                    // hwnd() / windows_sys crate 在 Tauri 2 里 cfg-gate 在 windows,
+                    // macos / linux 上不存在这两个 symbol。Win32 API 整块 cfg-gate。
+                    #[cfg(target_os = "windows")]
+                    {
+                        if let Ok(hwnd) = w.hwnd() {
+                            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                                AllowSetForegroundWindow, SetForegroundWindow,
+                            };
+                            unsafe {
+                                let _ = AllowSetForegroundWindow(0x00000001); // ASFW_ANY
+                                let _ = SetForegroundWindow(hwnd.0);
+                            }
                         }
                     }
                     // 同时把 WS_EX_TOPMOST 持久化（这样即便焦点之后

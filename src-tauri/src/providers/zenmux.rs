@@ -51,7 +51,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
-    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
+    shared_client, AuthKind, Credentials, FetchError, ProviderSnapshot, QuotaRow,
     QuotaSource,
 };
 

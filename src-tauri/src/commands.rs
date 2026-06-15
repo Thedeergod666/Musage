@@ -206,7 +206,7 @@ pub async fn save_config(
     app: AppHandle,
     cfg: AppConfig,
 ) -> Result<(), String> {
-    let mut cfg = cfg;
+    let cfg = cfg;
     if cfg.refresh_interval_secs < 10 {
         return Err("轮询间隔不能小于 10 秒（避免触发 provider rate limit）".to_string());
     }

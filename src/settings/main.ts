@@ -16,7 +16,7 @@ import { renderLogsSection, loadLogs } from "./logs";
 import { renderAboutSection } from "./about";
 import { setupUpdaterSection } from "./updater";
 import { bindCredentialButtonsGlobal, bindXiaomiLoginEvents, loadXiaomiDisplayMode } from "./credentials";
-import { bindOrderButtonsGlobal, updateOrderConfig } from "./order";
+import { bindOrderButtonsGlobal, updateOrderConfig, isSuppressingConfigRebuild } from "./order";
 import { flash } from "./utils";
 
 // ── 1) 同步：sidebar 切换 + tabs ───────────────────────────────
@@ -86,9 +86,15 @@ async function init() {
     // 订阅后端 config-changed：用户改了「在浮窗显示」或调整了 provider
     // 顺序时，Rust 会 emit 这个事件；设置面板需要重渲浮窗卡片顺序区域
     // （enabled/disabled 分区会随之调整）和重读 cfg。
+    //
+    // 但 order.ts 在批量 IPC（如分隔线拖拽→连续 setProviderEnabled N 次）
+    // 期间会置 suppressConfigRebuild=true 屏蔽本 listener，避免每次
+    // getConfig 覆盖乐观更新的 orderCfg 导致 UI 在「全隐藏」与「新位置」
+    // 之间穿梭。批量结束后 order.ts 会强制 resync 一次。
     let unlistenCfg: UnlistenFn | null = null;
     listen("musage://config-changed", async () => {
       try {
+        if (isSuppressingConfigRebuild()) return;
         const cfg = await getConfig();
         updateOrderConfig(cfg);
       } catch (e) {

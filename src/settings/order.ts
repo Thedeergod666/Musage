@@ -59,6 +59,16 @@ let orderSources: SourceMeta[] = [];
 let orderCfg: AppConfig | null = null;
 let listRef: HTMLOListElement | null = null;
 
+/// 批量 async 操作期间，main.ts 的 config-changed 监听器要跳过 rebuild，
+/// 否则每次 setProviderEnabled 都会触发 getConfig + buildOrderItems，把
+/// 我们乐观更新的 orderCfg 覆盖回部分后端状态，导致 UI 在「全隐藏」和
+/// 「新位置」之间闪烁。详见 onDividerMouseUp 注释。
+let suppressConfigRebuild = false;
+
+export function isSuppressingConfigRebuild(): boolean {
+  return suppressConfigRebuild;
+}
+
 function isEnabledId(id: string): boolean {
   if (!orderCfg) return true;
   return orderCfg.providers?.[id]?.enabled ?? true;
@@ -394,7 +404,10 @@ function onDividerMouseUp(_e: MouseEvent) {
   }
   refreshPosLabels();
 
-  // 顺序触发后端切换（避免并发 emit snapshot 导致浮窗闪烁）
+  // ── 批量 IPC：先禁止 main.ts 的 config-changed 监听器 rebuild（否则每次
+  // setProviderEnabled 都会触发 getConfig 覆盖我们的 orderCfg，导致 UI 闪烁
+  // 在「全隐藏」与「新位置」之间穿梭）。所有 IPC 跑完再 force resync 一次。──
+  suppressConfigRebuild = true;
   void (async () => {
     try {
       for (const id of toEnable) {
@@ -411,6 +424,12 @@ function onDividerMouseUp(_e: MouseEvent) {
       );
     } catch (e) {
       flash(`✗ 调整失败: ${e}`, true);
+    } finally {
+      suppressConfigRebuild = false;
+      // 最终 resync：以防乐观更新与后端状态有微小偏差（不可能，但兜底）
+      const cfg = await import("./api").then((m) => m.getConfig());
+      orderCfg = cfg;
+      if (listRef) buildOrderItems(listRef);
     }
   })();
 }
@@ -535,13 +554,18 @@ function buildRow(id: string, idx: number, total: number, section: "enabled" | "
 }
 
 /** 统一规则：
- *  - up 仅在「显示段第一张」时禁用（idx === 0；disabled 段的 ↑ 永远可点）
+ *  - up 仅在「显示段第一张」时禁用（enabled 且 idx === 0）
  *  - down 仅在「隐藏段最后一张」时禁用（disabled 且 idx === total - 1）
  *  - 其余全部可点 —— 包括「显示段最后一张的 ↓」（跨段进隐藏段首位） */
 function refreshRowButtons(li: HTMLElement, idx: number, total: number) {
   const upBtn = li.querySelector<HTMLButtonElement>(".order-up");
   const downBtn = li.querySelector<HTMLButtonElement>(".order-down");
-  if (upBtn) upBtn.disabled = idx === 0;
+  if (upBtn) {
+    // 全隐藏时 idx=0 的卡也是隐藏段首张，↑ 应该可点（跨段进显示段）
+    const isFirstEnabled =
+      !li.classList.contains("order-row-disabled") && idx === 0;
+    upBtn.disabled = isFirstEnabled;
+  }
   if (downBtn) {
     const isLastDisabled =
       li.classList.contains("order-row-disabled") && idx === total - 1;
@@ -569,7 +593,9 @@ export async function moveProviderInOrder(id: string, dir: "up" | "down") {
   // 数组中的"逻辑位置"已经天然落在对方段的边界上）。
   let willCrossBoundary = false;
   if (dir === "up") {
-    if (idx === 0) return; // 第一张 enabled 的 ↑ 被禁用（按钮也已 disabled 兜底）
+    // 只有「显示段首张」的 ↑ 被禁用；全隐藏时 idx=0 的卡也是隐藏段首张，
+    // 其 ↑ 是「跨段 ↑ → 进显示段」的合法入口 —— 必须放行。
+    if (idx === 0 && wasEnabled) return;
     if (isFirstDisabled) {
       // 隐藏段首张 ↑ → 进入显示段末尾
       willCrossBoundary = true;
@@ -669,7 +695,12 @@ function refreshPosLabels() {
     if (posEl) posEl.textContent = posLabel(i);
     const upBtn = document.querySelector<HTMLButtonElement>(`.order-up[data-id="${id}"]`);
     const downBtn = document.querySelector<HTMLButtonElement>(`.order-down[data-id="${id}"]`);
-    if (upBtn) upBtn.disabled = i === 0;
+    if (upBtn) {
+      const row = upBtn?.closest("li.order-row");
+      const isFirstEnabled =
+        !!row && !row.classList.contains("order-row-disabled") && i === 0;
+      upBtn.disabled = isFirstEnabled;
+    }
     if (downBtn) {
       const row = upBtn?.closest("li.order-row");
       const isLastDisabled =

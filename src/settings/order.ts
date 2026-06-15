@@ -26,7 +26,7 @@
 //   切换 enabled 状态（拖下来 = 隐藏、拖上去 = 显示）。这是隐藏段的
 //   另一种快捷调整方式。
 
-import { setProviderOrder, setProviderEnabled, getConfig } from "./api";
+import { setProviderOrder, setProviderEnabled } from "./api";
 import {
   BUILTIN_ORDER,
   currentProviderOrder,
@@ -225,17 +225,23 @@ function onDragMouseUp(_e: MouseEvent) {
   if (listRef) buildOrderItems(listRef);
 
   if (crossedDivider) {
-    // 跨过分隔线：先落盘 enabled，再落盘 order。Rust 端 set_provider_enabled
-    // 内部已经会 emit snapshot，set_provider_order 又会再 emit 一次。两次
-    // 几乎同时发到浮窗，浮窗 listen 端会按到达顺序处理（最终是 enabled 切换
-    // 后的新 order）—— 但为了避免极端竞态，先 await 一下 enabled。
+    // ── 乐观更新（fix bug #3 + #4）：先在内存里翻 enabled flag、sync
+    // provider panel checkbox + 立即 rebuild，再异步 IPC 落盘。──
+    if (orderCfg && dragSrcId) {
+      if (!orderCfg.providers) orderCfg.providers = {};
+      const entry = orderCfg.providers[dragSrcId] ?? { enabled: willBeEnabled };
+      orderCfg.providers[dragSrcId] = { ...entry, enabled: willBeEnabled };
+    }
+    if (dragSrcId) {
+      const cb = document.getElementById(`enabled-${dragSrcId}`) as HTMLInputElement | null;
+      if (cb) cb.checked = willBeEnabled;
+    }
+    refreshPosLabels();
+
     void (async () => {
       try {
         await setProviderEnabled(dragSrcId!, willBeEnabled);
         await setProviderOrder(currentProviderOrder);
-        // 拉最新 cfg 刷新"已勾选"checkbox 状态（让 provider panel 同步）
-        const cfg = await getConfig();
-        orderCfg = cfg;
         flash(
           willBeEnabled
             ? `✓ ${dragSrcId} 已移到浮窗显示区`
@@ -370,6 +376,24 @@ function onDividerMouseUp(_e: MouseEvent) {
   // DOM 立即按新分割点重建（给用户即时反馈）
   if (listRef) buildOrderItems(listRef);
 
+  // ── 乐观更新（fix bug #3 + #4）：先翻内存 flag + 同步 checkbox，再 IPC ──
+  if (orderCfg) {
+    if (!orderCfg.providers) orderCfg.providers = {};
+    for (const id of toEnable) {
+      const entry = orderCfg.providers[id] ?? { enabled: true };
+      orderCfg.providers[id] = { ...entry, enabled: true };
+      const cb = document.getElementById(`enabled-${id}`) as HTMLInputElement | null;
+      if (cb) cb.checked = true;
+    }
+    for (const id of toDisable) {
+      const entry = orderCfg.providers[id] ?? { enabled: false };
+      orderCfg.providers[id] = { ...entry, enabled: false };
+      const cb = document.getElementById(`enabled-${id}`) as HTMLInputElement | null;
+      if (cb) cb.checked = false;
+    }
+  }
+  refreshPosLabels();
+
   // 顺序触发后端切换（避免并发 emit snapshot 导致浮窗闪烁）
   void (async () => {
     try {
@@ -379,9 +403,6 @@ function onDividerMouseUp(_e: MouseEvent) {
       for (const id of toDisable) {
         await setProviderEnabled(id, false);
       }
-      const cfg = await getConfig();
-      orderCfg = cfg;
-      if (listRef) buildOrderItems(listRef);
       const delta = newBoundaryPos - oldBoundary;
       flash(
         delta > 0
@@ -455,8 +476,10 @@ function buildOrderItems(list: HTMLOListElement) {
     list.appendChild(buildRow(id, pos, enabledIds.length + disabledIds.length, "enabled"));
     pos++;
   }
+  // 分隔线永远渲染：即使 disabledIds 为 0 也保留，让用户能拖下去添加
+  // 隐藏项 —— 同时视觉上保持「显示段 / 隐藏段」分区恒在。
+  list.appendChild(buildDivider());
   if (disabledIds.length > 0) {
-    list.appendChild(buildDivider());
     for (const id of disabledIds) {
       list.appendChild(buildRow(id, pos, enabledIds.length + disabledIds.length, "disabled"));
       pos++;
@@ -512,14 +535,18 @@ function buildRow(id: string, idx: number, total: number, section: "enabled" | "
 }
 
 /** 统一规则：
- *  - up 仅在「显示段第一张」时禁用（idx === 0）
- *  - down 仅在「隐藏段最后一张」时禁用（idx === total - 1）
- *  - 其余全部可点 —— 包括跨段那一对（last enabled 的 ↓ / first disabled 的 ↑） */
+ *  - up 仅在「显示段第一张」时禁用（idx === 0；disabled 段的 ↑ 永远可点）
+ *  - down 仅在「隐藏段最后一张」时禁用（disabled 且 idx === total - 1）
+ *  - 其余全部可点 —— 包括「显示段最后一张的 ↓」（跨段进隐藏段首位） */
 function refreshRowButtons(li: HTMLElement, idx: number, total: number) {
   const upBtn = li.querySelector<HTMLButtonElement>(".order-up");
   const downBtn = li.querySelector<HTMLButtonElement>(".order-down");
   if (upBtn) upBtn.disabled = idx === 0;
-  if (downBtn) downBtn.disabled = idx === total - 1;
+  if (downBtn) {
+    const isLastDisabled =
+      li.classList.contains("order-row-disabled") && idx === total - 1;
+    downBtn.disabled = isLastDisabled;
+  }
 }
 
 function posLabel(i: number): string {
@@ -548,7 +575,8 @@ export async function moveProviderInOrder(id: string, dir: "up" | "down") {
       willCrossBoundary = true;
     }
   } else {
-    if (idx === currentProviderOrder.length - 1) return; // 最后一张的 ↓ 被禁用
+    // 只有「隐藏段最后一张」的 ↓ 不响应；显示段最后一张的 ↓ 仍可点（跨段进隐藏段）
+    if (!wasEnabled && idx === currentProviderOrder.length - 1) return;
     if (isLastEnabled) {
       // 显示段末张 ↓ → 进入隐藏段首位
       willCrossBoundary = true;
@@ -556,20 +584,41 @@ export async function moveProviderInOrder(id: string, dir: "up" | "down") {
   }
 
   if (willCrossBoundary) {
-    // DOM 全量重建（段归属变了）
+    // ── 乐观更新（fix bug #4：避免 rebuild 用旧 cfg 导致 partition 不变）──
+    // 1) 改 orderCfg 内存里的 enabled flag，让 buildOrderItems 用新值
+    // 2) 同步 provider panel 的 checkbox（fix bug #3：UI 不同步）
+    // 3) 全量 rebuild + refreshPosLabels（位置标签 6/8 → 7/8 同步）
+    const newEnabled = !wasEnabled;
+    if (orderCfg) {
+      if (!orderCfg.providers) orderCfg.providers = {};
+      const entry = orderCfg.providers[id] ?? { enabled: newEnabled };
+      orderCfg.providers[id] = { ...entry, enabled: newEnabled };
+    }
+    const cb = document.getElementById(`enabled-${id}`) as HTMLInputElement | null;
+    if (cb) cb.checked = newEnabled;
     if (listRef) buildOrderItems(listRef);
+    refreshPosLabels();
+
+    // IPC 后端落盘 + emit snapshot（异步，不阻塞视觉）
     void (async () => {
       try {
-        await setProviderEnabled(id, !wasEnabled);
-        const cfg = await getConfig();
-        orderCfg = cfg;
-        if (listRef) buildOrderItems(listRef);
+        await setProviderEnabled(id, newEnabled);
         flash(
           wasEnabled
             ? `✓ ${id} 已隐藏（点 ↑ 或拖回上方可恢复）`
             : `✓ ${id} 已移到浮窗显示区`,
         );
       } catch (e) {
+        // IPC 失败 → 回滚
+        if (orderCfg?.providers?.[id]) {
+          orderCfg.providers[id] = {
+            ...orderCfg.providers[id],
+            enabled: wasEnabled,
+          };
+        }
+        if (cb) cb.checked = wasEnabled;
+        if (listRef) buildOrderItems(listRef);
+        refreshPosLabels();
         flash(`✗ 切换失败: ${e}`, true);
       }
     })();
@@ -582,16 +631,20 @@ export async function moveProviderInOrder(id: string, dir: "up" | "down") {
   const adjusted = targetIdx > idx ? targetIdx - 1 : targetIdx;
   currentProviderOrder.splice(adjusted, 0, moved);
 
-  const list = document.querySelector<HTMLOListElement>(".order-list");
-  if (list) {
-    const items = [...list.children] as HTMLElement[];
-    const fromItem = items[idx];
-    const toItem = items[adjusted];
+  // DOM 同步：listRef.children 含 divider，disabled 段的 DOM 索引比
+  // currentProviderOrder 索引大 1。算出映射后再 insertBefore。
+  if (listRef) {
+    const boundary = boundaryIdx();
+    const fromDomIdx = idx >= boundary ? idx + 1 : idx;
+    const toDomIdx = adjusted >= boundary ? adjusted + 1 : adjusted;
+    const items = [...listRef.children] as HTMLElement[];
+    const fromItem = items[fromDomIdx];
+    const toItem = items[toDomIdx];
     if (fromItem && toItem) {
       if (dir === "up") {
-        list.insertBefore(fromItem, toItem);
+        listRef.insertBefore(fromItem, toItem);
       } else {
-        list.insertBefore(fromItem, toItem.nextSibling);
+        listRef.insertBefore(fromItem, toItem.nextSibling);
       }
     }
   }
@@ -617,7 +670,13 @@ function refreshPosLabels() {
     const upBtn = document.querySelector<HTMLButtonElement>(`.order-up[data-id="${id}"]`);
     const downBtn = document.querySelector<HTMLButtonElement>(`.order-down[data-id="${id}"]`);
     if (upBtn) upBtn.disabled = i === 0;
-    if (downBtn) downBtn.disabled = i === currentProviderOrder.length - 1;
+    if (downBtn) {
+      const row = upBtn?.closest("li.order-row");
+      const isLastDisabled =
+        !!row?.classList.contains("order-row-disabled") &&
+        i === currentProviderOrder.length - 1;
+      downBtn.disabled = isLastDisabled;
+    }
   }
 }
 

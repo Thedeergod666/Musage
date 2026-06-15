@@ -215,25 +215,48 @@ jobs:
                 printf "  %s %-50s u=%s  m=%s  w=%s\n", tag, $1, substr($2,1,12), substr($3,1,12), substr($4,1,12);
               }'
           echo ""
-          echo "─── 差异文件实际内容 (前 30 行 + size + head4 hex;cat -A 显示 ^M / 行尾) ───"
+          echo "─── 差异文件实际内容 (全文 + head/tail hex; diff -u 跨平台对照) ───"
           join -a 1 -a 2 -e "---MISSING---" -t '|' -o '0,1.2,2.2' \
             /tmp/m-ubuntu.tsv /tmp/m-macos.tsv \
             | join -a 1 -a 2 -e "---MISSING---" -t '|' -o '0,1.2,1.3,2.2' \
               - /tmp/m-windows.tsv \
           | awk -F'|' '$2 != $3 || $2 != $4 { print $1 }' \
           | while IFS= read -r f; do
+              echo ""
+              echo "############################################################"
+              echo "## $f"
+              echo "############################################################"
               for plat in ubuntu macos windows; do
-                echo ""
-                echo "▍▍▍▍▍ ${f} on ${plat} ▍▍▍▍▍"
                 fp="dl/dist-${plat}-latest/${f#./}"
                 if [ -f "$fp" ]; then
                   SZ=$(wc -c < "$fp")
-                  HEAD=$(head -c 4 "$fp" | od -An -tx1 | tr -d ' \n')
-                  echo "(size=${SZ}B, head4=0x${HEAD})"
-                  head -30 "$fp" | cat -A
-                else
-                  echo "(MISSING)"
+                  HEAD=$(head -c 16 "$fp" | od -An -tx1 | tr -d ' \n')
+                  TAIL=$(tail -c 16 "$fp" | od -An -tx1 | tr -d ' \n')
+                  echo ""
+                  echo "  ── ${plat} (size=${SZ}B, head16=0x${HEAD}, tail16=0x${TAIL}) ──"
                 fi
               done
+              # 跨平台 diff -u (如果 ubuntu==macos 就只对 ubuntu vs windows)
+              if diff -q dl/dist-ubuntu-latest/"${f#./}" dl/dist-macos-latest/"${f#./}" >/dev/null 2>&1; then
+                echo ""
+                echo "▍ ubuntu vs windows diff -u (macos 同 ubuntu):"
+                diff -u dl/dist-ubuntu-latest/"${f#./}" dl/dist-windows-latest/"${f#./}" || true
+                echo ""
+                echo "▍ windows 文件 hex dump (od -c 显示原始字节):"
+                od -c dl/dist-windows-latest/"${f#./}" | head -40
+              else
+                echo ""
+                echo "▍ ubuntu vs macos diff -u:"
+                diff -u dl/dist-ubuntu-latest/"${f#./}" dl/dist-macos-latest/"${f#./}" || true
+                echo ""
+                echo "▍ ubuntu vs windows diff -u:"
+                diff -u dl/dist-ubuntu-latest/"${f#./}" dl/dist-windows-latest/"${f#./}" || true
+                echo ""
+                echo "▍ macos 文件 hex dump:"
+                od -c dl/dist-macos-latest/"${f#./}" | head -40
+                echo ""
+                echo "▍ windows 文件 hex dump:"
+                od -c dl/dist-windows-latest/"${f#./}" | head -40
+              fi
             done
           exit 1

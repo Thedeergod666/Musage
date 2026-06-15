@@ -56,7 +56,9 @@ jobs:
       # JS/CSS 输出里保留 \r(尤其是内联进 bundle 的字符串字面量),导致
       # dist-<os> 三平台 hash 对不上。只动文本类后缀,不动 png/woff2 等二进制
       # —— 那些里的 0x0d 是合法字节,改了就坏。
-      - name: Normalize dist line endings (CRLF → LF)
+      # 同时剥 UTF-8 BOM(U+FEFF):Node 在 Windows 上 fs.writeFileSync(text, 'utf-8')
+      # 偶发会把 BOM 写进 HTML,跟 *nix 上无 BOM 的输出差 3 字节,触发 hash 飘。
+      - name: Normalize dist line endings (CRLF → LF) + strip BOM
         shell: bash
         run: |
           node -e "
@@ -68,8 +70,18 @@ jobs:
                 const p = path.join(d, e.name);
                 if (e.isDirectory()) walk(p);
                 else if (exts.has(path.extname(e.name).toLowerCase())) {
-                  const b = fs.readFileSync(p);
-                  if (b.includes(0x0d)) fs.writeFileSync(p, b.toString('binary').replace(/\r\n?/g, '\n'));
+                  let b = fs.readFileSync(p);
+                  // strip leading UTF-8 BOM if present
+                  if (b.length >= 3 && b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf) {
+                    b = b.subarray(3);
+                  }
+                  // strip CR (CRLF or lone CR)
+                  if (b.includes(0x0d)) {
+                    fs.writeFileSync(p, b.toString('binary').replace(/\r\n?/g, '\n'));
+                  } else if (b !== fs.readFileSync(p)) {
+                    // BOM was the only diff — rewrite without BOM
+                    fs.writeFileSync(p, b);
+                  }
                 }
               }
             }
@@ -191,14 +203,37 @@ jobs:
             && echo "(文件列表完全相同 → 差异在文件内容)" \
             || echo "(文件列表本身就不同 → 见上方 diff)"
           echo "─── 逐文件 sha256 比对 (列:path | ubuntu | macos | windows) ───"
-          # 三路 join:先把 ubuntu × windows 拼,再 × macos,缺则用 ---MISSING--- 占位
+          # 三路 join:先 ubuntu × macos 拼出 path|u|m,再 × windows 拼出 path|u|m|w
+          # → $2=u, $3=m, $4=w(顺序跟 label 对得上,不会标反)
           join -a 1 -a 2 -e "---MISSING---" -t '|' -o '0,1.2,2.2' \
-            /tmp/m-ubuntu.tsv /tmp/m-windows.tsv \
+            /tmp/m-ubuntu.tsv /tmp/m-macos.tsv \
             | join -a 1 -a 2 -e "---MISSING---" -t '|' -o '0,1.2,1.3,2.2' \
-              - /tmp/m-macos.tsv \
+              - /tmp/m-windows.tsv \
             | awk -F'|' '{
                 ok = ($2 == $3 && $2 == $4);
                 tag = ok ? "✓" : "✗";
                 printf "  %s %-50s u=%s  m=%s  w=%s\n", tag, $1, substr($2,1,12), substr($3,1,12), substr($4,1,12);
               }'
+          echo ""
+          echo "─── 差异文件实际内容 (前 30 行 + size + head4 hex;cat -A 显示 ^M / 行尾) ───"
+          join -a 1 -a 2 -e "---MISSING---" -t '|' -o '0,1.2,2.2' \
+            /tmp/m-ubuntu.tsv /tmp/m-macos.tsv \
+            | join -a 1 -a 2 -e "---MISSING---" -t '|' -o '0,1.2,1.3,2.2' \
+              - /tmp/m-windows.tsv \
+          | awk -F'|' '$2 != $3 || $2 != $4 { print $1 }' \
+          | while IFS= read -r f; do
+              for plat in ubuntu macos windows; do
+                echo ""
+                echo "▍▍▍▍▍ ${f} on ${plat} ▍▍▍▍▍"
+                fp="dl/dist-${plat}-latest/${f#./}"
+                if [ -f "$fp" ]; then
+                  SZ=$(wc -c < "$fp")
+                  HEAD=$(head -c 4 "$fp" | od -An -tx1 | tr -d ' \n')
+                  echo "(size=${SZ}B, head4=0x${HEAD})"
+                  head -30 "$fp" | cat -A
+                else
+                  echo "(MISSING)"
+                fi
+              done
+            done
           exit 1

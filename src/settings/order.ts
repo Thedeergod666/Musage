@@ -14,6 +14,17 @@
 //   之下是未勾选的 provider。用户可拖动卡片跨过分隔线来切换是否在浮窗显示。
 // - **位置控制可见性**：跨过分隔线的拖动同时更新 cfg.providers[id].enabled
 //   + cfg.provider_order + 后端 emit snapshot —— 浮窗即时跟着显示/隐藏。
+//
+// v0.7+ 统一交互：
+// - 移除 disabled 段卡片的「显示」按钮 —— 改用 ↑/↓ 按钮或拖拽跨过分隔线。
+// - ↑/↓ 按钮允许跨段移动：在显示段最下面点 ↓ → 进入隐藏段首位；
+//   在隐藏段最上面点 ↑ → 进入显示段末位。后端 set_provider_enabled
+//   同步切换可见性。
+// - 禁用规则统一：仅「显示段首张的 ↑」与「隐藏段末张的 ↓」被禁用（edge-of-list），
+//   其余按钮全部可点 —— 包括跨段的那一对。
+// - 分隔线本身可拖拽：用户可握住分隔线把它上下拖，跨越分隔线的卡片自动
+//   切换 enabled 状态（拖下来 = 隐藏、拖上去 = 显示）。这是隐藏段的
+//   另一种快捷调整方式。
 
 import { setProviderOrder, setProviderEnabled, getConfig } from "./api";
 import {
@@ -53,6 +64,15 @@ function isEnabledId(id: string): boolean {
   return orderCfg.providers?.[id]?.enabled ?? true;
 }
 
+/** 找到分隔点：currentProviderOrder 中第一个 disabled provider 的 index。
+ *  若全部 enabled，返回 length（即分隔点在最末尾）。 */
+function boundaryIdx(): number {
+  for (let j = 0; j < currentProviderOrder.length; j++) {
+    if (!isEnabledId(currentProviderOrder[j])) return j;
+  }
+  return currentProviderOrder.length;
+}
+
 // ── 自定义拖拽（mousedown/mousemove/mouseup）─────────────────
 
 let dragging = false;
@@ -60,9 +80,7 @@ let dragSrcId: string | null = null;
 let dragSrcIdx = -1;
 let dragGhost: HTMLElement | null = null;
 let dragPlaceholder: HTMLElement | null = null;
-let dragStartY = 0;
 let dragOffsetY = 0;
-void dragStartY; // used in onDragMouseDown for reference
 
 function onDragMouseDown(e: MouseEvent) {
   // 只在左键点击 <li> 时启动
@@ -75,7 +93,6 @@ function onDragMouseDown(e: MouseEvent) {
   e.preventDefault();
   dragSrcId = li.dataset.id ?? null;
   dragSrcIdx = currentProviderOrder.indexOf(dragSrcId!);
-  dragStartY = e.clientY;
   const rect = li.getBoundingClientRect();
   dragOffsetY = e.clientY - rect.top;
 
@@ -106,12 +123,12 @@ function onDragMouseDown(e: MouseEvent) {
 function onDragMouseMove(e: MouseEvent) {
   if (!dragging || !dragGhost || !listRef) return;
 
-  // 移动 ghost
+  // 移动 ghost（保持 mousedown 时的 offset，光标位置 = ghost.top + offset）
   dragGhost.style.top = `${e.clientY - dragOffsetY}px`;
 
-  // 找到光标所在的 <li>（不含 placeholder）
+  // 找到光标所在的 <li>（不含 placeholder、divider、隐藏的 src li）
   const items = [...listRef.querySelectorAll("li.order-row:not(.order-placeholder):not([style*='display: none'])")] as HTMLLIElement[];
-  let insertIdx = currentProviderOrder.length; // 默认插到末尾
+  let insertIdx = items.length; // 默认插到末尾
 
   for (let i = 0; i < items.length; i++) {
     const rect = items[i].getBoundingClientRect();
@@ -125,7 +142,6 @@ function onDragMouseMove(e: MouseEvent) {
   // 移动 placeholder 到 insertIdx
   if (dragPlaceholder && listRef) {
     const children = [...listRef.children] as HTMLElement[];
-    // 找到 insertIdx 对应的实际 DOM 位置（跳过隐藏的 src li）
     const visibleItems = children.filter(
       (c) => c !== dragPlaceholder && !(c as HTMLElement).style?.display?.includes("none"),
     );
@@ -238,6 +254,146 @@ function onDragMouseUp(_e: MouseEvent) {
   dragSrcIdx = -1;
 }
 
+// ── 分隔线拖拽 ──────────────────────────────────────────────
+
+let dividerDragging = false;
+let dividerGhost: HTMLElement | null = null;
+let dividerPlaceholder: HTMLElement | null = null;
+let dividerOffsetY = 0;
+
+function onDividerMouseDown(e: MouseEvent) {
+  if (e.button !== 0) return;
+  if (!listRef) return;
+  const divider = (e.target as HTMLElement).closest<HTMLLIElement>("li.order-divider");
+  if (!divider) return;
+  // 只接受 divider 本身或其文字标签被按下；不要拦截 row 上的事件
+  if ((e.target as HTMLElement).closest("li.order-row")) return;
+
+  e.preventDefault();
+  const rect = divider.getBoundingClientRect();
+  dividerOffsetY = e.clientY - rect.top;
+
+  // ghost：浮动分隔线
+  dividerGhost = divider.cloneNode(true) as HTMLElement;
+  dividerGhost.classList.add("order-divider-ghost");
+  dividerGhost.style.width = `${rect.width}px`;
+  dividerGhost.style.position = "fixed";
+  dividerGhost.style.left = `${rect.left}px`;
+  dividerGhost.style.top = `${e.clientY - dividerOffsetY}px`;
+  dividerGhost.style.zIndex = "9999";
+  dividerGhost.style.pointerEvents = "none";
+  dividerGhost.style.opacity = "0.85";
+  document.body.appendChild(dividerGhost);
+
+  // placeholder：原位占位
+  dividerPlaceholder = el("li", { class: "order-divider order-divider-placeholder" });
+  dividerPlaceholder.style.height = `${rect.height}px`;
+  divider.parentElement?.insertBefore(dividerPlaceholder, divider);
+  divider.style.display = "none";
+
+  dividerDragging = true;
+  document.addEventListener("mousemove", onDividerMouseMove);
+  document.addEventListener("mouseup", onDividerMouseUp);
+}
+
+function onDividerMouseMove(e: MouseEvent) {
+  if (!dividerDragging || !dividerGhost || !dividerPlaceholder || !listRef) return;
+  // ghost 跟随光标（保持 mousedown 时记录的 offset）
+  dividerGhost.style.top = `${e.clientY - dividerOffsetY}px`;
+
+  // 找到 insert 位置：基于 row 的中线
+  const items = [...listRef.querySelectorAll("li.order-row:not([style*='display: none'])")] as HTMLLIElement[];
+  let insertIdx = items.length;
+  for (let i = 0; i < items.length; i++) {
+    const midY = items[i].getBoundingClientRect().top + items[i].getBoundingClientRect().height / 2;
+    if (e.clientY < midY) {
+      insertIdx = i;
+      break;
+    }
+  }
+  if (insertIdx < items.length) {
+    listRef.insertBefore(dividerPlaceholder, items[insertIdx]);
+  } else {
+    listRef.appendChild(dividerPlaceholder);
+  }
+}
+
+function onDividerMouseUp(_e: MouseEvent) {
+  if (!dividerDragging) return;
+  document.removeEventListener("mousemove", onDividerMouseMove);
+  document.removeEventListener("mouseup", onDividerMouseUp);
+
+  const originalDivider = listRef?.querySelector("li.order-divider:not(.order-divider-placeholder)") as HTMLElement | null;
+  if (originalDivider) originalDivider.style.display = "";
+
+  // 找 placeholder 位置对应的"分割点"：上面有多少个 row
+  let newBoundaryPos = 0;
+  if (dividerPlaceholder && listRef) {
+    const children = [...listRef.children];
+    const placeholderIdx = children.indexOf(dividerPlaceholder);
+    for (let i = 0; i < placeholderIdx; i++) {
+      if (children[i].classList.contains("order-row")) newBoundaryPos++;
+    }
+  }
+
+  // 清理 ghost / placeholder
+  dividerPlaceholder?.remove();
+  dividerGhost?.remove();
+  dividerPlaceholder = null;
+  dividerGhost = null;
+  dividerDragging = false;
+
+  const oldBoundary = boundaryIdx();
+  if (newBoundaryPos === oldBoundary) {
+    // 没移动
+    if (listRef) buildOrderItems(listRef);
+    return;
+  }
+
+  // 算出要切换 enabled 的 provider 列表
+  const toEnable: string[] = [];
+  const toDisable: string[] = [];
+  if (newBoundaryPos > oldBoundary) {
+    // 边界下移：[oldBoundary, newBoundary) 从 disabled → enabled
+    for (let i = oldBoundary; i < newBoundaryPos; i++) {
+      const id = currentProviderOrder[i];
+      if (!isEnabledId(id)) toEnable.push(id);
+    }
+  } else {
+    // 边界上移：[newBoundary, oldBoundary) 从 enabled → disabled
+    for (let i = newBoundaryPos; i < oldBoundary; i++) {
+      const id = currentProviderOrder[i];
+      if (isEnabledId(id)) toDisable.push(id);
+    }
+  }
+
+  // DOM 立即按新分割点重建（给用户即时反馈）
+  if (listRef) buildOrderItems(listRef);
+
+  // 顺序触发后端切换（避免并发 emit snapshot 导致浮窗闪烁）
+  void (async () => {
+    try {
+      for (const id of toEnable) {
+        await setProviderEnabled(id, true);
+      }
+      for (const id of toDisable) {
+        await setProviderEnabled(id, false);
+      }
+      const cfg = await getConfig();
+      orderCfg = cfg;
+      if (listRef) buildOrderItems(listRef);
+      const delta = newBoundaryPos - oldBoundary;
+      flash(
+        delta > 0
+          ? `✓ 已新增 ${delta} 张卡片到浮窗`
+          : `✓ 已隐藏 ${-delta} 张卡片`,
+      );
+    } catch (e) {
+      flash(`✗ 调整失败: ${e}`, true);
+    }
+  })();
+}
+
 // ── 渲染 ────────────────────────────────────────────────────
 
 export function renderOrderSection(
@@ -254,8 +410,9 @@ export function renderOrderSection(
   listRef = list;
   buildOrderItems(list);
 
-  // 绑定 mousedown（自定义拖拽）
+  // 绑定 mousedown（卡片拖拽 + 分隔线拖拽）
   list.addEventListener("mousedown", onDragMouseDown);
+  list.addEventListener("mousedown", onDividerMouseDown);
 
   const section = el(
     "section",
@@ -310,9 +467,14 @@ function buildOrderItems(list: HTMLOListElement) {
 function buildDivider(): HTMLElement {
   return el(
     "li",
-    { class: "order-divider", "aria-hidden": "true" },
+    {
+      class: "order-divider",
+      "aria-hidden": "true",
+      title: "按住拖动可调整浮窗显示数量",
+    },
+    el("span", { class: "order-divider-grip", "aria-hidden": "true" }, "⋮⋮"),
     el("span", { class: "order-divider-line" }),
-    el("span", { class: "order-divider-label" }, "已隐藏（拖到上方即可在浮窗显示）"),
+    el("span", { class: "order-divider-label" }, "已隐藏"),
     el("span", { class: "order-divider-line" }),
   );
 }
@@ -345,50 +507,15 @@ function buildRow(id: string, idx: number, total: number, section: "enabled" | "
       el("button", { class: "order-down", "data-id": id, type: "button", title: "下移" }, "↓"),
     ),
   );
-  // disabled 段加一个"在浮窗显示"快速勾选按钮（避免用户必须滚到底部找 checkbox）
-  if (section === "disabled") {
-    const showBtn = el("button", {
-      class: "order-show",
-      "data-id": id,
-      type: "button",
-      title: "在浮窗显示",
-    }, "显示");
-    showBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      void (async () => {
-        try {
-          // 把这个 id 挪到 enabled 段最末尾（其它顺序不变）
-          const i = currentProviderOrder.indexOf(id);
-          if (i >= 0) currentProviderOrder.splice(i, 1);
-          // 找当前 enabled 段的末尾：第一个 disabled id 之前，或 list 末尾
-          let insertAt = currentProviderOrder.length;
-          for (let j = 0; j < currentProviderOrder.length; j++) {
-            if (!isEnabledId(currentProviderOrder[j])) {
-              insertAt = j;
-              break;
-            }
-          }
-          currentProviderOrder.splice(insertAt, 0, id);
-          buildOrderItems(listRef!);
-          await setProviderEnabled(id, true);
-          await setProviderOrder(currentProviderOrder);
-          const cfg = await getConfig();
-          orderCfg = cfg;
-          flash(`✓ ${displayName} 已显示在浮窗`);
-        } catch (err) {
-          flash(`✗ 切换失败: ${err}`, true);
-        }
-      })();
-    });
-    li.querySelector(".order-btns")?.appendChild(showBtn);
-  }
   refreshRowButtons(li, idx, total);
   return li;
 }
 
+/** 统一规则：
+ *  - up 仅在「显示段第一张」时禁用（idx === 0）
+ *  - down 仅在「隐藏段最后一张」时禁用（idx === total - 1）
+ *  - 其余全部可点 —— 包括跨段那一对（last enabled 的 ↓ / first disabled 的 ↑） */
 function refreshRowButtons(li: HTMLElement, idx: number, total: number) {
-  // enabled 段：上移到顶就禁 up，下移到底就禁 down
-  // disabled 段：单独成段，上移到顶就禁 up，下移到底就禁 down（与段内相对位置一致）
   const upBtn = li.querySelector<HTMLButtonElement>(".order-up");
   const downBtn = li.querySelector<HTMLButtonElement>(".order-down");
   if (upBtn) upBtn.disabled = idx === 0;
@@ -404,24 +531,62 @@ function posLabel(i: number): string {
 export async function moveProviderInOrder(id: string, dir: "up" | "down") {
   const idx = currentProviderOrder.indexOf(id);
   if (idx < 0) return;
-  const newIdx = dir === "up" ? idx - 1 : idx + 1;
-  if (newIdx < 0 || newIdx >= currentProviderOrder.length) return;
 
-  // 阻止跨段移动：↑/↓ 只在 enabled/disabled 同段内有效。跨段改用拖拽
-  // 或 disabled 段的"显示"按钮 —— 避免单步按钮不小心把 provider
-  // 隐藏/显示。
+  const boundary = boundaryIdx();
   const wasEnabled = isEnabledId(id);
-  const willBeEnabled = isEnabledId(currentProviderOrder[newIdx]);
-  if (wasEnabled !== willBeEnabled) {
-    flash("⚠ 跨区移动请用拖拽（或点「显示」按钮）", true);
+  const isLastEnabled = wasEnabled && idx === boundary - 1;
+  const isFirstDisabled = !wasEnabled && idx === boundary;
+
+  // 跨段快捷：last enabled 的 ↓ / first disabled 的 ↑ 直接切换 enabled
+  // 状态（currentProviderOrder 数组本身不需要 reorder —— 跨段时该卡在
+  // 数组中的"逻辑位置"已经天然落在对方段的边界上）。
+  let willCrossBoundary = false;
+  if (dir === "up") {
+    if (idx === 0) return; // 第一张 enabled 的 ↑ 被禁用（按钮也已 disabled 兜底）
+    if (isFirstDisabled) {
+      // 隐藏段首张 ↑ → 进入显示段末尾
+      willCrossBoundary = true;
+    }
+  } else {
+    if (idx === currentProviderOrder.length - 1) return; // 最后一张的 ↓ 被禁用
+    if (isLastEnabled) {
+      // 显示段末张 ↓ → 进入隐藏段首位
+      willCrossBoundary = true;
+    }
+  }
+
+  if (willCrossBoundary) {
+    // DOM 全量重建（段归属变了）
+    if (listRef) buildOrderItems(listRef);
+    void (async () => {
+      try {
+        await setProviderEnabled(id, !wasEnabled);
+        const cfg = await getConfig();
+        orderCfg = cfg;
+        if (listRef) buildOrderItems(listRef);
+        flash(
+          wasEnabled
+            ? `✓ ${id} 已隐藏（点 ↑ 或拖回上方可恢复）`
+            : `✓ ${id} 已移到浮窗显示区`,
+        );
+      } catch (e) {
+        flash(`✗ 切换失败: ${e}`, true);
+      }
+    })();
     return;
   }
+
+  // 同段移动：在 currentProviderOrder 里 splice + 轻量 DOM 交换
+  const targetIdx = dir === "up" ? idx - 1 : idx + 1;
+  const moved = currentProviderOrder.splice(idx, 1)[0];
+  const adjusted = targetIdx > idx ? targetIdx - 1 : targetIdx;
+  currentProviderOrder.splice(adjusted, 0, moved);
 
   const list = document.querySelector<HTMLOListElement>(".order-list");
   if (list) {
     const items = [...list.children] as HTMLElement[];
     const fromItem = items[idx];
-    const toItem = items[newIdx];
+    const toItem = items[adjusted];
     if (fromItem && toItem) {
       if (dir === "up") {
         list.insertBefore(fromItem, toItem);
@@ -431,13 +596,8 @@ export async function moveProviderInOrder(id: string, dir: "up" | "down") {
     }
   }
 
-  [currentProviderOrder[idx], currentProviderOrder[newIdx]] = [
-    currentProviderOrder[newIdx],
-    currentProviderOrder[idx],
-  ];
-
   refreshPosLabels();
-  void commitOrder(newIdx, id);
+  void commitOrder(adjusted, moved);
 }
 
 async function commitOrder(finalIdx: number, id: string) {

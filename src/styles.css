@@ -136,10 +136,11 @@ body[data-hover] #app {
   transition: color 0.28s, text-shadow 0.28s;
 }
 /* H8：head 右侧包裹 —— 装 status dot + (可选) err-label。
-   把它们封一起让 dot 永远在 head 右上角区域，label 紧贴右侧展开，
-   不会被 flex space-between 推到中间挤掉 dot 位置。 */
+   row-reverse 让 [dot, label] 渲染成 [label, dot]，
+   dot 永远在卡片右上角，label 紧贴其左侧展开。 */
 .card-head-status {
   display: flex;
+  flex-direction: row-reverse;
   align-items: center;
   gap: 6px;
   flex: 0 0 auto;

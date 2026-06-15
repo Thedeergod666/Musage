@@ -476,9 +476,8 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
     card.classList.add("err-card", `err-${kind}`);
     // H8 修复：err-label 加在 .card-head-status 里（紧贴 .card-dot 的右侧），
     // 而不是直接 append 到 .card-head —— 后者会触发 flex space-between
-    // 把 dot 推到中间、label 占右端，dot 失去"右上角"位置。
-    // 现在 head 右侧用 .card-head-status 包裹 [dot, label]，dot 永远在
-    // 包裹最左 = head 右上区域左侧，label 紧跟其右。
+    // 把 dot 推到中间。CSS 用 row-reverse 把 [dot, label] 渲染成
+    // [label, dot]，dot 永远在卡片右上角，label 在其左侧展开。
     const headStatus = card.querySelector<HTMLElement>(".card-head-status")!;
     let headLabel = headStatus.querySelector<HTMLElement>(".err-label");
     if (!headLabel) {

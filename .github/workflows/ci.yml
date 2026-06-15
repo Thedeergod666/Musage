@@ -105,6 +105,20 @@ jobs:
                       changed = true;
                     }
                   }
+                  // 4) Vite 在 Windows 上生成的 HTML 在 `>` (前一个元素的 close)
+                  //    跟 `</body>` / `</html>` 之间比 *nix 多一个空行(还可能多
+                  //    一个,settings.html 这种有 intentional 空行的会被翻倍)。
+                  //    修法:统一 canonical 化 —— `>` 跟 `</(body|html)>` 之间
+                  //    任何空白(>0 个 \n + 任意缩进)都压成 1 个空行。
+                  //    这会把 index.html 多个空行(ubuntu 0 → 1,windows 1 → 1),
+                  //    settings.html 收口到 1 个空行,3 平台格式一致
+                  if (path.extname(e.name).toLowerCase() === '.html') {
+                    const s = b.toString('utf-8').replace(/>\s*<\/(body|html)>/g, '>\n\n</$1>');
+                    if (Buffer.byteLength(s, 'utf-8') !== b.length) {
+                      b = Buffer.from(s, 'utf-8');
+                      changed = true;
+                    }
+                  }
                   if (changed) fs.writeFileSync(p, b);
                 }
               }

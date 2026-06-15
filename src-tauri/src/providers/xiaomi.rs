@@ -1088,4 +1088,62 @@ mod tests {
         // 仍然算 success（parse 没报错，filter 不会改 success 标志）
         assert!(out.success);
     }
+
+    // ── set_state 路径（托盘刷新触发 fetch 之前调用）──
+
+    /// 回归测试（H11）：用户切到 "all" 后托盘右键"立即刷新"必须保持 "all"。
+    ///
+    /// bug 根因：`refresh_inner` 之前对循环变量 `src` 调 `update_source_state`，
+    /// 然后又 `builtin_sources()` 重新构造 `src_box` 用于 fetch。新 src_box 的
+    /// `state` 是 `Default::default()` 出来的全新 `Arc<RwLock>`，display_mode
+    /// 回到 TotalOnly。修复：把 `update_state` 推到真正用于 fetch 的 `src_box`
+    /// 上（这条测试只覆盖 xiaomi 端 set_state 解析本身，命令层修复见
+    /// [commands.rs::refresh_inner]）。
+    #[tokio::test]
+    async fn set_state_picks_xiaomi_display_mode_from_cfg() {
+        use serde_json::json;
+
+        // 模拟"用户选了 all" 的 cfg JSON（结构跟 serde_json::to_value(AppConfig)
+        // 出来的形态一致）
+        let cfg = json!({
+            "providers": {
+                "xiaomimimo": {
+                    "enabled": true,
+                    "xiaomi_region": "cn",
+                    "xiaomi_display_mode": "all"
+                }
+            }
+        });
+
+        let src = XiaomimimoSource::default();
+        // 等价于 refresh_inner 里现在调的那条路径
+        QuotaSource::set_state(&src, cfg).await;
+        let mode = src.state.read().await.display_mode;
+        assert_eq!(mode, XiaomiDisplayMode::All);
+
+        // 同样验证 plan_only
+        let cfg = json!({
+            "providers": {
+                "xiaomimimo": {
+                    "enabled": true,
+                    "xiaomi_display_mode": "plan_only"
+                }
+            }
+        });
+        QuotaSource::set_state(&src, cfg).await;
+        let mode = src.state.read().await.display_mode;
+        assert_eq!(mode, XiaomiDisplayMode::PlanOnly);
+
+        // 老 config.json 缺这字段 → fallback 到默认 TotalOnly
+        let cfg = json!({
+            "providers": {
+                "xiaomimimo": {
+                    "enabled": true
+                }
+            }
+        });
+        QuotaSource::set_state(&src, cfg).await;
+        let mode = src.state.read().await.display_mode;
+        assert_eq!(mode, XiaomiDisplayMode::TotalOnly);
+    }
 }

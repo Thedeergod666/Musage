@@ -735,18 +735,22 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
         let creds_res = config::load_credential_for_id(id);
         tracing::trace!(provider = %id, has_creds = creds_res.as_ref().ok().and_then(|c| c.as_ref()).is_some(), "refresh_inner load_credential");
 
-        // 2. 让 source 更新自己的 state（region / overrides）
-        update_source_state(src, cfg).await;
-
         match creds_res {
             Ok(Some(creds)) => {
                 let id_owned = id.to_string();
-                // 注意：每次 fetch 都重新构造 source 实例，但内部 state 是
-                // Arc<RwLock> 共享的，所以 region / overrides 不会丢。
+                // 每次 fetch 都重新构造 source 实例 —— builtin_sources() 内部
+                // 走 `Box::new(XxxSource::default())`，每次都产生**全新**的
+                // `Arc<RwLock<state>>`，跟外层 `src` 的 state 不是同一份。
+                // 所以 set_state 必须推给真正用于 fetch 的 `src_box`，而不是
+                // 循环变量 `src`（早期代码注释误以为"内部 state 是 Arc<RwLock
+                // 共享的"，实际不共享 —— 症状：用户在设置面板切到 Xiaomi
+                // 显示模式 "all" 后保存，托盘右键"立即刷新"又把模式拉回默认
+                // "total_only"，因为 fetch 用的是新建 src_box 的默认空 state）。
                 let src_box: Box<dyn QuotaSource> = builtin_sources()
                     .into_iter()
                     .find(|s| s.id() == id)
                     .expect("source still registered");
+                update_source_state(&src_box, cfg).await;
                 let task: tokio::task::JoinHandle<Result<ProviderSnapshot, String>> =
                     tokio::spawn(async move {
                         match src_box.fetch(&creds).await {

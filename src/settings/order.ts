@@ -227,8 +227,13 @@ function onDragMouseUp(_e: MouseEvent) {
 
   // 执行移位（在 currentProviderOrder 里 splice）
   const moved = currentProviderOrder.splice(dragSrcIdx, 1)[0];
-  // splice 后 index 都可能 -1（拖到原位置之后）
-  const adjusted = orderIdx > dragSrcIdx ? orderIdx - 1 : orderIdx;
+  // splice(adjusted, 0, moved) 直接把 moved 放到 adjusted，**不需要 -1**：
+  //   targetIdx > srcIdx（往下拖）时，splice 移除 src 后 array 短了 1，
+  //   但 splice 的第二个参数是「插入位置」而不是「目标位置」，所以
+  //   adjusted 直接 = orderIdx 即可，移到 targetIdx。
+  //   之前 `targetIdx - 1` 是错的：arr=[A,B,C,D,E] 从 idx=0 拖到 idx=4
+  //   应该变 [B,C,D,E,A]（A 在 4），旧公式给 [B,C,D,A,E]（A 在 3）。
+  const adjusted = orderIdx;
   currentProviderOrder.splice(adjusted, 0, moved);
 
   // DOM 重建（含 divider）
@@ -654,7 +659,9 @@ export async function moveProviderInOrder(id: string, dir: "up" | "down") {
   // 同段移动：在 currentProviderOrder 里 splice + 轻量 DOM 交换
   const targetIdx = dir === "up" ? idx - 1 : idx + 1;
   const moved = currentProviderOrder.splice(idx, 1)[0];
-  const adjusted = targetIdx > idx ? targetIdx - 1 : targetIdx;
+  // splice(idx, 1) 后 array 短了 1，但 splice(adjusted, 0, x) 把 x 放到 adjusted。
+  // 不需要因为 idx 移除了就 -1 —— x 直接落到 targetIdx 即可。
+  const adjusted = targetIdx;
   currentProviderOrder.splice(adjusted, 0, moved);
 
   // DOM 同步：listRef.children 含 divider，disabled 段的 DOM 索引比

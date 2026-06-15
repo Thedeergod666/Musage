@@ -164,6 +164,7 @@ jobs:
     runs-on: ubuntu-latest
     if: success()
     steps:
+      - uses: actions/checkout@v4
       - name: Wait a moment for release
         run: sleep 15
       - name: Verify latest.json

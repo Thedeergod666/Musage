@@ -191,16 +191,35 @@ pub async fn refresh_now(
 ) -> Result<QuotaSnapshot, String> {
     let cfg = state.config.read().await.clone();
     let snap = refresh_inner(&app, &cfg).await?;
+    // 合并写回 state（而不是整块覆写）—— 跟 tick() 同理：
+    // refresh_inner 并发拉所有 provider 的过程中，per-provider poller 可能已经
+    // 把某个 provider 更新到 state.snapshot 里了；整块覆写会把那份新数据回滚。
     {
         let mut guard = state.snapshot.write().await;
-        *guard = snap.clone();
+        for new_p in &snap.providers {
+            let new_id = new_p.source_id.as_deref().unwrap_or(new_p.provider.id_str());
+            if let Some(idx) = guard
+                .providers
+                .iter()
+                .position(|p| p.source_id.as_deref() == Some(new_id))
+            {
+                guard.providers[idx] = new_p.clone();
+            } else {
+                guard.providers.push(new_p.clone());
+            }
+        }
+        guard.fetched_at = snap.fetched_at;
     }
-    let _ = app.emit("musage://snapshot", &snap);
+    // refresh_inner 内部已经 emit 过一次，这里再 emit 合并后的完整快照
+    // （refresh_inner emit 的是它自己收集的版本，不含 per-provider 的中间更新）
+    let state2 = app.state::<AppState>();
+    let final_snap = state2.snapshot.read().await.clone();
+    let _ = app.emit("musage://snapshot", &final_snap);
     let tray_style = cfg.tray_icon_style;
-    if let Err(e) = crate::tray::update_tray_from_snapshot(&app, &snap, tray_style) {
+    if let Err(e) = crate::tray::update_tray_from_snapshot(&app, &final_snap, tray_style) {
         tracing::warn!(error = %e, "刷新托盘失败");
     }
-    Ok(snap)
+    Ok(final_snap)
 }
 
 #[tauri::command]

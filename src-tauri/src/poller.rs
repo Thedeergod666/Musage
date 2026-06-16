@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::commands::{refresh_inner, refresh_single};
 use crate::providers::builtin_sources;
@@ -96,14 +96,39 @@ pub async fn tick(app: &AppHandle) -> Result<(), String> {
         cfg
     };
 
-    let snap = refresh_inner(app, &cfg).await?;
+    let new_snap = refresh_inner(app, &cfg).await?;
 
-    // 写回 state
+    // 合并写回 state（而不是整块覆写）——
+    // refresh_inner 会在内部 emit 一次快照，但那个快照是在 fetch 各 provider
+    // 并发期间收集的；如果此时 per-provider poller 的 refresh_single_inner
+    // 已经把某个 provider 更新到 state.snapshot 里了，整块覆写会把那份新数据
+    // 回滚成 refresh_inner 拿到的旧版本。
+    //
+    // 正确做法：按 source_id 逐条合并——新数据覆盖旧的，但只动 fetch 到的
+    // provider，不碰其他的。
     {
         let state = app.state::<AppState>();
         let mut guard = state.snapshot.write().await;
-        *guard = snap;
+        for new_p in &new_snap.providers {
+            let new_id = new_p.source_id.as_deref().unwrap_or(new_p.provider.id_str());
+            if let Some(idx) = guard
+                .providers
+                .iter()
+                .position(|p| p.source_id.as_deref() == Some(new_id))
+            {
+                guard.providers[idx] = new_p.clone();
+            } else {
+                guard.providers.push(new_p.clone());
+            }
+        }
+        guard.fetched_at = new_snap.fetched_at;
     }
+
+    // 合并后再 emit 一次——refresh_inner 内部 emit 的是它收集的版本，
+    // 不含 per-provider poller 在并发期间的中间更新。
+    let state = app.state::<AppState>();
+    let final_snap = state.snapshot.read().await.clone();
+    let _ = app.emit("musage://snapshot", &final_snap);
 
     Ok(())
 }

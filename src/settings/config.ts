@@ -58,8 +58,9 @@ export async function loadConfig() {
   if (zhipuRegionSelect) zhipuRegionSelect.value = cfg.zhipu_region ?? "cn";
 
   // 各 provider「在浮窗显示」开关（缺省视为 true）+ 轮询间隔覆盖
-  const { PROVIDER_IDS } = await import("./types");
-  for (const id of PROVIDER_IDS) {
+  // PR 3：改用 getCurrentKnownIds() 动态派生（custom_<uuid> 也能 cover）。
+  const { getCurrentKnownIds } = await import("./utils");
+  for (const id of getCurrentKnownIds()) {
     const el = document.getElementById(`enabled-${id}`) as HTMLInputElement | null;
     if (el) {
       el.checked = cfg.providers?.[id]?.enabled ?? true;

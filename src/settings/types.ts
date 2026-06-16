@@ -3,22 +3,13 @@
 // 历史包袱：`ProviderId` 联合保留了 5 个 provider（minimax/deepseek/
 // xiaomimimo/tavily/zenmux）。Phase 2 起新 source 走 registry id（string），
 // 旧 enum 路径只在 has_/set_/delete_/get_api_key_for 等命令里继续用。
+//
+// **PR 3 起** `ProviderId` 改成 `string`：用户自定义 source 的 id 是动态的
+//（`custom_<uuid>`），没法塞进固定 literal union。旧 `ProviderId` 联合里
+// 那种"as ProviderId" cast 在 26+ 处需要清理，TypeScript 编译错会指向
+// 它们。新 source id 走 `SourceMeta.id: string`（一直是 string）。
 
-export type ProviderId =
-  | "minimax"
-  | "deepseek"
-  | "xiaomimimo"
-  | "tavily"
-  | "zenmux"
-  | "openrouter"
-  | "kimi"
-  | "zhipu"
-  // 2026-06-16 新增（PR 2）
-  | "stepfun"
-  | "siliconflow"
-  | "novita"
-  | "qwen"
-  | "claude_official";
+export type ProviderId = string;
 
 export type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
 
@@ -31,6 +22,12 @@ export interface ProviderConfig {
 }
 
 /// 4 个 provider 面板的 id 列表。决定 #3/#4 UI 循环读哪些元素。
+///
+/// **PR 3 起废弃** —— 改用 `getCurrentKnownIds()` 动态从 `listSources()`
+/// 拿。`loadConfig()` 里 SPEC 化的 SPEC 化读 cfg.providers[id] 用 dynamic
+/// id 路径。保留 const 是给少数需要"内置 13 个 id 字面量"的地方做兜底
+/// （如 fallback 默认 region）。
+/// 已迁移到 `getCurrentKnownIds()`。
 export const PROVIDER_IDS = [
   "minimax",
   "deepseek",
@@ -152,7 +149,8 @@ export interface AppConfig {
 }
 
 export interface ProviderSnapshot {
-  /** 兼容字段（minimax / deepseek / xiaomimimo）。Phase 1 起请用 source_id。 */
+  /** 兼容字段（minimax / deepseek / xiaomimimo）。Phase 1 起请用 source_id。
+   * **PR 3** 起改成 string（用户自定义 source 没有 Provider enum 变体）。 */
   provider: ProviderId;
   /** Phase 1 新增。 */
   source_id?: string | null;
@@ -178,6 +176,45 @@ export interface ProviderSnapshot {
     | "server_error"
     | "other"
     | null;
+}
+
+// ── PR 3: 用户自定义 New API source ───────────────────────────
+
+/// Extract 模板（3 选 1）。
+///
+/// 跟 Rust `ExtractSpec` enum 一一对应（`#[serde(tag = "preset", rename_all = "snake_case")]`）。
+export type ExtractSpec =
+  | { preset: "new_api"; divide?: number | null }
+  | {
+      preset: "balance";
+      balance_path: string;
+      currency_path?: string | null;
+      divide?: number | null;
+    }
+  | {
+      preset: "custom";
+      remaining_path?: string | null;
+      used_path?: string | null;
+      total_path?: string | null;
+      unit?: string | null;
+      divide?: number | null;
+    };
+
+/// 用户自定义 source 的完整 spec。序列化为 JSON 存 `custom_sources.json`。
+///
+/// 跟 Rust `CustomSourceSpec` 一致。`id` 和 `created_at` 由后端生成，
+/// 前端在「添加」时只传 `Omit<CustomSourceSpec, "id" | "created_at">`。
+export interface CustomSourceSpec {
+  /** "custom_a1b2c3d4" —— UUID 后 8 位 hex */
+  id: string;
+  display_name: string;
+  base_url: string;
+  path: string;
+  method: "GET" | "POST";
+  extract: ExtractSpec;
+  plan_name_path?: string | null;
+  accent?: string | null;
+  created_at: number;
 }
 
 export interface QuotaSnapshot {

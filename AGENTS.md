@@ -26,7 +26,7 @@
 | 日志 | tracing + tracing-subscriber |
 | 自动启动 | tauri-plugin-autostart |
 | 前端类型 | `@types/node` 20.x（vite.config.ts 用 `node:url`） |
-| Providers | minimax / deepseek / xiaomimimo / tavily / zenmux / openrouter / kimi / zhipu / stepfun / siliconflow / novita / qwen / claude_official（13 个；v0.1.0 = 6 个，2026-06-14 加 kimi/zhipu，2026-06-16 加 stepfun/siliconflow/novita/qwen/claude_official） |
+| Providers | minimax / deepseek / xiaomimimo / tavily / zenmux / openrouter / kimi / zhipu / stepfun / siliconflow / novita / qwen / claude_official + **用户自定义 New API 中转站 (custom_<uuid>)**（13 内置 + N 动态；v0.1.0 = 6 个，2026-06-14 加 kimi/zhipu，2026-06-16 加 stepfun/siliconflow/novita/qwen/claude_official，**2026-06-16 PR 3 加 CustomSource 动态注册**） |
 
 ## 环境与工具链（2026-06-13 实测，跑 `pnpm tauri build` 必看）
 
@@ -217,7 +217,9 @@ D:\Project\Musage\
 │       ├── order.ts / logs.ts / test.ts / about.ts
 │       ├── updater.ts / advanced.ts / types.ts / utils.ts
 │       ├── logos.ts / source-extras.ts
-│       └── ...
+│       ├── groups.ts           ← PR 3: 6 组分组（token_plan/balance/official/xiaomi/custom/misc）
+│       ├── modal.ts            ← PR 3: 原生 <dialog> 包装
+│       └── custom-source-form.ts  ← PR 3: 「+ 添加自定义来源」表单 + 3 选 1 extract 模板
 └── src-tauri/                ← Rust 后端
     ├── Cargo.toml            ← crate-type = ["staticlib", "rlib"]（不用 cdylib）
     ├── tauri.conf.json       ← bundle targets: "all"（建议改 "nsis"）
@@ -239,6 +241,14 @@ D:\Project\Musage\
         │   ├── kimi.rs / zhipu.rs
         │   ├── stepfun.rs / siliconflow.rs / claude_official.rs
         │   ├── novita.rs / qwen.rs    ← STUB: 公开 API 无 quota endpoint
+        │   ├── parse.rs             ← PR 3: JSON path + num_f64 helpers (14 单测)
+        │   └── custom.rs            ← PR 3: CustomSourceSpec + ExtractSpec + CustomSource impl (14 单测)
+        ├── config/                  ← PR 3: 拆出子模块
+        │   ├── mod.rs (= config.rs)
+        │   └── custom_sources.rs    ← PR 3: load/save + 原子写 + parse 失败 backup
+        ├── commands/                ← PR 3: 拆出子模块 (commands.rs → mod.rs)
+        │   ├── mod.rs (= commands.rs)
+        │   └── custom_sources.rs    ← PR 3: 5 IPC commands (list/add/update/delete/test)
         └── platform/         ← 平台特定代码（仅 macOS 有非 stub 实现）
             ├── mod.rs
             └── macos.rs
@@ -261,6 +271,14 @@ D:\Project\Musage\
 9. **`crate-type` 不用 cdylib**：Tauri 2 + Windows + GNU 工具链下，cdylib 会触发 MinGW ld 16-bit ordinal 表溢出
 10. **tray 逻辑合并在 tray.rs**：原 icon.rs 已删除，所有托盘 + 图标生成代码都集中在 `tray.rs`
 11. **macOS 置底走私有 API（platform/macos.rs）**：仅 `set_always_on_top(false)` 在 macOS 上不够 —— 窗口会变成 `kCGNormalWindowLevel = 0`，前台调度会把它埋掉。`platform::macos` 用 `objc2` 直接调 `NSWindow.setLevel()`，PinBottom 时设到 `kCGNormalWindowLevel - 1`（即 -1），低于所有普通 app 窗口但高于桌面。同时启一个 background thread 轮询 `NSEvent.mouseLocation()` + 窗口 `frame` 做点-in-rect，因为窗口在 level -1 时被其它 app 盖住，JS `mouseenter` 触发不到。详见 [musage-ui-design](memory/musage-ui-design.md)。非 macOS 平台 stub 走 Tauri 原生 `set_always_on_top`。
+
+**PR 3（2026-06-16，CustomSource + 设置面板重构）新增决策**：
+- **QuotaSource trait** `id()` / `display_name()` 从 `&'static str` 改 `Cow<'_, str>`：内置 source 返 `Cow::Borrowed`（零分配），CustomSource 返 `Cow::Owned`
+- **CustomSource**：让用户加/改/删自己的 New API 中转站（dmx / byteplus / lemondata / ctok / silicon / crazyrouter / cubence / dds / runapi / ucloud / shengsuanyun 等）。一次实现吃掉 10+ 个异构 provider
+- **持久化**：`custom_sources.json`（独立文件，原子写 + 0600，parse 失败 backup 到 `.bak.<ts>`）；key 仍存 `keys.json` 的 `custom_<uuid>` key
+- **Extract 模板**（v1 = 3 选 1）：New API 系（写死 `data.quota / data.used_quota`，divide 500000）/ 余额系（用户填 `balance_path`）/ 自定义（3 个独立 path）
+- **设置面板**：原生 `<details>/<summary>` 分组（6 组：token_plan / balance / official / xiaomi / custom / misc）+ 顶部搜索框 + 「+ 添加自定义来源」按钮 + 原生 `<dialog>` modal
+- **删除确认**：`confirm()` + 二次输入 display_name（防误删短 id）
 
 ## 已知风险
 

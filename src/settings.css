@@ -579,3 +579,128 @@ button.order-down {
   white-space: pre-wrap;
 }
 /* `hidden` 属性优先级高于上面 display: none，JS 用 el.hidden 切换即可 */
+
+/* ── PR 3: 工具栏 / 分组 / Modal / 调色板 ─────────────────────── */
+
+.provider-toolbar {
+  display: flex;
+  gap: var(--sp-3, 8px);
+  align-items: center;
+  margin-bottom: var(--sp-3, 8px);
+  padding: var(--sp-2, 6px) var(--sp-3, 8px);
+  background: var(--bg-2);
+  border-radius: var(--r-md, 6px);
+}
+.provider-toolbar input[type="search"] {
+  flex: 1;
+  padding: 6px 10px;
+  background: var(--bg-1, transparent);
+  border: 1px solid var(--bg-3, rgba(255, 255, 255, 0.1));
+  border-radius: var(--r-sm, 4px);
+  color: inherit;
+  font: inherit;
+}
+.provider-toolbar .provider-count {
+  color: var(--fg-2, #888);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.provider-toolbar button#add-custom-source {
+  flex: 0 0 auto;
+}
+
+.provider-group {
+  margin-bottom: var(--sp-3, 8px);
+}
+.provider-group > summary {
+  padding: var(--sp-2, 6px) var(--sp-3, 8px);
+  cursor: pointer;
+  background: var(--bg-2);
+  border-radius: var(--r-md, 6px);
+  font-weight: 600;
+  list-style: none;       /* 去掉默认 ▶ 三角 */
+}
+.provider-group > summary::-webkit-details-marker { display: none; } /* Safari */
+.provider-group[open] > summary { border-radius: var(--r-md, 6px) var(--r-md, 6px) 0 0; }
+.provider-group > :not(summary) {
+  padding: var(--sp-3, 8px);
+  background: var(--bg-1);
+  border: 1px solid var(--bg-2);
+  border-top: none;
+  border-radius: 0 0 var(--r-md, 6px) var(--r-md, 6px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2, 6px);
+}
+
+.hidden { display: none !important; }
+
+/* ── Modal (PR 3) ──────────────────────────────────────────────── */
+
+dialog.modal {
+  border: 1px solid var(--bg-3, rgba(255, 255, 255, 0.15));
+  background: var(--bg-1);
+  color: inherit;
+  border-radius: var(--r-md, 8px);
+  padding: 0;
+  max-width: 560px;
+  width: 92vw;
+  max-height: 90vh;
+  overflow: auto;
+}
+dialog.modal::backdrop { background: rgba(0, 0, 0, 0.5); }
+dialog.modal form { padding: var(--sp-4, 16px); }
+dialog.modal h2 { margin: 0 0 var(--sp-3, 12px); font-size: 18px; }
+dialog.modal .modal-actions {
+  display: flex;
+  gap: var(--sp-2, 8px);
+  justify-content: flex-end;
+  margin-top: var(--sp-3, 12px);
+}
+
+/* ── Custom source form 内部 ──────────────────────────────────── */
+
+.custom-source-form .field { margin-bottom: var(--sp-3, 10px); }
+.custom-source-form .radio-group {
+  display: flex;
+  gap: var(--sp-3, 10px);
+  margin-top: var(--sp-2, 4px);
+}
+.custom-source-form .radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+.accent-palette {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: var(--sp-2, 4px);
+}
+.accent-swatch {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.accent-swatch.selected {
+  border-color: var(--fg-0, #fff);
+  box-shadow: 0 0 0 2px var(--bg-1, #000);
+}
+
+/* ── Custom source 面板删除按钮 ──────────────────────────────── */
+
+.btn-delete-custom {
+  background: transparent;
+  border: 1px solid var(--bg-3, rgba(255, 255, 255, 0.15));
+  border-radius: var(--r-sm, 4px);
+  padding: 2px 6px;
+  margin-right: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+.btn-delete-custom:hover { background: rgba(255, 80, 80, 0.15); }
+

@@ -1,0 +1,68 @@
+// 设置面板 modal 组件
+//
+// PR 3 起需要弹窗（"添加自定义来源"）。用原生 `<dialog>` 元素：
+// - a11y / focus trap / ESC 关闭 免费
+// - Tauri 2 的 WebView2 / WKWebView 都支持
+// - backdrop 用 `::backdrop` 伪元素 + 半透明黑
+//
+// 不引入第三方 modal 库（bootstrap / sweetalert / etc）—— 项目本身就是
+// 0 runtime dep 的 vanilla TS。
+
+import { el } from "./utils";
+
+export interface ModalOptions {
+  title: string;
+  body: HTMLElement;
+  /** 提交按钮回调。返 true = 关闭 modal，false = 留在原位 */
+  onSubmit: () => Promise<boolean>;
+  submitLabel?: string;
+  cancelLabel?: string;
+}
+
+/** 弹出 modal。多次调用可以嵌套多个（每个独立一个 `<dialog>`）。 */
+export function showModal(opts: ModalOptions): void {
+  const dlg = el("dialog", { class: "modal" });
+  const form = el("form", { method: "dialog" });
+  form.appendChild(el("h2", {}, opts.title));
+  form.appendChild(opts.body);
+  form.appendChild(
+    el(
+      "div",
+      { class: "modal-actions" },
+      el(
+        "button",
+        { type: "button", value: "cancel", class: "btn-secondary" },
+        opts.cancelLabel ?? "取消",
+      ),
+      el(
+        "button",
+        { type: "submit", value: "submit", class: "btn-primary" },
+        opts.submitLabel ?? "保存",
+      ),
+    ),
+  );
+  dlg.appendChild(form);
+  document.body.appendChild(dlg);
+
+  // 取消按钮：直接 close（form 不提交，submit 按钮不会触发）
+  form.querySelector<HTMLButtonElement>('button[value="cancel"]')!
+    .addEventListener("click", () => dlg.close());
+
+  // 提交按钮
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const submitBtn = form.querySelector<HTMLButtonElement>(
+      'button[value="submit"]',
+    )!;
+    submitBtn.disabled = true;
+    try {
+      if (await opts.onSubmit()) dlg.close();
+    } finally {
+      submitBtn.disabled = false;
+    }
+  });
+
+  // 关闭时从 DOM 摘掉（防止多次弹 modal 堆 DOM 节点）
+  dlg.addEventListener("close", () => dlg.remove());
+  dlg.showModal();
+}

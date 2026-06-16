@@ -132,26 +132,17 @@ interface QuotaRow {
 }
 
 interface ProviderSnapshot {
-  /** 兼容字段（minimax / deepseek / xiaomimimo）。新代码用 source_id。 */
-  provider:
-    | "minimax"
-    | "deepseek"
-    | "xiaomimimo"
-    | "tavily"
-    | "zenmux"
-    | "openrouter"
-    | "kimi"
-    | "zhipu"
-    // 2026-06-16 新增（PR 2）
-    | "stepfun"
-    | "siliconflow"
-    | "novita"
-    | "qwen"
-    | "claude_official";
+  /** 兼容字段（minimax / deepseek / xiaomimimo）。新代码用 source_id。
+   * **PR 3** 起改成 string（用户自定义 source 的 id 是 `custom_<uuid>`）。 */
+  provider: string;
   /** Phase 1 新增。 */
   source_id?: string | null;
   source_display_name?: string | null;
   plan_name?: string | null;
+  /** PR 3 新增：CustomSource 透传 display_name，避免前端用 id 走 PROVIDER_META 漏匹配 */
+  display_name?: string | null;
+  /** PR 3 新增：CustomSource 透传 accent 色，浮窗 first-letter fallback 用 */
+  accent?: string | null;
   success: boolean;
   rows: QuotaRow[];
   error: string | null;
@@ -438,10 +429,15 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
   const regionKey = (id === "zhipu" && p.source_display_name === "Z.ai")
     ? "Z.ai"
     : id;
-  const meta = PROVIDER_META[regionKey] ?? {
-    name: p.source_display_name ?? id,
+  // PR 3：CustomSource 透传 display_name / accent。优先级：
+  // 1. PROVIDER_META（内置 source 有固定 logo）
+  // 2. snapshot 的 display_name / accent（CustomSource 后端透传）
+  // 3. fallback：name=id, accent=#888
+  const builtinMeta = PROVIDER_META[regionKey];
+  const meta = builtinMeta ?? {
+    name: p.display_name ?? p.source_display_name ?? id,
     logo: "",
-    accent: "#888",
+    accent: p.accent ?? "#888",
   };
   const logoSrc = meta.logo || fallbackLogo(meta.name, meta.accent);
   const logo = title.querySelector<HTMLImageElement>(".card-logo")!;

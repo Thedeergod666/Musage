@@ -6,8 +6,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AppConfig,
+  CustomSourceSpec,
   LogEntry,
   ProviderId,
+  ProviderSnapshot,
   QuotaSnapshot,
   SourceMeta,
 } from "./types";
@@ -202,4 +204,54 @@ export async function clearLogs(): Promise<void> {
 
 export async function getAppVersion(): Promise<string> {
   return invoke<string>("get_app_version");
+}
+
+// ── PR 3: 用户自定义 New API source ─────────────────────────────
+
+/** 列出所有 custom source specs（无 customs 时返空数组） */
+export async function listCustomSources(): Promise<CustomSourceSpec[]> {
+  return invoke<CustomSourceSpec[]>("list_custom_sources");
+}
+
+/**
+ * 添加 custom source。
+ *
+ * 后端会：
+ * 1. 校验 display_name/base_url/path/method
+ * 2. 生成 `custom_<uuid>` id 和 created_at
+ * 3. 持久化到 `custom_sources.json`
+ * 4. emit config-changed（settings 重建）
+ * 5. **立即 refresh_single**（浮窗不等 poller 就出第一条数据）
+ *
+ * @returns 新 source 的 id (`custom_<uuid>`)
+ */
+export async function addCustomSource(
+  spec: Omit<CustomSourceSpec, "id" | "created_at">,
+): Promise<string> {
+  return invoke<string>("add_custom_source", { spec });
+}
+
+/** 更新 custom source（按 id 匹配）—— 后端持久化 + 立即 refresh */
+export async function updateCustomSource(spec: CustomSourceSpec): Promise<void> {
+  await invoke("update_custom_source", { spec });
+}
+
+/** 删除 custom source —— 后端从 custom_sources.json + keys.json 都删 */
+export async function deleteCustomSource(id: string): Promise<void> {
+  await invoke("delete_custom_source", { id });
+}
+
+/**
+ * 测试连接 —— 不写 spec，只用临时 CustomSource fetch 一次。
+ * 用于 modal 的「测试一下」按钮。
+ *
+ * @param spec     用户填好的 spec（base_url / path / extract 必填）
+ * @param apiKey   用户填的 API key（暂存，不持久化）
+ * @returns ProviderSnapshot（成功时 success=true + rows，失败时 error+error_kind）
+ */
+export async function testCustomSource(
+  spec: Omit<CustomSourceSpec, "id" | "created_at">,
+  apiKey: string,
+): Promise<ProviderSnapshot> {
+  return invoke<ProviderSnapshot>("test_custom_source", { spec, apiKey });
 }

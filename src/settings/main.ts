@@ -18,8 +18,30 @@ import { setupUpdaterSection } from "./updater";
 import { bindCredentialButtonsGlobal, bindXiaomiLoginEvents, loadXiaomiDisplayMode } from "./credentials";
 import { bindOrderButtonsGlobal, updateOrderConfig, isSuppressingConfigRebuild } from "./order";
 import { flash } from "./utils";
+import { t, initLocale, onLocaleChange } from "../i18n";
 
 // ── 1) 同步：sidebar 切换 + tabs ───────────────────────────────
+
+/// 把 settings.html 里所有带 [data-i18n] 的元素 textContent 改成对应 key 的翻译。
+/// 在 initLocale() 之后 + 每次 locale-changed 之后都跑一次（onLocaleChange listener）。
+function applyDataI18n() {
+  document.querySelectorAll<HTMLElement>("[data-i18n]").forEach((el) => {
+    const key = el.dataset.i18n;
+    if (!key) return;
+    el.textContent = t(key);
+  });
+  // 同步 window title（settings.html）
+  document.title = t("window.settings");
+}
+
+async function initI18n() {
+  await initLocale();
+  applyDataI18n();
+  // 监听前端 setLocale → 重新跑 data-i18n 翻译 + 通知 listeners
+  onLocaleChange(() => applyDataI18n());
+}
+
+void initI18n();
 
 function setupNav() {
   const navItems = document.querySelectorAll<HTMLButtonElement>(".nav-item");

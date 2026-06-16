@@ -1,7 +1,9 @@
 <!DOCTYPE html>
 <!--
   lang attr 在 src/settings.ts 启动时被 src/i18n/index.ts 的 initLocale() 改成当前 locale。
-  标题 "Musage · 设置" 后续在 P1 阶段会改用 t("window.settings")。
+  顶部 nav 6 个按钮的 nav-label 走 t()（src/settings/main.ts init 时遍历更新）。
+  标题"Musage · 设置"改成 settings.html 里 data-i18n-attr，src/settings.ts init 时
+  document.title = t("window.settings") 同步。
 -->
 <html lang="zh-CN">
   <head>
@@ -13,34 +15,34 @@
     <div class="app-shell">
       <!-- 顶部 header -->
       <header class="app-header">
-        <span class="app-title">⚙ Musage · 设置</span>
+        <span class="app-title">⚙ <span data-i18n="window.settings">Musage · 设置</span></span>
       </header>
 
       <!-- 左侧导航：emoji 替代旧 dot（v0.6+ 视觉调优）-->
       <aside id="nav" class="nav">
         <button class="nav-item active" data-section="providers">
           <span class="nav-emoji">📊</span>
-          <span class="nav-label">数据源</span>
+          <span class="nav-label" data-i18n="settings.nav.providers">数据源</span>
         </button>
         <button class="nav-item" data-section="floating">
           <span class="nav-emoji">🪟</span>
-          <span class="nav-label">浮窗</span>
+          <span class="nav-label" data-i18n="settings.nav.floating">浮窗</span>
         </button>
         <button class="nav-item" data-section="app">
           <span class="nav-emoji">⚙</span>
-          <span class="nav-label">应用</span>
+          <span class="nav-label" data-i18n="settings.nav.app">应用</span>
         </button>
         <button class="nav-item" data-section="advanced">
           <span class="nav-emoji">🔧</span>
-          <span class="nav-label">高级</span>
+          <span class="nav-label" data-i18n="settings.nav.advanced">高级</span>
         </button>
         <button class="nav-item" data-section="logs">
           <span class="nav-emoji">📋</span>
-          <span class="nav-label">日志</span>
+          <span class="nav-label" data-i18n="settings.nav.logs">日志</span>
         </button>
         <button class="nav-item" data-section="about">
           <span class="nav-emoji">ℹ</span>
-          <span class="nav-label">关于</span>
+          <span class="nav-label" data-i18n="settings.nav.about">关于</span>
         </button>
       </aside>
 

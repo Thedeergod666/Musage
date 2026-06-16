@@ -1,5 +1,5 @@
 {
-  "_meta": "P0 + P1 strings (zh-CN) - 浮窗 + provider 显示名。详见 memory/musage-i18n-conventions.md",
+  "_meta": "P0 + P1 frontend i18n (zh-CN) - 浮窗 + 主面板 nav + 通用 actions。详见 memory/musage-i18n-conventions.md",
 
   "provider": {
     "minimax": { "name": "MiniMax" },
@@ -23,7 +23,7 @@
     "loading_error_title": "⚠ 错误",
     "open_settings": "打开设置",
     "tray_right_to_settings": "托盘右键 → 设置 亦可",
-    "init_error_hint": "设置面板 · Schema overrides 加新字段名",
+    "init_error_hint": "设置面板 → Schema overrides 加新字段名",
     "footer": {
       "hint_unconfigured": "未配置 provider 的 key → 右键托盘 → 设置",
       "hint_normal": "拖动移动 · 右键菜单",
@@ -39,8 +39,143 @@
       "minutes_left": "（{minutes} 分钟后）",
       "hours_minutes": "（{hours}h{minutes}m）"
     },
-    "error": {
-      "unknown": "未知错误"
+    "error": { "unknown": "未知错误" }
+  },
+
+  "settings": {
+    "nav": {
+      "providers": "数据源",
+      "floating": "浮窗",
+      "app": "应用",
+      "advanced": "高级",
+      "logs": "日志",
+      "about": "关于"
+    },
+    "title": "设置",
+
+    "common": {
+      "save": "保存",
+      "delete": "删除",
+      "cancel": "取消",
+      "confirm": "确认",
+      "add": "添加",
+      "edit": "编辑",
+      "copy": "复制",
+      "paste": "粘贴",
+      "refresh": "刷新",
+      "test": "测试",
+      "close": "关闭",
+      "back": "返回",
+      "yes": "是",
+      "no": "否",
+      "ok": "好",
+      "loading": "加载中…",
+      "saved": "✓ 已保存到本机",
+      "not_set": "未设置",
+      "please_paste": "⚠ 请先粘贴...",
+      "copy_failed": "✗ 复制失败: {err}"
+    },
+
+    "providers": {
+      "section_title": "数据源",
+      "show_in_floating": "在浮窗显示"
+    },
+
+    "credentials": {
+      "api_key_placeholder": "粘贴 API key...",
+      "cookie_placeholder": "Cookie header 值",
+      "login_xiaomi": "🔑 登录小米账号",
+      "clear_cookie": "🗑 清除 Cookie",
+      "visit_official_site": "🌐 访问官网",
+      "cookie_login_hint": "🚀 不想手动抄 Cookie？",
+      "cookie_login_help": "点下面按钮 → 弹窗登录小米账号 → 后端自动提取 Cookie 写进 keys.json，全程不需要碰 DevTools。"
+    },
+
+    "app": {
+      "refresh_interval": "刷新间隔（秒）",
+      "refresh_interval_help": "最少 10 秒，默认 60。对所有 provider 同时生效。",
+      "autostart": "开机自启",
+      "tray_style_title": "托盘图标样式",
+      "tray_style_help": "改动会立即生效（不需点保存）。tooltip 仍显示完整数据。",
+      "tray_options": {
+        "percent": { "title": "📊 上下两个百分比", "desc": "5h 88% / 周 72%（默认）" },
+        "bars": { "title": "▤ 两条水平进度条", "desc": "暗灰轨道 + 白色填充" },
+        "logo": { "title": "🅼 原应用图标", "desc": "不显示数据，只看图标" }
+      }
+    },
+
+    "floating": {
+      "section_title": "浮窗",
+      "pin_mode_title": "置顶 / 置底 行为",
+      "pin_mode_help": "改动会立即生效（不需要点保存），并写入 config.json 下次启动恢复。",
+      "pin_modes": {
+        "top": { "title": "📌 始终置顶", "desc": "浮窗永远在最上层，不被其它窗口盖住" },
+        "bottom": { "title": "⬇ 置底，鼠标 hover 时置顶", "desc": "默认在底部，鼠标进入浮窗时自动浮上来" },
+        "normal": { "title": "🔓 普通窗口", "desc": "不强制层级，跟普通窗口一样" }
+      },
+      "reset_to_center": "归位到主屏幕正中央"
+    },
+
+    "advanced": {
+      "schema_overrides": "Schema overrides",
+      "schema_help_1": "只在",
+      "schema_help_2": "解析失败 / 显示 \"Schema 未知\"",
+      "schema_help_3": "时用。每行一个 JSON 对象，",
+      "schema_help_4": "改完点「保存配置」（或等 Stage 6 改成 blur 即时落盘）。参考 ccswitch 的 schema 字段名逆向。"
+    },
+
+    "logs": {
+      "section_title": "日志",
+      "section_help": "浮窗右上角红点 = 最近一次拉取报错。点击此处查看具体内容。",
+      "filter_level": "筛选日志级别",
+      "filter_all": "全部",
+      "filter_error": "仅报错",
+      "filter_warn": "仅警告",
+      "filter_info": "仅信息",
+      "copy_filtered": "复制筛选后的日志到剪贴板",
+      "clear_all": "清空",
+      "confirm_clear": "确认清空所有日志？",
+      "no_logs_filtered": "当前筛选下暂无日志",
+      "no_logs_to_copy": "当前筛选下没有日志可复制"
+    },
+
+    "about": {
+      "section_title": "关于",
+      "current_version": "当前版本：",
+      "links": "链接",
+      "source": "源码：",
+      "feedback": "问题反馈：同上 GitHub issues"
+    },
+
+    "updater": {
+      "section_title": "自动更新",
+      "check_update": "检查更新",
+      "download_install": "下载并安装",
+      "relaunch": "立即重启",
+      "checking": "检查中…",
+      "up_to_date": "✓ 已是最新",
+      "available": "🎉 发现新版本 v{version}",
+      "downloading": "下载中… {pct}%",
+      "ready": "✓ 已下载完成，点击重启生效",
+      "failed": "✗ {err}"
+    },
+
+    "order": {
+      "section_title": "浮窗卡片顺序",
+      "drag_hint": "按住拖动可调整浮窗显示数量"
+    },
+
+    "test": {
+      "testing": "测试中…",
+      "timeout": "请求超时（12s）",
+      "all_failed": "✗ 全部失败: {errs}",
+      "success": "✓ {summary}"
+    },
+
+    "dialog": {
+      "delete_api_key": "确认删除 {provider} 的 API key？",
+      "delete_cookie": "确认删除 {provider} 的 Cookie？",
+      "clear_cookie": "确认清除已保存的 Xiaomi Cookie？\n清除后需要重新登录。"
     }
   },
 

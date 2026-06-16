@@ -1,5 +1,5 @@
 {
-  "_meta": "P0 + P1 strings (en) - frontend floating window + provider display names. P2 will add region wizard labels. See memory/musage-i18n-conventions.md",
+  "_meta": "P0 + P1 frontend i18n (en) - floating + main panel nav + common actions. See memory/musage-i18n-conventions.md",
 
   "provider": {
     "minimax": { "name": "MiniMax" },
@@ -9,7 +9,7 @@
     "zenmux": { "name": "ZenMux" },
     "openrouter": { "name": "OpenRouter" },
     "kimi": { "name": "Kimi" },
-    "zhipu_cn": { "name": "智谱 GLM" },
+    "zhipu_cn": { "name": "Zhipu GLM" },
     "zhipu_en": { "name": "Z.ai" },
     "stepfun": { "name": "StepFun" },
     "siliconflow": { "name": "SiliconFlow" },
@@ -23,7 +23,7 @@
     "loading_error_title": "⚠ Error",
     "open_settings": "Open Settings",
     "tray_right_to_settings": "Tray right-click → Settings also works",
-    "init_error_hint": "Settings panel · Schema overrides to add new field names",
+    "init_error_hint": "Settings panel → Schema overrides to add new field names",
     "footer": {
       "hint_unconfigured": "No provider key configured → right-click tray → Settings",
       "hint_normal": "Drag to move · right-click menu",
@@ -39,8 +39,143 @@
       "minutes_left": "(in {minutes} min)",
       "hours_minutes": "({hours}h{minutes}m)"
     },
-    "error": {
-      "unknown": "Unknown error"
+    "error": { "unknown": "Unknown error" }
+  },
+
+  "settings": {
+    "nav": {
+      "providers": "Data sources",
+      "floating": "Floating window",
+      "app": "Application",
+      "advanced": "Advanced",
+      "logs": "Logs",
+      "about": "About"
+    },
+    "title": "Settings",
+
+    "common": {
+      "save": "Save",
+      "delete": "Delete",
+      "cancel": "Cancel",
+      "confirm": "Confirm",
+      "add": "Add",
+      "edit": "Edit",
+      "copy": "Copy",
+      "paste": "Paste",
+      "refresh": "Refresh",
+      "test": "Test",
+      "close": "Close",
+      "back": "Back",
+      "yes": "Yes",
+      "no": "No",
+      "ok": "OK",
+      "loading": "Loading...",
+      "saved": "✓ Saved to local",
+      "not_set": "Not set",
+      "please_paste": "⚠ Please paste first...",
+      "copy_failed": "✗ Copy failed: {err}"
+    },
+
+    "providers": {
+      "section_title": "Data sources",
+      "show_in_floating": "Show in floating window"
+    },
+
+    "credentials": {
+      "api_key_placeholder": "Paste API key...",
+      "cookie_placeholder": "Cookie header value",
+      "login_xiaomi": "🔑 Login Xiaomi account",
+      "clear_cookie": "🗑 Clear Cookie",
+      "visit_official_site": "🌐 Visit official site",
+      "cookie_login_hint": "🚀 Don't want to manually copy Cookie?",
+      "cookie_login_help": "Click the button below → popup login Xiaomi account → backend auto-extracts Cookie and writes to keys.json, no need to touch DevTools throughout."
+    },
+
+    "app": {
+      "refresh_interval": "Refresh interval (seconds)",
+      "refresh_interval_help": "Min 10 seconds, default 60. Applies to all providers.",
+      "autostart": "Auto-start on boot",
+      "tray_style_title": "Tray icon style",
+      "tray_style_help": "Changes take effect immediately (no save needed). Tooltip still shows full data.",
+      "tray_options": {
+        "percent": { "title": "📊 Top/bottom percent", "desc": "5h 88% / Weekly 72% (default)" },
+        "bars": { "title": "▤ Two horizontal bars", "desc": "Dark gray track + white fill" },
+        "logo": { "title": "🅼 Original app icon", "desc": "No data, just the icon" }
+      }
+    },
+
+    "floating": {
+      "section_title": "Floating window",
+      "pin_mode_title": "Pin / Unpin behavior",
+      "pin_mode_help": "Changes take effect immediately (no save needed), and written to config.json to restore on next launch.",
+      "pin_modes": {
+        "top": { "title": "📌 Always on top", "desc": "Floating window always on top layer, not covered by other windows" },
+        "bottom": { "title": "⬇ Bottom, hover to bring to top", "desc": "Default at bottom, auto bring to top on hover" },
+        "normal": { "title": "🔓 Normal window", "desc": "No forced z-order, behaves like normal window" }
+      },
+      "reset_to_center": "Reset to main screen center"
+    },
+
+    "advanced": {
+      "schema_overrides": "Schema overrides",
+      "schema_help_1": "Only when",
+      "schema_help_2": "parse fails / shows 'Schema unknown'",
+      "schema_help_3": "Use. One JSON object per line, ",
+      "schema_help_4": "click Save config (or wait for blur-save in Stage 6). Refer to ccswitch's schema field name reverse-engineering."
+    },
+
+    "logs": {
+      "section_title": "Logs",
+      "section_help": "Red dot at floating window top-right = last fetch failed. Click here for details.",
+      "filter_level": "Filter log level",
+      "filter_all": "All",
+      "filter_error": "Errors only",
+      "filter_warn": "Warnings only",
+      "filter_info": "Info only",
+      "copy_filtered": "Copy filtered logs to clipboard",
+      "clear_all": "Clear",
+      "confirm_clear": "Confirm clearing all logs?",
+      "no_logs_filtered": "No logs under current filter",
+      "no_logs_to_copy": "No logs under current filter to copy"
+    },
+
+    "about": {
+      "section_title": "About",
+      "current_version": "Current version:",
+      "links": "Links",
+      "source": "Source code:",
+      "feedback": "Feedback: same GitHub issues"
+    },
+
+    "updater": {
+      "section_title": "Auto update",
+      "check_update": "Check for updates",
+      "download_install": "Download and install",
+      "relaunch": "Relaunch now",
+      "checking": "Checking...",
+      "up_to_date": "✓ Already up to date",
+      "available": "🎉 New version v{version} available",
+      "downloading": "Downloading... {pct}%",
+      "ready": "✓ Downloaded, click Relaunch to apply",
+      "failed": "✗ {err}"
+    },
+
+    "order": {
+      "section_title": "Floating card order",
+      "drag_hint": "Hold and drag to adjust floating display count"
+    },
+
+    "test": {
+      "testing": "Testing...",
+      "timeout": "Request timeout (12s)",
+      "all_failed": "✗ All failed: {errs}",
+      "success": "✓ {summary}"
+    },
+
+    "dialog": {
+      "delete_api_key": "Confirm delete {provider} API key?",
+      "delete_cookie": "Confirm delete {provider} Cookie?",
+      "clear_cookie": "Confirm clearing saved Xiaomi Cookie?\nAfter clearing, you need to re-login."
     }
   },
 

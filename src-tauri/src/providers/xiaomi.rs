@@ -27,6 +27,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderImpl, ProviderSnapshot, QuotaRow, QuotaSource};
+
+use crate::t;
 use crate::config::ProviderOverrides;
 
 /// 公开 endpoint（dashboard admin API，不是 token-plan 子域）
@@ -157,7 +159,7 @@ impl QuotaSource for XiaomimimoSource {
             let strategy = decide_auth_strategy(credentials);
             let fetch_result = match strategy {
                 AuthStrategy::None => Err(FetchError::unconfigured(
-                    "未配置 API key 或 Dashboard cookie（设置面板填入）"
+                    t!("error.xiaomi.unconfigured_both").into_owned()
                 )),
                 AuthStrategy::BearerOnly => {
                     // 安全：strategy 保证 Some
@@ -258,7 +260,9 @@ impl Xiaomimimo {
         overrides: &ProviderOverrides,
     ) -> Result<(serde_json::Value, ProviderSnapshot), FetchError> {
         if api_key.trim().is_empty() {
-            return Err(FetchError::unconfigured("API key 为空"));
+            return Err(FetchError::unconfigured(
+                t!("error.common.api_key_empty").into_owned()
+            ));
         }
         let client = shared_client();
         let resp = client
@@ -267,35 +271,42 @@ impl Xiaomimimo {
             .header("Accept", "application/json")
             .send()
             .await
-            .map_err(|e| FetchError::network(format!("网络错误 [{}]: {e}", USAGE_URL)))?;
+            .map_err(|e| FetchError::network(
+                t!("error.common.network", url = USAGE_URL, err = e.to_string()).into_owned()
+            ))?;
         let status = resp.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(FetchError::auth(
-                "Xiaomi API key 鉴权失败 (HTTP 401) — 当前用量 API 仅对 dashboard cookie 放行，请改填 Cookie 或两者都填（401 会自动退到 Cookie 路径）",
+                t!("error.xiaomi.api_key_unauthorized_hint").into_owned()
             ));
         }
         if status == reqwest::StatusCode::FORBIDDEN {
             return Err(FetchError::auth(
-                "无权限访问 Xiaomi dashboard API (HTTP 403) — API key 可能未订阅 Token Plan，或用量 API 对 Bearer key 关闭",
+                t!("error.common.forbidden", provider = "Xiaomi MiMo").into_owned()
             ));
         }
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(FetchError::server(format!(
-                "Xiaomi dashboard API 异常 (HTTP {status}): {}",
-                body.chars().take(200).collect::<String>()
-            )));
+            return Err(FetchError::server(
+                t!(
+                    "error.xiaomi.http_error",
+                    status = status.as_u16(),
+                    body = body.chars().take(200).collect::<String>()
+                ).into_owned()
+            ));
         }
         let raw: serde_json::Value = resp
             .json()
             .await
-            .map_err(|e| FetchError::parse(format!("响应不是 JSON: {e}")))?;
+            .map_err(|e| FetchError::parse(
+                t!("error.common.parse_json", err = e.to_string()).into_owned()
+            ))?;
         if let Some(code) = raw.get("code").and_then(|v| v.as_i64()) {
             if code != 0 {
                 let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
-                return Err(FetchError::server(format!(
-                    "Xiaomi dashboard API code {code}: {msg}"
-                )));
+                return Err(FetchError::server(
+                    t!("error.xiaomi.business_code", code = code, msg = msg).into_owned()
+                ));
             }
         }
         // detail 失败不阻塞
@@ -322,7 +333,9 @@ impl Xiaomimimo {
         overrides: &ProviderOverrides,
     ) -> Result<(serde_json::Value, ProviderSnapshot), FetchError> {
         if cookie.trim().is_empty() {
-            return Err(FetchError::unconfigured("Dashboard cookie 为空（设置面板 · Xiaomi · Dashboard Cookie）"));
+            return Err(FetchError::unconfigured(
+                t!("error.xiaomi.cookie_empty").into_owned()
+            ));
         }
 
         let client = shared_client();
@@ -334,33 +347,46 @@ impl Xiaomimimo {
             .header("Accept", "application/json")
             .send()
             .await
-            .map_err(|e| FetchError::network(format!("网络错误 [{}]: {e}", USAGE_URL)))?;
+            .map_err(|e| FetchError::network(
+                t!("error.common.network", url = USAGE_URL, err = e.to_string()).into_owned()
+            ))?;
 
         let status = resp.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(FetchError::auth("Cookie 失效或无效 —— 请重新登录 platform.xiaomimimo.com → DevTools 复制新 Cookie"));
+            return Err(FetchError::auth(
+                t!("error.xiaomi.cookie_invalid_hint").into_owned()
+            ));
         }
         if status == reqwest::StatusCode::FORBIDDEN {
-            return Err(FetchError::auth("无权限访问 Xiaomi dashboard API（HTTP 403）"));
+            return Err(FetchError::auth(
+                t!("error.common.forbidden", provider = "Xiaomi MiMo").into_owned()
+            ));
         }
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(FetchError::server(format!(
-                "Xiaomi dashboard API 异常 (HTTP {status}): {}",
-                body.chars().take(200).collect::<String>()
-            )));
+            return Err(FetchError::server(
+                t!(
+                    "error.xiaomi.http_error",
+                    status = status.as_u16(),
+                    body = body.chars().take(200).collect::<String>()
+                ).into_owned()
+            ));
         }
 
         let raw: serde_json::Value = resp
             .json()
             .await
-            .map_err(|e| FetchError::parse(format!("响应不是 JSON: {e}")))?;
+            .map_err(|e| FetchError::parse(
+                t!("error.common.parse_json", err = e.to_string()).into_owned()
+            ))?;
 
         // 业务级 code
         if let Some(code) = raw.get("code").and_then(|v| v.as_i64()) {
             if code != 0 {
                 let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
-                return Err(FetchError::server(format!("Xiaomi dashboard API code {code}: {msg}")));
+                return Err(FetchError::server(
+                    t!("error.xiaomi.business_code", code = code, msg = msg).into_owned()
+                ));
             }
         }
 
@@ -475,7 +501,7 @@ fn parse(
     // ── 1. 套餐（plan_total_token）—— 主指标，dashboard 显示的就是它
     if let Some(pct) = plan_pct {
         rows.push(QuotaRow {
-            label: "套餐".to_string(),
+            label: t!("row.plan").to_string(),
             utilization: Some(pct),
             remaining: None,
             used: None,
@@ -489,7 +515,7 @@ fn parse(
     // ── 2. 补偿积分（compensation_total_token）
     if let Some(pct) = comp_pct {
         rows.push(QuotaRow {
-            label: "补偿".to_string(),
+            label: t!("row.compensation").to_string(),
             utilization: Some(pct),
             remaining: None,
             used: None,
@@ -512,7 +538,7 @@ fn parse(
     if show_total {
         if let Some(pct) = month_pct {
             rows.push(QuotaRow {
-                label: "总额度".to_string(),
+                label: t!("row.monthly_total").to_string(),
                 utilization: Some(pct),
                 remaining: None,
                 used: None,
@@ -537,9 +563,9 @@ fn parse(
             // 配新名；没 data → 响应结构变了，归 Parse。
             let has_data = raw_usage.pointer("/data").is_some();
             if has_data {
-                Some("响应里找不到 plan_total_token / compensation_total_token / month_total_token 任何一项（schema 改名？去设置面板 schema_overrides 配新名）".to_string())
+                Some(t!("error.xiaomi.schema_unknown_hint").into_owned())
             } else {
-                Some("响应缺少 data 字段".to_string())
+                Some(t!("error.xiaomi.data_field_missing").into_owned())
             }
         },
         error_kind: if success {
@@ -998,20 +1024,20 @@ mod tests {
             success: true,
             rows: vec![
                 QuotaRow {
-                    label: "套餐".to_string(),
+                    label: t!("row.plan").to_string(),
                     utilization: Some(13.0),
                     resets_at: Some(1785024000000),  // 2026-06-28 07:20 UTC
                     unit: Some("%".to_string()),
                     ..Default::default()
                 },
                 QuotaRow {
-                    label: "补偿".to_string(),
+                    label: t!("row.compensation").to_string(),
                     utilization: Some(100.0),
                     unit: Some("%".to_string()),
                     ..Default::default()
                 },
                 QuotaRow {
-                    label: "总额度".to_string(),
+                    label: t!("row.monthly_total").to_string(),
                     utilization: Some(42.0),
                     unit: Some("%".to_string()),
                     ..Default::default()

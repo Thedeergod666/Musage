@@ -36,6 +36,7 @@ clap = { version = "4", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 dirs = "5"
+uuid = { version = "1", features = ["v4"] }
 
 # macOS 私有 API —— PinBottom 模式需要直接操作 NSWindow.level 把窗口
 # 放到 kCGNormalWindowLevel - 1（所有正常 app 窗口之下），仅 macOS 需要。

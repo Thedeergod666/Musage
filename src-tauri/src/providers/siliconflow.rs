@@ -37,6 +37,7 @@
 //! - 没有"已用"概念（钱包余额是 current_balance）
 //! - 没有多区域（单域名 api.siliconflow.cn）
 
+use std::borrow::Cow;
 use std::pin::Pin;
 
 use super::{
@@ -54,8 +55,8 @@ impl Default for SiliconflowSource {
 }
 
 impl QuotaSource for SiliconflowSource {
-    fn id(&self) -> &'static str { "siliconflow" }
-    fn display_name(&self) -> &'static str { "SiliconFlow" }
+    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("siliconflow") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("SiliconFlow") }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
 
     fn set_state<'a>(

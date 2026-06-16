@@ -24,6 +24,7 @@
 //! - 没有"已用"概念（钱包余额是 current_balance）
 //! - `is_available=false` 通常意味着余额不足，UI 用红色提示
 
+use std::borrow::Cow;
 use std::pin::Pin;
 
 use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderImpl, ProviderSnapshot, QuotaRow, QuotaSource};
@@ -39,8 +40,8 @@ impl Default for DeepseekSource {
 }
 
 impl QuotaSource for DeepseekSource {
-    fn id(&self) -> &'static str { "deepseek" }
-    fn display_name(&self) -> &'static str { "DeepSeek" }
+    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("deepseek") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("DeepSeek") }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
 
     fn set_state<'a>(

@@ -16,11 +16,13 @@
 //! [`builtin_sources`] 路径，但 `dump` CLI 和 `set_api_key_for` 仍按 enum 走。
 
 pub mod claude_official;
+pub mod custom;
 pub mod deepseek;
 pub mod kimi;
 pub mod minimax;
 pub mod novita;
 pub mod openrouter;
+pub mod parse;
 pub mod qwen;
 pub mod siliconflow;
 pub mod stepfun;
@@ -29,6 +31,11 @@ pub mod xiaomi;
 pub mod zenmux;
 pub mod zhipu;
 
+// PR 3 重新导出：让 settings 面板 / 浮窗等 crate 外部消费者只 `use
+// crate::providers::{CustomSource, CustomSourceSpec, ExtractSpec}` 即可。
+pub use custom::{CustomSource, CustomSourceSpec, ExtractSpec};
+
+use std::borrow::Cow;
 use std::pin::Pin;
 use std::sync::OnceLock;
 
@@ -263,13 +270,17 @@ impl ProviderSnapshot {
     /// 直接用 `provider.id_str()` 写 `source_id` 会把 Tavily 错标成 "minimax"，
     /// 前端 PROVIDER_META 查表时 logo + 名字都串了。
     /// 现在从 builtin_sources 里查真正的 display_name，没有就 fallback 到 enum。
-    pub fn empty_error(
+    ///
+    /// PR 3 起 `async` —— [`find_source`] 改成 async（customs 在 `AppState` 里）。
+    pub async fn empty_error(
+        state: &crate::AppState,
         provider: Provider,
         id: &str,
         kind: ErrorKind,
         error: String,
     ) -> Self {
-        let display_name = find_source(id)
+        let display_name = find_source(state, id)
+            .await
             .map(|s| s.display_name().to_string())
             .unwrap_or_else(|| provider.display_name().to_string());
         Self {
@@ -345,10 +356,15 @@ impl QuotaSnapshot {
 /// 运行时（per-fetch）需要的东西（region、overrides、用户填的 key）通过
 /// [`QuotaSource::fetch`] 的参数传进去。
 pub trait QuotaSource: Send + Sync {
-    /// 稳定字符串 id（"minimax" / "tavily"）
-    fn id(&self) -> &'static str;
-    /// 给用户看的名字（"MiniMax" / "Tavily"）
-    fn display_name(&self) -> &'static str;
+    /// 稳定字符串 id（"minimax" / "tavily" / `"custom_<uuid>"`）
+    ///
+    /// PR 3 起改 `Cow<'_, str>`：内置 source 返 `Cow::Borrowed(...)`（零分配），
+    /// [`CustomSource`] 返 `Cow::Owned(spec.id.clone())`。
+    fn id(&self) -> Cow<'_, str>;
+    /// 给用户看的名字（"MiniMax" / "Tavily" / 用户自定义 `"DMX API"`）
+    ///
+    /// 同 [`id`](Self::id)，PR 3 起 `Cow<'_, str>`。
+    fn display_name(&self) -> Cow<'_, str>;
     /// 鉴权方式（决定设置面板显示什么输入框）
     fn auth_kind(&self) -> AuthKind;
     /// 更新运行时状态（region / overrides）。`value` 是 [`AppConfig`] 的
@@ -399,9 +415,30 @@ pub fn builtin_sources() -> Vec<Box<dyn QuotaSource>> {
     ]
 }
 
-/// 按 id 查 source。找不到返回 None。
-pub fn find_source(id: &str) -> Option<Box<dyn QuotaSource>> {
-    builtin_sources().into_iter().find(|s| s.id() == id)
+/// 按 id 查 source（**异步**，PR 3 起 —— customs 在 `AppState` 里，需要 await lock）。
+///
+/// ## Lock 顺序约定
+///
+/// 调用方在持 `state.config` 锁的情况下**不能**调本函数（会死锁）——
+/// `all_sources` 先拿 `state.custom_sources.read()` 再用 `builtin_sources()`
+/// 同步版（无锁），不冲突；但拿 `state.config` 后又调本函数会形成
+/// config → custom_sources → ... 的反向锁链。
+pub async fn find_source(state: &crate::AppState, id: &str) -> Option<Box<dyn QuotaSource>> {
+    all_sources(state).await.into_iter().find(|s| s.id() == id)
+}
+
+/// 全部 source 的注册表（内置 + 用户自定义）。async 是因为 customs 在
+/// `AppState.custom_sources` 里，需要拿 lock。
+///
+/// **绝大多数 commands 都应该走这个**而不是 `builtin_sources()`，否则 customs
+/// 不会被 poller / refresh_inner 看到。
+pub async fn all_sources(state: &crate::AppState) -> Vec<Box<dyn QuotaSource>> {
+    let mut sources = builtin_sources();
+    let customs = state.custom_sources.read().await;
+    for spec in customs.iter() {
+        sources.push(Box::new(custom::CustomSource::new(spec.clone())));
+    }
+    sources
 }
 
 // ── 共享 HTTP client ────────────────────────────────────────────────

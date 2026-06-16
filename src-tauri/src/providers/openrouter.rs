@@ -22,6 +22,7 @@
 //!
 //! 渲染：1 行「余额 $X.XX USD」（DeepSeek-style balance-row）
 
+use std::borrow::Cow;
 use std::pin::Pin;
 
 use serde_json::Value;
@@ -43,8 +44,8 @@ impl Default for OpenrouterSource {
 }
 
 impl QuotaSource for OpenrouterSource {
-    fn id(&self) -> &'static str { "openrouter" }
-    fn display_name(&self) -> &'static str { "OpenRouter" }
+    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("openrouter") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("OpenRouter") }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
 
     fn set_state<'a>(

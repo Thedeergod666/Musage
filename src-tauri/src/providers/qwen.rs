@@ -20,6 +20,7 @@
 //! - `POST https://coding-intl.dashscope.aliyuncs.com/v1/quota/remaining`（待实测）
 //! - 或订阅页 dashboard HTML 解析（不推荐，脆）
 
+use std::borrow::Cow;
 use std::pin::Pin;
 
 use super::{AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaSource};
@@ -33,8 +34,8 @@ impl Default for QwenSource {
 }
 
 impl QuotaSource for QwenSource {
-    fn id(&self) -> &'static str { "qwen" }
-    fn display_name(&self) -> &'static str { "Qwen（DashScope）" }
+    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("qwen") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("Qwen（DashScope）") }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
 
     fn set_state<'a>(

@@ -18,7 +18,7 @@ use tauri_plugin_autostart::ManagerExt;
 
 use crate::config::{self, AppConfig, FloatingPinMode, ProviderConfig, TrayIconStyle};
 use crate::providers::{
-    builtin_sources, find_source, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderSnapshot, QuotaSnapshot, QuotaSource,
+    builtin_sources, find_source, AuthKind, Credentials, ErrorKind, Provider, ProviderSnapshot, QuotaSnapshot, QuotaSource,
 };
 use crate::providers::xiaomi::XiaomiDisplayMode;
 use crate::AppState;
@@ -294,7 +294,7 @@ pub async fn list_sources(state: State<'_, AppState>) -> Result<Vec<SourceMeta>,
                 AuthKind::Cookie => "cookie",
                 AuthKind::ApiKeyOrCookie => "api_key_or_cookie",
             },
-            enabled: cfg.is_enabled_id(s.id()),
+            enabled: cfg.is_enabled_id(s.id().as_ref()),
             // Xiaomi: API key (Bearer) 永远 401，手动 cookie 是兜底 → 都放高级 tab
             hide_credentials: s.id() == "xiaomimimo",
         })
@@ -302,9 +302,13 @@ pub async fn list_sources(state: State<'_, AppState>) -> Result<Vec<SourceMeta>,
 }
 
 #[tauri::command]
-pub async fn has_source_credential(id: String) -> Result<bool, String> {
+pub async fn has_source_credential(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<bool, String> {
     // 验证 id 存在（防 IPC 注入任意 key 名）
-    let _ = find_source(&id).ok_or_else(|| format!("未知的 source id: {id}"))?;
+    let _ = find_source(&state, &id).await
+        .ok_or_else(|| format!("未知的 source id: {id}"))?;
     Ok(config::load_credential_for_id(&id)?.is_some())
 }
 
@@ -322,7 +326,8 @@ pub async fn set_source_credential(
     // 否则两个输入框都保存到 api_key，cookie 永远落不进去。
     field: Option<String>,
 ) -> Result<(), String> {
-    let src = find_source(&id).ok_or_else(|| format!("未知的 source id: {id}"))?;
+    let src = find_source(&state, &id).await
+        .ok_or_else(|| format!("未知的 source id: {id}"))?;
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err("凭据不能为空".to_string());
@@ -378,7 +383,8 @@ pub async fn delete_source_credential(
     app: AppHandle,
     id: String,
 ) -> Result<(), String> {
-    let _ = find_source(&id).ok_or_else(|| format!("未知的 source id: {id}"))?;
+    let _ = find_source(&state, &id).await
+        .ok_or_else(|| format!("未知的 source id: {id}"))?;
     config::delete_credential_for_id(&id)?;
     // 跟 set_source_credential 对称：删了 key 浮窗应该立刻看到 "未配置"
     // 错误态，而不是等下一次 poller 周期。
@@ -394,8 +400,12 @@ pub async fn delete_source_credential(
 
 /// 用于设置面板"复制到剪贴板"按钮。返回值仅一次 IPC 用，不在前端持久化。
 #[tauri::command]
-pub async fn get_source_credential(id: String) -> Result<Option<String>, String> {
-    let _ = find_source(&id).ok_or_else(|| format!("未知的 source id: {id}"))?;
+pub async fn get_source_credential(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Option<String>, String> {
+    let _ = find_source(&state, &id).await
+        .ok_or_else(|| format!("未知的 source id: {id}"))?;
     let cred = config::load_credential_for_id(&id)?;
     Ok(cred.and_then(|c| c.api_key.or(c.cookie)))
 }
@@ -718,21 +728,22 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
 
     for src in &sources {
         let id = src.id();
+        let id_str = id.as_ref();  // Cow<'_, str> → &str，避免在循环里反复 .as_ref()
         // 跳过未启用的
-        if !cfg.is_enabled_id(id) {
+        if !cfg.is_enabled_id(id_str) {
             continue;
         }
 
         // 默认间隔（per-provider override 优先）—— backoff 写入时用
         let default_interval_secs = cfg
             .providers
-            .get(id)
+            .get(id_str)
             .and_then(|p| p.refresh_interval_secs)
             .unwrap_or(cfg.refresh_interval_secs)
             .max(10);
 
         // 1. 同步加载凭据（避免在 tokio::spawn 里 await I/O）
-        let creds_res = config::load_credential_for_id(id);
+        let creds_res = config::load_credential_for_id(id_str);
         tracing::trace!(provider = %id, has_creds = creds_res.as_ref().ok().and_then(|c| c.as_ref()).is_some(), "refresh_inner load_credential");
 
         match creds_res {
@@ -794,7 +805,13 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                 let provider = provider_from_id(&id);
                 let kind = classify_error_message(&e);
                 log_provider_error(app, &id, kind, &e);
-                let err_snap = ProviderSnapshot::empty_error(provider, &id, kind, e);
+                let err_snap = ProviderSnapshot::empty_error(
+                    &app.state::<AppState>(),
+                    provider,
+                    &id,
+                    kind,
+                    e,
+                ).await;
                 // 写 backoff：失败（如果 kind 属于可退避类）→ 翻倍
                 {
                     let state = app.state::<AppState>();
@@ -807,12 +824,15 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                 let provider = provider_from_id(&id);
                 let msg = format!("任务调度失败: {join_err}");
                 log_provider_error(app, &id, ErrorKind::Other, &msg);
-                snap.providers.push(ProviderSnapshot::empty_error(
-                    provider,
-                    &id,
-                    ErrorKind::Other,
-                    msg,
-                ));
+                snap.providers.push(
+                    ProviderSnapshot::empty_error(
+                        &app.state::<AppState>(),
+                        provider,
+                        &id,
+                        ErrorKind::Other,
+                        msg,
+                    ).await,
+                );
             }
         }
     }
@@ -894,7 +914,13 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
                 let provider = provider_from_id(id);
                 let kind = e.kind;
                 log_provider_error(app, id, kind, &e.message);
-                ProviderSnapshot::empty_error(provider, id, kind, e.message)
+                ProviderSnapshot::empty_error(
+                    &app.state::<AppState>(),
+                    provider,
+                    id,
+                    kind,
+                    e.message,
+                ).await
             }
         },
         None => {
@@ -902,7 +928,13 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
             let kind = ErrorKind::UnconfiguredKey;
             let msg = "未配置凭据（设置面板填入）".to_string();
             log_provider_error(app, id, kind, &msg);
-            ProviderSnapshot::empty_error(provider, id, kind, msg)
+            ProviderSnapshot::empty_error(
+                &app.state::<AppState>(),
+                provider,
+                id,
+                kind,
+                msg,
+            ).await
         }
     };
 

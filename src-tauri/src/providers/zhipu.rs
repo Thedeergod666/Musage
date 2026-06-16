@@ -47,6 +47,7 @@
 //! 4. **老套餐只回 1 条 TOKENS_LIMIT**：自然降级为只显示 5h
 //! 5. **国际版（api.z.ai）**：与国区 schema 完全一致；base_url 二选一
 
+use std::borrow::Cow;
 use std::pin::Pin;
 use std::sync::OnceLock;
 
@@ -116,8 +117,8 @@ impl Default for ZhipuSource {
 }
 
 impl QuotaSource for ZhipuSource {
-    fn id(&self) -> &'static str { "zhipu" }
-    fn display_name(&self) -> &'static str { "智谱 GLM" }
+    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("zhipu") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("智谱 GLM") }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
 
     fn set_state<'a>(

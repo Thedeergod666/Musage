@@ -54,6 +54,7 @@
 //! `auth_kind = Cookie`：用户在前端 cookie 输入框粘贴 `sessionKey=<value>`
 //! 整行，**或**只粘贴纯 value（程序自动补 `sessionKey=` 前缀，容错）。
 
+use std::borrow::Cow;
 use std::pin::Pin;
 
 use chrono::{DateTime, Utc};
@@ -76,8 +77,8 @@ impl Default for ClaudeOfficialSource {
 }
 
 impl QuotaSource for ClaudeOfficialSource {
-    fn id(&self) -> &'static str { "claude_official" }
-    fn display_name(&self) -> &'static str { "Claude 官方" }
+    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("claude_official") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("Claude 官方") }
     fn auth_kind(&self) -> AuthKind { AuthKind::Cookie }
 
     fn set_state<'a>(

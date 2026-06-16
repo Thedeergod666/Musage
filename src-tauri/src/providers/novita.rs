@@ -22,6 +22,7 @@
 //! - `Authorization: Bearer <api_key>`
 //! - 响应字段 `balance` (number) + `currency` ("USD" 假设)
 
+use std::borrow::Cow;
 use std::pin::Pin;
 
 use super::{AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaSource};
@@ -35,8 +36,8 @@ impl Default for NovitaSource {
 }
 
 impl QuotaSource for NovitaSource {
-    fn id(&self) -> &'static str { "novita" }
-    fn display_name(&self) -> &'static str { "Novita AI" }
+    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("novita") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("Novita AI") }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
 
     fn set_state<'a>(

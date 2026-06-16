@@ -28,6 +28,7 @@
 //! 3. 失败则回退到 count-based 路径（旧 schema）
 //! 4. reset 字段智能识别：> 10^12 当 epoch ms，否则当 duration-seconds 加到 now
 
+use std::borrow::Cow;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -93,8 +94,8 @@ impl MinimaxSource {
 }
 
 impl QuotaSource for MinimaxSource {
-    fn id(&self) -> &'static str { "minimax" }
-    fn display_name(&self) -> &'static str { "MiniMax" }
+    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("minimax") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("MiniMax") }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
 
     fn set_state<'a>(

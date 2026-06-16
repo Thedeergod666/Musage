@@ -29,7 +29,7 @@ pub fn start(app: AppHandle) {
         for src in builtin_sources() {
             let interval_secs = cfg0
                 .providers
-                .get(src.id())
+                .get(src.id().as_ref())
                 .and_then(|p| p.refresh_interval_secs)
                 .unwrap_or(cfg0.refresh_interval_secs)
                 .max(10);
@@ -53,17 +53,18 @@ pub fn start(app: AppHandle) {
 
             for src in builtin_sources() {
                 let id = src.id();
-                if !cfg.is_enabled_id(id) {
+                let id_str = id.as_ref();  // Cow → &str，给 is_enabled_id / map.get 用
+                if !cfg.is_enabled_id(id_str) {
                     continue;  // 用户关了，不拉
                 }
                 let cfg_interval_secs = cfg
                     .providers
-                    .get(id)
+                    .get(id_str)
                     .and_then(|p| p.refresh_interval_secs)
                     .unwrap_or(cfg.refresh_interval_secs)
                     .max(10);
                 // 退避后的实际间隔：优先用 backoff 的，没退避用 cfg 默认
-                let interval_secs = backoff_guard.next_interval_secs(id, cfg_interval_secs);
+                let interval_secs = backoff_guard.next_interval_secs(id_str, cfg_interval_secs);
 
                 let entry = next_fetch.entry(id.to_string()).or_insert(now);
                 if now < *entry {

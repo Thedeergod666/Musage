@@ -38,6 +38,7 @@
 //!
 //! 字段名 / schema 参照 ccswitch；老套餐只回 `usage` 时只显示 1 行（自然降级）。
 
+use std::borrow::Cow;
 use std::pin::Pin;
 
 use chrono::{DateTime, Utc};
@@ -58,8 +59,8 @@ impl Default for KimiSource {
 }
 
 impl QuotaSource for KimiSource {
-    fn id(&self) -> &'static str { "kimi" }
-    fn display_name(&self) -> &'static str { "Kimi" }
+    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("kimi") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("Kimi") }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
 
     fn set_state<'a>(

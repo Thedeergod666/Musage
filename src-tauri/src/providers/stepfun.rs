@@ -55,6 +55,7 @@
 //! 3. **请求是 POST 而非 GET**：Step Plan rate limit 用 POST + JSON body（空
 //!    body 也可），不是常规 GET。
 
+use std::borrow::Cow;
 use std::pin::Pin;
 
 use chrono::{DateTime, Utc};
@@ -78,8 +79,8 @@ impl Default for StepfunSource {
 }
 
 impl QuotaSource for StepfunSource {
-    fn id(&self) -> &'static str { "stepfun" }
-    fn display_name(&self) -> &'static str { "StepFun Step Plan" }
+    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("stepfun") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("StepFun Step Plan") }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
 
     fn set_state<'a>(

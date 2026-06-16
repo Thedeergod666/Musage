@@ -515,6 +515,9 @@ impl AppConfig {
     }
 }
 
+// PR 3：用户自定义 New API source 持久化（独立文件，不进 config.json）。
+pub mod custom_sources;
+
 fn config_dir() -> Result<PathBuf, String> {
     dirs::config_dir().ok_or_else(|| "无法定位配置目录".to_string())
 }

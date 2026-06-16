@@ -37,6 +37,7 @@
 //! - 后续行（细分 endpoint）：每个一行，label 是 endpoint 名，used 是数字
 //! - 头部副标题：`plan_name = account.current_plan`
 
+use std::borrow::Cow;
 use std::pin::Pin;
 
 use chrono::{NaiveDate, NaiveTime};
@@ -55,8 +56,8 @@ impl Default for TavilySource {
 }
 
 impl QuotaSource for TavilySource {
-    fn id(&self) -> &'static str { "tavily" }
-    fn display_name(&self) -> &'static str { "Tavily" }
+    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("tavily") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("Tavily") }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
 
     fn set_state<'a>(

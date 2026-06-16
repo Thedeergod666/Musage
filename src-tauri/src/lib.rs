@@ -29,7 +29,7 @@ use tokio::sync::RwLock;
 use crate::config::AppConfig;
 use crate::logstore::LogStore;
 use crate::poller_backoff::BackoffState;
-use crate::providers::{builtin_sources, QuotaSnapshot};
+use crate::providers::{builtin_sources, CustomSourceSpec, QuotaSnapshot};
 use crate::commands::apply_pin_mode_to_window;
 
 pub struct AppState {
@@ -42,6 +42,10 @@ pub struct AppState {
     /// - 读：poller 调度 tick 时算下次间隔
     /// 详见 [`crate::poller_backoff`]
     pub backoff: Arc<RwLock<BackoffState>>,
+    /// PR 3：用户自定义 New API sources。启动时从 `custom_sources.json` load。
+    /// 写：add/update/delete_custom_source IPC 命令（会 persist）。
+    /// 读：providers::all_sources / find_source 拼 customs 进去。
+    pub custom_sources: Arc<RwLock<Vec<CustomSourceSpec>>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -168,7 +172,7 @@ pub fn run() {
 
             // 首次启动引导：所有 provider 都没配 key → 自动弹设置窗口
             let any_key = builtin_sources().iter().any(|src| {
-                config::load_credential_for_id(src.id())
+                config::load_credential_for_id(src.id().as_ref())
                     .ok()
                     .flatten()
                     .is_some()
@@ -188,6 +192,10 @@ pub fn run() {
             // 从磁盘 reload 最近 200 条 —— 启动时一次性 IO，不在热路径
             log: Arc::new(LogStore::load_from_disk()),
             backoff: Arc::new(RwLock::new(BackoffState::new())),
+            // PR 3：custom_sources 启动 load。load 失败时返空 Vec（不阻塞启动）。
+            custom_sources: Arc::new(RwLock::new(
+                config::custom_sources::load_custom_sources().unwrap_or_default(),
+            )),
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_snapshot,
@@ -311,12 +319,12 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
         let sources: Vec<Box<dyn crate::providers::QuotaSource>> = match provider_filter {
             None => builtin_sources()
                 .into_iter()
-                .filter(|s| cfg.is_enabled_id(s.id()))
+                .filter(|s| cfg.is_enabled_id(s.id().as_ref()))
                 .collect(),
             Some(id) => match builtin_sources().into_iter().find(|s| s.id() == id) {
                 Some(s) => vec![s],
                 None => {
-                    let known: Vec<&str> = builtin_sources().iter().map(|s| s.id()).collect();
+                    let known: Vec<String> = builtin_sources().iter().map(|s| s.id().to_string()).collect();
                     eprintln!("[dump] 未知 source id: {id}（可用: {}）", known.join(" / "));
                     return 2;
                 }
@@ -332,7 +340,7 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
             println!("\n========== {} ({}) ==========", src.display_name(), src.id());
 
             // 加载凭据
-            let creds = match config::load_credential_for_id(src.id()) {
+            let creds = match config::load_credential_for_id(src.id().as_ref()) {
                 Ok(Some(c)) => c,
                 Ok(None) => {
                     eprintln!("[dump] 未配置凭据。请先在 GUI 设置面板配置。");

@@ -44,6 +44,7 @@
 //! }
 //! ```
 
+use std::borrow::Cow;
 use std::pin::Pin;
 use std::sync::OnceLock;
 
@@ -99,8 +100,8 @@ impl Default for ZenmuxSource {
 }
 
 impl QuotaSource for ZenmuxSource {
-    fn id(&self) -> &'static str { "zenmux" }
-    fn display_name(&self) -> &'static str { "ZenMux" }
+    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("zenmux") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("ZenMux") }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
 
     fn set_state<'a>(

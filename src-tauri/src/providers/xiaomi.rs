@@ -19,6 +19,7 @@
 //!
 //! Cookie 会随用户登出失效，过期时 (HTTP 401) 错误信息会引导用户重新粘贴。
 
+use std::borrow::Cow;
 use std::pin::Pin;
 use std::sync::Arc;
 
@@ -109,8 +110,8 @@ impl XiaomimimoSource {
 }
 
 impl QuotaSource for XiaomimimoSource {
-    fn id(&self) -> &'static str { "xiaomimimo" }
-    fn display_name(&self) -> &'static str { "Xiaomi MiMo" }
+    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("xiaomimimo") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("Xiaomi MiMo") }
     /// 优先 Bearer（API key），401 时降级到 Cookie。两个输入都展示在设置面板。
     /// 决策逻辑见 [`decide_auth_strategy`] + [`Xiaomimimo::fetch`]。
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKeyOrCookie }

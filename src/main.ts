@@ -31,26 +31,29 @@ import "./styles.css";
 /// - CN → zhipuLogo（紫色渐变 + 智字）
 /// - EN → zhipuEnLogo（z.ai 官方 logo SVG）
 ///
+/// 显示名走 t(\`provider.${id}.name\`) —— 跟 settings 那边用同一个 i18n key，
+/// P1 frontend 阶段合一过 [src/settings/logos.ts] 和 [src/settings/utils.ts:providerDisplay]
+/// 三处 dup。settings panel 加新 provider 时只改 [src/i18n/{en,zh-CN}.json] 即可。
+///
 /// 加新 provider 时如果暂时没有 logo 文件，把 `logo` 留空字符串，
 /// `updateCard` 会自动用首字母 + accent 色生成 data: URL fallback。
-/// 等拿到真 logo 直接 `cp` 替换 SVG 文件即可。
 const PROVIDER_META: Record<string, { name: string; logo: string; accent: string }> = {
-  minimax: { name: "MiniMax", logo: minimaxLogo, accent: "#9b59ff" },
-  deepseek: { name: "DeepSeek", logo: deepseekLogo, accent: "#4a90e2" },
-  xiaomimimo: { name: "Xiaomi MiMo", logo: xiaomimimoLogo, accent: "#ff6a00" },
-  tavily: { name: "Tavily", logo: tavilyLogo, accent: "#00d4a8" },
-  zenmux: { name: "ZenMux", logo: zenmuxLogo, accent: "#9b59ff" },
-  openrouter: { name: "OpenRouter", logo: openrouterLogo, accent: "#5ac8fa" },
-  kimi: { name: "Kimi", logo: kimiLogo, accent: "#5ac8fa" },
-  zhipu: { name: "智谱 GLM", logo: zhipuLogo, accent: "#7b61ff" },
-  "Z.ai": { name: "Z.ai", logo: zhipuEnLogo, accent: "#2D2D2D" },
+  minimax: { name: t("provider.minimax.name"), logo: minimaxLogo, accent: "#9b59ff" },
+  deepseek: { name: t("provider.deepseek.name"), logo: deepseekLogo, accent: "#4a90e2" },
+  xiaomimimo: { name: t("provider.xiaomimimo.name"), logo: xiaomimimoLogo, accent: "#ff6a00" },
+  tavily: { name: t("provider.tavily.name"), logo: tavilyLogo, accent: "#00d4a8" },
+  zenmux: { name: t("provider.zenmux.name"), logo: zenmuxLogo, accent: "#9b59ff" },
+  openrouter: { name: t("provider.openrouter.name"), logo: openrouterLogo, accent: "#5ac8fa" },
+  kimi: { name: t("provider.kimi.name"), logo: kimiLogo, accent: "#5ac8fa" },
+  zhipu: { name: t("provider.zhipu_cn.name"), logo: zhipuLogo, accent: "#7b61ff" },
+  "Z.ai": { name: t("provider.zhipu_en.name"), logo: zhipuEnLogo, accent: "#2D2D2D" },
   // 2026-06-16 新增（PR 2）—— 暂没 logo 文件，fallback 用首字母 + accent 色
   // 等拿到真 logo 直接 `cp` 替换 SVG/PNG 文件即可（无需改代码）
-  stepfun: { name: "StepFun", logo: "", accent: "#6366f1" },
-  siliconflow: { name: "SiliconFlow", logo: "", accent: "#ff6b35" },
-  novita: { name: "Novita AI", logo: "", accent: "#9333ea" },
-  qwen: { name: "Qwen", logo: "", accent: "#615ced" },
-  claude_official: { name: "Claude 官方", logo: "", accent: "#d97706" },
+  stepfun: { name: t("provider.stepfun.name"), logo: "", accent: "#6366f1" },
+  siliconflow: { name: t("provider.siliconflow.name"), logo: "", accent: "#ff6b35" },
+  novita: { name: t("provider.novita.name"), logo: "", accent: "#9333ea" },
+  qwen: { name: t("provider.qwen.name"), logo: "", accent: "#615ced" },
+  claude_official: { name: t("provider.claude_official.name"), logo: "", accent: "#d97706" },
 };
 
 /// 没有 logo 文件时，用首字母 + accent 色生成 data: URL SVG。
@@ -389,7 +392,7 @@ async function autoResizeWindow(snap: QuotaSnapshot) {
 function renderLoading() {
   // 留一个占位 .err —— 首次启动 / 还没拉到数据时
   if (!app.querySelector(".err")) {
-    app.innerHTML = `<div class="err"><div class="err-title">⏳ 加载中…</div></div>`;
+    app.innerHTML = `<div class="err"><div class="err-title">${escapeHtml(t("floating.loading"))}</div></div>`;
   }
 }
 
@@ -487,11 +490,11 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
     const label = errorKindLabel(kind);
     const needsSettings = kind === "unconfigured_key" || kind === "auth_failed";
     const settingsBtn = needsSettings
-      ? `<button class="err-btn open-settings">打开设置</button>`
+      ? `<button class="err-btn open-settings">${escapeHtml(t("floating.open_settings"))}</button>`
       : "";
     const schemaHint =
       kind === "schema_unknown"
-        ? `<div class="hint">→ 设置面板 · Schema overrides 加新字段名</div>`
+        ? `<div class="hint">${escapeHtml(t("floating.init_error_hint"))}</div>`
         : "";
     card.classList.add("err-card", `err-${kind}`);
     // H8 修复：err-label 加在 .card-head-status 里，CSS 用 row-reverse
@@ -507,7 +510,7 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
     }
     headLabel.textContent = label;
     rowsBox.innerHTML = `
-      <div class="err-msg">${escapeHtml(p.error ?? "未知错误")}</div>
+      <div class="err-msg">${escapeHtml(p.error ?? t("floating.error.unknown"))}</div>
       ${settingsBtn}
       ${schemaHint}
     `;
@@ -693,9 +696,10 @@ function updateFoot(snap: QuotaSnapshot) {
     (p) => !p.success && p.error_kind === "unconfigured_key",
   );
   const hint = anyUnconfigured
-    ? "未配置 provider 的 key → 右键托盘 → 设置"
-    : "拖动移动 · 右键菜单";
-  const text = `${snap.providers.length} 个 provider · ${hint}`;
+    ? t("floating.footer.hint_unconfigured")
+    : t("floating.footer.hint_normal");
+  // plural-aware：英文 1 个 provider vs N providers
+  const text = t("floating.footer.count", { count: snap.providers.length, hint });
   if (foot) {
     foot.textContent = text;
   } else {
@@ -866,7 +870,7 @@ async function init() {
   }).then((fn) => (unlistenLowPower = fn));
 
   // 启动时立即 render loading 占位，避免空白窗口
-  app.innerHTML = `<div class="err"><div class="err-title">⏳ 加载中…</div></div>`;
+  app.innerHTML = `<div class="err"><div class="err-title">${escapeHtml(t("floating.loading"))}</div></div>`;
 
   // 初次拉取
   try {
@@ -878,7 +882,7 @@ async function init() {
       render(fresh);
     }
   } catch (e) {
-    app.innerHTML = `<div class="err"><div class="err-title">⚠ 错误</div><div class="err-msg">${escapeHtml(String(e))}</div><button class="err-btn open-settings">打开设置</button><div class="hint">托盘右键 → 设置 亦可</div></div>`;
+    app.innerHTML = `<div class="err"><div class="err-title">${escapeHtml(t("floating.loading_error_title"))}</div><div class="err-msg">${escapeHtml(String(e))}</div><button class="err-btn open-settings">${escapeHtml(t("floating.open_settings"))}</button><div class="hint">${escapeHtml(t("floating.tray_right_to_settings"))}</div></div>`;
   }
 
   // 事件代理：所有 .open-settings 按钮

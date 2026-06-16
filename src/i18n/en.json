@@ -1,5 +1,49 @@
 {
-  "_meta": "P0 scaffolding + P1 error labels. P1 strings phase will fill all UI strings. See memory/musage-i18n-conventions.md",
+  "_meta": "P0 + P1 strings (en) - frontend floating window + provider display names. P2 will add region wizard labels. See memory/musage-i18n-conventions.md",
+
+  "provider": {
+    "minimax": { "name": "MiniMax" },
+    "deepseek": { "name": "DeepSeek" },
+    "xiaomimimo": { "name": "Xiaomi MiMo" },
+    "tavily": { "name": "Tavily" },
+    "zenmux": { "name": "ZenMux" },
+    "openrouter": { "name": "OpenRouter" },
+    "kimi": { "name": "Kimi" },
+    "zhipu_cn": { "name": "智谱 GLM" },
+    "zhipu_en": { "name": "Z.ai" },
+    "stepfun": { "name": "StepFun" },
+    "siliconflow": { "name": "SiliconFlow" },
+    "novita": { "name": "Novita AI" },
+    "qwen": { "name": "Qwen" },
+    "claude_official": { "name": "Claude" }
+  },
+
+  "floating": {
+    "loading": "⏳ Loading...",
+    "loading_error_title": "⚠ Error",
+    "open_settings": "Open Settings",
+    "tray_right_to_settings": "Tray right-click → Settings also works",
+    "init_error_hint": "Settings panel · Schema overrides to add new field names",
+    "footer": {
+      "hint_unconfigured": "No provider key configured → right-click tray → Settings",
+      "hint_normal": "Drag to move · right-click menu",
+      "count_one": "{count} provider · {hint}",
+      "count_other": "{count} providers · {hint}"
+    },
+    "countdown": {
+      "reset_suffix": " reset",
+      "monthly_prefix": "Monthly reset",
+      "placeholder": "—",
+      "reset_done": "(reset)",
+      "days_left": "({days}d)",
+      "minutes_left": "(in {minutes} min)",
+      "hours_minutes": "({hours}h{minutes}m)"
+    },
+    "error": {
+      "unknown": "Unknown error"
+    }
+  },
+
   "error": {
     "unconfigured_key": "No API key",
     "auth_failed": "Auth failed",
@@ -9,9 +53,5 @@
     "schema_unknown": "Schema unknown",
     "server_error": "Server error",
     "other": "Unknown error"
-  },
-  "window": {
-    "settings": "Musage · Settings",
-    "xiaomi_login": "Login Xiaomi — Musage"
   }
 }

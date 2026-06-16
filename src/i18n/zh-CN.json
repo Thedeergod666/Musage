@@ -1,5 +1,49 @@
 {
-  "_meta": "P0 scaffolding + P1 error labels. P1 strings phase 填全部 UI 文案。详见 memory/musage-i18n-conventions.md",
+  "_meta": "P0 + P1 strings (zh-CN) - 浮窗 + provider 显示名。详见 memory/musage-i18n-conventions.md",
+
+  "provider": {
+    "minimax": { "name": "MiniMax" },
+    "deepseek": { "name": "DeepSeek" },
+    "xiaomimimo": { "name": "Xiaomi MiMo" },
+    "tavily": { "name": "Tavily" },
+    "zenmux": { "name": "ZenMux" },
+    "openrouter": { "name": "OpenRouter" },
+    "kimi": { "name": "Kimi" },
+    "zhipu_cn": { "name": "智谱 GLM" },
+    "zhipu_en": { "name": "Z.ai" },
+    "stepfun": { "name": "StepFun" },
+    "siliconflow": { "name": "SiliconFlow" },
+    "novita": { "name": "Novita AI" },
+    "qwen": { "name": "Qwen" },
+    "claude_official": { "name": "Claude 官方" }
+  },
+
+  "floating": {
+    "loading": "⏳ 加载中…",
+    "loading_error_title": "⚠ 错误",
+    "open_settings": "打开设置",
+    "tray_right_to_settings": "托盘右键 → 设置 亦可",
+    "init_error_hint": "设置面板 · Schema overrides 加新字段名",
+    "footer": {
+      "hint_unconfigured": "未配置 provider 的 key → 右键托盘 → 设置",
+      "hint_normal": "拖动移动 · 右键菜单",
+      "count_one": "{count} 个 provider · {hint}",
+      "count_other": "{count} 个 provider · {hint}"
+    },
+    "countdown": {
+      "reset_suffix": "重置",
+      "monthly_prefix": "月重置",
+      "placeholder": "—",
+      "reset_done": "（已重置）",
+      "days_left": "（{days}天）",
+      "minutes_left": "（{minutes} 分钟后）",
+      "hours_minutes": "（{hours}h{minutes}m）"
+    },
+    "error": {
+      "unknown": "未知错误"
+    }
+  },
+
   "error": {
     "unconfigured_key": "未配置 Key",
     "auth_failed": "Key 无效",
@@ -9,9 +53,5 @@
     "schema_unknown": "Schema 未知",
     "server_error": "服务异常",
     "other": "未知错误"
-  },
-  "window": {
-    "settings": "Musage · 设置",
-    "xiaomi_login": "登录小米账号 - Musage"
   }
 }

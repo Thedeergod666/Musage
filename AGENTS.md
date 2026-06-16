@@ -26,7 +26,7 @@
 | 日志 | tracing + tracing-subscriber |
 | 自动启动 | tauri-plugin-autostart |
 | 前端类型 | `@types/node` 20.x（vite.config.ts 用 `node:url`） |
-| Providers | minimax / deepseek / xiaomimimo / tavily / zenmux / openrouter / kimi / zhipu（8 个；v0.1.0 发 6 个，2026-06-14 加 kimi/zhipu） |
+| Providers | minimax / deepseek / xiaomimimo / tavily / zenmux / openrouter / kimi / zhipu / stepfun / siliconflow / novita / qwen / claude_official（13 个；v0.1.0 = 6 个，2026-06-14 加 kimi/zhipu，2026-06-16 加 stepfun/siliconflow/novita/qwen/claude_official） |
 
 ## 环境与工具链（2026-06-13 实测，跑 `pnpm tauri build` 必看）
 
@@ -233,10 +233,12 @@ D:\Project\Musage\
         ├── tray.rs           ← 托盘菜单 + 动态图标（合并了原 icon.rs）
         ├── config.rs         ← AppConfig + keys.json 文件存储
         ├── commands.rs       ← tauri::command 暴露给前端
-        ├── providers/        ← 8 个 provider 实现（v0.1.0 = 6 个，2026-06-14 加 kimi/zhipu）
+        ├── providers/        ← 13 个 provider 实现（v0.1.0 = 6，2026-06-14 +kimi/zhipu，2026-06-16 +5）
         │   ├── mod.rs / minimax.rs / deepseek.rs / xiaomi.rs
         │   ├── tavily.rs / zenmux.rs / openrouter.rs
         │   ├── kimi.rs / zhipu.rs
+        │   ├── stepfun.rs / siliconflow.rs / claude_official.rs
+        │   ├── novita.rs / qwen.rs    ← STUB: 公开 API 无 quota endpoint
         └── platform/         ← 平台特定代码（仅 macOS 有非 stub 实现）
             ├── mod.rs
             └── macos.rs
@@ -277,7 +279,7 @@ D:\Project\Musage\
 ## 关键文件链接（按重要性）
 
 - **核心 API 解析**：`src-tauri/src/api.rs` ← 改 schema 主要改这里
-- **Provider 实现**：`src-tauri/src/providers/{minimax,deepseek,xiaomi,tavily,zenmux,openrouter,kimi,zhipu}.rs`（v0.1.0 = 6 个，2026-06-14 加 kimi/zhipu）
+- **Provider 实现**：`src-tauri/src/providers/{minimax,deepseek,xiaomi,tavily,zenmux,openrouter,kimi,zhipu,stepfun,siliconflow,claude_official,novita,qwen}.rs`（v0.1.0 = 6，2026-06-14 +kimi/zhipu，2026-06-16 +5 个；novita/qwen 是 STUB）
 - **托盘 UI**：`src-tauri/src/tray.rs`（合并了原 icon.rs：动态图标 + 文字绘制 + 菜单 + tooltip）
 - **悬浮窗 UI**：`src/main.ts` + `src/styles.css`
 - **设置面板**：`src/settings/main.ts` + `settings.html`（子模块见 `src/settings/` 18 个文件）

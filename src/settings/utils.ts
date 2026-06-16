@@ -4,25 +4,25 @@
 // v1 不大改，未来 Stage 3+ 加侧边栏 + 动态渲染时也只用 DOM 局部 patch，
 // 不会全量 re-render，所以不需要 reactive 框架。
 
-import type { ProviderId } from "./types";
+/// 当前已知的 source id 列表（**派生自后端 registry**，不写死）。
+///
+/// 之前叫 `BUILTIN_ORDER` —— 写死 8 个 provider id。问题：
+/// 1. 加新 provider 要改 2 处（mod.rs + utils.ts），容易漏
+/// 2. PR 3 的 CustomSource（`custom_<uuid>`）会从 `list_custom_sources` 动态来，
+///    写死 list 接不住
+///
+/// 新方案：`renderOrderSection(sources, ...)` 每次渲染时把 `sources.map(s => s.id)`
+/// 写进 `setCurrentKnownIds()`，canonicalizeOrder / buildOrderItems 走这个 list。
+/// 后续加新 provider（builtin / custom）都**零代码改动**自动出现在浮窗顺序里。
+let currentKnownIds: string[] = [];
 
-/// provider 排序（拖拽/上下按钮）
-/// DOM 结构：每个 provider 一个 row（[id="provider-order-row-{id}"]），
-/// 包含 ↑ ↓ 按钮，移位后重新调换 DOM 顺序。保存时按当前 DOM 顺序生成
-/// Provider 顺序（per-panel ↑↓ 按钮）
-/// 之前的实现是单独的「浮窗顺序」section + ↑↓ 按钮，调完要滚到那里再保存。
-/// 改成在每个 provider panel 内部放「位置 X/4」+ ↑↓ 按钮，逻辑分散但
-/// 视觉跟 provider 关联更紧密，调完即时生效。
-export const BUILTIN_ORDER: ProviderId[] = [
-  "minimax",
-  "deepseek",
-  "xiaomimimo",
-  "tavily",
-  "zenmux",
-  "openrouter",
-  "kimi",
-  "zhipu",
-];
+export function setCurrentKnownIds(ids: string[]): void {
+  currentKnownIds = ids.slice();
+}
+
+export function getCurrentKnownIds(): string[] {
+  return currentKnownIds;
+}
 
 /// 当前内存里的 provider 顺序（同步 set_provider_order 时维护，
 /// UI 渲染时也以这个为准）。

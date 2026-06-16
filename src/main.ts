@@ -44,6 +44,13 @@ const PROVIDER_META: Record<string, { name: string; logo: string; accent: string
   kimi: { name: "Kimi", logo: kimiLogo, accent: "#5ac8fa" },
   zhipu: { name: "智谱 GLM", logo: zhipuLogo, accent: "#7b61ff" },
   "Z.ai": { name: "Z.ai", logo: zhipuEnLogo, accent: "#2D2D2D" },
+  // 2026-06-16 新增（PR 2）—— 暂没 logo 文件，fallback 用首字母 + accent 色
+  // 等拿到真 logo 直接 `cp` 替换 SVG/PNG 文件即可（无需改代码）
+  stepfun: { name: "StepFun", logo: "", accent: "#6366f1" },
+  siliconflow: { name: "SiliconFlow", logo: "", accent: "#ff6b35" },
+  novita: { name: "Novita AI", logo: "", accent: "#9333ea" },
+  qwen: { name: "Qwen", logo: "", accent: "#615ced" },
+  claude_official: { name: "Claude 官方", logo: "", accent: "#d97706" },
 };
 
 /// 没有 logo 文件时，用首字母 + accent 色生成 data: URL SVG。
@@ -126,7 +133,21 @@ interface QuotaRow {
 
 interface ProviderSnapshot {
   /** 兼容字段（minimax / deepseek / xiaomimimo）。新代码用 source_id。 */
-  provider: "minimax" | "deepseek" | "xiaomimimo" | "tavily" | "zenmux" | "openrouter" | "kimi" | "zhipu";
+  provider:
+    | "minimax"
+    | "deepseek"
+    | "xiaomimimo"
+    | "tavily"
+    | "zenmux"
+    | "openrouter"
+    | "kimi"
+    | "zhipu"
+    // 2026-06-16 新增（PR 2）
+    | "stepfun"
+    | "siliconflow"
+    | "novita"
+    | "qwen"
+    | "claude_official";
   /** Phase 1 新增。 */
   source_id?: string | null;
   source_display_name?: string | null;

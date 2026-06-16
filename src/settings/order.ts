@@ -28,27 +28,46 @@
 
 import { setProviderOrder, setProviderEnabled } from "./api";
 import {
-  BUILTIN_ORDER,
   currentProviderOrder,
   el,
   flash,
+  getCurrentKnownIds,
+  setCurrentKnownIds,
   setCurrentProviderOrder,
 } from "./utils";
 import { getProviderMeta } from "./logos";
 import type { AppConfig, ProviderId, SourceMeta } from "./types";
 
+/// 把 cfg.provider_order 规整成「已知 + 按 builtin 注册表补齐」的有序列表。
+///
+/// 流程：
+/// 1. 保留 cfg.provider_order 里**已知**的 id（去重），按其顺序
+/// 2. 把当前已知 list（来自 [setCurrentKnownIds]）里**没出现**的补到末尾
+///
+/// "已知" 集合是动态的（PR 2 起派生自 `SourceMeta[]`，PR 3 会包含
+/// `custom_*` 中转站），所以新加 provider 不用改这个函数。
+///
+/// 防御性：known 列表为空时（极少数情况，比如 `renderProviderOrderPanels`
+/// 在 `renderOrderSection` 之前被调用），fallback 到把 input dedup 后
+/// 原样返回，避免空数组炸 UI。
 export function canonicalizeOrder(order: string[]): ProviderId[] {
+  const known = getCurrentKnownIds();
+  const knownSet = new Set(known);
+  if (knownSet.size === 0) {
+    const dedup: string[] = [];
+    for (const id of order) {
+      if (!dedup.includes(id)) dedup.push(id);
+    }
+    return dedup as ProviderId[];
+  }
   const ordered: ProviderId[] = [];
   for (const id of order) {
-    if (
-      (BUILTIN_ORDER as string[]).includes(id) &&
-      !(ordered as string[]).includes(id)
-    ) {
+    if (knownSet.has(id) && !(ordered as string[]).includes(id)) {
       ordered.push(id as ProviderId);
     }
   }
-  for (const id of BUILTIN_ORDER) {
-    if (!(ordered as string[]).includes(id)) ordered.push(id);
+  for (const id of known) {
+    if (!(ordered as string[]).includes(id)) ordered.push(id as ProviderId);
   }
   return ordered;
 }
@@ -447,6 +466,8 @@ export function renderOrderSection(
   cfgProviderOrder: string[] | undefined,
   cfg: AppConfig | null = null,
 ) {
+  // 先把 known list 同步到 utils（必须早于 canonicalizeOrder，因为后者读它）
+  setCurrentKnownIds(sources.map((s) => s.id));
   setCurrentProviderOrder(canonicalizeOrder(cfgProviderOrder ?? []));
   orderSources = sources;
   orderCfg = cfg;
@@ -487,9 +508,10 @@ function buildOrderItems(list: HTMLOListElement) {
     if (isEnabledId(id)) enabledIds.push(id);
     else disabledIds.push(id);
   }
-  // 兜底：任何 builtin 但不在 currentProviderOrder 里的 id，按 enabled
-  // 状态加进对应段（首次启动时 order 为空、但每个 provider 都有 enabled）。
-  for (const id of BUILTIN_ORDER as readonly string[]) {
+  // 兜底：任何已知 source（builtin + custom）但不在 currentProviderOrder 里的 id，
+  // 按 enabled 状态加进对应段（首次启动时 order 为空、但每个 provider 都有 enabled）。
+  // PR 3 加 CustomSource 后这个循环自动接住（known list 在 renderOrderSection 时更新）。
+  for (const id of getCurrentKnownIds()) {
     if (currentProviderOrder.includes(id as ProviderId)) continue;
     if (isEnabledId(id)) enabledIds.push(id);
     else disabledIds.push(id);

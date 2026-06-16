@@ -12,7 +12,13 @@ export type ProviderId =
   | "zenmux"
   | "openrouter"
   | "kimi"
-  | "zhipu";
+  | "zhipu"
+  // 2026-06-16 新增（PR 2）
+  | "stepfun"
+  | "siliconflow"
+  | "novita"
+  | "qwen"
+  | "claude_official";
 
 export type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
 
@@ -34,6 +40,12 @@ export const PROVIDER_IDS = [
   "openrouter",
   "kimi",
   "zhipu",
+  // 2026-06-16 新增（PR 2）
+  "stepfun",
+  "siliconflow",
+  "novita",
+  "qwen",
+  "claude_official",
 ] as const;
 
 /// Phase 1 起新 source 的元信息（后端 list_sources 返回）。

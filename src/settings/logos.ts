@@ -56,6 +56,12 @@ export const PROVIDER_META: Record<string, ProviderMeta> = {
   kimi: { name: "Kimi", logo: kimiLogo, accent: "var(--id-kimi)" },
   zhipu: { name: "智谱 GLM", logo: zhipuLogo, accent: "var(--id-zhipu)" },
   zhipu_en: { name: "Z.ai", logo: zhipuEnLogo, accent: "var(--id-zhipu)" },
+  // 2026-06-16 新增（PR 2）—— 暂没 logo 文件，fallback 用首字母 + accent 色
+  stepfun: { name: "StepFun", logo: "", accent: "#6366f1" },
+  siliconflow: { name: "SiliconFlow", logo: "", accent: "#ff6b35" },
+  novita: { name: "Novita AI", logo: "", accent: "#9333ea" },
+  qwen: { name: "Qwen", logo: "", accent: "#615ced" },
+  claude_official: { name: "Claude 官方", logo: "", accent: "#d97706" },
 };
 
 export function getProviderMeta(id: string): ProviderMeta | undefined {

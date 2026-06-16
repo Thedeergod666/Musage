@@ -345,6 +345,12 @@ function renderMultiAuthBlock(meta: SourceMeta): HTMLElement {
             "data-id": meta.id,
             "data-action": "xiaomi-clear-cookie",
           }, "🗑 清除 Cookie"),
+          el("a", {
+            class: "link-ext",
+            href: "https://platform.xiaomimimo.com",
+            target: "_blank",
+            rel: "noopener noreferrer",
+          }, "🌐 访问官网"),
         ),
       ),
     );
@@ -401,45 +407,29 @@ function renderMultiAuthBlock(meta: SourceMeta): HTMLElement {
   }
 
   // ── 显示模式选择（Xiaomi 专用）──
-  // 切"完整 / 只套餐 / 只总额度"3 档。
+  // 下拉选"完整 / 只套餐 / 只总额度"3 档（label 同时给出"包含什么"提示）。
   // 切完即时生效：后端落盘 + refresh 一次（poller 下一分钟才 fire）
   // 当前选中值在 init 时由 `loadXiaomiDisplayMode` 回填。
   if (meta.id === "xiaomimimo") {
+    const modeSelect = el("select", {
+      id: `xiaomi-display-mode-${meta.id}`,
+      "data-id": meta.id,
+      "data-action": "xiaomi-display-mode",
+    }) as HTMLSelectElement;
+    const options: Array<{ value: "all" | "plan_only" | "total_only"; label: string; hint: string }> = [
+      { value: "all",        label: "完整",     hint: "（3 行，套餐和总额度数字一致时自动合并）" },
+      { value: "plan_only",  label: "只看套餐", hint: "（只显示套餐用量 + 重置时间）" },
+      { value: "total_only", label: "只看总额度", hint: "（只显示本月总消耗 + 重置时间）" },
+    ];
+    for (const o of options) {
+      modeSelect.appendChild(
+        el("option", { value: o.value }, `${o.label} ${o.hint}`),
+      );
+    }
     block.appendChild(
       el("div", { class: "field" },
-        el("label", {}, "📊 浮窗显示模式"),
-        el("div", { class: "radio-group", id: `xiaomi-display-mode-${meta.id}` },
-          el("label", { class: "radio-option" },
-            el("input", {
-              type: "radio",
-              name: "xiaomi-display-mode",
-              value: "all",
-              "data-action": "xiaomi-display-mode",
-            }),
-            el("span", {}, "完整"),
-            el("small", {}, "（3 行，套餐和总额度数字一致时自动合并）"),
-          ),
-          el("label", { class: "radio-option" },
-            el("input", {
-              type: "radio",
-              name: "xiaomi-display-mode",
-              value: "plan_only",
-              "data-action": "xiaomi-display-mode",
-            }),
-            el("span", {}, "只看套餐"),
-            el("small", {}, "（只显示套餐用量 + 重置时间）"),
-          ),
-          el("label", { class: "radio-option" },
-            el("input", {
-              type: "radio",
-              name: "xiaomi-display-mode",
-              value: "total_only",
-              "data-action": "xiaomi-display-mode",
-            }),
-            el("span", {}, "只看总额度"),
-            el("small", {}, "（只显示本月总消耗 + 重置时间）"),
-          ),
-        ),
+        el("label", { for: `xiaomi-display-mode-${meta.id}` }, "📊 浮窗显示模式"),
+        modeSelect,
         el("div", { class: "help" },
           "切到'只看总额度'时会复用套餐的月度重置时间（总额度也是按月清零）。",
         ),
@@ -461,6 +451,12 @@ export function apiKeyPlaceholder(id: string): string {
     case "openrouter": return "sk-or-v1-...";
     case "kimi":       return "sk-...";
     case "zhipu":      return "id.secret";
+    // 2026-06-16 新增（PR 2）
+    case "stepfun":    return "Oasis-Token...";
+    case "siliconflow":return "sk-...";
+    case "novita":     return "sk-...";
+    case "qwen":       return "sk-sp-...";
+    case "claude_official": return "sessionKey=...（或纯 value）";
     default:           return "...";
   }
 }
@@ -564,6 +560,78 @@ function apiKeyHelpNodes(id: string): (Node | string)[] {
         "）或 EN（",
         el("a", { href: "https://z.ai/manage-apikey/subscription", target: "_blank", class: "link-ext" }, "z.ai"),
         "）。两个平台的 key 不通用。",
+      ];
+    // ── 2026-06-16 新增（PR 2）──
+    case "stepfun":
+      return [
+        "StepFun（阶跃星辰）Step Plan 订阅套餐，5h + 周双窗口。",
+        el("br"),
+        el("strong", {}, "鉴权特殊"),
+        "：用 Oasis-Token（",
+        el("code", {}, "Cookie: Oasis-Token=<value>"),
+        "），不是普通 Bearer。",
+        el("br"),
+        "获取方法：Chrome 登录 ",
+        el("a", { href: "https://platform.stepfun.com", target: "_blank", class: "link-ext" }, "platform.stepfun.com"),
+        " → F12 → Network → 任意请求 → 找 ",
+        el("code", {}, "Oasis-Token"),
+        " Cookie value 整段复制。",
+        el("br"),
+        el("strong", {}, "已知限制"),
+        "：Oasis-Token 一般 7-30 天过期，过期时（HTTP 401）需重新登录提取。",
+        el("br"),
+        el("strong", {}, "暂不支持"),
+        " 3 步 OAuth 自动登录流（Phase X 补）。",
+      ];
+    case "siliconflow":
+      return [
+        "SiliconFlow（硅基流动）钱包余额，按 CNY 显示。",
+        el("br"),
+        "从 ",
+        el("a", { href: "https://cloud.siliconflow.cn/account/ak", target: "_blank", class: "link-ext" }, "cloud.siliconflow.cn"),
+        " 获取 API key。",
+      ];
+    case "novita":
+      return [
+        el("strong", {}, "⚠️ Novita AI 暂未支持"),
+        " —— 公开 API ref 没有 balance/quota endpoint（2026-06-16 确认）。",
+        el("br"),
+        "设置面板可启用，但 fetch 永远返回「未支持」错。等官方公开后可参考 SiliconFlow 模式补 do_fetch。",
+      ];
+    case "qwen":
+      return [
+        el("strong", {}, "⚠️ Qwen / DashScope 暂未支持"),
+        " —— 公开 API 无 quota endpoint（",
+        el("a", { href: "https://github.com/steipete/CodexBar/issues/612", target: "_blank", class: "link-ext" }, "CodexBar issue #612"),
+        " 实测确认）。",
+        el("br"),
+        "设置面板可启用，但 fetch 永远返回「未支持」错。Phase X 走 Coding Plan OAuth flow 补。",
+      ];
+    case "claude_official":
+      return [
+        "Claude Pro / Max 官方 OAuth 用量监控。",
+        el("br"),
+        el("strong", {}, "鉴权特殊"),
+        "：用 Cookie ",
+        el("code", {}, "sessionKey=<value>"),
+        "（不是 Bearer API key）。",
+        el("br"),
+        "获取方法：Chrome 登录 ",
+        el("a", { href: "https://claude.ai", target: "_blank", class: "link-ext" }, "claude.ai"),
+        " → F12 → Application → Cookies → ",
+        el("code", {}, "sessionKey"),
+        " 整段 value 复制（或只粘纯 value 也行，程序自动补 ",
+        el("code", {}, "sessionKey="),
+        " 前缀）。",
+        el("br"),
+        el("strong", {}, "已知限制"),
+        "：",
+        el("ol", { style: "margin: 4px 0; padding-left: 20px;" },
+          el("li", {}, "sessionKey 约 8h 过期（claude.ai 登录 session 失效）"),
+          el("li", {}, "OAuth usage API 偶发 429（",
+            el("a", { href: "https://github.com/anthropics/claude-code/issues/31021", target: "_blank", class: "link-ext" }, "claude-code#31021"),
+            "），属 Anthropic 端问题，Musage 不重试"),
+        ),
       ];
     default:
       return ["API key 存到本机 keys.json。"];
@@ -743,12 +811,11 @@ export function bindCredentialButtonsGlobal() {
     }
   });
 
-  // radio 用 'change' 事件，不用 click（click 在同一个 radio 上不会重复触发，
-  // 但 change 会）
+  // select 用 'change' 事件：用户切了 option 就即时落盘。
   document.addEventListener("change", (e) => {
     const t = e.target as HTMLElement;
     if (t.dataset.action !== "xiaomi-display-mode") return;
-    const value = (t as HTMLInputElement).value;
+    const value = (t as HTMLSelectElement).value;
     if (value !== "all" && value !== "plan_only" && value !== "total_only") return;
     void xiaomiDisplayModeAction(value);
   });
@@ -772,9 +839,9 @@ async function xiaomiDisplayModeAction(
   }
 }
 
-/// 初始化 Xiaomi 显示模式的 radio 选中状态。
+/// 初始化 Xiaomi 显示模式的下拉选中状态。
 /// 在 settings/main.ts init() 调一次（renderProvidersSection 之后），
-/// 渲染完面板后让 radio 反映后端的当前值。
+/// 渲染完面板后让 select 反映后端的当前值。
 ///
 /// 后端默认 `total_only` —— 老 config.json 没有 xiaomi_display_mode 字段
 /// → `unwrap_or_default()` 落到 TotalOnly → 这里 fallback 也走 total_only，
@@ -783,10 +850,8 @@ export async function loadXiaomiDisplayMode(): Promise<void> {
   const container = document.querySelector<HTMLElement>("[data-id='xiaomimimo']");
   if (!container) return;  // Xiaomi panel 还没渲染
   const mode = await getXiaomiDisplayMode().catch(() => "total_only");
-  const radios = container.querySelectorAll<HTMLInputElement>(
-    "input[data-action='xiaomi-display-mode']"
+  const select = container.querySelector<HTMLSelectElement>(
+    "select[data-action='xiaomi-display-mode']"
   );
-  for (const r of radios) {
-    r.checked = r.value === mode;
-  }
+  if (select) select.value = mode;
 }

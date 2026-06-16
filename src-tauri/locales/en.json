@@ -48,6 +48,7 @@
       "network": "Network error [{url}]: {err}",
       "parse_json": "Response is not JSON: {err}",
       "http_error": "{provider} service error (HTTP {status}): {body}",
+      "http_error_simple": "HTTP {status} ({provider})",
       "business_code": "{provider} API error (code {code}): {msg}",
       "missing_field": "{provider} response missing {field}",
       "rate_limited": "{provider} rate limited, please try again later"

@@ -1,0 +1,309 @@
+//! SiliconFlow（硅基流动）钱包余额查询
+//!
+//! 端点：`GET https://api.siliconflow.cn/v1/user/info`
+//! 鉴权：`Authorization: Bearer <api_key>`
+//!
+//! ## 响应 schema（实测确认，2026-06-16）
+//!
+//! ```json
+//! {
+//!   "code": 20000,
+//!   "message": "OK",
+//!   "status": true,
+//!   "data": {
+//!     "id": "userid",
+//!     "name": "username",
+//!     "image": "...",
+//!     "email": "user@example.com",
+//!     "isAdmin": false,
+//!     "balance": "0.88",        // 剩余可用余额（字符串数字）
+//!     "status": "normal",
+//!     "introduction": "",
+//!     "role": "",
+//!     "chargeBalance": "88.00", // 充值余额
+//!     "totalBalance": "88.88"   // 总余额（charge + 赠送等）
+//!   }
+//! }
+//! ```
+//!
+//! ## 渲染策略
+//!
+//! - 主行 `余额`：`data.balance`（可用余额，字符串 → f64），unit = `"CNY"`
+//!
+//! ## 已知坑
+//!
+//! - 余额字段是**字符串**（不是数字），用 `parse_f64` 容错
+//! - 非 `status=true` 视为业务错误（带 message）
+//! - 没有"已用"概念（钱包余额是 current_balance）
+//! - 没有多区域（单域名 api.siliconflow.cn）
+
+use std::pin::Pin;
+
+use super::{
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
+};
+
+const URL: &str = "https://api.siliconflow.cn/v1/user/info";
+
+// ── QuotaSource 实现 ─────────────────────────────────────────────
+
+pub struct SiliconflowSource;
+
+impl Default for SiliconflowSource {
+    fn default() -> Self { Self }
+}
+
+impl QuotaSource for SiliconflowSource {
+    fn id(&self) -> &'static str { "siliconflow" }
+    fn display_name(&self) -> &'static str { "SiliconFlow" }
+    fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
+
+    fn set_state<'a>(
+        &'a self,
+        _cfg: serde_json::Value,
+    ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+        // SiliconFlow 无 region / overrides 概念，忽略
+        Box::pin(async move {})
+    }
+
+    fn fetch<'a>(
+        &'a self,
+        credentials: &'a Credentials,
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>> {
+        Box::pin(async move {
+            let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
+            if api_key.is_empty() {
+                return Err(FetchError::unconfigured("未配置 SiliconFlow API key（设置面板填入）"));
+            }
+            do_fetch(api_key).await
+        })
+    }
+}
+
+async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
+    if api_key.trim().is_empty() {
+        return Err(FetchError::unconfigured("API key 为空"));
+    }
+
+    let client = shared_client();
+
+    let resp = client
+        .get(URL)
+        .header("Authorization", format!("Bearer {api_key}"))
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|e| FetchError::network(format!("SiliconFlow 网络错误: {e}")))?;
+
+    let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(FetchError::auth("鉴权失败，请检查 SiliconFlow API key"));
+    }
+    if status == reqwest::StatusCode::FORBIDDEN {
+        return Err(FetchError::auth("无权限访问 SiliconFlow 钱包（HTTP 403）"));
+    }
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(FetchError::new(ErrorKind::RateLimited, "SiliconFlow 请求过于频繁，请稍后再试"));
+    }
+    if !status.is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(FetchError::server(format!(
+            "SiliconFlow 服务异常 (HTTP {status}): {}",
+            body.chars().take(200).collect::<String>()
+        )));
+    }
+
+    let raw: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| FetchError::parse(format!("响应不是 JSON: {e}")))?;
+
+    parse(&raw)
+}
+
+/// 解析 SiliconFlow /user/info 响应 → QuotaRow 列表。
+fn parse(raw: &serde_json::Value) -> Result<ProviderSnapshot, FetchError> {
+    let now_ms = chrono::Utc::now().timestamp_millis();
+
+    // 业务级 status 检查（code != 20000 或 status != true 都视为业务错误）
+    if raw.get("status").and_then(|v| v.as_bool()) == Some(false) {
+        let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("Unknown error");
+        return Err(FetchError::server(format!("SiliconFlow API error: {msg}")));
+    }
+    let code = raw.get("code").and_then(|v| v.as_i64()).unwrap_or(0);
+    if code != 0 && code != 20000 {
+        let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("Unknown error");
+        return Err(FetchError::server(format!("SiliconFlow API error (code {code}): {msg}")));
+    }
+
+    let data = raw
+        .get("data")
+        .ok_or_else(|| FetchError::parse("SiliconFlow 响应缺少 data 字段".to_string()))?;
+
+    // 余额字段是字符串 → parse_f64 容错
+    let balance = parse_f64(data.get("balance"))
+        .ok_or_else(|| FetchError::parse("SiliconFlow 响应缺少 data.balance".to_string()))?;
+
+    let account_status = data
+        .get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("normal");
+    let is_healthy = account_status == "normal";
+
+    let rows = vec![QuotaRow {
+        label: "余额".to_string(),
+        utilization: None,
+        remaining: Some(balance),
+        used: None,
+        total: None,
+        resets_at: None,
+        unit: Some("CNY".to_string()),
+        extra: None,
+    }];
+
+    Ok(ProviderSnapshot {
+        // 沿用 Provider::Minimax 占位 —— SiliconFlow 没有自己的 enum 变体。
+        // 前端应该用 source_id 字段查 PROVIDER_META。
+        provider: super::Provider::Minimax,
+        success: true,
+        rows,
+        error: None,
+        error_kind: None,
+        fetched_at: Some(now_ms),
+        raw: Some(raw.clone()),
+        is_healthy,
+        source_id: Some("siliconflow".to_string()),
+        source_display_name: Some("SiliconFlow".to_string()),
+        plan_name: None,
+    })
+}
+
+/// 兼容数字和字符串两种 JSON 表示（SiliconFlow 余额字段是字符串）。
+fn parse_f64(v: Option<&serde_json::Value>) -> Option<f64> {
+    v.and_then(|x| {
+        x.as_f64()
+            .or_else(|| x.as_str().and_then(|s| s.trim().parse().ok()))
+    })
+}
+
+// ── 单元测试 ─────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_full_response() {
+        let raw = json!({
+            "code": 20000,
+            "message": "OK",
+            "status": true,
+            "data": {
+                "id": "u-123",
+                "name": "alice",
+                "balance": "0.88",
+                "chargeBalance": "88.00",
+                "totalBalance": "88.88",
+                "status": "normal"
+            }
+        });
+        let snap = parse(&raw).expect("parse");
+        assert!(snap.success);
+        assert_eq!(snap.source_id.as_deref(), Some("siliconflow"));
+        assert_eq!(snap.source_display_name.as_deref(), Some("SiliconFlow"));
+        assert!(snap.is_healthy);
+        assert_eq!(snap.rows.len(), 1);
+        assert_eq!(snap.rows[0].label, "余额");
+        assert!((snap.rows[0].remaining.unwrap() - 0.88).abs() < 0.001);
+        assert_eq!(snap.rows[0].unit.as_deref(), Some("CNY"));
+    }
+
+    #[test]
+    fn parse_balance_as_number_also_works() {
+        // 防御性：未来如果 API 改成 number 也要兼容
+        let raw = json!({
+            "code": 20000,
+            "status": true,
+            "data": {
+                "balance": 12.34,
+                "status": "normal"
+            }
+        });
+        let snap = parse(&raw).expect("parse");
+        assert!((snap.rows[0].remaining.unwrap() - 12.34).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_status_false_is_error() {
+        let raw = json!({
+            "code": 50000,
+            "message": "internal error",
+            "status": false
+        });
+        let err = parse(&raw).unwrap_err();
+        // 业务级失败 → ServerError（前端按 server_error 处理）
+        assert_eq!(err.kind, FetchError::server("test").kind);
+        assert!(err.message.contains("internal error"));
+    }
+
+    #[test]
+    fn parse_non_normal_status_is_unhealthy_but_still_success() {
+        // account.status = "frozen" / "banned" 这种 —— 响应本身 200 + status=true，
+        // 但账户被冻结。仍按"拉取成功"算，让 UI 显示"账户状态: frozen"。
+        let raw = json!({
+            "code": 20000,
+            "status": true,
+            "data": {
+                "balance": "5.00",
+                "status": "frozen"
+            }
+        });
+        let snap = parse(&raw).expect("parse");
+        assert!(snap.success);
+        assert!(!snap.is_healthy); // 健康度 = false
+        assert!((snap.rows[0].remaining.unwrap() - 5.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_missing_balance_is_error() {
+        let raw = json!({
+            "code": 20000,
+            "status": true,
+            "data": { "id": "u-1" }  // 没 balance
+        });
+        let err = parse(&raw).unwrap_err();
+        assert_eq!(err.kind, FetchError::parse("test").kind);
+    }
+
+    #[test]
+    fn parse_missing_data_is_error() {
+        let raw = json!({ "code": 20000, "status": true });
+        let err = parse(&raw).unwrap_err();
+        assert_eq!(err.kind, FetchError::parse("test").kind);
+    }
+
+    #[test]
+    fn parse_f64_handles_string() {
+        let v = json!("12.34");
+        assert_eq!(parse_f64(Some(&v)), Some(12.34));
+    }
+
+    #[test]
+    fn parse_f64_handles_number() {
+        let v = json!(12.34);
+        assert_eq!(parse_f64(Some(&v)), Some(12.34));
+    }
+
+    #[test]
+    fn parse_f64_handles_invalid_string() {
+        let v = json!("not a number");
+        assert_eq!(parse_f64(Some(&v)), None);
+    }
+
+    #[test]
+    fn parse_f64_handles_null() {
+        let v = json!(null);
+        assert_eq!(parse_f64(Some(&v)), None);
+    }
+}

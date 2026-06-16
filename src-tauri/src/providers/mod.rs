@@ -15,10 +15,15 @@
 //! 旧 [`ProviderSnapshot`] / [`ProviderImpl`] 也保留别名，commands.rs 走
 //! [`builtin_sources`] 路径，但 `dump` CLI 和 `set_api_key_for` 仍按 enum 走。
 
+pub mod claude_official;
 pub mod deepseek;
 pub mod kimi;
 pub mod minimax;
+pub mod novita;
 pub mod openrouter;
+pub mod qwen;
+pub mod siliconflow;
+pub mod stepfun;
 pub mod tavily;
 pub mod xiaomi;
 pub mod zenmux;
@@ -365,6 +370,16 @@ pub trait QuotaSource: Send + Sync {
 /// 全部内置 source 的注册表。commands.rs 和 dump CLI 都从这里拿 source。
 ///
 /// **新增 source 只需要在这里加一行**。
+///
+/// ## 顺序 = 浮窗卡片默认顺序（cfg.provider_order 为空时）
+///
+/// 历史顺序：minimax / deepseek / xiaomi / tavily / zenmux / openrouter / kimi / zhipu
+/// 2026-06-16 新增 5 个：
+/// - **stepfun**：Oasis-Token（手动粘贴），Step Plan 套餐用量
+/// - **siliconflow**：Bearer，硅基流动钱包余额
+/// - **novita** / **qwen**：STUB，公开 API 无 quota endpoint，fetch 永久返回
+///   "未支持"错（前端可见，UI 不报错）
+/// - **claude_official**：Cookie，Claude Pro/Max 官方 OAuth 用量
 pub fn builtin_sources() -> Vec<Box<dyn QuotaSource>> {
     vec![
         Box::new(minimax::MinimaxSource::default()),
@@ -375,6 +390,12 @@ pub fn builtin_sources() -> Vec<Box<dyn QuotaSource>> {
         Box::new(openrouter::OpenrouterSource::default()),
         Box::new(kimi::KimiSource::default()),
         Box::new(zhipu::ZhipuSource::default()),
+        // 2026-06-16 新增（PR 2）
+        Box::new(stepfun::StepfunSource::default()),
+        Box::new(siliconflow::SiliconflowSource::default()),
+        Box::new(novita::NovitaSource::default()),
+        Box::new(qwen::QwenSource::default()),
+        Box::new(claude_official::ClaudeOfficialSource::default()),
     ]
 }
 

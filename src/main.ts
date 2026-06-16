@@ -130,7 +130,7 @@ function applyColorOverrides(): void {
   }
 }
 
-import { t, initLocale, onLocaleChange } from "./i18n";
+import { t, initLocale, onLocaleChange, setLocale } from "./i18n";
 
 
 
@@ -850,6 +850,13 @@ async function init() {
     // 重新渲染 loading/error 态（文字也会变）
     const snap = lastRenderedSnap;
     if (snap) render(snap);
+  });
+  // 监听 Rust 端 locale-changed 事件（设置面板切语言时触发，跨 webview 同步）
+  listen<string>("musage://locale-changed", async (e) => {
+    const newLocale = e.payload;
+    if (newLocale === "en" || newLocale === "zh-CN") {
+      await setLocale(newLocale); // loadLocale + current 更新 + onLocaleChange 触发
+    }
   });
 
   const w = getCurrentWindow();

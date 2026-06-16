@@ -34,10 +34,10 @@
       "reset_suffix": " reset",
       "monthly_prefix": "Monthly reset",
       "placeholder": "—",
-      "reset_done": "(reset)",
-      "days_left": "({days}d)",
-      "minutes_left": "(in {minutes} min)",
-      "hours_minutes": "({hours}h{minutes}m)"
+      "reset_done": " (reset)",
+      "days_left": " ({days}d)",
+      "minutes_left": " (in {minutes} min)",
+      "hours_minutes": " ({hours}h{minutes}m)"
     },
     "error": { "unknown": "Unknown error" }
   },

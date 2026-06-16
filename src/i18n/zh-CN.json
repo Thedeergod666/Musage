@@ -37,7 +37,7 @@
       "reset_done": "（已重置）",
       "days_left": "（{days}天）",
       "minutes_left": "（{minutes} 分钟后）",
-      "hours_minutes": "（{hours}h{minutes}m）"
+      "hours_minutes": " （{hours}h{minutes}m）"
     },
     "error": { "unknown": "未知错误" }
   },

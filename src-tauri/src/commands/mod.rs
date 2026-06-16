@@ -24,7 +24,7 @@ use tauri_plugin_autostart::ManagerExt;
 
 use crate::config::{self, AppConfig, FloatingPinMode, ProviderConfig, TrayIconStyle};
 use crate::providers::{
-    builtin_sources, find_source, AuthKind, Credentials, ErrorKind, Provider, ProviderSnapshot, QuotaSnapshot, QuotaSource,
+    builtin_sources, find_source, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderSnapshot, QuotaSnapshot, QuotaSource,
 };
 use crate::providers::xiaomi::XiaomiDisplayMode;
 use crate::AppState;
@@ -729,7 +729,8 @@ pub fn apply_pin_mode_to_window(app: &AppHandle, mode: FloatingPinMode) {
 pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnapshot, String> {
     // 按 cfg 准备好 sources（避免在 spawn 闭包里 .await 持锁）
     let sources = builtin_sources();
-    let mut tasks: Vec<(String, u64, tokio::task::JoinHandle<Result<ProviderSnapshot, String>>)> =
+    // P1 重构：closure 返 FetchError 而不是 String，kind 在 collect 时直接拿。
+    let mut tasks: Vec<(String, u64, tokio::task::JoinHandle<Result<ProviderSnapshot, FetchError>>)> =
         Vec::new();
 
     for src in &sources {
@@ -768,26 +769,27 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                     .find(|s| s.id() == id)
                     .expect("source still registered");
                 update_source_state(&src_box, cfg).await;
-                let task: tokio::task::JoinHandle<Result<ProviderSnapshot, String>> =
+                // P1 重构：返回 FetchError 而不是 String，kind 在 closure 内就
+                // 保留住，collect 时直接 e.kind 拿（不再走 classify_error_message）。
+                let task: tokio::task::JoinHandle<Result<ProviderSnapshot, FetchError>> =
                     tokio::spawn(async move {
-                        match src_box.fetch(&creds).await {
-                            Ok(snap) => Ok(snap),
-                            Err(e) => Err(e.message),  // message 给前端看，kind 由 classify 还原
-                        }
+                        src_box.fetch(&creds).await
                     });
                 tasks.push((id_owned, default_interval_secs, task));
             }
             Ok(None) => {
                 let id_owned = id.to_string();
                 let task = tokio::spawn(async move {
-                    Err("未配置凭据（设置面板填入）".to_string())
+                    Err(FetchError::unconfigured("未配置凭据（设置面板填入）"))
                 });
                 tasks.push((id_owned, default_interval_secs, task));
             }
             Err(e) => {
                 let id_owned = id.to_string();
                 let task = tokio::spawn(async move {
-                    Err(format!("读 keys.json 失败: {e}"))
+                    // 读 keys.json 失败归到 Network（IO 错误类），不归到 Other
+                    // 让前端能正确分类显示
+                    Err(FetchError::network(format!("读 keys.json 失败: {e}")))
                 });
                 tasks.push((id_owned, default_interval_secs, task));
             }
@@ -808,15 +810,16 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                 snap.providers.push(s);
             }
             Ok(Err(e)) => {
+                // P1 重构：kind 直接从 FetchError 取，不再走 classify_error_message
+                // 子串匹配（旧实现 i18n 一动就破）。
                 let provider = provider_from_id(&id);
-                let kind = classify_error_message(&e);
-                log_provider_error(app, &id, kind, &e);
+                log_provider_error(app, &id, e.kind, &e.message);
                 let err_snap = ProviderSnapshot::empty_error(
                     &app.state::<AppState>(),
                     provider,
                     &id,
-                    kind,
-                    e,
+                    e.kind,
+                    e.message,
                 ).await;
                 // 写 backoff：失败（如果 kind 属于可退避类）→ 翻倍
                 {
@@ -1020,27 +1023,15 @@ pub async fn update_source_state(src: &Box<dyn QuotaSource>, cfg: &AppConfig) {
 
 /// 把 provider 抛出的中文错误串映射成 [`ErrorKind`]。
 ///
-/// Phase 1 起，理想情况下 provider 返回的是 [`FetchError`]（带 kind），但
-/// 为了保持 refresh_inner 的鲁棒性，这里仍然对最终的中文消息做兜底分类。
-fn classify_error_message(msg: &str) -> ErrorKind {
-    let m = msg;
-    if m.contains("API key 为空") || m.contains("未配置") {
-        ErrorKind::UnconfiguredKey
-    } else if m.contains("鉴权失败") || m.contains("无权限") || m.contains("HTTP 401") || m.contains("HTTP 403") {
-        ErrorKind::AuthFailed
-    } else if m.contains("频繁") || m.contains("HTTP 429") {
-        ErrorKind::RateLimited
-    } else if m.starts_with("网络错误") || m.contains("网络错误") {
-        ErrorKind::Network
-    } else if m.contains("不是 JSON") {
-        ErrorKind::Parse
-    } else if m.contains("未识别 schema") {
-        ErrorKind::SchemaUnknown
-    } else if m.contains("服务异常") || m.contains("HTTP 5") {
-        ErrorKind::ServerError
-    } else {
-        ErrorKind::Other
-    }
+/// P1 错误分类重构：删了。
+/// 旧实现对中文字符串做子串匹配（鉴权失败 / 网络错误 / ...），i18n 一动
+/// （Rust 错误消息改 tr!() 走 en.json）就全破。
+/// 现在 refresh_inner closure 直接返回 [`FetchError`]（带 kind），
+/// 这里不再需要兜底分类。详见 `refresh_inner` L774 注释。
+#[allow(dead_code)]
+fn _classify_error_message_removed(_msg: &str) -> ErrorKind {
+    // 保留一个占位 stub 防止别处误引用（编译期 dead_code 警告，不影响产物）。
+    ErrorKind::Other
 }
 
 // ── 日志：错误事件下沉到 LogStore ────────────────────────────────────
@@ -1073,7 +1064,9 @@ fn log_provider_error(app: &AppHandle, provider_id: &str, kind: ErrorKind, messa
     if is_in_clear_grace(now) {
         return;
     }
-    let key = (provider_id.to_string(), kind.short_label());
+    // P1 重构：用 ErrorKind::as_str()（snake_case）作为 dedup key —— 跟 serde
+    // 序列化的形式一致，i18n 切换不会破坏去重窗口。
+    let key = (provider_id.to_string(), kind.as_str());
 
     // 去重判断：拿锁尽量短
     {
@@ -1092,7 +1085,7 @@ fn log_provider_error(app: &AppHandle, provider_id: &str, kind: ErrorKind, messa
     let state = app.state::<AppState>();
     state.log.push(crate::logstore::LogEntry::error(
         provider_id,
-        kind.short_label(),
+        kind.as_str(),
         message,
     ));
 }

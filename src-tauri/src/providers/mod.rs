@@ -143,17 +143,20 @@ pub enum ErrorKind {
 }
 
 impl ErrorKind {
-    /// 给前端的简短文案（≤ 8 字中文，适合卡片标题）
-    pub fn short_label(&self) -> &'static str {
+    /// snake_case 形式（跟 serde rename_all 一致）—— 给 LogEntry / dedup key 用。
+    /// **不要**拿这个当用户可见 label：用户可见的 label 走前端 `t("error.${kind}")`。
+    /// P1 错误分类重构：删了原来的 `short_label`（中文），改用这个跟 serde
+    /// 一致的稳定字符串，dedup 不会因为 i18n 切换失效。
+    pub fn as_str(&self) -> &'static str {
         match self {
-            ErrorKind::UnconfiguredKey => "未配置 Key",
-            ErrorKind::AuthFailed => "Key 无效",
-            ErrorKind::RateLimited => "请求过快",
-            ErrorKind::Network => "网络错误",
-            ErrorKind::Parse => "响应异常",
-            ErrorKind::SchemaUnknown => "Schema 未知",
-            ErrorKind::ServerError => "服务异常",
-            ErrorKind::Other => "未知错误",
+            ErrorKind::UnconfiguredKey => "unconfigured_key",
+            ErrorKind::AuthFailed => "auth_failed",
+            ErrorKind::RateLimited => "rate_limited",
+            ErrorKind::Network => "network",
+            ErrorKind::Parse => "parse",
+            ErrorKind::SchemaUnknown => "schema_unknown",
+            ErrorKind::ServerError => "server_error",
+            ErrorKind::Other => "other",
         }
     }
 

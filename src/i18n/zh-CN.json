@@ -1,3 +1,17 @@
 {
-  "_meta": "P0 scaffolding — 空壳结构，P1 阶段填实际翻译。详见 memory/musage-i18n-conventions.md"
+  "_meta": "P0 scaffolding + P1 error labels. P1 strings phase 填全部 UI 文案。详见 memory/musage-i18n-conventions.md",
+  "error": {
+    "unconfigured_key": "未配置 Key",
+    "auth_failed": "Key 无效",
+    "rate_limited": "请求过快",
+    "network": "网络错误",
+    "parse": "响应异常",
+    "schema_unknown": "Schema 未知",
+    "server_error": "服务异常",
+    "other": "未知错误"
+  },
+  "window": {
+    "settings": "Musage · 设置",
+    "xiaomi_login": "登录小米账号 - Musage"
+  }
 }

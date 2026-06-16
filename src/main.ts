@@ -117,7 +117,9 @@ function applyColorOverrides(): void {
   }
 }
 
-// ── 类型（必须和 src-tauri/src/providers/mod.rs 对齐）──
+import { t } from "./i18n";
+
+
 
 interface QuotaRow {
   label: string;
@@ -222,19 +224,13 @@ const lastGoodSnap = new Map<string, ProviderSnapshot>();
 /// 重新 fit。详见 `contentFingerprint` + `autoResizeWindow`。
 let lastFitFingerprint: string | null = null;
 
-const ERROR_LABELS: Record<string, string> = {
-  unconfigured_key: "未配置 Key",
-  auth_failed: "Key 无效",
-  rate_limited: "请求过快",
-  network: "网络错误",
-  parse: "响应异常",
-  schema_unknown: "Schema 未知",
-  server_error: "服务异常",
-  other: "未知错误",
-};
-
+/**
+ * ErrorKind 简短 label —— P1 错误分类重构后走 i18n。
+ * 8 个 key 跟 Rust 端 `ErrorKind::as_str()`（snake_case）严格对齐，
+ * 后端改 ErrorKind 变体时这里要同步。缺失 → dev mode console 报警。
+ */
 function errorKindLabel(k: string): string {
-  return ERROR_LABELS[k] ?? "未知错误";
+  return t(`error.${k}`);
 }
 
 // ── 渲染入口 ──

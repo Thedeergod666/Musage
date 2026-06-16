@@ -1,3 +1,17 @@
 {
-  "_meta": "P0 scaffolding — empty. P1 will fill all UI strings. See memory/musage-i18n-conventions.md"
+  "_meta": "P0 scaffolding + P1 error labels. P1 strings phase will fill all UI strings. See memory/musage-i18n-conventions.md",
+  "error": {
+    "unconfigured_key": "No API key",
+    "auth_failed": "Auth failed",
+    "rate_limited": "Rate limited",
+    "network": "Network error",
+    "parse": "Parse error",
+    "schema_unknown": "Schema unknown",
+    "server_error": "Server error",
+    "other": "Unknown error"
+  },
+  "window": {
+    "settings": "Musage · Settings",
+    "xiaomi_login": "Login Xiaomi — Musage"
+  }
 }

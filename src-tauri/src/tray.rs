@@ -428,7 +428,11 @@ fn fill_rounded_rect(
 ///   "33%" / "100%" / "0%" 各种长度都对齐到右边
 /// - **无背板**：纯白文字 + Bold 字体（macOS 优先 Arial Black）字形本身
 ///   足够粗，菜单栏透明背景上自然清晰
-/// - **scale 14**：比 v1 的 11 大一档，菜单栏渲染到 ~16px 时字形不糊
+/// - **scale 16**（用户 2026-06-15 反馈：14 还偏小，菜单栏看不清）：比 v1 的
+///   11 大两档；menu bar 实际渲染到 ~16px（macOS）或 ~64px（Win11 高 DPI）
+///   时字形都不糊。layout 不动（y_top / y_bot 间距 16px）正好等于字号，
+///   ascent ≈ 0.8 × scale，第一行底部 ≈ y_top + 13（32 图标）/ 26（64 图标），
+///   第二行顶部 y_bot 不冲突。
 ///
 /// font 缺失时 fallback 到 `draw_mini_bars`（保持信息密度，不留空让用户
 /// 困惑 "是不是没数据"）。
@@ -438,7 +442,7 @@ fn draw_percent(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64, 
     };
 
     let s = ICON_SIZE as i32;
-    let scale = PxScale::from(s as f32 * 14.0 / 32.0); // 14 → 28
+    let scale = PxScale::from(s as f32 * 16.0 / 32.0); // 16 → 32
     // 两行基线：上行顶部 y=2，下行顶部 y=18。两者之间留 2px 空隙避免粘连。
     let y_top = s * 2 / 32;  //  2 →  4
     let y_bot = s * 18 / 32; // 18 → 36

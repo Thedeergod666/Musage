@@ -1,0 +1,7 @@
+{
+  "_meta": "P0 scaffolding — minimum keys for window titles. Filled in P1. See memory/musage-i18n-conventions.md",
+  "window": {
+    "settings": "Musage · Settings",
+    "xiaomi_login": "Login Xiaomi — Musage"
+  }
+}

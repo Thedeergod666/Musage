@@ -189,6 +189,62 @@ pub struct AppConfig {
     /// idle（未 hover）状态保持白色，跟改动前一致。
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub color_overrides: BTreeMap<String, String>,
+    /// P0 国际化：UI 语言代码。"zh-CN" / "en"。默认 "zh-CN"（老用户不感知）。
+    /// `#[serde(default = "default_locale")]` 让老 config.json 缺这字段时走中文。
+    #[serde(default = "default_locale")]
+    pub locale: String,
+    /// P2 区域：首次启动向导选定。"cn"（默认）/ "global" / "custom"。
+    /// 决定 default provider 顺序 + MiniMax/Zhipu 默认 endpoint。
+    /// `#[serde(default)]` 让老 config.json 缺这字段时走 "cn"（不动现有行为）。
+    #[serde(default)]
+    pub user_region: UserRegion,
+}
+
+/// 用户的"主用区域"——影响默认 provider 顺序 + 部分 provider 的默认 endpoint。
+///
+/// - `Cn`     ：中国用户。默认 provider 顺序把 MiniMax / Xiaomi MiMo / 智谱排前；
+///              MiniMax / Zhipu 默认 endpoint 走国内。
+/// - `Global` ：海外用户。默认 provider 顺序把 OpenRouter / Claude 官方排前；
+///              MiniMax / Zhipu 默认 endpoint 走国际。
+/// - `Custom` ：用户在设置面板手动调过顺序 / endpoint，**不要**再用区域默认值
+///              覆盖（避免"我刚改完结果被默认值拍回去"的体验坑）。
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum UserRegion {
+    #[default]
+    Cn,
+    Global,
+    Custom,
+}
+
+impl UserRegion {
+    /// 该区域默认的 provider 顺序（builtin_sources() 的 id 字符串）。
+    /// 写死，按"该区域用户最可能用什么"排序。
+    pub fn default_provider_order(&self) -> &'static [&'static str] {
+        match self {
+            UserRegion::Cn => &[
+                "minimax", "deepseek", "xiaomimimo", "kimi", "zhipu",
+                "qwen", "openrouter", "tavily", "zenmux",
+                "stepfun", "siliconflow", "novita", "claude_official",
+            ],
+            UserRegion::Global => &[
+                "openrouter", "claude_official", "tavily", "deepseek",
+                "zenmux", "kimi", "siliconflow", "minimax",
+                "zhipu", "stepfun", "novita", "qwen", "xiaomimimo",
+            ],
+            // Custom：理论上不该被调用（set_region 守卫），但兜底走 Cn
+            UserRegion::Custom => &[
+                "minimax", "deepseek", "xiaomimimo", "kimi", "zhipu",
+                "qwen", "openrouter", "tavily", "zenmux",
+                "stepfun", "siliconflow", "novita", "claude_official",
+            ],
+        }
+    }
+}
+
+fn default_locale() -> String {
+    // serde_default 要 fn() -> String，不能 const fn（String 不是 const-friendly）。
+    "zh-CN".to_string()
 }
 
 const fn tavily_concise_default() -> bool {
@@ -306,6 +362,10 @@ impl Default for AppConfig {
             color_thresholds: default_color_thresholds(),
             wallet_alert_threshold: None,
             color_overrides: BTreeMap::new(),
+            // P0 老用户走 zh-CN，海外用户通过 P2 向导切到 en
+            locale: default_locale(),
+            // P2 首次启动默认 Cn（保持现有用户体验），用户主动切区域后变 Custom
+            user_region: UserRegion::default(),
         }
     }
 }

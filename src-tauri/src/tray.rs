@@ -106,29 +106,8 @@ const ICON_SIZE: u32 = 64;
 const ICON_SIZE: u32 = 32;
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
-    // 显隐合并：菜单里只留一个 "切换悬浮窗"，内部根据当前可见性自动判断
-    // 该 show 还是 hide。跟左键单击同逻辑（on_tray_icon_event 里的 toggle）。
-    let toggle_i = MenuItem::with_id(app, "toggle", "切换悬浮窗", true, None::<&str>)?;
-    let settings_i = MenuItem::with_id(app, "settings", "设置...", true, None::<&str>)?;
-    let refresh_i = MenuItem::with_id(app, "refresh", "立即刷新", true, None::<&str>)?;
-    // **Win 端 z-order 逃生口**（2026-06-12）：hover-raise 的 16ms tick +
-    // dual-path + 焦点事件 hook 多管齐下，OS 还是持续 demote `WS_EX_TOPMOST`。
-    // 给用户一个**主动**操作：菜单里点 "强制置顶浮窗" 走
-    // `AllowSetForegroundWindow(ASFW_ANY) + SetForegroundWindow`，靠**抢前台**
-    // 把浮窗真顶到最上面（**会**抢焦点，但用户点菜单那一瞬间本来就在
-    // 操作我们 app，UX 可接受）。
-    let force_top_i = MenuItem::with_id(
-        app,
-        "force_top_floating",
-        "置顶一下",
-        cfg!(target_os = "windows"),
-        None::<&str>,
-    )?;
-    let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(
-        app,
-        &[&toggle_i, &settings_i, &refresh_i, &force_top_i, &quit_i],
-    )?;
+    // 构造初始菜单（tray builder 一次吃完）。
+    let menu = build_tray_menu(app)?;
 
     let _tray = TrayIconBuilder::with_id("main-tray")
         .tooltip("Musage - 加载中…")
@@ -217,6 +196,50 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         })
         .build(app)?;
 
+    Ok(())
+}
+
+/// 构造 tray 菜单（独立成函数，方便 [`rebuild_tray`] 在 locale 切换时复用）。
+///
+/// **P0 阶段**：label 仍 hardcode 中文 —— tr!() 在 P1 阶段把 menu 5 条 + tooltip
+/// 8 个模板的 key 抽进 en.json / zh-CN.json 后再走翻译函数。
+/// 现在拆出来是为了 P1 时只需改这一处，setup() / rebuild_tray() 都通过它组装。
+///
+/// **Win 端 z-order 逃生口**（2026-06-12）：hover-raise 的 16ms tick +
+/// dual-path + 焦点事件 hook 多管齐下，OS 还是持续 demote `WS_EX_TOPMOST`。
+/// 给用户一个**主动**操作：菜单里点 "强制置顶浮窗" 走
+/// `AllowSetForegroundWindow(ASFW_ANY) + SetForegroundWindow`，靠**抢前台**
+/// 把浮窗真顶到最上面（**会**抢焦点，但用户点菜单那一瞬间本来就在
+/// 操作我们 app，UX 可接受）。
+fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let toggle_i = MenuItem::with_id(app, "toggle", "切换悬浮窗", true, None::<&str>)?;
+    let settings_i = MenuItem::with_id(app, "settings", "设置...", true, None::<&str>)?;
+    let refresh_i = MenuItem::with_id(app, "refresh", "立即刷新", true, None::<&str>)?;
+    let force_top_i = MenuItem::with_id(
+        app,
+        "force_top_floating",
+        "置顶一下",
+        cfg!(target_os = "windows"),
+        None::<&str>,
+    )?;
+    let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    Menu::with_items(
+        app,
+        &[&toggle_i, &settings_i, &refresh_i, &force_top_i, &quit_i],
+    )
+}
+
+/// P0：locale 切换时重新构造菜单并 `set_menu()` 替换（不是 remove+add，
+/// 避免 tray 短暂消失闪烁）。
+///
+/// 调用时机：[`crate::lib::run`] setup 里的 `musage://locale-changed` 监听器。
+/// 错误返回：仅 Tauri API 失败时返 Err，调用方记 warn 不阻塞。
+pub fn rebuild_tray(app: &AppHandle) -> tauri::Result<()> {
+    let Some(tray) = app.tray_by_id("main-tray") else {
+        return Ok(());  // tray 还没建好（极早期事件），跳过
+    };
+    let menu = build_tray_menu(app)?;
+    tray.set_menu(Some(menu))?;
     Ok(())
 }
 

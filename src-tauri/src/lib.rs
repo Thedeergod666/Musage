@@ -22,8 +22,13 @@ mod providers;
 mod tray;
 mod xiaomi_login;
 
+// P0 国际化：编译期展开 tr!() / t!() macro 时需要知道 locale 文件路径。
+// 必须在 `mod` 声明之后、其他文件 `use rust_i18n` 之前。
+// `fallback = "en"`：找不到 key 时退到英文（开发期抓漏翻的护栏）。
+rust_i18n::i18n!("locales", fallback = "en");
+
 use std::sync::Arc;
-use tauri::Manager;
+use tauri::{Listener, Manager};
 use tokio::sync::RwLock;
 
 use crate::config::AppConfig;
@@ -47,6 +52,11 @@ pub struct AppState {
     /// 读：providers::all_sources / find_source 拼 customs 进去。
     pub custom_sources: Arc<RwLock<Vec<CustomSourceSpec>>>,
 }
+
+/// 前端调用的"切换语言"命令。实现见 [`crate::commands::i18n::set_app_locale`]。
+/// 这里只 re-export 给 `tauri::generate_handler!` 用。
+pub use crate::commands::i18n::set_app_locale;
+pub use crate::commands::i18n::get_app_locale;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -77,6 +87,11 @@ pub fn run() {
         .setup(|app| {
             // 读取配置
             let config = AppConfig::load(&app.handle()).unwrap_or_default();
+
+            // P0：把 cfg.locale 推到 rust_i18n 的进程内 state，让 tr!() 立刻生效。
+            // 必须在 .setup 里最早做（之后 tr!() 才会拿到正确 locale）。
+            rust_i18n::set_locale(&config.locale);
+
             let cfg_handle = app.state::<AppState>();
 
             // 写入初始状态
@@ -84,6 +99,29 @@ pub fn run() {
                 let mut guard = cfg_handle.config.blocking_write();
                 *guard = config;
             }
+
+            // P0：监听 locale-changed 事件 → 重建 tray menu（用新 locale 的 label）
+            // + 同步 settings / xiaomi 窗口 title。
+            // 用 cloned AppHandle 在闭包外 spawn 一个长生命周期监听。
+            let app_for_locale = app.handle().clone();
+            app.listen("musage://locale-changed", move |event| {
+                if let Ok(locale) = serde_json::from_str::<String>(event.payload()) {
+                    rust_i18n::set_locale(&locale);
+                    // 重建 tray menu（label 走 tr!()，新 locale 立刻生效）
+                    if let Err(e) = crate::tray::rebuild_tray(&app_for_locale) {
+                        tracing::warn!(error = %e, "rebuild_tray 失败");
+                    }
+                    // 同步 settings 窗口 title
+                    if let Some(w) = app_for_locale.get_webview_window("settings") {
+                        let title = rust_i18n::t!("window.settings").to_string();
+                        let _ = w.set_title(&title);
+                    }
+                    if let Some(w) = app_for_locale.get_webview_window("xiaomi-login") {
+                        let title = rust_i18n::t!("window.xiaomi_login").to_string();
+                        let _ = w.set_title(&title);
+                    }
+                }
+            });
 
             // 启动后台轮询
             poller::start(app.handle().clone());
@@ -236,6 +274,9 @@ pub fn run() {
             commands::get_app_version,
             commands::get_recent_logs,
             commands::clear_logs,
+            // P0 国际化：locale 切换（persistence + 事件 + rust_i18n set_locale）
+            set_app_locale,
+            get_app_locale,
             // PR 3: 用户自定义 New API source (5 commands)
             commands::custom_sources::list_custom_sources,
             commands::custom_sources::add_custom_source,

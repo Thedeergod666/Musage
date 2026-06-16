@@ -1,0 +1,7 @@
+{
+  "_meta": "P0 scaffolding — 仅含 window titles 最小集，P1 填实际翻译。详见 memory/musage-i18n-conventions.md",
+  "window": {
+    "settings": "Musage · 设置",
+    "xiaomi_login": "登录小米账号 - Musage"
+  }
+}

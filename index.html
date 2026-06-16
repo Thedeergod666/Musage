@@ -1,9 +1,13 @@
 <!DOCTYPE html>
+<!--
+  lang attr 在 src/i18n/index.ts initLocale() 启动时被改成当前 locale
+  （默认 "zh-CN" 在 initLocale 跑之前短暂存在，跟旧行为 byte-for-byte 一致）
+-->
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Musage - MiniMax 用量监控</title>
+    <title>Musage</title>
   </head>
   <body>
     <div id="app"></div>

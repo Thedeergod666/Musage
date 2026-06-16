@@ -94,28 +94,11 @@ export function flash(msg: string, isError = false) {
 
 // ── 文本/时间/数字格式 ─────────────────────────────────────
 
-export function providerDisplay(p: string): string {
-  switch (p) {
-    case "minimax":
-      return "MiniMax";
-    case "deepseek":
-      return "DeepSeek";
-    case "xiaomimimo":
-      return "Xiaomi MiMo";
-    case "tavily":
-      return "Tavily";
-    case "zenmux":
-      return "ZenMux";
-    case "openrouter":
-      return "OpenRouter";
-    case "kimi":
-      return "Kimi";
-    case "zhipu":
-      return "智谱 GLM";
-    default:
-      return p;
-  }
-}
+// P1 frontend 阶段：providerDisplay 已废弃 —— 直接用 t(\`provider.${id}.name\`)
+// 走 src/i18n helper，跟 [src/main.ts:37 PROVIDER_META] 共享同一组 key。
+// 历史：以前是个 switch hardcode 13 个名字，i18n 后三处合一（main.ts /
+// settings/logos.ts / utils.ts:providerDisplay）。
+// 调用方迁移：把 \`providerDisplay(x)\` 替换成 \`t(\\\`provider.\\\${x}.name\\\`)\`。
 
 export function formatAmount(v: number): string {
   return v.toLocaleString("zh-CN", {

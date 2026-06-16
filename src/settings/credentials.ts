@@ -22,7 +22,8 @@ import {
   setXiaomiDisplayMode,
   refreshNow,
 } from "./api";
-import { $, el, flash, providerDisplay } from "./utils";
+import { $, el, flash } from "./utils";
+import { t } from "../i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { ProviderId, SourceMeta } from "./types";
@@ -47,7 +48,7 @@ export async function saveKey(provider: ProviderId) {
     await setApiKeyFor(provider, key);
     input.value = "";
     await loadKeyStatus(provider);
-    flash(`✓ ${providerDisplay(provider)} key 已保存`);
+    flash(`✓ ${t(`provider.${provider}.name`)} key 已保存`);
     // 立即拉一次
     const { refreshNow } = await import("./api");
     await refreshNow();
@@ -57,7 +58,7 @@ export async function saveKey(provider: ProviderId) {
 }
 
 export async function deleteKey(provider: ProviderId) {
-  if (!confirm(`确认删除 ${providerDisplay(provider)} 的 API key？`)) return;
+  if (!confirm(`确认删除 ${t(`provider.${provider}.name`)} 的 API key？`)) return;
   await deleteApiKeyFor(provider);
   await loadKeyStatus(provider);
   flash("✓ 已删除");
@@ -68,11 +69,11 @@ export async function copyKey(provider: ProviderId) {
   try {
     const key = await getApiKeyFor(provider);
     if (!key) {
-      flash(`⚠ ${providerDisplay(provider)} 未设置 key`, true);
+      flash(`⚠ ${t(`provider.${provider}.name`)} 未设置 key`, true);
       return;
     }
     await navigator.clipboard.writeText(key);
-    flash(`✓ ${providerDisplay(provider)} key 已复制到剪贴板`);
+    flash(`✓ ${t(`provider.${provider}.name`)} key 已复制到剪贴板`);
   } catch (e) {
     flash(`✗ 复制失败: ${e}`, true);
   }
@@ -103,14 +104,14 @@ export async function saveCookie(provider: ProviderId) {
     await setCookieFor(provider, cookie);
     input.value = "";
     await loadCookieStatus(provider);
-    flash(`✓ ${providerDisplay(provider)} Cookie 已保存`);
+    flash(`✓ ${t(`provider.${provider}.name`)} Cookie 已保存`);
   } catch (e) {
     flash(`✗ 保存失败: ${e}`, true);
   }
 }
 
 export async function deleteCookie(provider: ProviderId) {
-  if (!confirm(`确认删除 ${providerDisplay(provider)} 的 Cookie？`)) return;
+  if (!confirm(`确认删除 ${t(`provider.${provider}.name`)} 的 Cookie？`)) return;
   await deleteCookieFor(provider);
   await loadCookieStatus(provider);
   flash("✓ Cookie 已删除");
@@ -696,7 +697,7 @@ export async function saveCredentialAction(id: string, action: "key" | "cookie",
       status.textContent = "✓ 已保存到本机";
       status.className = "status ok";
     }
-    flash(`✓ ${providerDisplay(id as ProviderId)} 已保存`);
+    flash(`✓ ${t(`provider.${id as ProviderId}.name`)} 已保存`);
     await refreshNow();
   } catch (e) {
     flash(`✗ 保存失败: ${e}`, true);
@@ -705,7 +706,7 @@ export async function saveCredentialAction(id: string, action: "key" | "cookie",
 
 export async function deleteCredentialAction(id: string, action: "key" | "cookie") {
   const label = action === "key" ? "API key" : "Cookie";
-  if (!confirm(`确认删除 ${providerDisplay(id as ProviderId)} 的 ${label}？`)) return;
+  if (!confirm(`确认删除 ${t(`provider.${id as ProviderId}.name`)} 的 ${label}？`)) return;
   // 后端 delete_source_credential 会同时清 api_key 和 cookie，统一用一个入口
   await deleteSourceCredential(id);
   await loadCredentialStatus(id);
@@ -716,11 +717,11 @@ export async function copyCredentialAction(id: string) {
   try {
     const value = await getSourceCredential(id);
     if (!value) {
-      flash(`⚠ ${providerDisplay(id as ProviderId)} 未设置 key`, true);
+      flash(`⚠ ${t(`provider.${id as ProviderId}.name`)} 未设置 key`, true);
       return;
     }
     await navigator.clipboard.writeText(value);
-    flash(`✓ ${providerDisplay(id as ProviderId)} key 已复制到剪贴板`);
+    flash(`✓ ${t(`provider.${id as ProviderId}.name`)} key 已复制到剪贴板`);
   } catch (e) {
     flash(`✗ 复制失败: ${e}`, true);
   }

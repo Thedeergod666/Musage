@@ -293,6 +293,34 @@ D:\Project\Musage\
 3. **设置面板对接真实 key**：填入 API Key → 联调 minimax + 其他 5 个 provider
 4. **（可选）固化 NSIS-only**：`tauri.conf.json` 的 `bundle.targets` 改成 `"nsis"`，免得未来会话又撞 WiX timeout
 5. **（可选）`assets/font.ttf`**：托盘图标想画百分比文字时再补
+6. **i18n 收尾（v2）**：`apiKeyHelpNodes` 13 provider help text + flash() 里硬编码中文 + confirm() dialog 文本全走 t()。P0-P2 把架构铺好但留了 ~20% strings 未 i18n
+
+## i18n 约定（P0-P2 已铺好，详见 `memory/musage-i18n-conventions.md`）
+
+**双 locale 架构**：
+- 后端走 rust-i18n（`src-tauri/locales/{en,zh-CN}.json` + `t!()` macro，编译期展开）
+- 前端走自写 helper（`src/i18n/index.ts` + `src/i18n/{en,zh-CN}.json` + `t()` 函数）
+
+**Key 命名规范**：
+- 语义命名（`button.save` 不是 `Save`），`.` 分层
+- 错误消息用 `error.<kind>`（kind 跟 `ErrorKind::as_str()` 对齐）
+- plural 用 key 后缀：`footer.count.one` / `footer.count.other`，中文不分单复数所以只有一个 `footer.count`
+
+**三处 PROVIDER_META 合一**：
+- ~~`src/settings/utils.ts:providerDisplay`~~ — 删
+- 单一来源：[`src/main.ts:37`](src/main.ts#L37) + 共享 [`src/i18n/{en,zh-CN}.json`](src/i18n/) 的 `provider.<id>.name`
+- 加新 provider 唯一改 3 处（后端 source.rs + main.ts PROVIDER_META + i18n JSON 的 `provider.<id>.name`）
+
+**Locale 切换链路**：
+1. 前端 `setLocale(locale)` → 调 `set_app_locale` Tauri command
+2. 后端 `rust_i18n::set_locale()` + `cfg.locale` 持久化 + emit `musage://locale-changed`
+3. 后端 listener → `tray::rebuild_tray()` 重建菜单 + 同步窗口 title
+4. 前端 listener → 重新 `applyDataI18n()` 遍历 `[data-i18n]` 元素
+
+**踩过的坑（详见 memory）**：
+- rust-i18n 3.x 不接受 `features = ["json"]`（默认支持）
+- `#[tauri::command]` + 同名函数在 lib.rs 顶层会触发 `__cmd__xxx` macro 重复定义（放子模块）
+- 子模块用 `t!()` 需 `use crate::t;`（不能 `use rust_i18n::t;`）
 
 ## 关键文件链接（按重要性）
 

@@ -1,5 +1,5 @@
 {
-  "_meta": "P0 + P1 frontend i18n (en) - floating + main panel nav + common actions. See memory/musage-i18n-conventions.md",
+  "_meta": "P0 + P1 + P2 i18n (en) - floating + main panel + region wizard. See memory/musage-i18n-conventions.md",
 
   "provider": {
     "minimax": { "name": "MiniMax" },

@@ -1,5 +1,5 @@
 {
-  "_meta": "P0 + P1 frontend i18n (zh-CN) - 浮窗 + 主面板 nav + 通用 actions。详见 memory/musage-i18n-conventions.md",
+  "_meta": "P0 + P1 + P2 i18n (zh-CN) - 浮窗 + 主面板 + 区域向导。详见 memory/musage-i18n-conventions.md",
 
   "provider": {
     "minimax": { "name": "MiniMax" },

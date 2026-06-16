@@ -144,5 +144,17 @@
   "window": {
     "settings": "Musage · 设置",
     "xiaomi_login": "登录小米账号 - Musage"
+  },
+
+  "xiaomi_login": {
+    "parse_login_url": "parse LOGIN_URL: {err}",
+    "build_webview": "build webview: {err}",
+    "another_task_done": "另一个提取任务已成功完成",
+    "read_url_failed": "读 webview URL 失败: {err}",
+    "cookie_extraction_failed": "Cookie 提取失败——多次重试后仍未在 cookie store 中找到预期的 dashboard cookie。请检查：1) 登录是否成功完成；2) 是否在 platform.xiaomimimo.com 的 dashboard 页面上。",
+    "parse_url": "parse url: {err}",
+    "cookies_for_url_failed": "webview.cookies_for_url 失败: {err}",
+    "cookies_not_found": "没找到 Xiaomi dashboard cookies（共 {count} 个 cookie，白名单期望 {expected} 个：{wanted}）。实际可用：{available}",
+    "save_keys_failed": "写 keys.json 失败: {err}"
   }
 }

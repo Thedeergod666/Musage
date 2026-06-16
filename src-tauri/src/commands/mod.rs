@@ -28,6 +28,7 @@ use crate::providers::{
 };
 use crate::providers::xiaomi::XiaomiDisplayMode;
 use crate::AppState;
+use crate::t;
 
 /// 立即更新 provider 顺序 + 落盘 + emit config-changed（前端调，无需走
 /// save_config 全量保存）。前端用这个实现「↑↓ 按钮即时生效」。
@@ -126,7 +127,7 @@ pub async fn set_xiaomi_display_mode(
         "all" => XiaomiDisplayMode::All,
         "plan_only" => XiaomiDisplayMode::PlanOnly,
         "total_only" => XiaomiDisplayMode::TotalOnly,
-        other => return Err(format!("未知的 Xiaomi 显示模式: {other}（应为 all / plan_only / total_only）")),
+        other => return Err(t!("commands.display_mode_unknown_xiaomi", other = other).into_owned()),
     };
     {
         let mut cfg = state.config.write().await;
@@ -214,19 +215,17 @@ pub async fn save_config(
 ) -> Result<(), String> {
     let cfg = cfg;
     if cfg.refresh_interval_secs < 10 {
-        return Err("轮询间隔不能小于 10 秒（避免触发 provider rate limit）".to_string());
+        return Err(t!("commands.interval_too_small").into_owned());
     }
     // 校验色阈值（settings 面板的保存路径也要兜底 —— 即使用户绕过 set_display_thresholds
     // 直接调 save_config 也会在这里被挡）
     let [t0, t1, t2] = cfg.color_thresholds;
     if !(0 < t0 && t0 < t1 && t1 < t2 && t2 < 100) {
-        return Err(format!(
-            "色阈值必须满足 0 < t0 < t1 < t2 < 100（实际 {t0} / {t1} / {t2}）"
-        ));
+        return Err(t!("commands.threshold_invalid", t0 = t0, t1 = t1, t2 = t2).into_owned());
     }
     if let Some(n) = cfg.wallet_alert_threshold {
         if !(n.is_finite() && n >= 0.0) {
-            return Err(format!("钱包告警阈值必须 ≥ 0（实际 {n}）"));
+            return Err(t!("commands.wallet_threshold_negative", n = n).into_owned());
         }
     }
     // 校验自定义色（同 set_display_thresholds 路径）
@@ -234,15 +233,11 @@ pub async fn save_config(
         match k.as_str() {
             "ok" | "cyan" | "warn" | "alert" => {}
             other => {
-                return Err(format!(
-                    "未知的色档 key: {other}（仅支持 ok / cyan / warn / alert）"
-                ));
+                return Err(t!("commands.color_key_unknown", other = other).into_owned());
             }
         }
         if !is_valid_hex_color(v) {
-            return Err(format!(
-                "{k} 的颜色值必须是 #RGB / #RRGGBB 形式（实际 {v}）"
-            ));
+            return Err(t!("commands.color_value_invalid", k = k.as_str(), v = v.as_str()).into_owned());
         }
     }
     cfg.save()?;
@@ -250,9 +245,9 @@ pub async fn save_config(
     // 同步 autostart
     let mgr = app.autolaunch();
     if cfg.autostart {
-        mgr.enable().map_err(|e| format!("autostart enable: {e}"))?;
+        mgr.enable().map_err(|e| t!("commands.autostart_enable", err = e.to_string()).into_owned())?;
     } else {
-        mgr.disable().map_err(|e| format!("autostart disable: {e}"))?;
+        mgr.disable().map_err(|e| t!("commands.autostart_disable", err = e.to_string()).into_owned())?;
     }
 
     // 同步「全屏自动隐藏」开关到平台层（watcher 始终运行，这里翻原子开关）
@@ -314,7 +309,7 @@ pub async fn has_source_credential(
 ) -> Result<bool, String> {
     // 验证 id 存在（防 IPC 注入任意 key 名）
     let _ = find_source(&state, &id).await
-        .ok_or_else(|| format!("未知的 source id: {id}"))?;
+        .ok_or_else(|| t!("commands.source_unknown", id = id.as_str()).into_owned())?;
     Ok(config::load_credential_for_id(&id)?.is_some())
 }
 
@@ -333,10 +328,10 @@ pub async fn set_source_credential(
     field: Option<String>,
 ) -> Result<(), String> {
     let src = find_source(&state, &id).await
-        .ok_or_else(|| format!("未知的 source id: {id}"))?;
+        .ok_or_else(|| t!("commands.source_unknown", id = id.as_str()).into_owned())?;
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Err("凭据不能为空".to_string());
+        return Err(t!("commands.credential_empty").into_owned());
     }
     let cred = build_credentials(&src, trimmed, field.as_deref())?;
     config::save_credential_for_id(&id, &cred)?;
@@ -370,7 +365,7 @@ fn build_credentials(
     let target = match field {
         Some("api_key") => "api_key",
         Some("cookie") => "cookie",
-        Some(other) => return Err(format!("未知的 field 标识: {other}（应为 api_key 或 cookie）")),
+        Some(other) => return Err(t!("commands.field_unknown", other = other).into_owned()),
         None => match src.auth_kind() {
             AuthKind::ApiKey | AuthKind::ApiKeyOrCookie => "api_key",
             AuthKind::Cookie => "cookie",
@@ -390,7 +385,7 @@ pub async fn delete_source_credential(
     id: String,
 ) -> Result<(), String> {
     let _ = find_source(&state, &id).await
-        .ok_or_else(|| format!("未知的 source id: {id}"))?;
+        .ok_or_else(|| t!("commands.source_unknown", id = id.as_str()).into_owned())?;
     config::delete_credential_for_id(&id)?;
     // 跟 set_source_credential 对称：删了 key 浮窗应该立刻看到 "未配置"
     // 错误态，而不是等下一次 poller 周期。
@@ -411,7 +406,7 @@ pub async fn get_source_credential(
     id: String,
 ) -> Result<Option<String>, String> {
     let _ = find_source(&state, &id).await
-        .ok_or_else(|| format!("未知的 source id: {id}"))?;
+        .ok_or_else(|| t!("commands.source_unknown", id = id.as_str()).into_owned())?;
     let cred = config::load_credential_for_id(&id)?;
     Ok(cred.and_then(|c| c.api_key.or(c.cookie)))
 }
@@ -432,7 +427,7 @@ pub async fn set_api_key_for(
 ) -> Result<(), String> {
     let trimmed = key.trim();
     if trimmed.is_empty() {
-        return Err("key 不能为空".to_string());
+        return Err(t!("commands.api_key_empty").into_owned());
     }
     config::save_api_key_for(provider, trimmed)?;
     // 跟 set_source_credential 一致：保存后立即拉一次，浮窗即时看到
@@ -479,7 +474,7 @@ pub async fn set_cookie_for(
 ) -> Result<(), String> {
     let trimmed = cookie.trim();
     if trimmed.is_empty() {
-        return Err("cookie 不能为空".to_string());
+        return Err(t!("commands.cookie_empty").into_owned());
     }
     config::save_cookie_for(provider, trimmed)?;
     let id = provider.id_str();
@@ -564,7 +559,7 @@ pub async fn open_settings_window(app: AppHandle) -> Result<(), String> {
         let _ = w.show();
         let _ = w.set_focus();
     } else {
-        build_settings_window(&app).map_err(|e| format!("create settings: {e}"))?;
+        build_settings_window(&app).map_err(|e| t!("commands.create_settings", err = e.to_string()).into_owned())?;
     }
     Ok(())
 }
@@ -602,11 +597,11 @@ pub async fn hide_settings_window(app: AppHandle) -> Result<(), String> {
 pub async fn reset_floating_window(app: AppHandle) -> Result<(), String> {
     let win = app
         .get_webview_window("floating")
-        .ok_or_else(|| "找不到浮窗".to_string())?;
+        .ok_or_else(|| t!("commands.floating_not_found").into_owned())?;
 
     // 优先用 Tauri 内置 center() —— 自己算 monitor 几何的旧实现
     // (commands.rs:209-216 旧版) 有 .max(0) 截断的 bug，多显示器 / 负坐标场景会偏。
-    win.center().map_err(|e| format!("center: {e}"))?;
+    win.center().map_err(|e| t!("commands.center_failed", err = e.to_string()).into_owned())?;
 
     // 持久化（on_window_event(Moved) 也会触发，但先写一次更稳）
     if let Ok(pos) = win.outer_position() {
@@ -670,7 +665,7 @@ fn parse_pin_mode(s: &str) -> Result<FloatingPinMode, String> {
         "pin_top" | "PinTop" => Ok(FloatingPinMode::PinTop),
         "pin_bottom" | "PinBottom" => Ok(FloatingPinMode::PinBottom),
         "normal" | "Normal" => Ok(FloatingPinMode::Normal),
-        other => Err(format!("未知的浮窗置顶模式: {other}")),
+        other => Err(t!("commands.pin_mode_unknown", other = other).into_owned()),
     }
 }
 
@@ -698,7 +693,7 @@ pub async fn resize_floating_window(app: AppHandle, height: f64) -> Result<(), S
         // 保留用户当前的宽度（auto-resize 只调高度，不动宽 —— 宽度由用户拖控制）
         // 用 inner_size 的 logical 版本，绕开 macOS 上 outer/inner 的细微差
         let cur_logical: tauri::LogicalSize<f64> =
-            w.inner_size().map_err(|e| format!("size: {e}"))?.to_logical(
+            w.inner_size().map_err(|e| t!("commands.size_failed", err = e.to_string()).into_owned())?.to_logical(
                 w.scale_factor().unwrap_or(1.0),
             );
         let width = cur_logical.width;
@@ -1204,28 +1199,22 @@ pub async fn set_display_thresholds(
 ) -> Result<(), String> {
     let [t0, t1, t2] = color_thresholds;
     if !(0 < t0 && t0 < t1 && t1 < t2 && t2 < 100) {
-        return Err(format!(
-            "色阈值必须满足 0 < t0 < t1 < t2 < 100（实际 {t0} / {t1} / {t2}）"
-        ));
+        return Err(t!("commands.threshold_invalid", t0 = t0, t1 = t1, t2 = t2).into_owned());
     }
     if let Some(n) = wallet_alert_threshold {
         if !(n.is_finite() && n >= 0.0) {
-            return Err(format!("钱包告警阈值必须 ≥ 0（实际 {n}）"));
+            return Err(t!("commands.wallet_threshold_negative", n = n).into_owned());
         }
     }
     for (k, v) in &color_overrides {
         match k.as_str() {
             "ok" | "cyan" | "warn" | "alert" => {}
             other => {
-                return Err(format!(
-                    "未知的色档 key: {other}（仅支持 ok / cyan / warn / alert）"
-                ));
+                return Err(t!("commands.color_key_unknown", other = other).into_owned());
             }
         }
         if !is_valid_hex_color(v) {
-            return Err(format!(
-                "{k} 的颜色值必须是 #RGB / #RRGGBB 形式（实际 {v}）"
-            ));
+            return Err(t!("commands.color_value_invalid", k = k.as_str(), v = v.as_str()).into_owned());
         }
     }
     {

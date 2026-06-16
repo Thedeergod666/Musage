@@ -42,6 +42,7 @@ use tokio::time::sleep;
 
 use crate::config;
 use crate::providers::Credentials;
+use crate::t;
 
 /// 全局提取锁：防止多个 on_page_load 回调同时运行提取任务。
 /// 一旦有任务在提取/等待中，后续回调直接跳过。
@@ -105,9 +106,8 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
         sleep(Duration::from_millis(100)).await;
     }
 
-    let url: Url = LOGIN_URL
-        .parse()
-        .map_err(|e| format!("parse LOGIN_URL: {e}"))?;
+    let url: Url = (LOGIN_URL.parse::<Url>())
+        .map_err(|e| t!("xiaomi_login.parse_login_url", err = e.to_string()).into_owned())?;
 
     // 闭包必须 'static + Send + Sync → 克隆 AppHandle（内部 Arc 包装，廉价）
     let app_for_callback = app.clone();
@@ -175,7 +175,7 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
             });
         })
         .build()
-        .map_err(|e| format!("build webview: {e}"))?;
+        .map_err(|e| t!("xiaomi_login.build_webview", err = e.to_string()).into_owned())?;
 
     Ok(())
 }
@@ -196,7 +196,7 @@ async fn extract_with_retry(
 
         // 如果另一个任务已经成功，直接退出
         if DONE.load(Ordering::SeqCst) {
-            return Err("另一个提取任务已成功完成".to_string());
+            return Err(t!("xiaomi_login.another_task_done").into_owned());
         }
 
         sleep(Duration::from_secs(*delay)).await;
@@ -208,7 +208,7 @@ async fn extract_with_retry(
                 // webview 可能已被成功的任务关闭（"failed to receive message"），
                 // 这是预期行为，直接退出
                 tracing::debug!(error = %e, attempt_num, "读 webview URL 失败（窗口可能已关闭）");
-                return Err(format!("读 webview URL 失败: {e}"));
+                return Err(t!("xiaomi_login.read_url_failed", err = e.to_string()).into_owned());
             }
         };
 
@@ -230,24 +230,21 @@ async fn extract_with_retry(
     }
 
     // 所有重试都失败
-    Err("Cookie 提取失败——多次重试后仍未在 cookie store 中找到预期的 dashboard cookie。\
-        请检查：1) 登录是否成功完成；2) 是否在 platform.xiaomimimo.com 的 dashboard 页面上。"
-        .to_string())
+    Err(t!("xiaomi_login.cookie_extraction_failed").into_owned())
 }
 
 /// 从 webview 提取 cookie → 过滤白名单 → 拼字符串 → 写 keys.json。
 ///
 /// 返回写入的字节数（便于前端展示"已保存 N 字节"）。
 async fn extract_and_save(window: &tauri::WebviewWindow) -> Result<usize, String> {
-    let url: Url = LOGIN_URL
-        .parse()
-        .map_err(|e| format!("parse url: {e}"))?;
+    let url: Url = (LOGIN_URL.parse::<Url>())
+        .map_err(|e| t!("xiaomi_login.parse_url", err = e.to_string()).into_owned())?;
 
     // cookies_for_url：拿指定 URL 上下文下的 cookies（含 HttpOnly，
     // 这正是我们需要的 —— 普通 document.cookie 读不到 HttpOnly）
     let raw_cookies: Vec<Cookie<'static>> = window
         .cookies_for_url(url)
-        .map_err(|e| format!("webview.cookies_for_url 失败: {e}"))?;
+        .map_err(|e| t!("xiaomi_login.cookies_for_url_failed", err = e.to_string()).into_owned())?;
 
     tracing::debug!(total = raw_cookies.len(), "cookies_for_url 返回");
 
@@ -269,14 +266,13 @@ async fn extract_and_save(window: &tauri::WebviewWindow) -> Result<usize, String
                 )
             })
             .collect();
-        return Err(format!(
-            "没找到 Xiaomi dashboard cookies（共 {} 个 cookie，白名单期望 {} 个：{:?}）。\
-            实际可用：{:?}",
-            raw_cookies.len(),
-            WANTED_COOKIES.len(),
-            WANTED_COOKIES,
-            available
-        ));
+        return Err(t!(
+            "xiaomi_login.cookies_not_found",
+            count = raw_cookies.len(),
+            expected = WANTED_COOKIES.len(),
+            wanted = format!("{WANTED_COOKIES:?}"),
+            available = format!("{available:?}")
+        ).into_owned());
     }
 
     let mut cookie_parts: Vec<String> = relevant
@@ -311,7 +307,7 @@ async fn extract_and_save(window: &tauri::WebviewWindow) -> Result<usize, String
         cookie: Some(cookie_str.clone()),
     };
     config::save_credential_for_id("xiaomimimo", &cred)
-        .map_err(|e| format!("写 keys.json 失败: {e}"))?;
+        .map_err(|e| t!("xiaomi_login.save_keys_failed", err = e.to_string()).into_owned())?;
 
     Ok(cookie_str.len())
 }

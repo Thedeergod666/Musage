@@ -26,6 +26,7 @@ use tauri::AppHandle;
 use crate::providers::minimax::Region;
 use crate::providers::xiaomi::{XiaomiDisplayMode, XiaomiRegion};
 use crate::providers::Provider;
+use crate::t;
 
 const CONFIG_FILE: &str = "config.json";
 const KEYS_FILE: &str = "keys.json";
@@ -377,7 +378,7 @@ impl AppConfig {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let s = std::fs::read_to_string(&path).map_err(|e| format!("read config: {e}"))?;
+        let s = std::fs::read_to_string(&path).map_err(|e| t!("commands.read_config", err = e.to_string()).into_owned())?;
 
         // 尝试新格式
         if let Ok(cfg) = serde_json::from_str::<AppConfig>(&s) {
@@ -422,10 +423,7 @@ impl AppConfig {
             return Ok(cfg);
         }
 
-        Err(format!(
-            "config.json 格式无法识别（既不是新格式也不是旧格式）：{}",
-            path.display()
-        ))
+        Err(t!("commands.config_unrecognized", path = path.display().to_string()).into_owned())
     }
 
     /// 兼容入口：带 AppHandle 时使用
@@ -567,10 +565,10 @@ impl AppConfig {
     pub fn save(&self) -> Result<(), String> {
         let path = config_path()?;
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
+            std::fs::create_dir_all(parent).map_err(|e| t!("commands.config_mkdir", err = e.to_string()).into_owned())?;
         }
-        let s = serde_json::to_string_pretty(self).map_err(|e| format!("serialize: {e}"))?;
-        std::fs::write(&path, s).map_err(|e| format!("write config: {e}"))?;
+        let s = serde_json::to_string_pretty(self).map_err(|e| t!("commands.config_serialize", err = e.to_string()).into_owned())?;
+        std::fs::write(&path, s).map_err(|e| t!("commands.config_write", err = e.to_string()).into_owned())?;
         Ok(())
     }
 }
@@ -579,7 +577,7 @@ impl AppConfig {
 pub mod custom_sources;
 
 fn config_dir() -> Result<PathBuf, String> {
-    dirs::config_dir().ok_or_else(|| "无法定位配置目录".to_string())
+    dirs::config_dir().ok_or_else(|| t!("commands.config_dir_not_found").into_owned())
 }
 
 fn config_path() -> Result<PathBuf, String> {
@@ -604,17 +602,17 @@ fn write_keys_atomic(map: &KeysMap) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
     }
     let tmp = path.with_extension("json.tmp");
-    let s = serde_json::to_string_pretty(map).map_err(|e| format!("serialize keys: {e}"))?;
-    std::fs::write(&tmp, &s).map_err(|e| format!("write tmp: {e}"))?;
+    let s = serde_json::to_string_pretty(map).map_err(|e| t!("commands.config_serialize", err = e.to_string()).into_owned())?;
+    std::fs::write(&tmp, &s).map_err(|e| t!("commands.keys_io", op = "write tmp").into_owned())?;
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| format!("chmod 0600: {e}"))?;
+            .map_err(|e| t!("commands.keys_io", op = "chmod 0600").into_owned())?;
     }
 
-    std::fs::rename(&tmp, &path).map_err(|e| format!("rename keys: {e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| t!("commands.keys_io", op = "rename").into_owned())?;
     Ok(())
 }
 
@@ -623,11 +621,11 @@ fn read_keys() -> Result<KeysMap, String> {
     if !path.exists() {
         return Ok(BTreeMap::new());
     }
-    let s = std::fs::read_to_string(&path).map_err(|e| format!("read keys: {e}"))?;
+    let s = std::fs::read_to_string(&path).map_err(|e| t!("commands.read_keys", err = e.to_string()).into_owned())?;
     if s.trim().is_empty() {
         return Ok(BTreeMap::new());
     }
-    serde_json::from_str::<KeysMap>(&s).map_err(|e| format!("parse keys.json: {e}"))
+    serde_json::from_str::<KeysMap>(&s).map_err(|e| t!("commands.parse_keys", err = e.to_string()).into_owned())
 }
 
 pub fn load_api_key_for(provider: Provider) -> Result<Option<String>, String> {
@@ -648,7 +646,7 @@ pub fn delete_api_key_for(provider: Provider) -> Result<(), String> {
         // 全部删完就连文件一起删，避免空文件 + 0 字节文件混在目录里
         let path = keys_path()?;
         if path.exists() {
-            std::fs::remove_file(&path).map_err(|e| format!("remove empty keys: {e}"))?;
+            std::fs::remove_file(&path).map_err(|e| t!("commands.keys_io", op = "remove empty").into_owned())?;
         }
     } else {
         write_keys_atomic(&map)?;
@@ -679,7 +677,7 @@ pub fn delete_cookie_for(provider: Provider) -> Result<(), String> {
     if map.is_empty() {
         let path = keys_path()?;
         if path.exists() {
-            std::fs::remove_file(&path).map_err(|e| format!("remove empty keys: {e}"))?;
+            std::fs::remove_file(&path).map_err(|e| t!("commands.keys_io", op = "remove empty").into_owned())?;
         }
     } else {
         write_keys_atomic(&map)?;

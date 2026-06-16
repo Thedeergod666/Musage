@@ -30,6 +30,7 @@ use uuid::Uuid;
 use crate::config::{custom_sources as custom_persist, delete_credential_for_id};
 use crate::providers::{CustomSource, CustomSourceSpec, ProviderSnapshot, QuotaSource};
 use crate::AppState;
+use crate::t;
 
 /// 列表：返回所有 custom source specs（无 id 时返空 vec）。
 #[tauri::command]
@@ -57,16 +58,16 @@ pub async fn add_custom_source(
 ) -> Result<String, String> {
     // 1. 校验
     if spec.display_name.trim().is_empty() {
-        return Err("display_name 不能为空".to_string());
+        return Err(t!("commands.custom_name_empty").into_owned());
     }
     if !spec.base_url.starts_with("http://") && !spec.base_url.starts_with("https://") {
-        return Err("base_url 必须以 http:// 或 https:// 开头".to_string());
+        return Err(t!("commands.custom_url_invalid").into_owned());
     }
     if !spec.path.starts_with('/') {
-        return Err("path 必须以 / 开头".to_string());
+        return Err(t!("commands.custom_path_invalid").into_owned());
     }
     if spec.method != "GET" && spec.method != "POST" {
-        return Err(format!("method 必须是 GET 或 POST，当前: {}", spec.method));
+        return Err(t!("commands.custom_method_invalid", method = spec.method.as_str()).into_owned());
     }
 
     // 2. 拿锁 + 写
@@ -89,13 +90,10 @@ pub async fn add_custom_source(
     {
         let mut customs = state.custom_sources.write().await;
         if customs.len() >= 50 {
-            return Err("已达自定义来源上限 (50)".to_string());
+            return Err(t!("commands.custom_limit_reached").into_owned());
         }
         if customs.iter().any(|s| s.display_name == new_spec.display_name) {
-            return Err(format!(
-                "display_name '{}' 已被其他自定义来源占用",
-                new_spec.display_name
-            ));
+            return Err(t!("commands.custom_duplicate", name = new_spec.display_name.as_str()).into_owned());
         }
         customs.push(new_spec);
         custom_persist::save_custom_sources(&customs)?;
@@ -119,16 +117,16 @@ pub async fn update_custom_source(
     spec: CustomSourceSpec,
 ) -> Result<(), String> {
     if spec.display_name.trim().is_empty() {
-        return Err("display_name 不能为空".to_string());
+        return Err(t!("commands.custom_name_empty").into_owned());
     }
     if !spec.base_url.starts_with("http://") && !spec.base_url.starts_with("https://") {
-        return Err("base_url 必须以 http:// 或 https:// 开头".to_string());
+        return Err(t!("commands.custom_url_invalid").into_owned());
     }
     if !spec.path.starts_with('/') {
-        return Err("path 必须以 / 开头".to_string());
+        return Err(t!("commands.custom_path_invalid").into_owned());
     }
     if spec.method != "GET" && spec.method != "POST" {
-        return Err(format!("method 必须是 GET 或 POST，当前: {}", spec.method));
+        return Err(t!("commands.custom_method_invalid", method = spec.method.as_str()).into_owned());
     }
 
     let cleaned = CustomSourceSpec {
@@ -150,13 +148,10 @@ pub async fn update_custom_source(
     {
         let mut customs = state.custom_sources.write().await;
         let pos = customs.iter().position(|s| s.id == cleaned.id)
-            .ok_or_else(|| format!("custom source '{}' 不存在", cleaned.id))?;
+            .ok_or_else(|| t!("commands.custom_not_found", id = cleaned.id.as_str()).into_owned())?;
         if customs.iter().enumerate()
             .any(|(i, s)| i != pos && s.display_name == cleaned.display_name) {
-            return Err(format!(
-                "display_name '{}' 已被其他自定义来源占用",
-                cleaned.display_name
-            ));
+            return Err(t!("commands.custom_duplicate", name = cleaned.display_name.as_str()).into_owned());
         }
         customs[pos] = cleaned;
         custom_persist::save_custom_sources(&customs)?;
@@ -181,7 +176,7 @@ pub async fn delete_custom_source(
     {
         let mut customs = state.custom_sources.write().await;
         let pos = customs.iter().position(|s| s.id == id)
-            .ok_or_else(|| format!("custom source '{}' 不存在", id))?;
+            .ok_or_else(|| t!("commands.custom_not_found", id = id.as_str()).into_owned())?;
         customs.remove(pos);
         custom_persist::save_custom_sources(&customs)?;
     }
@@ -206,7 +201,7 @@ pub async fn test_custom_source(
 ) -> Result<ProviderSnapshot, String> {
     let trimmed = api_key.trim();
     if trimmed.is_empty() {
-        return Err("API key 不能为空".to_string());
+        return Err(t!("commands.api_key_empty").into_owned());
     }
     let temp = CustomSource::new(spec);
     let creds = crate::providers::Credentials {

@@ -144,5 +144,17 @@
   "window": {
     "settings": "Musage · Settings",
     "xiaomi_login": "Login Xiaomi — Musage"
+  },
+
+  "xiaomi_login": {
+    "parse_login_url": "parse LOGIN_URL: {err}",
+    "build_webview": "build webview: {err}",
+    "another_task_done": "Another extraction task already completed",
+    "read_url_failed": "Failed to read webview URL: {err}",
+    "cookie_extraction_failed": "Cookie extraction failed — after multiple retries still could not find expected dashboard cookies. Please check: 1) login completed successfully; 2) you are on the platform.xiaomimimo.com dashboard page",
+    "parse_url": "parse url: {err}",
+    "cookies_for_url_failed": "webview.cookies_for_url failed: {err}",
+    "cookies_not_found": "No Xiaomi dashboard cookies found ({count} total, expected {expected}: {wanted}). Actually available: {available}",
+    "save_keys_failed": "Failed to write keys.json: {err}"
   }
 }

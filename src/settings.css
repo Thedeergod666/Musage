@@ -613,34 +613,54 @@ button.order-down {
   margin-bottom: var(--sp-3, 8px);
 }
 
-/* PR 3 UX 调整：顶部 3 列 grid (token_plan / balance / official)
- * - 桌面：3 列并排，方便用户横向对比
- * - 较窄屏幕（<1100px）：降级为 2 列
- * - 移动端（<720px）：1 列
- * 关键点：3 个组 `<details>` 元素都默认 open，所以高度是 max(3 列)；
- * 限制 max-height 让每列内部可滚，避免页面被某长列撑爆
+/* PR 3 UX：tab interface (sticky 置顶) ——
+ * 3 个高频分组（token_plan / balance / official）改成 tabs：
+ * - 顶部一行 tab strip，sticky 置顶方便随时切换
+ * - 默认显示 Token Plan；点 tab 切换内容，0 重渲染（只 toggle .active）
+ * - 搜索时所有 tab pane 都展开，让结果跨 tab 显示
+ * - Xiaomi / custom / misc 仍用 collapsible <details> 放在下面
  */
-.provider-groups-top {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--sp-3, 8px);
+.provider-tab-strip {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--bg-3, rgba(255, 255, 255, 0.1));
   margin-bottom: var(--sp-3, 8px);
+  /* sticky 置顶 —— 用户滚到下面时 tab strip 仍在视口顶部 */
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg-1, transparent);
+  /* backdrop blur 让 tab strip 浮在内容之上时更清晰 */
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
-.provider-groups-top .provider-group {
-  margin-bottom: 0;
-  min-width: 0;   /* 防止 grid item 内容撑破列宽 */
+.provider-tab {
+  flex: 1;
+  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;       /* 跟 strip 的 border-bottom 重叠，避免双线 */
+  color: var(--fg-2, #aaa);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: center;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+  white-space: nowrap;
 }
-.provider-groups-top .provider-group > :not(summary) {
-  /* 内容可滚：3 列里最长的可能 5-6 个 source，不限高会推高整页 */
-  max-height: 60vh;
-  overflow-y: auto;
+.provider-tab:hover {
+  color: var(--fg-0, #fff);
+  background: rgba(255, 255, 255, 0.04);
 }
-@media (max-width: 1100px) {
-  .provider-groups-top { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.provider-tab.active {
+  color: var(--fg-0, #fff);
+  font-weight: 600;
+  border-bottom-color: var(--accent, #9b59ff);
 }
-@media (max-width: 720px) {
-  .provider-groups-top { grid-template-columns: 1fr; }
-}
+.provider-tab-pane { display: none; }
+.provider-tab-pane.active,
+.provider-tab-pane.show-all { display: block; }
 .provider-group > summary {
   padding: var(--sp-2, 6px) var(--sp-3, 8px);
   cursor: pointer;

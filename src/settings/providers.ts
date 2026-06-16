@@ -27,7 +27,7 @@ import { getProviderExtras } from "./source-extras";
 import { renderOrderSection } from "./order";
 import { renderCredentialBlock, loadCredentialStatus } from "./credentials";
 import { getProviderMeta } from "./logos";
-import { groupSources, renderGroup, splitGroupsForLayout } from "./groups";
+import { groupSources, getGroupDef, renderGroup, splitGroupsForLayout } from "./groups";
 import { openAddCustomSourceModal } from "./custom-source-form";
 import type { AppConfig, SourceMeta } from "./types";
 
@@ -76,24 +76,68 @@ export async function renderProvidersSection(container: HTMLElement) {
   // 2) 顶部"浮窗卡片顺序"（带 enabled/disabled 分区）
   renderOrderSection(container, allSources, cfg.provider_order, cfg);
 
-  // 3) 按分组渲染
-  // PR 3 UX：顶部 3 列（token_plan / balance / official） + 下面堆叠（xiaomi / custom / misc）
+  // 3) Tab interface + special groups
+  // PR 3 UX：3 个 tab (token_plan / balance / official) sticky 置顶，
+  // 默认显示 token_plan，点 tab 切换；xiaomi/custom/misc 仍在下面。
   const groups = groupSources(allSources);
-  const { top, rest } = splitGroupsForLayout(groups);
+  const { tabs, special } = splitGroupsForLayout(groups);
 
-  // 3a) 顶部 3 列 grid wrapper
-  if (top.length > 0) {
-    const topRow = el("div", { class: "provider-groups-top" });
-    for (const [key, metas] of top) {
-      topRow.appendChild(
-        renderGroup(key, metas, (m) => createProviderPanel(m, cfg)),
+  if (tabs.length > 0) {
+    // 3a) Tab strip（sticky 置顶）
+    const tabStrip = el("div", {
+      class: "provider-tab-strip",
+      role: "tablist",
+    });
+    for (const [key, metas] of tabs) {
+      const def = getGroupDef(key);
+      tabStrip.appendChild(
+        el(
+          "button",
+          {
+            type: "button",
+            class: "provider-tab",
+            "data-tab": key,
+            role: "tab",
+            id: `tab-${key}`,
+            "aria-controls": `pane-${key}`,
+          },
+          `${def.icon} ${def.title} (${metas.length})`,
+        ),
       );
     }
-    container.appendChild(topRow);
+    // Tab 点击 → 切换 active class
+    tabStrip.addEventListener("click", (e) => {
+      const t = (e.target as HTMLElement).closest<HTMLElement>(".provider-tab");
+      if (!t) return;
+      const key = t.dataset.tab;
+      if (!key) return;
+      switchTab(key, container);
+    });
+    container.appendChild(tabStrip);
+
+    // 3b) Tab panes（全部 DOM 内，仅 active 可见，切换 0 重渲染）
+    let isFirst = true;
+    for (const [key, metas] of tabs) {
+      const pane = el("div", {
+        class: "provider-tab-pane" + (isFirst ? " active" : ""),
+        "data-pane": key,
+        role: "tabpanel",
+        id: `pane-${key}`,
+        "aria-labelledby": `tab-${key}`,
+      });
+      for (const meta of metas) {
+        pane.appendChild(createProviderPanel(meta, cfg));
+      }
+      container.appendChild(pane);
+      isFirst = false;
+    }
+    // 第一个 tab 默认 active
+    const firstTab = tabStrip.querySelector<HTMLElement>(".provider-tab");
+    firstTab?.classList.add("active");
   }
 
-  // 3b) 下面堆叠的组（xiaomi / custom / misc 等）
-  for (const [key, metas] of rest) {
+  // 3c) 特殊组（xiaomi / custom / misc）—— 折叠 details，下面堆叠
+  for (const [key, metas] of special) {
     container.appendChild(
       renderGroup(key, metas, (m) => createProviderPanel(m, cfg)),
     );
@@ -127,9 +171,21 @@ function renderToolbar(sources: SourceMeta[], cfg: AppConfig): HTMLElement {
   );
 }
 
-/// 搜索过滤：把不匹配的 .provider-section 标 .hidden，相应组也隐藏（如果全空）。
+/// Tab 切换：active class 同步给 tab + pane
+function switchTab(key: string, container: HTMLElement): void {
+  container
+    .querySelectorAll<HTMLElement>(".provider-tab")
+    .forEach((t) => t.classList.toggle("active", t.dataset.tab === key));
+  container
+    .querySelectorAll<HTMLElement>(".provider-tab-pane")
+    .forEach((p) => p.classList.toggle("active", p.dataset.pane === key));
+}
+
+/// 搜索过滤：把不匹配的 .provider-section 标 .hidden。
+/// 搜索时让所有 tab pane 都展开（无视 tab 状态），让结果跨 tab 显示。
 function applySearchFilter(q: string, container: HTMLElement): void {
   const needle = q.trim().toLowerCase();
+  const isSearching = needle.length > 0;
   container
     .querySelectorAll<HTMLElement>(".provider-section")
     .forEach((sec) => {
@@ -142,7 +198,11 @@ function applySearchFilter(q: string, container: HTMLElement): void {
         name.toLowerCase().includes(needle);
       sec.classList.toggle("hidden", !hit);
     });
-  // 空组也隐藏（避免 "其他 (0)" 这种空组还在占位）
+  // 搜索时让所有 tab pane 都展开（无视 tab 状态）
+  container
+    .querySelectorAll<HTMLElement>(".provider-tab-pane")
+    .forEach((p) => p.classList.toggle("show-all", isSearching));
+  // 特殊组（xiaomi/custom/misc）空组也隐藏
   container
     .querySelectorAll<HTMLDetailsElement>(".provider-group")
     .forEach((g) => {

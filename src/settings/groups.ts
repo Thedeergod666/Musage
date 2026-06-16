@@ -97,22 +97,27 @@ export function groupSources(
   return result;
 }
 
-/** PR 3 (UX 调整)：把分组拆成「顶部 3 列」+「下面堆叠」两段。
+/** PR 3 (UX 调整)：把分组拆成「顶部 tabs」+「下面特殊组」两段。
  *
- * - 顶部 3 列（3-col grid）：token_plan / balance / official —— 高频类目，
- *   并排显示让用户不用滚到底就能对比"套餐/余额/官方"
- * - 下面堆叠（full-width）：xiaomi / custom / misc —— 这些是低频或
- *   动态长内容的（custom 数量增长会拉高列高）
+ * - 顶部 tabs (tab strip, sticky 置顶)：token_plan / balance / official
+ *   —— 高频类目，tab 切换 + 置顶方便随时切换；默认显示 token_plan
+ * - 下面特殊组（collapsible <details>）：xiaomi / custom / misc
+ *   —— 这些是低频或动态长内容的
  */
 export function splitGroupsForLayout(groups: Map<GroupKey, SourceMeta[]>): {
-  top: Array<[GroupKey, SourceMeta[]]>;
-  rest: Array<[GroupKey, SourceMeta[]]>;
+  tabs: Array<[GroupKey, SourceMeta[]]>;
+  special: Array<[GroupKey, SourceMeta[]]>;
 } {
-  const topKeys: GroupKey[] = ["token_plan", "balance", "official"];
+  const tabKeys: GroupKey[] = ["token_plan", "balance", "official"];
   const all = Array.from(groups.entries());
-  const top = all.filter(([k]) => topKeys.includes(k));
-  const rest = all.filter(([k]) => !topKeys.includes(k));
-  return { top, rest };
+  const tabs = all.filter(([k]) => tabKeys.includes(k));
+  const special = all.filter(([k]) => !tabKeys.includes(k));
+  return { tabs, special };
+}
+
+/** 暴露 group definition 给 providers.ts 读 title / icon。 */
+export function getGroupDef(key: GroupKey): GroupDef {
+  return GROUP_DEFINITIONS[key];
 }
 
 /** 渲染单个组（原生 `<details>` + `<summary>`，无 CSS 依赖）。 */

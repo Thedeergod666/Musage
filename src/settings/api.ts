@@ -255,3 +255,15 @@ export async function testCustomSource(
 ): Promise<ProviderSnapshot> {
   return invoke<ProviderSnapshot>("test_custom_source", { spec, apiKey });
 }
+
+// ── P2 区域向导 ──
+
+/** P2 区域：用户选定后 apply 默认 provider 顺序 + endpoint */
+export async function setRegion(region: string): Promise<void> {
+  await invoke("set_region", { region });
+}
+
+/** P2 区域：取当前 user_region（"cn" / "global" / "custom"） */
+export async function getRegion(): Promise<string> {
+  return invoke<string>("get_region");
+}

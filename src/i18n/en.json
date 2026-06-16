@@ -176,6 +176,19 @@
       "delete_api_key": "Confirm delete {provider} API key?",
       "delete_cookie": "Confirm delete {provider} Cookie?",
       "clear_cookie": "Confirm clearing saved Xiaomi Cookie?\nAfter clearing, you need to re-login."
+    },
+
+    "region": {
+      "section_title": "Region",
+      "help": "First-time setup. Affects default provider order and MiniMax endpoint. Once you customize provider order or endpoint manually, this won't show again.",
+      "option_cn": "Mainland China",
+      "desc_cn": "MiniMax domestic endpoint + 智谱 / Kimi / Xiaomi MiMo / DeepSeek / Qwen as defaults",
+      "option_global": "Global",
+      "desc_global": "OpenRouter / Claude / Tavily / DeepSeek / ZenMux as defaults; MiniMax international endpoint",
+      "apply": "Apply",
+      "applied": "✓ Region defaults applied",
+      "banner": "Select your region to apply default providers",
+      "go_to_wizard": "Set region"
     }
   },
 

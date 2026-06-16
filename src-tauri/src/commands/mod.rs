@@ -22,10 +22,11 @@ pub mod i18n;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
-use crate::config::{self, AppConfig, FloatingPinMode, ProviderConfig, TrayIconStyle};
+use crate::config::{self, AppConfig, FloatingPinMode, ProviderConfig, TrayIconStyle, UserRegion};
 use crate::providers::{
     builtin_sources, find_source, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderSnapshot, QuotaSnapshot, QuotaSource,
 };
+use crate::providers::minimax::Region as MinimaxRegion;
 use crate::providers::xiaomi::XiaomiDisplayMode;
 use crate::AppState;
 use crate::t;
@@ -714,7 +715,64 @@ pub fn apply_pin_mode_to_window(app: &AppHandle, mode: FloatingPinMode) {
     }
 }
 
-// ── 核心：refresh_inner ───────────────────────────────────────────
+/// P2 区域向导：用户选定区域后 apply 该区域的默认 provider 顺序 + 默认
+/// endpoint（MiniMax/Zhipu CN/EN），并把 user_region 标为 Custom
+/// （之后用户手动改顺序/endpoint 不会触发 wizard 重新弹出）。
+#[tauri::command]
+pub async fn set_region(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    region: String,
+) -> Result<(), String> {
+    let parsed = match region.as_str() {
+        "cn" => UserRegion::Cn,
+        "global" => UserRegion::Global,
+        "custom" => UserRegion::Custom,
+        other => return Err(t!("commands.region_invalid", other = other).into_owned()),
+    };
+
+    let default_order: Vec<String> = parsed.default_provider_order()
+        .iter().map(|s| s.to_string()).collect();
+
+    {
+        let mut cfg = state.config.write().await;
+        // 1. apply 默认 provider 顺序（仅在当前是 default empty 时覆盖）
+        if cfg.provider_order.is_empty() {
+            cfg.provider_order = default_order;
+        }
+        // 2. apply 默认 endpoint（MiniMax 跟 region 走；zhipu 当前 schema
+        // 缺独立 field，靠 cfg.pointer(\"/providers/zhipu/region\") 读，
+        // 不在 ProviderConfig 里 —— TODO v2 加 zhipu_region 字段）
+        if parsed == UserRegion::Global {
+            if let Some(mm) = cfg.providers.get_mut("minimax") {
+                mm.region = Some(MinimaxRegion::En);
+            }
+        } else {
+            // Cn (默认) —— 显式归位 CN
+            if let Some(mm) = cfg.providers.get_mut("minimax") {
+                mm.region = Some(MinimaxRegion::Cn);
+            }
+        }
+        // 3. 标 user_region 为 Custom（之后用户手动改任何字段都不会触发 wizard）
+        cfg.user_region = UserRegion::Custom;
+        cfg.save()?;
+    }
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
+}
+
+/// 取当前 user_region（给前端决定是否显示 wizard）
+#[tauri::command]
+pub async fn get_region(state: State<'_, AppState>) -> Result<String, String> {
+    let region = match state.config.read().await.user_region {
+        UserRegion::Cn => "cn",
+        UserRegion::Global => "global",
+        UserRegion::Custom => "custom",
+    };
+    Ok(region.to_string())
+}
+
+// ── 核心：refresh_inner ───────────────────────────────────────
 
 /// 刷新所有启用的 source。**并发**跑，互不拖累。
 ///

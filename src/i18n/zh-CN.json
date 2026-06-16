@@ -176,6 +176,19 @@
       "delete_api_key": "确认删除 {provider} 的 API key？",
       "delete_cookie": "确认删除 {provider} 的 Cookie？",
       "clear_cookie": "确认清除已保存的 Xiaomi Cookie？\n清除后需要重新登录。"
+    },
+
+    "region": {
+      "section_title": "区域",
+      "help": "首次启动设置。影响默认 provider 顺序 + MiniMax endpoint。一旦手动改过顺序/endpoint 就不再显示。",
+      "option_cn": "中国大陆",
+      "desc_cn": "MiniMax 国内 endpoint + 智谱 / Kimi / Xiaomi MiMo / DeepSeek / Qwen 优先",
+      "option_global": "海外",
+      "desc_global": "OpenRouter / Claude / Tavily / DeepSeek / ZenMux 优先；MiniMax 国际 endpoint",
+      "apply": "应用",
+      "applied": "✓ 区域默认值已应用",
+      "banner": "选择你的区域以应用默认 provider",
+      "go_to_wizard": "设置区域"
     }
   },
 

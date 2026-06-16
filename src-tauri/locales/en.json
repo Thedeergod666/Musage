@@ -96,6 +96,7 @@
   },
 
   "commands": {
+    "region_invalid": "Invalid region: {other} (must be cn / global / custom)",
     "source_unknown": "Unknown source id: {id}",
     "field_unknown": "Unknown field identifier: {other} (expected api_key or cookie)",
     "credential_empty": "Credential cannot be empty",

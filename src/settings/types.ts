@@ -19,6 +19,8 @@ export interface ProviderConfig {
   xiaomi_region?: "cn" | "sgp" | "ams" | null;
   /// 可选：覆盖全局轮询间隔（秒）。None = 用全局 default
   refresh_interval_secs?: number | null;
+  /// P2 起：可调显示模式 (Xiaomi 用)
+  xiaomi_display_mode?: "all" | "plan_only" | "total_only" | null;
 }
 
 /// 4 个 provider 面板的 id 列表。决定 #3/#4 UI 循环读哪些元素。
@@ -146,6 +148,13 @@ export interface AppConfig {
   /// 空对象 / 缺字段 = 走 iOS 系统默认色。浮窗 init 时把非空项写进
   /// #app 的 inline CSS 变量 --c-data-{key}，bar / dot 同步跟着变。
   color_overrides?: Record<string, string>;
+  /// P0 国际化：UI 语言代码。"zh-CN" / "en"。老 config.json 缺这字段时
+  /// Rust 端走 zh-CN 默认。frontend initLocale() 读它决定默认 locale。
+  locale?: string;
+  /// P2 区域：用户首启向导选定的区域。"cn" / "global" / "custom"。
+  /// 影响默认 provider 顺序 + MiniMax endpoint。手动改过顺序/endpoint 后
+  /// 自动变 "custom"（防止 wizard 反复弹）。
+  user_region?: "cn" | "global" | "custom";
 }
 
 export interface ProviderSnapshot {

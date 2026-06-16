@@ -279,6 +279,9 @@ pub fn run() {
             // P0 国际化：locale 切换（persistence + 事件 + rust_i18n set_locale）
             set_app_locale,
             get_app_locale,
+            // P2 区域向导：用户选 cn/global 后 apply 默认 provider 顺序 + endpoint
+            commands::set_region,
+            commands::get_region,
             // PR 3: 用户自定义 New API source (5 commands)
             commands::custom_sources::list_custom_sources,
             commands::custom_sources::add_custom_source,

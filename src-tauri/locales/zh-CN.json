@@ -96,6 +96,7 @@
   },
 
   "commands": {
+    "region_invalid": "未知的 region: {other}（必须为 cn / global / custom）",
     "source_unknown": "未知的 source id: {id}",
     "field_unknown": "未知的 field 标识: {other}（应为 api_key 或 cookie）",
     "credential_empty": "凭据不能为空",

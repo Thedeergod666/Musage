@@ -15,6 +15,7 @@ import { renderAdvancedSection } from "./advanced";
 import { renderLogsSection, loadLogs } from "./logs";
 import { renderAboutSection } from "./about";
 import { setupUpdaterSection } from "./updater";
+import { renderRegionSection } from "./region-wizard";
 import { bindCredentialButtonsGlobal, bindXiaomiLoginEvents, loadXiaomiDisplayMode } from "./credentials";
 import { bindOrderButtonsGlobal, updateOrderConfig, isSuppressingConfigRebuild } from "./order";
 import { flash } from "./utils";
@@ -97,6 +98,11 @@ async function init() {
     if (containers.advanced) renderAdvancedSection(containers.advanced, cfg);
     if (containers.logs) renderLogsSection(containers.logs);
     if (containers.about) await renderAboutSection(containers.about);
+
+    // P2 区域向导：user_region != Custom 时在 providers 之前插入
+    if (containers.providers) {
+      await renderRegionSection(containers.providers);
+    }
 
     // 拉每个 source 的 key 状态 + 日志 + 注入 updater
     // （cfg 初值已经在 render*Section 里用上了；不用再调 loadConfig）

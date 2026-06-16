@@ -90,7 +90,8 @@
       "newapi_data_missing": "NewApi template: data.quota / data.used_quota missing or non-numeric",
       "balance_divide_zero": "Balance template: divide cannot be 0",
       "balance_path_invalid": "Balance template: path '{path}' invalid or non-numeric",
-      "custom_path_no_match": "Custom template: no paths matched any value"
+      "custom_path_no_match": "Custom template: no paths matched any value",
+      "custom_divide_zero": "Custom template: divide cannot be 0"
     }
   },
 

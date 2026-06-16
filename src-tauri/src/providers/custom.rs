@@ -42,10 +42,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::parse::{num_f64, read_path};
-use super::{
-    shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderSnapshot,
-    QuotaRow, QuotaSource,
-};
+use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderSnapshot, QuotaRow, QuotaSource};
+use crate::t;
 
 // ── 类型定义 ────────────────────────────────────────────────────────
 
@@ -167,7 +165,9 @@ impl QuotaSource for CustomSource {
         Box::pin(async move {
             let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
-                return Err(FetchError::unconfigured("未配置 API key（设置面板填入）"));
+                return Err(FetchError::unconfigured(
+                    t!("error.custom.unconfigured_key").into_owned()
+                ));
             }
             let spec = self.spec.clone();  // 'static lifetime 需要 owned
             do_fetch(api_key, &spec).await
@@ -191,7 +191,7 @@ async fn do_fetch(api_key: &str, spec: &CustomSourceSpec) -> Result<ProviderSnap
         other => {
             return Err(FetchError::new(
                 ErrorKind::Other,
-                format!("不支持的 method: {other}"),
+                t!("commands.custom_method_invalid", method = other).into_owned()
             ));
         }
     };
@@ -202,33 +202,44 @@ async fn do_fetch(api_key: &str, spec: &CustomSourceSpec) -> Result<ProviderSnap
     let resp = req
         .send()
         .await
-        .map_err(|e| FetchError::network(format!("CustomSource 网络错误: {e}")))?;
+        .map_err(|e| FetchError::network(
+            t!("error.custom.network", err = e.to_string()).into_owned()
+        ))?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED {
-        return Err(FetchError::auth("鉴权失败，请检查 API key"));
+        return Err(FetchError::auth(
+            t!("error.custom.auth_failed").into_owned()
+        ));
     }
     if status == reqwest::StatusCode::FORBIDDEN {
-        return Err(FetchError::auth("无权限访问（HTTP 403）"));
+        return Err(FetchError::auth(
+            t!("error.custom.forbidden").into_owned()
+        ));
     }
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
         return Err(FetchError::new(
             ErrorKind::RateLimited,
-            "请求过于频繁，请稍后再试",
+            t!("error.custom.rate_limited").into_owned()
         ));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(FetchError::server(format!(
-            "CustomSource HTTP {status}: {}",
-            body.chars().take(200).collect::<String>()
-        )));
+        return Err(FetchError::server(
+            t!(
+                "error.custom.http_error",
+                status = status.as_u16(),
+                body = body.chars().take(200).collect::<String>()
+            ).into_owned()
+        ));
     }
 
     let raw: Value = resp
         .json()
         .await
-        .map_err(|e| FetchError::parse(format!("响应不是 JSON: {e}")))?;
+        .map_err(|e| FetchError::parse(
+            t!("error.common.parse_json", err = e.to_string()).into_owned()
+        ))?;
 
     let (rows, plan_name) = parse_with_extract(&raw, &spec.extract, spec.plan_name_path.as_deref())?;
 
@@ -265,7 +276,9 @@ fn parse_with_extract(
         ExtractSpec::NewApi { divide } => {
             let div = divide.unwrap_or(500_000.0);
             if div == 0.0 {
-                return Err(FetchError::parse("NewApi 模板：divide 不能为 0"));
+                return Err(FetchError::parse(
+                    t!("error.custom.newapi_divide_zero").into_owned()
+                ));
             }
             let remaining = read_path(raw, "data.quota")
                 .and_then(num_f64)
@@ -279,11 +292,11 @@ fn parse_with_extract(
             };
             if remaining.is_none() && used.is_none() {
                 return Err(FetchError::parse(
-                    "NewApi 模板：data.quota / data.used_quota 都缺失或非数字",
+                    t!("error.custom.newapi_data_missing").into_owned()
                 ));
             }
             QuotaRow {
-                label: "余额".to_string(),
+                label: t!("row.balance").to_string(),
                 utilization: None,
                 remaining,
                 used,
@@ -300,23 +313,24 @@ fn parse_with_extract(
         } => {
             let div = divide.unwrap_or(1.0);
             if div == 0.0 {
-                return Err(FetchError::parse("Balance 模板：divide 不能为 0"));
+                return Err(FetchError::parse(
+                    t!("error.custom.balance_divide_zero").into_owned()
+                ));
             }
             let remaining = read_path(raw, balance_path.as_str())
                 .and_then(num_f64)
                 .map(|v| v / div);
             if remaining.is_none() {
-                return Err(FetchError::parse(format!(
-                    "Balance 模板：路径 '{}' 无效或非数字",
-                    balance_path
-                )));
+                return Err(FetchError::parse(
+                    t!("error.custom.balance_path_invalid", path = balance_path.as_str()).into_owned()
+                ));
             }
             let unit = currency_path
                 .as_deref()
                 .and_then(|p| read_path(raw, p))
                 .and_then(|v| v.as_str().map(String::from));
             QuotaRow {
-                label: "余额".to_string(),
+                label: t!("row.balance").to_string(),
                 utilization: None,
                 remaining,
                 used: None,
@@ -335,7 +349,9 @@ fn parse_with_extract(
         } => {
             let div = divide.unwrap_or(1.0);
             if div == 0.0 {
-                return Err(FetchError::parse("Custom 模板：divide 不能为 0"));
+                return Err(FetchError::parse(
+                    t!("error.custom.custom_divide_zero").into_owned()
+                ));
             }
             let remaining = remaining_path
                 .as_deref()
@@ -354,11 +370,11 @@ fn parse_with_extract(
                 .map(|v| v / div);
             if remaining.is_none() && used.is_none() && total.is_none() {
                 return Err(FetchError::parse(
-                    "Custom 模板：所有 path 都没匹配到值",
+                    t!("error.custom.custom_path_no_match").into_owned()
                 ));
             }
             QuotaRow {
-                label: "余额".to_string(),
+                label: t!("row.balance").to_string(),
                 utilization: None,
                 remaining,
                 used,

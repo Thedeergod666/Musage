@@ -19,6 +19,11 @@ import openrouterLogo from "../assets/openrouter-logo.png";
 import kimiLogo from "../assets/kimi-logo.svg";
 import zhipuLogo from "../assets/zhipu-logo.svg";
 import zhipuEnLogo from "../assets/zhipu-en-logo.svg";
+import stepfunLogo from "../assets/stepfun-logo.svg";
+import siliconflowLogo from "../assets/siliconflow-logo.svg";
+import novitaLogo from "../assets/novita-logo.svg";
+import qwenLogo from "../assets/qwen-logo.svg";
+import claudeLogo from "../assets/claude-logo.svg";
 
 export interface ProviderMeta {
   name: string;
@@ -65,13 +70,11 @@ export const PROVIDER_META: Record<string, ProviderMeta> = {
   kimi: { name: t("provider.kimi.name"), logo: kimiLogo, accent: "var(--id-kimi)" },
   zhipu: { name: t("provider.zhipu_cn.name"), logo: zhipuLogo, accent: "var(--id-zhipu)" },
   zhipu_en: { name: t("provider.zhipu_en.name"), logo: zhipuEnLogo, accent: "var(--id-zhipu)" },
-  // 2026-06-16 新增（PR 2）—— 暂没 logo 文件，fallback 用首字母 + accent 色
-  // 等拿到真 logo 直接 `cp` 替换 SVG/PNG 文件即可（无需改代码）
-  stepfun: { name: t("provider.stepfun.name"), logo: "", accent: "#6366f1" },
-  siliconflow: { name: t("provider.siliconflow.name"), logo: "", accent: "#ff6b35" },
-  novita: { name: t("provider.novita.name"), logo: "", accent: "#9333ea" },
-  qwen: { name: t("provider.qwen.name"), logo: "", accent: "#615ced" },
-  claude_official: { name: t("provider.claude_official.name"), logo: "", accent: "#d97706" },
+  stepfun: { name: t("provider.stepfun.name"), logo: stepfunLogo, accent: "#6366f1" },
+  siliconflow: { name: t("provider.siliconflow.name"), logo: siliconflowLogo, accent: "#ff6b35" },
+  novita: { name: t("provider.novita.name"), logo: novitaLogo, accent: "#9333ea" },
+  qwen: { name: t("provider.qwen.name"), logo: qwenLogo, accent: "#615ced" },
+  claude_official: { name: t("provider.claude_official.name"), logo: claudeLogo, accent: "#d97706" },
 };
 
 export function getProviderMeta(id: string): ProviderMeta | undefined {

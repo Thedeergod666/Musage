@@ -21,6 +21,11 @@ import openrouterLogo from "./assets/openrouter-logo.png";
 import kimiLogo from "./assets/kimi-logo.svg?url";
 import zhipuLogo from "./assets/zhipu-logo.svg?url";
 import zhipuEnLogo from "./assets/zhipu-en-logo.svg?url";
+import stepfunLogo from "./assets/stepfun-logo.svg?url";
+import siliconflowLogo from "./assets/siliconflow-logo.svg?url";
+import novitaLogo from "./assets/novita-logo.svg?url";
+import qwenLogo from "./assets/qwen-logo.svg?url";
+import claudeLogo from "./assets/claude-logo.svg?url";
 import "./styles.css";
 
 /// 静态映射：provider id → 官网 logo + 显示名 + accent 色
@@ -37,24 +42,29 @@ import "./styles.css";
 ///
 /// 加新 provider 时如果暂时没有 logo 文件，把 `logo` 留空字符串，
 /// `updateCard` 会自动用首字母 + accent 色生成 data: URL fallback。
-const PROVIDER_META: Record<string, { name: string; logo: string; accent: string }> = {
-  minimax: { name: t("provider.minimax.name"), logo: minimaxLogo, accent: "#9b59ff" },
-  deepseek: { name: t("provider.deepseek.name"), logo: deepseekLogo, accent: "#4a90e2" },
-  xiaomimimo: { name: t("provider.xiaomimimo.name"), logo: xiaomimimoLogo, accent: "#ff6a00" },
-  tavily: { name: t("provider.tavily.name"), logo: tavilyLogo, accent: "#00d4a8" },
-  zenmux: { name: t("provider.zenmux.name"), logo: zenmuxLogo, accent: "#9b59ff" },
-  openrouter: { name: t("provider.openrouter.name"), logo: openrouterLogo, accent: "#5ac8fa" },
-  kimi: { name: t("provider.kimi.name"), logo: kimiLogo, accent: "#5ac8fa" },
-  zhipu: { name: t("provider.zhipu_cn.name"), logo: zhipuLogo, accent: "#7b61ff" },
-  "Z.ai": { name: t("provider.zhipu_en.name"), logo: zhipuEnLogo, accent: "#2D2D2D" },
-  // 2026-06-16 新增（PR 2）—— 暂没 logo 文件，fallback 用首字母 + accent 色
-  // 等拿到真 logo 直接 `cp` 替换 SVG/PNG 文件即可（无需改代码）
-  stepfun: { name: t("provider.stepfun.name"), logo: "", accent: "#6366f1" },
-  siliconflow: { name: t("provider.siliconflow.name"), logo: "", accent: "#ff6b35" },
-  novita: { name: t("provider.novita.name"), logo: "", accent: "#9333ea" },
-  qwen: { name: t("provider.qwen.name"), logo: "", accent: "#615ced" },
-  claude_official: { name: t("provider.claude_official.name"), logo: "", accent: "#d97706" },
-};
+/// 构建 provider 元数据表。必须在 initLocale() 之后调用（t() 需要 dict 已加载）。
+/// locale 切换时重新构建 + 刷新卡片名称。
+function buildProviderMeta(): Record<string, { name: string; logo: string; accent: string }> {
+  return {
+    minimax: { name: t("provider.minimax.name"), logo: minimaxLogo, accent: "#9b59ff" },
+    deepseek: { name: t("provider.deepseek.name"), logo: deepseekLogo, accent: "#4a90e2" },
+    xiaomimimo: { name: t("provider.xiaomimimo.name"), logo: xiaomimimoLogo, accent: "#ff6a00" },
+    tavily: { name: t("provider.tavily.name"), logo: tavilyLogo, accent: "#00d4a8" },
+    zenmux: { name: t("provider.zenmux.name"), logo: zenmuxLogo, accent: "#9b59ff" },
+    openrouter: { name: t("provider.openrouter.name"), logo: openrouterLogo, accent: "#5ac8fa" },
+    kimi: { name: t("provider.kimi.name"), logo: kimiLogo, accent: "#5ac8fa" },
+    zhipu: { name: t("provider.zhipu_cn.name"), logo: zhipuLogo, accent: "#7b61ff" },
+    "Z.ai": { name: t("provider.zhipu_en.name"), logo: zhipuEnLogo, accent: "#2D2D2D" },
+    stepfun: { name: t("provider.stepfun.name"), logo: stepfunLogo, accent: "#6366f1" },
+    siliconflow: { name: t("provider.siliconflow.name"), logo: siliconflowLogo, accent: "#ff6b35" },
+    novita: { name: t("provider.novita.name"), logo: novitaLogo, accent: "#9333ea" },
+    qwen: { name: t("provider.qwen.name"), logo: qwenLogo, accent: "#615ced" },
+    claude_official: { name: t("provider.claude_official.name"), logo: claudeLogo, accent: "#d97706" },
+  };
+}
+
+/// 当前 locale 的 provider 元数据缓存。initLocale 后 + locale 变化时重建。
+let PROVIDER_META = {} as Record<string, { name: string; logo: string; accent: string }>;
 
 /// 没有 logo 文件时，用首字母 + accent 色生成 data: URL SVG。
 /// 渲染成本几乎为 0（base64 inline），但保证浮窗一定有头像可显示。
@@ -120,7 +130,7 @@ function applyColorOverrides(): void {
   }
 }
 
-import { t } from "./i18n";
+import { t, initLocale, onLocaleChange } from "./i18n";
 
 
 
@@ -173,6 +183,8 @@ interface QuotaSnapshot {
 
 const app = document.getElementById("app")!;
 let countdownTimer: number | null = null;
+/// 最后一次 render 的 snapshot —— locale 变化时用来重新渲染。
+let lastRenderedSnap: QuotaSnapshot | null = null;
 
 /// 瞬态错误：网络抖动 / 限流 / 服务端错误 → 浮窗只翻红点 + 写日志，
 /// **不**覆盖 rows（保留最后一次成功的数据让用户能继续看用量）。
@@ -192,8 +204,9 @@ function isTransientError(kind: string | null | undefined): boolean {
 /// 那块）保持严格一致 —— 任一处改了另一处要同步改，否则 contentFingerprint
 /// 算出来的"可见结构"就跟实际 DOM 脱节 → 要么漏 fit 要么白 fit。
 function effectiveSnap(p: ProviderSnapshot): ProviderSnapshot {
-  if (isTransientError(p.error_kind) && lastGoodSnap.has(p.provider)) {
-    return lastGoodSnap.get(p.provider)!;
+  const entry = lastGoodSnap.get(p.provider);
+  if (isTransientError(p.error_kind) && entry && (Date.now() - entry.at < LAST_GOOD_TTL_MS)) {
+    return entry.snap;
   }
   return p;
 }
@@ -216,10 +229,14 @@ function contentFingerprint(snap: QuotaSnapshot): string {
   return `fh:${renderPrefs.showFooterHint ? 1 : 0};${providers}`;
 }
 
-/// 每个 provider 的"最后一次成功"快照。
+/// 每个 provider 的"最后一次成功"快照 + 记录时间。
 /// 瞬态错误来时，浮窗用这份数据继续渲染 + dot 翻红。
 /// 持久错误（且无历史成功）才走完整的错误 UI。
-const lastGoodSnap = new Map<string, ProviderSnapshot>();
+///
+/// TTL：超过 5 分钟的缓存视为过期——不再用于瞬态错误兜底，改为显示错误 UI。
+/// 避免退避期间浮窗一直卡在过期数据上（用户看到"962"但实际已经是 1000 了）。
+const LAST_GOOD_TTL_MS = 5 * 60 * 1000;
+const lastGoodSnap = new Map<string, { snap: ProviderSnapshot; at: number }>();
 
 /// 上一次 fit-to-content 时的"可见结构"指纹。
 /// 内容数据刷新（utilization / countdown）不改变这个值 → auto-resize 跳过，
@@ -239,6 +256,7 @@ function errorKindLabel(k: string): string {
 // ── 渲染入口 ──
 
 function render(snap: QuotaSnapshot) {
+  lastRenderedSnap = snap;
   if (!snap.providers || snap.providers.length === 0) {
     renderLoading();
     return;
@@ -452,7 +470,7 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
 
   // 成功 → 记录到 lastGood 备用（瞬态错误时复用这份数据继续渲染）
   if (p.success) {
-    lastGoodSnap.set(p.provider, p);
+    lastGoodSnap.set(p.provider, { snap: p, at: Date.now() });
     card.dataset.stale = ""; // 清 stale 标记（即使之前是 stale）
   }
 
@@ -468,9 +486,10 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
 
   if (!p.success) {
     const kind = p.error_kind ?? "other";
-    const good = lastGoodSnap.get(p.provider);
+    const entry = lastGoodSnap.get(p.provider);
+    const good = entry && (Date.now() - entry.at < LAST_GOOD_TTL_MS) ? entry.snap : null;
 
-    // ── 瞬态错误（网络抖动 / 限流 / 服务端错误）+ 之前有过成功数据 ──
+    // ── 瞬态错误（网络抖动 / 限流 / 服务端错误）+ 之前有过成功数据（且未过期） ──
     // **不**碰 rowsBox 的 DOM（最后一次成功渲染留下的用量数据原封不动），
     // 只翻红点 + 标 stale。具体报错已由后端写进 LogStore，浮窗不再展示。
     // ⚠️ 这条分支的判定条件跟 `effectiveSnap`（上面）必须严格保持一致，
@@ -641,8 +660,8 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
     // row-foot：plan_name + 月重置倒计时
     if (r.resets_at) {
       rowEl.dataset.resetsAt = String(r.resets_at);
-      // Tavily 月重置：用 "月重置" 前缀，不复用 label（"Free tier"）
-      rowEl.dataset.resetsPrefix = "月重置";
+      // Tavily 月重置：用 i18n 前缀，不复用 label（"Free tier"）
+      rowEl.dataset.resetsPrefix = t("floating.countdown.monthly_prefix");
     } else {
       delete rowEl.dataset.resetsAt;
       delete rowEl.dataset.resetsPrefix;
@@ -726,9 +745,9 @@ function updateCountdowns() {
     if (!Number.isFinite(ms) || ms <= 0) return;
     const foot = row.querySelector<HTMLElement>(".row-foot");
     if (!foot) return;
-    // 优先用 data-resets-prefix（Tavily 用 "月重置"），否则用 label + " 重置"
+    // 优先用 data-resets-prefix（Tavily 用 t("floating.countdown.monthly_prefix")），否则用 label + reset suffix
     const prefix = row.dataset.resetsPrefix
-      ?? (row.querySelector<HTMLElement>(".row-label > span:first-child")?.textContent ?? "") + " 重置";
+      ?? (row.querySelector<HTMLElement>(".row-label > span:first-child")?.textContent ?? "") + t("floating.countdown.reset_suffix");
     foot.textContent = formatResetWithCountdown(ms, prefix);
   });
 }
@@ -778,21 +797,21 @@ function formatResetWithCountdown(ms: number, prefix: string): string {
   const days = Math.floor(remainMs / 86400000);
   if (remainMs <= 0) {
     const label = `${dt.getMonth() + 1}-${dt.getDate()}`;
-    return `${prefix} ${label}（已重置）`;
+    return `${prefix} ${label}${t("floating.countdown.reset_done")}`;
   }
   if (days >= 1) {
     const label = `${dt.getMonth() + 1}-${dt.getDate()}`;
-    return `${prefix} ${label}（${days}天）`;
+    return `${prefix} ${label}${t("floating.countdown.days_left", { days })}`;
   }
   // < 1 天：显示时分 + "Nh Mm" 倒计时
   const time = `${pad2(dt.getHours())}:${pad2(dt.getMinutes())}`;
   const minutes = Math.floor(remainMs / 60000);
   if (minutes < 60) {
-    return `${prefix} ${time}（${minutes} 分钟后）`;
+    return `${prefix} ${time}${t("floating.countdown.minutes_left", { minutes })}`;
   }
   const hours = Math.floor(minutes / 60);
   const mins = minutes % 60;
-  return `${prefix} ${time}（${hours}h${pad2(mins)}m）`;
+  return `${prefix} ${time}${t("floating.countdown.hours_minutes", { hours, minutes: pad2(mins) })}`;
 }
 
 function pad2(n: number): string {
@@ -813,6 +832,26 @@ function cssEscape(s: string): string {
 // ── 启动 ──
 
 async function init() {
+  // ── i18n 初始化：必须在任何 t() 调用前完成（加载 dict） ──
+  await initLocale();
+  PROVIDER_META = buildProviderMeta();
+  // locale 变化时重建元数据 + 刷新所有卡片名称
+  onLocaleChange(() => {
+    PROVIDER_META = buildProviderMeta();
+    // 刷新已渲染卡片的名称（不触发 full re-render，只更新 .card-name）
+    app.querySelectorAll<HTMLElement>(".card[data-provider]").forEach((card) => {
+      const id = card.dataset.provider;
+      if (!id) return;
+      const meta = PROVIDER_META[id];
+      if (!meta) return;
+      const name = card.querySelector<HTMLElement>(".card-name");
+      if (name) name.textContent = meta.name;
+    });
+    // 重新渲染 loading/error 态（文字也会变）
+    const snap = lastRenderedSnap;
+    if (snap) render(snap);
+  });
+
   const w = getCurrentWindow();
   // 拖动：左键按住任意非按钮区域 → start_dragging
   app.addEventListener("mousedown", (e) => {

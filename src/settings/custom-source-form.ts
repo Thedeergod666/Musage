@@ -172,7 +172,10 @@ function field(_name: string, label: string, input: HTMLElement): HTMLElement {
 
 function radio(name: string, value: string, checked: boolean, label?: string): HTMLElement {
   const id = `${name}-${value}`;
-  return el("label", { class: "radio" },
+  // 注意：input 必须 margin: 0 + flex-shrink: 0，否则原生 radio 的
+  // "clickable area" 会把旁边的文字推开 / 内部点遮住字母（之前 GET 被
+  // 渲染成 GOT 的根因）。
+  return el("label", { class: "radio", for: id },
     el("input", {
       type: "radio",
       name,
@@ -180,7 +183,7 @@ function radio(name: string, value: string, checked: boolean, label?: string): H
       value,
       ...(checked ? { checked: "true" } : {}),
     }),
-    label ?? value,
+    el("span", { class: "radio-label" }, label ?? value),
   );
 }
 

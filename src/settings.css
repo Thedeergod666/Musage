@@ -612,6 +612,35 @@ button.order-down {
 .provider-group {
   margin-bottom: var(--sp-3, 8px);
 }
+
+/* PR 3 UX 调整：顶部 3 列 grid (token_plan / balance / official)
+ * - 桌面：3 列并排，方便用户横向对比
+ * - 较窄屏幕（<1100px）：降级为 2 列
+ * - 移动端（<720px）：1 列
+ * 关键点：3 个组 `<details>` 元素都默认 open，所以高度是 max(3 列)；
+ * 限制 max-height 让每列内部可滚，避免页面被某长列撑爆
+ */
+.provider-groups-top {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-3, 8px);
+  margin-bottom: var(--sp-3, 8px);
+}
+.provider-groups-top .provider-group {
+  margin-bottom: 0;
+  min-width: 0;   /* 防止 grid item 内容撑破列宽 */
+}
+.provider-groups-top .provider-group > :not(summary) {
+  /* 内容可滚：3 列里最长的可能 5-6 个 source，不限高会推高整页 */
+  max-height: 60vh;
+  overflow-y: auto;
+}
+@media (max-width: 1100px) {
+  .provider-groups-top { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .provider-groups-top { grid-template-columns: 1fr; }
+}
 .provider-group > summary {
   padding: var(--sp-2, 6px) var(--sp-3, 8px);
   cursor: pointer;
@@ -643,7 +672,8 @@ dialog.modal {
   color: inherit;
   border-radius: var(--r-md, 8px);
   padding: 0;
-  max-width: 560px;
+  /* PR 3 UX：560 → 720，给自定义表单更多横向空间（3 个 radio + 路径/divide 字段并排） */
+  max-width: 720px;
   width: 92vw;
   max-height: 90vh;
   overflow: auto;
@@ -663,14 +693,28 @@ dialog.modal .modal-actions {
 .custom-source-form .field { margin-bottom: var(--sp-3, 10px); }
 .custom-source-form .radio-group {
   display: flex;
-  gap: var(--sp-3, 10px);
+  flex-wrap: wrap;       /* 窄屏允许换行（不会让标签竖排被压窄） */
+  gap: var(--sp-3, 12px);
   margin-top: var(--sp-2, 4px);
 }
 .custom-source-form .radio {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   cursor: pointer;
+  white-space: nowrap;   /* 防"New API 系"被竖排 */
+  padding: 2px 4px;
+}
+.custom-source-form .radio input[type="radio"] {
+  /* 原生 radio 的 clickable area 包含内圆点，
+   * 没这两行会让 input 视觉位置把"GET"中间的"E"遮住变 GOT */
+  margin: 0;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+.custom-source-form .radio .radio-label {
+  user-select: none;
 }
 .accent-palette {
   display: flex;

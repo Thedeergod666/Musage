@@ -27,7 +27,7 @@ import { getProviderExtras } from "./source-extras";
 import { renderOrderSection } from "./order";
 import { renderCredentialBlock, loadCredentialStatus } from "./credentials";
 import { getProviderMeta } from "./logos";
-import { groupSources, renderGroup } from "./groups";
+import { groupSources, renderGroup, splitGroupsForLayout } from "./groups";
 import { openAddCustomSourceModal } from "./custom-source-form";
 import type { AppConfig, SourceMeta } from "./types";
 
@@ -77,8 +77,23 @@ export async function renderProvidersSection(container: HTMLElement) {
   renderOrderSection(container, allSources, cfg.provider_order, cfg);
 
   // 3) 按分组渲染
+  // PR 3 UX：顶部 3 列（token_plan / balance / official） + 下面堆叠（xiaomi / custom / misc）
   const groups = groupSources(allSources);
-  for (const [key, metas] of groups) {
+  const { top, rest } = splitGroupsForLayout(groups);
+
+  // 3a) 顶部 3 列 grid wrapper
+  if (top.length > 0) {
+    const topRow = el("div", { class: "provider-groups-top" });
+    for (const [key, metas] of top) {
+      topRow.appendChild(
+        renderGroup(key, metas, (m) => createProviderPanel(m, cfg)),
+      );
+    }
+    container.appendChild(topRow);
+  }
+
+  // 3b) 下面堆叠的组（xiaomi / custom / misc 等）
+  for (const [key, metas] of rest) {
     container.appendChild(
       renderGroup(key, metas, (m) => createProviderPanel(m, cfg)),
     );

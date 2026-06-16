@@ -97,6 +97,24 @@ export function groupSources(
   return result;
 }
 
+/** PR 3 (UX 调整)：把分组拆成「顶部 3 列」+「下面堆叠」两段。
+ *
+ * - 顶部 3 列（3-col grid）：token_plan / balance / official —— 高频类目，
+ *   并排显示让用户不用滚到底就能对比"套餐/余额/官方"
+ * - 下面堆叠（full-width）：xiaomi / custom / misc —— 这些是低频或
+ *   动态长内容的（custom 数量增长会拉高列高）
+ */
+export function splitGroupsForLayout(groups: Map<GroupKey, SourceMeta[]>): {
+  top: Array<[GroupKey, SourceMeta[]]>;
+  rest: Array<[GroupKey, SourceMeta[]]>;
+} {
+  const topKeys: GroupKey[] = ["token_plan", "balance", "official"];
+  const all = Array.from(groups.entries());
+  const top = all.filter(([k]) => topKeys.includes(k));
+  const rest = all.filter(([k]) => !topKeys.includes(k));
+  return { top, rest };
+}
+
 /** 渲染单个组（原生 `<details>` + `<summary>`，无 CSS 依赖）。 */
 export function renderGroup(
   key: GroupKey,

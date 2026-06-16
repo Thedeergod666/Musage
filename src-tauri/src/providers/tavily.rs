@@ -45,6 +45,8 @@ use serde_json::Value;
 
 use super::{shared_client, AuthKind, Credentials, FetchError, ProviderSnapshot, QuotaRow, QuotaSource};
 
+use crate::t;
+
 const URL: &str = "https://api.tavily.com/usage";
 
 // ── QuotaSource 实现 ─────────────────────────────────────────────
@@ -75,7 +77,9 @@ impl QuotaSource for TavilySource {
         Box::pin(async move {
             let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
-                return Err(FetchError::unconfigured("未配置 Tavily API key（设置面板填入）"));
+                return Err(FetchError::unconfigured(
+                    t!("error.provider.unconfigured_key", provider = "Tavily").into_owned()
+                ));
             }
             do_fetch(api_key).await
         })
@@ -84,7 +88,9 @@ impl QuotaSource for TavilySource {
 
 async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
     if api_key.trim().is_empty() {
-        return Err(FetchError::unconfigured("API key 为空"));
+        return Err(FetchError::unconfigured(
+            t!("error.common.api_key_empty").into_owned()
+        ));
     }
 
     let client = shared_client();
@@ -95,24 +101,34 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| FetchError::network(format!("Tavily 网络错误: {e}")))?;
+        .map_err(|e| FetchError::network(
+            t!("error.common.network", url = URL, err = e.to_string()).into_owned()
+        ))?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Err(FetchError::auth("鉴权失败，请检查 Tavily API key"));
+        return Err(FetchError::auth(
+            t!("error.common.auth_failed", provider = "Tavily").into_owned()
+        ));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(FetchError::server(format!(
-            "Tavily 服务异常 (HTTP {status}): {}",
-            body.chars().take(200).collect::<String>()
-        )));
+        return Err(FetchError::server(
+            t!(
+                "error.common.http_error",
+                provider = "Tavily",
+                status = status.as_u16(),
+                body = body.chars().take(200).collect::<String>()
+            ).into_owned()
+        ));
     }
 
     let raw: Value = resp
         .json()
         .await
-        .map_err(|e| FetchError::parse(format!("响应不是 JSON: {e}")))?;
+        .map_err(|e| FetchError::parse(
+            t!("error.common.parse_json", err = e.to_string()).into_owned()
+        ))?;
 
     parse(&raw)
 }
@@ -125,7 +141,9 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
 
     let key = raw
         .get("key")
-        .ok_or_else(|| FetchError::parse("Tavily 响应缺少 key 字段".to_string()))?;
+        .ok_or_else(|| FetchError::parse(
+            t!("error.common.missing_field", provider = "Tavily", field = "key").into_owned()
+        ))?;
 
     let used = num_f64(key, "usage");
     let mut limit = num_f64(key, "limit");
@@ -169,38 +187,38 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     if let (Some(u), Some(l)) = (used, limit) {
         if l > 0.0 {
             rows.push(QuotaRow {
-                label: "Free tier".to_string(),
+                label: t!("row.free_tier").to_string(),
                 utilization: Some((u / l) * 100.0),
                 remaining: Some((l - u).max(0.0)),
                 used: Some(u),
                 total: Some(l),
                 resets_at,
-                unit: Some("credits".to_string()),
+                unit: Some(t!("row.credits").to_string()),
                 extra: None,
             });
         } else {
             // limit = 0 → 理论上不该出现，但保险起见也列
             rows.push(QuotaRow {
-                label: "Free tier".to_string(),
+                label: t!("row.free_tier").to_string(),
                 utilization: None,
                 remaining: None,
                 used: Some(u),
                 total: None,
                 resets_at,
-                unit: Some("credits".to_string()),
+                unit: Some(t!("row.credits").to_string()),
                 extra: None,
             });
         }
     } else if let Some(u) = used {
         // 没有 limit（无限制套餐）：只显示 used
         rows.push(QuotaRow {
-            label: "Free tier".to_string(),
+            label: t!("row.free_tier").to_string(),
             utilization: None,
             remaining: None,
             used: Some(u),
             total: None,
             resets_at,
-            unit: Some("credits".to_string()),
+            unit: Some(t!("row.credits").to_string()),
             extra: None,
         });
     }
@@ -222,14 +240,16 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
                 used: Some(n),
                 total: None,
                 resets_at: None,
-                unit: Some("calls".to_string()),
+                unit: Some(t!("row.calls").to_string()),
                 extra: None,
             });
         }
     }
 
     if rows.is_empty() {
-        return Err(FetchError::parse("Tavily 响应里没找到任何 usage 字段".to_string()));
+        return Err(FetchError::parse(
+            t!("error.common.missing_field", provider = "Tavily", field = "any usage").into_owned()
+        ));
     }
 
     let success = !rows.is_empty();

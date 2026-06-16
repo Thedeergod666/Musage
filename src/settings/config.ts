@@ -13,6 +13,7 @@ import {
   saveConfig as ipcSaveConfig,
   setFloatingPinMode,
 } from "./api";
+import { t } from "../i18n";
 import type { AppConfig, FieldTriple, FloatingPinMode, ProviderId } from "./types";
 
 // ── 加载 ─────────────────────────────────────────────────────
@@ -69,7 +70,7 @@ export async function loadConfig() {
       el.addEventListener("change", () => {
         void import("./api").then(({ setProviderEnabled }) =>
           setProviderEnabled(id, el.checked).catch((e) => {
-            flash(`✗ 切换显示失败: ${e}`, true);
+            flash(t("settings.app.switch_failed", { err: String(e) }), true);
           }),
         );
       });
@@ -80,7 +81,7 @@ export async function loadConfig() {
     if (intervalEl) {
       const v = cfg.providers?.[id]?.refresh_interval_secs;
       intervalEl.value = v != null ? String(v) : "";
-      intervalEl.placeholder = `默认 ${cfg.refresh_interval_secs} 秒（顶部"轮询间隔"）`;
+      intervalEl.placeholder = t("settings.app.interval_default_placeholder", { secs: cfg.refresh_interval_secs });
     }
   }
 
@@ -137,10 +138,10 @@ export async function saveConfig() {
       !Array.isArray(weeklyCandidates) ||
       !Array.isArray(monthlyCandidates)
     ) {
-      throw new Error("必须是 JSON 数组");
+      throw new Error("must be a JSON array");
     }
   } catch (e) {
-    flash(`✗ Schema overrides JSON 解析失败: ${e}`, true);
+    flash(t("settings.config.schema_parse_failed", { err: String(e) }), true);
     return;
   }
 
@@ -276,9 +277,9 @@ export async function saveConfig() {
   };
   try {
     await ipcSaveConfig(cfg);
-    flash("✓ 配置已保存");
+    flash(t("settings.app.config_saved"));
   } catch (e) {
-    flash(`✗ 保存失败: ${e}`, true);
+    flash(t("settings.app.config_save_failed", { err: String(e) }), true);
   }
 }
 
@@ -289,14 +290,9 @@ export async function saveConfig() {
 export async function applyPinMode(mode: FloatingPinMode) {
   try {
     await setFloatingPinMode(mode);
-    const label =
-      mode === "pin_top"
-        ? "已设为：始终置顶"
-        : mode === "pin_bottom"
-        ? "已设为：置底（hover 置顶）"
-        : "已设为：普通窗口";
+    const label = t(`settings.pin_mode.${mode === "pin_top" ? "top" : mode === "pin_bottom" ? "bottom" : "normal"}`);
     flash(`✓ ${label}`);
   } catch (e) {
-    flash(`✗ 切换置顶模式失败: ${e}`, true);
+    flash(t("settings.pin_mode.failed", { err: String(e) }), true);
   }
 }

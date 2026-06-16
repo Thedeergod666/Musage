@@ -47,9 +47,9 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
     radio.addEventListener("change", () => {
       if (!radio.checked) return;
       void setTrayIconStyle(opt.value)
-        .then(() => flash(`✓ 托盘样式已切换：${opt.title}`))
+        .then(() => flash(t("settings.app.tray_style_changed", { name: opt.title })))
         .catch((e) => {
-          flash(`✗ 切换失败: ${e}`, true);
+          flash(t("settings.app.tray_style_failed", { err: String(e) }), true);
           // 回滚所有 radio 到 cfg 的旧值
           const oldRadio = document.querySelector<HTMLInputElement>(
             `input[name="tray-style"][value="${currentStyle}"]`,

@@ -101,7 +101,13 @@
         "percent": { "title": "📊 上下两个百分比", "desc": "5h 88% / 周 72%（默认）" },
         "bars": { "title": "▤ 两条水平进度条", "desc": "暗灰轨道 + 白色填充" },
         "logo": { "title": "🅼 原应用图标", "desc": "不显示数据，只看图标" }
-      }
+      },
+      "tray_style_changed": "✓ 托盘样式已切换：{name}",
+      "tray_style_failed": "✗ 切换失败: {err}",
+      "config_saved": "✓ 配置已保存",
+      "config_save_failed": "✗ 保存失败: {err}",
+      "switch_failed": "✗ 切换显示失败: {err}",
+      "interval_default_placeholder": "默认 {secs} 秒（顶部\"轮询间隔\"）"
     },
 
     "floating": {
@@ -113,7 +119,40 @@
         "bottom": { "title": "⬇ 置底，鼠标 hover 时置顶", "desc": "默认在底部，鼠标进入浮窗时自动浮上来" },
         "normal": { "title": "🔓 普通窗口", "desc": "不强制层级，跟普通窗口一样" }
       },
-      "reset_to_center": "归位到主屏幕正中央"
+      "reset_to_center": "归位到主屏幕正中央",
+      "reset_done": "✓ 浮窗已归位到主屏幕正中央",
+      "reset_failed": "✗ 归位失败: {err}",
+      "low_power_on": "✓ 省电模式已开启",
+      "low_power_off": "✓ 省电模式已关闭",
+      "auto_hide_on": "✓ 全屏自动隐藏已开启（仅 macOS）",
+      "auto_hide_off": "✓ 全屏自动隐藏已关闭",
+      "footer_hint_on": "✓ 底部提示行已开启",
+      "footer_hint_off": "✓ 底部提示行已关闭",
+      "toggle_failed": "✗ 切换失败: {err}",
+      "low_power_label": "省电模式（关闭玻璃模糊 + 过渡动画）",
+      "low_power_help": "老 Intel Mac / Linux WebKitGTK 等 GPU 弱的平台开启可显著减少 backdrop-filter 开销。",
+      "auto_hide_label": "全屏时自动隐藏浮窗",
+      "auto_hide_help": "检测到任何 app 进入全屏（菜单栏自动隐藏）→ 浮窗暂时隐藏；退出全屏 → 自动恢复。目前仅 macOS 生效。",
+      "footer_hint_label": "显示底部提示行（provider 数量 + 快捷操作）",
+      "footer_hint_help": "默认隐藏。开启后浮窗底部会显示「X 个 provider · 拖动移动 · 右键菜单」提示，窗口高度会自动适配。",
+      "position_help": "浮窗位置 + 大小已经自动记忆，下次启动恢复。点归位可把窗口挪到当前主屏幕正中央。",
+      "color_thresholds_label": "🎨 颜色档位阈值（%）",
+      "color_thresholds_help": "默认 [50, 70, 88]。改动会立即生效（不需点保存）。后端校验 0 < t0 < t1 < t2 < 100。",
+      "color_custom_label": "🎨 自定义 4 档色（hover 时显示）",
+      "color_custom_help": "默认用 iOS 系统色（绿/青/黄/红）。改任意一个 → 立即生效；浮窗文字 / 进度条 / 状态点 三个地方的颜色会同步跟着变。",
+      "color_ok": "OK (绿 · 安全)",
+      "color_cyan": "CYAN (青 · 过半提醒)",
+      "color_warn": "WARN (黄 · 警告)",
+      "color_alert": "ALERT (红 · 告警)",
+      "wallet_label": "💰 钱包余额告警（剩余多少时变红）",
+      "wallet_enable": "启用低额高亮（剩余金额 < 阈值时行翻红）",
+      "wallet_help": "默认关闭（保持现状蓝色）。开启后，对所有「余额 / 剩余积分」行生效，不区分钱 / 积分（DeepSeek / ZenMux / OpenRouter 等），按你自己 provider 的余额量级调阈值。",
+      "reset_all": "↺ 全部重置为默认",
+      "reset_all_help": "一键把上述 3 项全部还原到默认：阈值 [50,70,88] / 颜色 iOS 默认色 / 钱包告警关闭。",
+      "threshold_must_be_number": "✗ 阈值必须是数字",
+      "wallet_must_be_number": "✗ 钱包告警阈值必须是数字（或取消勾选关闭）",
+      "display_saved": "✓ 显示设置已更新",
+      "display_save_failed": "✗ 保存失败: {err}"
     },
 
     "advanced": {
@@ -141,10 +180,18 @@
 
     "about": {
       "section_title": "关于",
+      "description": "多 Provider 实时用量监控悬浮窗。",
       "current_version": "当前版本：",
       "links": "链接",
       "source": "源码：",
       "feedback": "问题反馈：同上 GitHub issues"
+    },
+
+    "pin_mode": {
+      "top": "已设为：始终置顶",
+      "bottom": "已设为：置底（hover 置顶）",
+      "normal": "已设为：普通窗口",
+      "failed": "✗ 切换置顶模式失败: {err}"
     },
 
     "updater": {
@@ -176,6 +223,10 @@
       "delete_api_key": "确认删除 {provider} 的 API key？",
       "delete_cookie": "确认删除 {provider} 的 Cookie？",
       "clear_cookie": "确认清除已保存的 Xiaomi Cookie？\n清除后需要重新登录。"
+    },
+
+    "config": {
+      "schema_parse_failed": "✗ Schema overrides JSON 解析失败: {err}"
     },
 
     "region": {

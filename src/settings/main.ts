@@ -99,9 +99,9 @@ async function init() {
     if (containers.logs) renderLogsSection(containers.logs);
     if (containers.about) await renderAboutSection(containers.about);
 
-    // P2 区域向导：user_region != Custom 时在 providers 之前插入
-    if (containers.providers) {
-      await renderRegionSection(containers.providers);
+    // P2 区域向导 + 语言切换：放在「应用」section 底部
+    if (containers.app) {
+      await renderRegionSection(containers.app);
     }
 
     // 拉每个 source 的 key 状态 + 日志 + 注入 updater

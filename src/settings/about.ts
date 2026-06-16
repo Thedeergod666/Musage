@@ -21,7 +21,7 @@ export async function renderAboutSection(container: HTMLElement) {
       el("div", { class: "field" },
         el("label", {}, "Musage"),
         el("div", { class: "help" },
-          "多 Provider 实时用量监控悬浮窗。",
+          t("settings.about.description"),
           t("settings.about.current_version"),
           el("strong", { id: "updater-current-version" }, `v${version}`),
         ),

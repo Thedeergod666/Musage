@@ -101,7 +101,13 @@
         "percent": { "title": "📊 Top/bottom percent", "desc": "5h 88% / Weekly 72% (default)" },
         "bars": { "title": "▤ Two horizontal bars", "desc": "Dark gray track + white fill" },
         "logo": { "title": "🅼 Original app icon", "desc": "No data, just the icon" }
-      }
+      },
+      "tray_style_changed": "✓ Tray style switched: {name}",
+      "tray_style_failed": "✗ Switch failed: {err}",
+      "config_saved": "✓ Config saved",
+      "config_save_failed": "✗ Save failed: {err}",
+      "switch_failed": "✗ Toggle failed: {err}",
+      "interval_default_placeholder": "Default {secs}s (top \"Refresh interval\")"
     },
 
     "floating": {
@@ -113,7 +119,40 @@
         "bottom": { "title": "⬇ Bottom, hover to bring to top", "desc": "Default at bottom, auto bring to top on hover" },
         "normal": { "title": "🔓 Normal window", "desc": "No forced z-order, behaves like normal window" }
       },
-      "reset_to_center": "Reset to main screen center"
+      "reset_to_center": "Reset to main screen center",
+      "reset_done": "✓ Floating window reset to center",
+      "reset_failed": "✗ Reset failed: {err}",
+      "low_power_on": "✓ Low power mode enabled",
+      "low_power_off": "✓ Low power mode disabled",
+      "auto_hide_on": "✓ Auto-hide in fullscreen enabled (macOS only)",
+      "auto_hide_off": "✓ Auto-hide in fullscreen disabled",
+      "footer_hint_on": "✓ Footer hint enabled",
+      "footer_hint_off": "✓ Footer hint disabled",
+      "toggle_failed": "✗ Toggle failed: {err}",
+      "low_power_label": "Low power mode (disable glass blur + transitions)",
+      "low_power_help": "Enable on platforms with weak GPUs (old Intel Macs / Linux WebKitGTK) to significantly reduce backdrop-filter overhead.",
+      "auto_hide_label": "Auto-hide floating window in fullscreen",
+      "auto_hide_help": "When any app enters fullscreen (menu bar auto-hides) → floating window temporarily hides; exit fullscreen → auto-restores. Currently macOS only.",
+      "footer_hint_label": "Show footer hint (provider count + quick actions)",
+      "footer_hint_help": "Hidden by default. When enabled, the floating window bottom shows '{count} providers · drag to move · right-click menu' hint, window height auto-adjusts.",
+      "position_help": "Window position + size are auto-remembered and restored on next launch. Click reset to move the window to the current main screen center.",
+      "color_thresholds_label": "🎨 Color tier thresholds (%)",
+      "color_thresholds_help": "Default [50, 70, 88]. Changes take effect immediately (no save needed). Backend validates 0 < t0 < t1 < t2 < 100.",
+      "color_custom_label": "🎨 Custom 4-tier colors (shown on hover)",
+      "color_custom_help": "Defaults to iOS system colors (green/cyan/yellow/red). Change any → immediate effect; floating text / progress bar / status dot colors all sync.",
+      "color_ok": "OK (green · safe)",
+      "color_cyan": "CYAN (cyan · past-half提醒)",
+      "color_warn": "WARN (yellow · warning)",
+      "color_alert": "ALERT (red · alert)",
+      "wallet_label": "💰 Wallet balance alert (turn red when low)",
+      "wallet_enable": "Enable low-balance highlight (row turns red when remaining < threshold)",
+      "wallet_help": "Off by default (keeps current blue). When enabled, applies to all 'balance / remaining credits' rows regardless of currency (DeepSeek / ZenMux / OpenRouter etc.), adjust threshold based on your provider balance magnitude.",
+      "reset_all": "↺ Reset all to defaults",
+      "reset_all_help": "One-click reset all 3 items to defaults: thresholds [50,70,88] / iOS default colors / wallet alert off.",
+      "threshold_must_be_number": "✗ Thresholds must be numbers",
+      "wallet_must_be_number": "✗ Wallet alert threshold must be a number (or uncheck to disable)",
+      "display_saved": "✓ Display settings updated",
+      "display_save_failed": "✗ Save failed: {err}"
     },
 
     "advanced": {
@@ -141,10 +180,18 @@
 
     "about": {
       "section_title": "About",
+      "description": "Multi-provider real-time usage monitoring floating window.",
       "current_version": "Current version:",
       "links": "Links",
       "source": "Source code:",
       "feedback": "Feedback: same GitHub issues"
+    },
+
+    "pin_mode": {
+      "top": "Set to: always on top",
+      "bottom": "Set to: bottom (hover to top)",
+      "normal": "Set to: normal window",
+      "failed": "✗ Switch pin mode failed: {err}"
     },
 
     "updater": {
@@ -176,6 +223,10 @@
       "delete_api_key": "Confirm delete {provider} API key?",
       "delete_cookie": "Confirm delete {provider} Cookie?",
       "clear_cookie": "Confirm clearing saved Xiaomi Cookie?\nAfter clearing, you need to re-login."
+    },
+
+    "config": {
+      "schema_parse_failed": "✗ Schema overrides JSON parse failed: {err}"
     },
 
     "region": {

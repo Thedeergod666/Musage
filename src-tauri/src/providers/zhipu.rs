@@ -54,9 +54,8 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{
-    shared_client, AuthKind, Credentials, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
-};
+use super::{shared_client, AuthKind, Credentials, FetchError, ProviderSnapshot, QuotaRow, QuotaSource};
+use crate::t;
 
 const URL_CN: &str = "https://open.bigmodel.cn/api/monitor/usage/quota/limit";
 const URL_EN: &str = "https://api.z.ai/api/monitor/usage/quota/limit";
@@ -144,7 +143,9 @@ impl QuotaSource for ZhipuSource {
         Box::pin(async move {
             let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
-                return Err(FetchError::unconfigured("未配置智谱 GLM API key（设置面板填入）"));
+                return Err(FetchError::unconfigured(
+                    t!("error.provider.unconfigured_key", provider = "智谱 GLM").into_owned()
+                ));
             }
             let region = self.region.get().copied().unwrap_or_default();
             do_fetch(api_key, region).await
@@ -164,33 +165,42 @@ async fn do_fetch(api_key: &str, region: ZhipuRegion) -> Result<ProviderSnapshot
         .header("Accept-Language", "en-US,en")
         .send()
         .await
-        .map_err(|e| FetchError::network(format!("智谱 GLM 网络错误: {e}")))?;
+        .map_err(|e| FetchError::network(
+            t!("error.common.network", url = url, err = e.to_string()).into_owned()
+        ))?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(FetchError::auth(
-            "鉴权失败 —— 智谱 GLM API key 无效（注意 key 不要加 Bearer 前缀；CN/EN 区域 key 不通用）",
+            t!("error.zhipu.auth_failed_hint").into_owned()
         ));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(FetchError::server(format!(
-            "智谱 GLM ({}) 服务异常 (HTTP {}): {}",
-            match region { ZhipuRegion::Cn => "国区", ZhipuRegion::En => "国际" },
-            status,
-            body.chars().take(200).collect::<String>()
-        )));
+        let region_label = match region { ZhipuRegion::Cn => "国区", ZhipuRegion::En => "国际" };
+        return Err(FetchError::server(
+            t!(
+                "error.common.http_error",
+                provider = format!("智谱 GLM ({region_label})"),
+                status = status.as_u16(),
+                body = body.chars().take(200).collect::<String>()
+            ).into_owned()
+        ));
     }
 
     let raw: Value = resp
         .json()
         .await
-        .map_err(|e| FetchError::parse(format!("响应不是 JSON: {e}")))?;
+        .map_err(|e| FetchError::parse(
+            t!("error.common.parse_json", err = e.to_string()).into_owned()
+        ))?;
 
     // 业务级 success 检查
     if raw.get("success").and_then(|v| v.as_bool()) == Some(false) {
-        let msg = raw.get("msg").and_then(|v| v.as_str()).unwrap_or("Unknown error");
-        return Err(FetchError::server(format!("智谱 GLM API error: {msg}")));
+        let msg = raw.get("msg").and_then(|v| v.as_str()).unwrap_or("");
+        return Err(FetchError::server(
+            t!("error.common.business_code", provider = "智谱 GLM", code = 0, msg = msg).into_owned()
+        ));
     }
 
     parse(&raw, region)
@@ -208,7 +218,9 @@ fn parse(raw: &Value, region: ZhipuRegion) -> Result<ProviderSnapshot, FetchErro
 
     let data = raw
         .get("data")
-        .ok_or_else(|| FetchError::parse("智谱响应缺少 data 字段".to_string()))?;
+        .ok_or_else(|| FetchError::parse(
+            t!("error.common.missing_field", provider = "智谱 GLM", field = "data").into_owned()
+        ))?;
 
     let (five_h, weekly) = classify_zhipu_limits(data);
 
@@ -216,7 +228,7 @@ fn parse(raw: &Value, region: ZhipuRegion) -> Result<ProviderSnapshot, FetchErro
 
     if let Some((pct, resets_at)) = five_h {
         rows.push(QuotaRow {
-            label: "5h".to_string(),
+            label: t!("row.five_hour").to_string(),
             utilization: Some(pct),
             remaining: None,
             used: None,
@@ -228,7 +240,7 @@ fn parse(raw: &Value, region: ZhipuRegion) -> Result<ProviderSnapshot, FetchErro
     }
     if let Some((pct, resets_at)) = weekly {
         rows.push(QuotaRow {
-            label: "周".to_string(),
+            label: t!("row.weekly").to_string(),
             utilization: Some(pct),
             remaining: None,
             used: None,

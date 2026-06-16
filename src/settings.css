@@ -619,18 +619,33 @@ button.order-down {
  * - 默认显示 Token Plan；点 tab 切换内容，0 重渲染（只 toggle .active）
  * - 搜索时所有 tab pane 都展开，让结果跨 tab 显示
  * - Xiaomi / custom / misc 仍用 collapsible <details> 放在下面
+ * - toolbar (搜索 + 添加) 也 sticky 在 tab strip 上方，避免 sticky 时
+ *   "上面的缝隙泄漏内容"
  */
+.provider-toolbar {
+  /* 之前没 sticky，sticky 时 tab strip 上方会露馅。把它也钉在顶部 */
+  position: sticky;
+  top: 0;
+  z-index: 11;       /* 高于 tab strip (10)，这样 tab strip 在它下方 */
+  margin-bottom: var(--sp-2, 6px);
+  /* 关键：toolbar 背景必须不透明，否则滚动时上方内容漏出 */
+  background: #1a1c22;
+  padding: var(--sp-2, 6px) var(--sp-3, 8px);
+  border-radius: var(--r-md, 6px);
+}
 .provider-tab-strip {
   display: flex;
   gap: 2px;
   border-bottom: 1px solid var(--bg-3, rgba(255, 255, 255, 0.1));
   margin-bottom: var(--sp-3, 8px);
-  /* sticky 置顶 —— 用户滚到下面时 tab strip 仍在视口顶部 */
+  /* sticky 置顶 —— 用户滚到下面时 tab strip 仍在 toolbar 下方 */
+  /* top: 0 但 toolbar z-index=11 在它上面，自然层级 */
   position: sticky;
   top: 0;
   z-index: 10;
-  background: var(--bg-1, transparent);
-  /* backdrop blur 让 tab strip 浮在内容之上时更清晰 */
+  /* 关键：背景必须不透明 + 跟 body 同色，否则滚过的内容"漏"出来 */
+  background: #1a1c22;
+  /* backdrop-filter 是 nice-to-have 视觉打磨，opacity 必须先解决 */
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }

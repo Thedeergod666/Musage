@@ -115,11 +115,11 @@ pub fn run() {
                     }
                     // 同步 settings 窗口 title
                     if let Some(w) = app_for_locale.get_webview_window("settings") {
-                        let title = rust_i18n::t!("window.settings").to_string();
+                        let title = t!("window.settings").to_string();
                         let _ = w.set_title(&title);
                     }
                     if let Some(w) = app_for_locale.get_webview_window("xiaomi-login") {
-                        let title = rust_i18n::t!("window.xiaomi_login").to_string();
+                        let title = t!("window.xiaomi_login").to_string();
                         let _ = w.set_title(&title);
                     }
                 }
@@ -374,29 +374,29 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
                 Some(s) => vec![s],
                 None => {
                     let known: Vec<String> = builtin_sources().iter().map(|s| s.id().to_string()).collect();
-                    eprintln!("[dump] 未知 source id: {id}（可用: {}）", known.join(" / "));
+                    eprintln!("{}", t!("cli.dump_unknown_source", id = id, known = known.join(" / ")));
                     return 2;
                 }
             },
         };
 
         if sources.is_empty() {
-            eprintln!("[dump] 没有启用的 source");
+            eprintln!("{}", t!("cli.dump_no_enabled"));
             return 2;
         }
 
         for src in sources {
-            println!("\n========== {} ({}) ==========", src.display_name(), src.id());
+            println!("{}", t!("cli.dump_header", display_name = src.display_name(), id = src.id()));
 
             // 加载凭据
             let creds = match config::load_credential_for_id(src.id().as_ref()) {
                 Ok(Some(c)) => c,
                 Ok(None) => {
-                    eprintln!("[dump] 未配置凭据。请先在 GUI 设置面板配置。");
+                    eprintln!("{}", t!("cli.dump_no_credentials"));
                     continue;
                 }
                 Err(e) => {
-                    eprintln!("[dump] 读 keys.json 失败: {e}");
+                    eprintln!("{}", t!("cli.dump_read_keys_failed", err = e.to_string()));
                     continue;
                 }
             };
@@ -409,15 +409,15 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
 
             match result {
                 Ok(snap) => {
-                    println!("\n--- 原始响应 ---");
+                    println!("{}", t!("cli.dump_raw_response"));
                     if let Some(raw) = &snap.raw {
                         println!("{}", serde_json::to_string_pretty(raw).unwrap_or_default());
                     }
-                    println!("\n--- 解析结果 ---");
+                    println!("{}", t!("cli.dump_parsed_result"));
                     println!("{}", serde_json::to_string_pretty(&snap).unwrap_or_default());
                 }
                 Err(e) => {
-                    eprintln!("[dump] 拉取失败: {:?}", e);
+                    eprintln!("{}", t!("cli.dump_fetch_failed", err = format!("{e:?}")));
                 }
             }
         }

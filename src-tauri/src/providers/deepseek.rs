@@ -29,6 +29,8 @@ use std::pin::Pin;
 
 use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderImpl, ProviderSnapshot, QuotaRow, QuotaSource};
 
+use crate::t;
+
 const URL: &str = "https://api.deepseek.com/user/balance";
 
 // ── QuotaSource 实现（Phase 1）────────────────────────────────────
@@ -59,7 +61,9 @@ impl QuotaSource for DeepseekSource {
         Box::pin(async move {
             let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
-                return Err(FetchError::unconfigured("未配置 API key（设置面板填入）"));
+                return Err(FetchError::unconfigured(
+                    t!("error.provider.unconfigured_key", provider = "DeepSeek").into_owned()
+                ));
             }
             do_fetch(api_key).await
         })
@@ -87,7 +91,9 @@ impl ProviderImpl for Deepseek {
 
 async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
     if api_key.trim().is_empty() {
-        return Err(FetchError::unconfigured("API key 为空"));
+        return Err(FetchError::unconfigured(
+            t!("error.common.api_key_empty").into_owned()
+        ));
     }
 
     let client = shared_client();
@@ -98,30 +104,45 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| FetchError::network(format!("DeepSeek 网络错误: {e}")))?;
+        .map_err(|e| FetchError::network(
+            t!("error.common.network", url = URL, err = e.to_string()).into_owned()
+        ))?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED {
-        return Err(FetchError::auth("鉴权失败，请检查 DeepSeek API key"));
+        return Err(FetchError::auth(
+            t!("error.common.auth_failed", provider = "DeepSeek").into_owned()
+        ));
     }
     if status == reqwest::StatusCode::FORBIDDEN {
-        return Err(FetchError::auth("无权限访问 DeepSeek 钱包（HTTP 403）"));
+        return Err(FetchError::auth(
+            t!("error.common.forbidden", provider = "DeepSeek").into_owned()
+        ));
     }
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(FetchError::new(ErrorKind::RateLimited, "DeepSeek 请求过于频繁，请稍后再试"));
+        return Err(FetchError::new(
+            ErrorKind::RateLimited,
+            t!("error.common.rate_limited", provider = "DeepSeek").into_owned()
+        ));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(FetchError::server(format!(
-            "DeepSeek 服务异常 (HTTP {status}): {}",
-            body.chars().take(200).collect::<String>()
-        )));
+        return Err(FetchError::server(
+            t!(
+                "error.common.http_error",
+                provider = "DeepSeek",
+                status = status.as_u16(),
+                body = body.chars().take(200).collect::<String>()
+            ).into_owned()
+        ));
     }
 
     let raw: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| FetchError::parse(format!("响应不是 JSON: {e}")))?;
+        .map_err(|e| FetchError::parse(
+            t!("error.common.parse_json", err = e.to_string()).into_owned()
+        ))?;
 
     let is_available = raw
         .get("is_available")
@@ -146,7 +167,7 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
                     if g + t > 0.0 { Some(g + t) } else { None }
                 });
             rows.push(QuotaRow {
-                label: "余额".to_string(),
+                label: t!("row.balance").to_string(),
                 utilization: None,
                 remaining: total_balance,
                 used: None,
@@ -159,7 +180,9 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
     }
 
     if rows.is_empty() {
-        return Err(FetchError::parse("DeepSeek 响应缺少 balance_infos".to_string()));
+        return Err(FetchError::parse(
+            t!("error.common.missing_field", provider = "DeepSeek", field = "balance_infos").into_owned()
+        ));
     }
 
     // 不再 push "状态" 行 —— `is_available` 仍驱动 `is_healthy`（即右上角

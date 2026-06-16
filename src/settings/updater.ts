@@ -9,6 +9,7 @@
 import { getAppVersion } from "./api";
 import { $ } from "./utils";
 import { flash } from "./utils";
+import { t } from "../i18n";
 import {
   checkForUpdate,
   downloadAndInstall,
@@ -26,14 +27,14 @@ export function setupUpdaterSection() {
   block.className = "row updater-section";
   block.id = "updater-section";
   block.innerHTML = `
-    <h3>自动更新</h3>
+    <h3>${t("settings.updater.section_title")}</h3>
     <div class="updater-meta">
-      当前版本：<span id="updater-current-version">—</span>
+      ${t("settings.about.current_version")}<span id="updater-current-version">—</span>
     </div>
     <div class="updater-actions">
-      <button id="updater-check" class="primary">检查更新</button>
-      <button id="updater-install" class="primary" hidden>下载并安装</button>
-      <button id="updater-relaunch" class="primary" hidden>立即重启</button>
+      <button id="updater-check" class="primary">${t("settings.updater.check_update")}</button>
+      <button id="updater-install" class="primary" hidden>${t("settings.updater.download_install")}</button>
+      <button id="updater-relaunch" class="primary" hidden>${t("settings.updater.relaunch")}</button>
       <span id="updater-status"></span>
     </div>
     <div id="updater-notes" class="updater-notes"></div>
@@ -56,7 +57,7 @@ export function setupUpdaterSection() {
     void doInstall();
   });
   document.getElementById("updater-relaunch")?.addEventListener("click", () => {
-    relaunchApp().catch((e) => flash(`✗ 重启失败: ${e}`, true));
+    relaunchApp().catch((e) => flash(`✗ ${e}`, true));
   });
 
   // 订阅状态
@@ -106,21 +107,21 @@ function renderUpdaterState(s: UpdateState) {
 
   switch (s.status) {
     case "checking":
-      status.textContent = "检查中…";
+      status.textContent = t("settings.updater.checking");
       status.style.color = "";
       if (installBtn) installBtn.hidden = true;
       if (relaunchBtn) relaunchBtn.hidden = true;
       if (notes) notes.hidden = true;
       break;
     case "up-to-date":
-      status.textContent = "✓ 已是最新";
+      status.textContent = t("settings.updater.up_to_date");
       status.style.color = "#4caf50";
       if (installBtn) installBtn.hidden = true;
       if (relaunchBtn) relaunchBtn.hidden = true;
       if (notes) notes.hidden = true;
       break;
     case "available":
-      status.textContent = `🎉 发现新版本 v${s.version}`;
+      status.textContent = t("settings.updater.available", { version: s.version ?? "" });
       status.style.color = "#2196f3";
       if (installBtn) installBtn.hidden = false;
       if (relaunchBtn) relaunchBtn.hidden = true;
@@ -134,22 +135,21 @@ function renderUpdaterState(s: UpdateState) {
       }
       break;
     case "downloading":
-      status.textContent =
-        s.progress != null
-          ? `下载中… ${(s.progress * 100).toFixed(0)}%`
-          : "下载中…";
+      status.textContent = s.progress != null
+        ? t("settings.updater.downloading", { pct: (s.progress * 100).toFixed(0) })
+        : t("settings.updater.downloading", { pct: "0" }).replace(" 0%", "");
       status.style.color = "#ff9800";
       if (installBtn) installBtn.hidden = true;
       if (relaunchBtn) relaunchBtn.hidden = true;
       break;
     case "ready":
-      status.textContent = "✓ 已下载完成，点击重启生效";
+      status.textContent = t("settings.updater.ready");
       status.style.color = "#4caf50";
       if (installBtn) installBtn.hidden = true;
       if (relaunchBtn) relaunchBtn.hidden = false;
       break;
     case "error":
-      status.textContent = `✗ ${s.error ?? "更新失败"}`;
+      status.textContent = t("settings.updater.failed", { err: s.error ?? "更新失败" });
       status.style.color = "#f44336";
       if (installBtn) installBtn.hidden = true;
       if (relaunchBtn) relaunchBtn.hidden = true;

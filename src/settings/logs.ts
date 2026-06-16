@@ -10,6 +10,7 @@
 
 import { clearLogs as clearLogsIPC, getRecentLogs } from "./api";
 import { el, escapeHtml, flash, formatLogTime } from "./utils";
+import { t } from "../i18n";
 import type { LogEntry } from "./types";
 
 /// v0.6+ 把 logs 渲染到独立 section。
@@ -19,20 +20,20 @@ export function renderLogsSection(container: HTMLElement) {
   const filter = el("select", {
     id: "logs-filter",
     class: "logs-filter",
-    title: "筛选日志级别",
+    title: t("settings.logs.filter_level"),
   }) as HTMLSelectElement;
-  filter.appendChild(el("option", { value: "all" }, "全部"));
-  filter.appendChild(el("option", { value: "error" }, "仅报错"));
-  filter.appendChild(el("option", { value: "warn" }, "仅警告"));
-  filter.appendChild(el("option", { value: "info" }, "仅信息"));
+  filter.appendChild(el("option", { value: "all" }, t("settings.logs.filter_all")));
+  filter.appendChild(el("option", { value: "error" }, t("settings.logs.filter_error")));
+  filter.appendChild(el("option", { value: "warn" }, t("settings.logs.filter_warn")));
+  filter.appendChild(el("option", { value: "info" }, t("settings.logs.filter_info")));
   filter.addEventListener("change", () => void loadLogs());
 
   // 按钮
-  const refresh = el("button", { id: "logs-refresh", class: "primary" }, "刷新");
+  const refresh = el("button", { id: "logs-refresh", class: "primary" }, t("settings.common.refresh"));
   refresh.addEventListener("click", () => void loadLogs());
-  const copy = el("button", { id: "logs-copy", class: "primary", title: "复制当前筛选后的日志到剪贴板" }, "复制");
+  const copy = el("button", { id: "logs-copy", class: "primary", title: t("settings.logs.copy_filtered") }, t("settings.common.copy"));
   copy.addEventListener("click", () => void copyLogs());
-  const clear = el("button", { id: "logs-clear", class: "danger" }, "清空");
+  const clear = el("button", { id: "logs-clear", class: "danger" }, t("settings.logs.clear_all"));
   clear.addEventListener("click", () => void clearLogs());
   const count = el("span", { id: "logs-count" });
 
@@ -41,8 +42,8 @@ export function renderLogsSection(container: HTMLElement) {
 
   container.appendChild(
     el("section", { class: "section-card", id: "logs-section" },
-      el("h2", {}, "📋 日志"),
-      el("div", { class: "help" }, "浮窗右上角红点 = 最近一次拉取报错。点击此处查看具体内容。"),
+      el("h2", {}, `📋 ${t("settings.logs.section_title")}`),
+      el("div", { class: "help" }, t("settings.logs.section_help")),
       el("div", { class: "row row-tight" }, filter, refresh, copy, clear, count),
       list,
     ),

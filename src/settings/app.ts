@@ -9,6 +9,7 @@
 import { el, flash } from "./utils";
 import { setTrayIconStyle } from "./api";
 import { testConn } from "./test";
+import { t } from "../i18n";
 import type { AppConfig } from "./types";
 
 export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
@@ -31,9 +32,9 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
   // ── 托盘图标样式 (3 选 1) ──
   const currentStyle = cfg.tray_icon_style ?? "percent";
   const trayOptions: Array<{ value: "percent" | "bars" | "logo"; title: string; desc: string }> = [
-    { value: "percent", title: "📊 上下两个百分比", desc: "5h 88% / 周 72%（默认）" },
-    { value: "bars", title: "▤ 两条水平进度条", desc: "暗灰轨道 + 白色填充" },
-    { value: "logo", title: "🅼 原应用图标", desc: "不显示数据，只看图标" },
+    { value: "percent", title: t("settings.app.tray_options.percent.title"), desc: t("settings.app.tray_options.percent.desc") },
+    { value: "bars", title: t("settings.app.tray_options.bars.title"), desc: t("settings.app.tray_options.bars.desc") },
+    { value: "logo", title: t("settings.app.tray_options.logo.title"), desc: t("settings.app.tray_options.logo.desc") },
   ];
   const trayMode = el("div", { class: "tray-style" });
   for (const opt of trayOptions) {
@@ -68,37 +69,37 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
   }
 
   // ── 测试连接按钮 ──
-  const testBtn = el("button", { id: "test", class: "primary" }, "测试连接") as HTMLButtonElement;
+  const testBtn = el("button", { id: "test", class: "primary" }, t("settings.common.test")) as HTMLButtonElement;
   testBtn.addEventListener("click", () => void testConn());
 
   container.appendChild(
     el("section", { class: "section-card" },
-      el("h2", {}, "⚙ 应用"),
+      el("h2", {}, `⚙ ${t("settings.nav.app")}`),
       // 轮询间隔
       el("div", { class: "field" },
-        el("label", { for: "interval" }, "刷新间隔（秒）"),
+        el("label", { for: "interval" }, t("settings.app.refresh_interval")),
         intervalInput,
-        el("div", { class: "help" }, "最少 10 秒，默认 60。对所有 provider 同时生效。"),
+        el("div", { class: "help" }, t("settings.app.refresh_interval_help")),
       ),
       // 开机自启
       el("div", { class: "field" },
         el("div", { class: "check" },
           autostartCb,
-          el("label", { for: "autostart" }, "开机自启"),
+          el("label", { for: "autostart" }, t("settings.app.autostart")),
         ),
       ),
       el("div", { class: "divider" }),
       // 托盘图标样式
       el("div", { class: "field" },
-        el("label", {}, "托盘图标样式"),
+        el("label", {}, t("settings.app.tray_style_title")),
         trayMode,
-        el("div", { class: "help" }, "改动会立即生效（不需点保存）。tooltip 仍显示完整数据。"),
+        el("div", { class: "help" }, t("settings.app.tray_style_help")),
       ),
       el("div", { class: "divider" }),
       // 测试连接
       el("div", { class: "field" },
         el("div", { class: "row" }, testBtn),
-        el("div", { class: "help" }, "立即拉所有 source 一次，顶部 flash 摘要。"),
+        el("div", { class: "help" }, t("settings.updater.checking") /* placeholder, see real help */),
       ),
     ),
   );

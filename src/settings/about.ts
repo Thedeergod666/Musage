@@ -5,6 +5,7 @@
 
 import { el } from "./utils";
 import { getAppVersion } from "./api";
+import { t } from "../i18n";
 
 export async function renderAboutSection(container: HTMLElement) {
   let version = "—";
@@ -16,23 +17,24 @@ export async function renderAboutSection(container: HTMLElement) {
 
   container.appendChild(
     el("section", { class: "section-card", id: "about-section" },
-      el("h2", {}, "ℹ 关于"),
+      el("h2", {}, `ℹ ${t("settings.about.section_title")}`),
       el("div", { class: "field" },
         el("label", {}, "Musage"),
         el("div", { class: "help" },
-          "多 Provider 实时用量监控悬浮窗。当前版本：",
+          "多 Provider 实时用量监控悬浮窗。",
+          t("settings.about.current_version"),
           el("strong", { id: "updater-current-version" }, `v${version}`),
         ),
       ),
       // updater section 由 setupUpdaterSection() 注入到这里
       el("div", { id: "updater-section" }),
       el("div", { class: "field" },
-        el("label", {}, "链接"),
+        el("label", {}, t("settings.about.links")),
         el("div", { class: "help" },
-          "源码：",
+          t("settings.about.source"),
           el("a", { href: "https://github.com/Thedeergod666/musage", target: "_blank", class: "link-ext" }, "github.com/Thedeergod666/musage"),
           el("br"),
-          "问题反馈：同上 GitHub issues",
+          t("settings.about.feedback"),
         ),
       ),
     ),

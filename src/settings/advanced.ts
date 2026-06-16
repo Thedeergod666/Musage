@@ -8,6 +8,7 @@
 import { el } from "./utils";
 import type { AppConfig } from "./types";
 import { apiKeyPlaceholder, loadCredentialStatus } from "./credentials";
+import { t } from "../i18n";
 
 export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
   const ov = cfg.schema_overrides ?? {};
@@ -44,11 +45,11 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
   // ── Schema Overrides ──
   container.appendChild(
     el("section", { class: "section-card" },
-      el("h2", {}, "🔧 高级"),
+      el("h2", {}, `🔧 ${t("settings.nav.advanced")}`),
       el("div", { class: "help" },
-        "只在 ",
-        el("strong", {}, "解析失败 / 显示 \"Schema 未知\""),
-        " 时用。每行一个 JSON 对象，",
+        t("settings.advanced.schema_help_1"),
+        el("strong", {}, t("settings.advanced.schema_help_2")),
+        t("settings.advanced.schema_help_3"),
         el("code", {}, "total"),
         " + ",
         el("code", {}, "remaining"),
@@ -56,7 +57,7 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
         el("code", {}, "end"),
         " 可选。",
         el("br"),
-        "改完点「保存配置」（或等 Stage 6 改成 blur 即时落盘）。参考 ccswitch 的 schema 字段名逆向。",
+        t("settings.advanced.schema_help_4"),
       ),
       el("div", { class: "field" },
         el("label", { for: "overrides-5h-minimax" }, "MiniMax · 5h 候选字段名"),
@@ -106,14 +107,14 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
           "data-id": "xiaomimimo",
           "data-action": "save-key",
           "data-advanced": "true",
-        }, "保存 API key"),
+        }, t("settings.common.save") + " API key"),
         el("button", {
           class: "danger",
           id: "del-key-xiaomimimo-adv",
           "data-id": "xiaomimimo",
           "data-action": "del-key",
           "data-advanced": "true",
-        }, "删除"),
+        }, t("settings.common.delete")),
       ),
     ),
     // Cookie
@@ -128,14 +129,14 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
           "data-id": "xiaomimimo",
           "data-action": "save-cookie",
           "data-advanced": "true",
-        }, "保存 Cookie"),
+        }, t("settings.common.save") + " Cookie"),
         el("button", {
           class: "danger",
           id: "del-cookie-xiaomimimo-adv",
           "data-id": "xiaomimimo",
           "data-action": "del-cookie",
           "data-advanced": "true",
-        }, "删除"),
+        }, t("settings.common.delete")),
       ),
       el("div", { class: "help" },
         "⚠ Xiaomi 用量走 dashboard admin API，需要浏览器登录态。",

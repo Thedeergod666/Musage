@@ -14,6 +14,7 @@ import {
   setDisplayThresholds,
   setShowFooterHint,
 } from "./api";
+import { t } from "../i18n";
 import type { AppConfig, FloatingPinMode } from "./types";
 
 export function renderFloatingSection(container: HTMLElement, cfg: AppConfig) {
@@ -21,9 +22,9 @@ export function renderFloatingSection(container: HTMLElement, cfg: AppConfig) {
   const currentMode: FloatingPinMode = cfg.floating_pin_mode ?? "pin_top";
   const pinMode = el("div", { class: "pin-mode" });
   const options: Array<{ value: FloatingPinMode; title: string; desc: string }> = [
-    { value: "pin_top", title: "📌 始终置顶", desc: "浮窗永远在最上层，不被其它窗口盖住" },
-    { value: "pin_bottom", title: "⬇ 置底，鼠标 hover 时置顶", desc: "默认在底部，鼠标进入浮窗时自动浮上来" },
-    { value: "normal", title: "🔓 普通窗口", desc: "不强制层级，跟普通窗口一样" },
+    { value: "pin_top", title: t("settings.floating.pin_modes.top.title"), desc: t("settings.floating.pin_modes.top.desc") },
+    { value: "pin_bottom", title: t("settings.floating.pin_modes.bottom.title"), desc: t("settings.floating.pin_modes.bottom.desc") },
+    { value: "normal", title: t("settings.floating.pin_modes.normal.title"), desc: t("settings.floating.pin_modes.normal.desc") },
   ];
   for (const opt of options) {
     const radio = el("input", {
@@ -47,7 +48,7 @@ export function renderFloatingSection(container: HTMLElement, cfg: AppConfig) {
   }
 
   // ── 归位按钮 ──
-  const resetBtn = el("button", { id: "reset-floating", class: "primary" }, "归位到主屏幕正中央") as HTMLButtonElement;
+  const resetBtn = el("button", { id: "reset-floating", class: "primary" }, t("settings.floating.reset_to_center")) as HTMLButtonElement;
   resetBtn.addEventListener("click", () => {
     resetBtn.disabled = true;
     void resetFloatingWindow()
@@ -97,12 +98,12 @@ export function renderFloatingSection(container: HTMLElement, cfg: AppConfig) {
 
   container.appendChild(
     el("section", { class: "section-card" },
-      el("h2", {}, "🪟 浮窗"),
+      el("h2", {}, `🪟 ${t("settings.floating.section_title")}`),
       // 置顶模式
       el("div", { class: "field" },
-        el("label", {}, "置顶 / 置底 行为"),
+        el("label", {}, t("settings.floating.pin_mode_title")),
         pinMode,
-        el("div", { class: "help" }, "改动会立即生效（不需要点保存），并写入 config.json 下次启动恢复。"),
+        el("div", { class: "help" }, t("settings.floating.pin_mode_help")),
       ),
       // 归位
       el("div", { class: "field" },

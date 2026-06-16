@@ -12,6 +12,11 @@
 //! source，每个 source 自己负责鉴权 + 拉数据 + 解析。这是 ROADMAP Phase 1 的核心。
 //!
 //! [`refresh_now`] 和 [`crate::poller::tick`] 共用 refresh_inner。
+//!
+//! PR 3：custom_sources 子模块装 5 个用户自定义 New API source 的 IPC。
+//! 拆出子模块是因为 `commands/mod.rs` 本身已经 1200+ 行。
+
+pub mod custom_sources;
 
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;

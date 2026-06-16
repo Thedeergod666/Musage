@@ -236,6 +236,12 @@ pub fn run() {
             commands::get_app_version,
             commands::get_recent_logs,
             commands::clear_logs,
+            // PR 3: 用户自定义 New API source (5 commands)
+            commands::custom_sources::list_custom_sources,
+            commands::custom_sources::add_custom_source,
+            commands::custom_sources::update_custom_source,
+            commands::custom_sources::delete_custom_source,
+            commands::custom_sources::test_custom_source,
             xiaomi_login::open_xiaomi_login_window,
         ])
         .on_window_event(|window, event| {

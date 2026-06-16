@@ -428,12 +428,13 @@ fn fill_rounded_rect(
 ///   "33%" / "100%" / "0%" 各种长度都对齐到右边
 /// - **无背板**：纯白文字 + Bold 字体（macOS 优先 Arial Black）字形本身
 ///   足够粗，菜单栏透明背景上自然清晰
-/// - **scale 18**（用户 2026-06-15 反馈：14/16 都偏小）：比 v1 的 11 大三档；
-///   menu bar 实际渲染到 ~16px（macOS）或 ~64px（Win11 高 DPI）时字形都
-///   清晰可读。layout 重新分配让两行各占一半：`y_top = 1` (s=32) / `2`
-///   (s=64)，`y_bot = s/2`，两行顶部间距 = 字号，ascent ≈ 0.75 × scale，
-///   第一行底部 ≈ y_top + 13（32 图标）/ 27（64 图标）刚好落在第二行顶部
-///   之前不重叠。
+/// - **scale 20**（用户 2026-06-15 三次反馈：14/16/18 都偏小）：比 v1 的
+///   11 大近一倍；menu bar 实际渲染到 ~16px（macOS）或 ~64px（Win11 高 DPI）
+///   时字形都清晰可读。layout 两行贴边：y_top=0, y_bot=s/2，间距 = 字号 =
+///   20/40，Bold 字体的数字 cap height ≈ 0.7×scale ≈ 14/28，第一行底 14/28
+///   < 第二行顶 16/32，刚好不重叠。
+///   ⚠ 这是 percent 模式布局的物理上限 —— 再大字号第一行底部会进第二行顶部，
+///   两行粘连糊成一片。届时建议切回 Bars 模式（同样信息密度、无字号痛点）。
 ///
 /// font 缺失时 fallback 到 `draw_mini_bars`（保持信息密度，不留空让用户
 /// 困惑 "是不是没数据"）。
@@ -443,10 +444,10 @@ fn draw_percent(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64, 
     };
 
     let s = ICON_SIZE as i32;
-    let scale = PxScale::from(s as f32 * 18.0 / 32.0); // 18 → 36
-    // 两行各占一半（间距 = 字号 = 18/36），不留 gap：ascent 不到 scale，
-    // 视觉上自然有空隙，腾出的空间让字更显眼
-    let y_top = s / 32;     //  1 →  2
+    let scale = PxScale::from(s as f32 * 20.0 / 32.0); // 20 → 40
+    // 两行贴边（间距 = 字号 = 20/40），Bold 数字 cap height ≈ 0.7×scale，
+    // 第一行底 14/28 < 第二行顶 16/32 不重叠
+    let y_top = 0;          //  0 →  0
     let y_bot = s / 2;      // 16 → 32
     let pad_right = s * 2 / 32; // 右边留 2px 内边距
     let color = Rgba([255, 255, 255, 255]);

@@ -25,6 +25,8 @@ use std::pin::Pin;
 
 use super::{AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaSource};
 
+use crate::t;
+
 // ── QuotaSource 实现 ─────────────────────────────────────────────
 
 pub struct QwenSource;
@@ -52,16 +54,19 @@ impl QuotaSource for QwenSource {
         Box::pin(async move {
             let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
-                return Err(FetchError::unconfigured("未配置 Qwen DashScope API key（设置面板填入）"));
+                return Err(FetchError::unconfigured(
+                    t!("error.provider.unconfigured_key", provider = "Qwen DashScope").into_owned()
+                ));
             }
             // ⚠️ STUB: 真实 fetch 路径未实现。DashScope 公开 API 无 quota endpoint；
             // 只有 Coding Plan 走 OAuth flow + 私有 endpoint（参考 CodexBar alibaba-token-plan.md），
             // 工作量约 1 周，Phase X 补。
             Err(FetchError::new(
                 ErrorKind::ServerError,
-                "Qwen / DashScope 暂未支持 —— 公开 API 无 quota endpoint \
-                 （CodexBar issue #612 实测确认）。Phase X 走 Coding Plan OAuth \
-                 flow（参考 CodexBar alibaba-token-plan.md）补 do_fetch。",
+                t!("error.provider.not_supported",
+                    provider = "Qwen / DashScope",
+                    reason = "public API has no quota endpoint (CodexBar issue #612 confirmed); Phase X adds Coding Plan OAuth flow"
+                ).into_owned()
             ))
         })
     }

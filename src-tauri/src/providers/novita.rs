@@ -27,6 +27,8 @@ use std::pin::Pin;
 
 use super::{AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaSource};
 
+use crate::t;
+
 // ── QuotaSource 实现 ─────────────────────────────────────────────
 
 pub struct NovitaSource;
@@ -54,14 +56,18 @@ impl QuotaSource for NovitaSource {
         Box::pin(async move {
             let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
-                return Err(FetchError::unconfigured("未配置 Novita API key（设置面板填入）"));
+                return Err(FetchError::unconfigured(
+                    t!("error.provider.unconfigured_key", provider = "Novita AI").into_owned()
+                ));
             }
             // ⚠️ STUB: 真实 fetch 路径未实现。Novita 公开 API ref 没有 balance endpoint，
             // 等官方开放或 community 提供 hack 后再实现。
             Err(FetchError::new(
                 ErrorKind::ServerError,
-                "Novita AI 暂未支持 —— 公开 API ref 没有 balance/quota endpoint \
-                 （2026-06-16 确认）。等官方开放后可参考 SiliconFlow 模式补 do_fetch。",
+                t!("error.provider.not_supported",
+                    provider = "Novita AI",
+                    reason = "public API ref has no balance/quota endpoint (confirmed 2026-06-16)"
+                ).into_owned()
             ))
         })
     }

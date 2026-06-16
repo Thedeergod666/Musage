@@ -61,9 +61,8 @@ use std::pin::Pin;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use super::{
-    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
-};
+use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource};
+use crate::t;
 
 const URL_RATE_LIMIT: &str =
     "https://platform.stepfun.com/api/step.openapi.devcenter.Dashboard/QueryStepPlanRateLimit";
@@ -104,7 +103,7 @@ impl QuotaSource for StepfunSource {
                 .trim();
             if token.is_empty() {
                 return Err(FetchError::unconfigured(
-                    "未配置 StepFun Oasis-Token（设置面板填入；从 stepfun.ai 浏览器 DevTools → Cookies → Oasis-Token 复制）",
+                    t!("error.stepfun.token_unconfigured_hint").into_owned()
                 ));
             }
             do_fetch(token).await
@@ -132,38 +131,48 @@ async fn fetch_rate_limit(token: &str) -> Result<Value, FetchError> {
         .body("{}")  // 空 body，服务端 schema 不需要参数
         .send()
         .await
-        .map_err(|e| FetchError::network(format!("StepFun 网络错误: {e}")))?;
+        .map_err(|e| FetchError::network(
+            t!("error.common.network", url = URL_RATE_LIMIT, err = e.to_string()).into_owned()
+        ))?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(FetchError::auth(
-            "StepFun Oasis-Token 无效或已过期（去 stepfun.ai 重新登录并粘贴新 token）",
+            t!("error.stepfun.token_invalid_hint").into_owned()
         ));
     }
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
         return Err(FetchError::new(
             ErrorKind::RateLimited,
-            "StepFun 请求过于频繁，请稍后再试",
+            t!("error.common.rate_limited", provider = "StepFun").into_owned()
         ));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(FetchError::server(format!(
-            "StepFun 服务异常 (HTTP {status}): {}",
-            body.chars().take(200).collect::<String>()
-        )));
+        return Err(FetchError::server(
+            t!(
+                "error.common.http_error",
+                provider = "StepFun",
+                status = status.as_u16(),
+                body = body.chars().take(200).collect::<String>()
+            ).into_owned()
+        ));
     }
 
     let raw: Value = resp
         .json()
         .await
-        .map_err(|e| FetchError::parse(format!("响应不是 JSON: {e}")))?;
+        .map_err(|e| FetchError::parse(
+            t!("error.common.parse_json", err = e.to_string()).into_owned()
+        ))?;
 
     // 业务级 code 检查
     let code = raw.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
     if code != 0 {
-        let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("Unknown error");
-        return Err(FetchError::server(format!("StepFun API error (code {code}): {msg}")));
+        let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        return Err(FetchError::server(
+            t!("error.common.business_code", provider = "StepFun", code = code, msg = msg).into_owned()
+        ));
     }
 
     Ok(raw)
@@ -219,7 +228,7 @@ fn parse(rate_raw: Value, plan_name: Option<String>) -> Result<ProviderSnapshot,
                 .get("five_hour_usage_reset_time")
                 .and_then(extract_reset_ms);
             rows.push(QuotaRow {
-                label: "5h".to_string(),
+                label: t!("row.five_hour").to_string(),
                 utilization: Some(used_pct),
                 remaining: None,
                 used: None,
@@ -239,7 +248,7 @@ fn parse(rate_raw: Value, plan_name: Option<String>) -> Result<ProviderSnapshot,
                 .get("weekly_usage_reset_time")
                 .and_then(extract_reset_ms);
             rows.push(QuotaRow {
-                label: "周".to_string(),
+                label: t!("row.weekly").to_string(),
                 utilization: Some(used_pct),
                 remaining: None,
                 used: None,

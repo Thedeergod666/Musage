@@ -40,9 +40,8 @@
 use std::borrow::Cow;
 use std::pin::Pin;
 
-use super::{
-    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
-};
+use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource};
+use crate::t;
 
 const URL: &str = "https://api.siliconflow.cn/v1/user/info";
 
@@ -74,7 +73,9 @@ impl QuotaSource for SiliconflowSource {
         Box::pin(async move {
             let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
-                return Err(FetchError::unconfigured("未配置 SiliconFlow API key（设置面板填入）"));
+                return Err(FetchError::unconfigured(
+                    t!("error.provider.unconfigured_key", provider = "SiliconFlow").into_owned()
+                ));
             }
             do_fetch(api_key).await
         })
@@ -83,7 +84,9 @@ impl QuotaSource for SiliconflowSource {
 
 async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
     if api_key.trim().is_empty() {
-        return Err(FetchError::unconfigured("API key 为空"));
+        return Err(FetchError::unconfigured(
+            t!("error.common.api_key_empty").into_owned()
+        ));
     }
 
     let client = shared_client();
@@ -94,30 +97,45 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| FetchError::network(format!("SiliconFlow 网络错误: {e}")))?;
+        .map_err(|e| FetchError::network(
+            t!("error.common.network", url = URL, err = e.to_string()).into_owned()
+        ))?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED {
-        return Err(FetchError::auth("鉴权失败，请检查 SiliconFlow API key"));
+        return Err(FetchError::auth(
+            t!("error.common.auth_failed", provider = "SiliconFlow").into_owned()
+        ));
     }
     if status == reqwest::StatusCode::FORBIDDEN {
-        return Err(FetchError::auth("无权限访问 SiliconFlow 钱包（HTTP 403）"));
+        return Err(FetchError::auth(
+            t!("error.common.forbidden", provider = "SiliconFlow").into_owned()
+        ));
     }
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(FetchError::new(ErrorKind::RateLimited, "SiliconFlow 请求过于频繁，请稍后再试"));
+        return Err(FetchError::new(
+            ErrorKind::RateLimited,
+            t!("error.common.rate_limited", provider = "SiliconFlow").into_owned()
+        ));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(FetchError::server(format!(
-            "SiliconFlow 服务异常 (HTTP {status}): {}",
-            body.chars().take(200).collect::<String>()
-        )));
+        return Err(FetchError::server(
+            t!(
+                "error.common.http_error",
+                provider = "SiliconFlow",
+                status = status.as_u16(),
+                body = body.chars().take(200).collect::<String>()
+            ).into_owned()
+        ));
     }
 
     let raw: serde_json::Value = resp
         .json()
         .await
-        .map_err(|e| FetchError::parse(format!("响应不是 JSON: {e}")))?;
+        .map_err(|e| FetchError::parse(
+            t!("error.common.parse_json", err = e.to_string()).into_owned()
+        ))?;
 
     parse(&raw)
 }
@@ -128,13 +146,17 @@ fn parse(raw: &serde_json::Value) -> Result<ProviderSnapshot, FetchError> {
 
     // 业务级 status 检查（code != 20000 或 status != true 都视为业务错误）
     if raw.get("status").and_then(|v| v.as_bool()) == Some(false) {
-        let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("Unknown error");
-        return Err(FetchError::server(format!("SiliconFlow API error: {msg}")));
+        let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        return Err(FetchError::server(
+            t!("error.common.business_code", provider = "SiliconFlow", code = 0, msg = msg).into_owned()
+        ));
     }
     let code = raw.get("code").and_then(|v| v.as_i64()).unwrap_or(0);
     if code != 0 && code != 20000 {
-        let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("Unknown error");
-        return Err(FetchError::server(format!("SiliconFlow API error (code {code}): {msg}")));
+        let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        return Err(FetchError::server(
+            t!("error.common.business_code", provider = "SiliconFlow", code = code, msg = msg).into_owned()
+        ));
     }
 
     let data = raw
@@ -152,7 +174,7 @@ fn parse(raw: &serde_json::Value) -> Result<ProviderSnapshot, FetchError> {
     let is_healthy = account_status == "normal";
 
     let rows = vec![QuotaRow {
-        label: "余额".to_string(),
+        label: t!("row.balance").to_string(),
         utilization: None,
         remaining: Some(balance),
         used: None,

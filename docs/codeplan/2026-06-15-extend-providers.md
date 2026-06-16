@@ -1,8 +1,49 @@
 # Code Plan: 扩展 Musage quota source + 设置面板重构
 
-> 日期: 2026-06-15
-> 状态: **草案（待执行）**。已做过 review，关键风险点见末尾 "Review notes"。
+> 日期: 2026-06-15（创建） / 2026-06-16（PR 2 完成更新）
+> 状态: **PR 2 ✅ 完成。PR 3 待执行。**
 > 原始 plan 来源: 维护者在 chat 中粘贴的 14KB 草稿。
+
+## 进度
+
+| PR / Phase | 内容 | 状态 | Commit |
+|---|---|---|---|
+| **PR 1** = Phase 0 | AGENTS.md 同步 + API schema 调研 | ✅ 完成（发现：stepfun 需 OAuth login / novita+qwen 无 public quota API） | (AGENTS.md 已含) |
+| **PR 2** = Phase 1 + Phase 2 | 5 个新内置 provider | ✅ **完成**（2026-06-16） | `aabe823` (backend) + `174b5de` (frontend) |
+| **PR 3** = Phase 3+4+5 | CustomSource + IPC + 设置面板重构 | ⏳ 待执行 | — |
+| 后续 | Phase 6（test/docs）+ Phase X（StepFun 3 步 OAuth + Novita/Qwen 真实 fetch） | — | — |
+
+### PR 2 实际交付（2026-06-16）
+
+按 plan §1 目标，Musage 现有 **13 个 quota source**（8 已存 + 5 新增）。
+
+**5 个新 provider**（commit `aabe823`）：
+- [siliconflow.rs](../../src-tauri/src/providers/siliconflow.rs) — Bearer, schema 100% 确认（官方 API ref 实测）。9 单测。
+- [claude_official.rs](../../src-tauri/src/providers/claude_official.rs) — Cookie + `oauth-2025-04-20` beta header；429 频发不重试；sessionKey 智能归一化。14 单测。
+- [stepfun.rs](../../src-tauri/src/providers/stepfun.rs) — Oasis-Token 手动粘贴模式。11 单测。3 步 OAuth auto-login 留 TODO。
+- [novita.rs](../../src-tauri/src/providers/novita.rs) — **STUB**：公开 API 无 quota endpoint（实测确认）。3 单测。
+- [qwen.rs](../../src-tauri/src/providers/qwen.rs) — **STUB**：CodexBar issue #612 实测无 quota API。3 单测。
+
+**前端适配**（commit `174b5de`）：
+- `types.ts` / `logos.ts` / `credentials.ts`：加 5 个新 source id / 占位符 / 帮助文本 / accent 色
+- `src/main.ts`：浮窗 `PROVIDER_META` + `ProviderSnapshot.provider` type union 加 5 个
+- **`BUILTIN_ORDER` 改造为 `currentKnownIds` 动态派生**（[src/settings/utils.ts](../../src/settings/utils.ts)）—— 移掉 8 个写死 id，改成从 `SourceMeta[]` 派生。**PR 3 加 CustomSource 时零代码改动**自动出现在浮窗顺序里。
+- `AGENTS.md` 同步 13 provider 列表 + 文件结构
+
+**验证**：
+- `cargo check` 0 错（12 个 pre-existing warning）
+- `cargo test providers::siliconflow/claude_official/stepfun/novita/qwen`：**41 passed; 0 failed**
+- `pnpm tsc --noEmit`：0 错
+- `pnpm vite build`：通过（settings.js 49.58 → 49.67 kB，+90B）
+
+### 关键发现与决策
+
+1. **StepFun API**：plan 假设 Bearer + GET 一个端点，实际需 Oasis-Token Cookie + POST 两个端点（参考 [CodexBar docs/stepfun.md](https://github.com/steipete/CodexBar/blob/main/docs/stepfun.md)）。3 步 OAuth auto-login 工作量 1 周+ → 暂不做，留 TODO。
+2. **Novita / Qwen**：plan URL 是猜测，实际**不存在** public quota API。改 STUB 模式：UI 可见，fetch 永久返 "未支持" 错。
+3. **claude_official**：需 `Anthropic-Beta: oauth-2025-04-20` header + `User-Agent: claude-code/<ver>`。**429 频发**（[claude-code#31021](https://github.com/anthropics/claude-code/issues/31021)），不重试。
+4. **`BUILTIN_ORDER` 硬编码问题**：原本写死 8 个 id，未来 PR 3 加 `custom_<uuid>` 不可维护。改成从 `SourceMeta[]` 动态派生，**自适应**。
+
+---
 
 ## 0. 现状摸底
 

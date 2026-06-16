@@ -44,9 +44,8 @@ use std::pin::Pin;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use super::{
-    shared_client, AuthKind, Credentials, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
-};
+use super::{shared_client, AuthKind, Credentials, FetchError, ProviderSnapshot, QuotaRow, QuotaSource};
+use crate::t;
 
 const URL: &str = "https://api.kimi.com/coding/v1/usages";
 
@@ -78,7 +77,9 @@ impl QuotaSource for KimiSource {
         Box::pin(async move {
             let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
-                return Err(FetchError::unconfigured("未配置 Kimi API key（设置面板填入）"));
+                return Err(FetchError::unconfigured(
+                    t!("error.provider.unconfigured_key", provider = "Kimi").into_owned()
+                ));
             }
             do_fetch(api_key).await
         })
@@ -94,24 +95,34 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| FetchError::network(format!("Kimi 网络错误: {e}")))?;
+        .map_err(|e| FetchError::network(
+            t!("error.common.network", url = URL, err = e.to_string()).into_owned()
+        ))?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        return Err(FetchError::auth("鉴权失败，请检查 Kimi API key"));
+        return Err(FetchError::auth(
+            t!("error.common.auth_failed", provider = "Kimi").into_owned()
+        ));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(FetchError::server(format!(
-            "Kimi 服务异常 (HTTP {status}): {}",
-            body.chars().take(200).collect::<String>()
-        )));
+        return Err(FetchError::server(
+            t!(
+                "error.common.http_error",
+                provider = "Kimi",
+                status = status.as_u16(),
+                body = body.chars().take(200).collect::<String>()
+            ).into_owned()
+        ));
     }
 
     let raw: Value = resp
         .json()
         .await
-        .map_err(|e| FetchError::parse(format!("响应不是 JSON: {e}")))?;
+        .map_err(|e| FetchError::parse(
+            t!("error.common.parse_json", err = e.to_string()).into_owned()
+        ))?;
 
     parse(&raw)
 }
@@ -137,7 +148,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
                     let used = (l - r).max(0.0);
                     let utilization = (used / l) * 100.0;
                     rows.push(QuotaRow {
-                        label: "5h".to_string(),
+                        label: t!("row.five_hour").to_string(),
                         utilization: Some(utilization),
                         remaining: Some(r),
                         used: Some(used),
@@ -163,7 +174,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
                 let used = (l - r).max(0.0);
                 let utilization = (used / l) * 100.0;
                 rows.push(QuotaRow {
-                    label: "周".to_string(),
+                    label: t!("row.weekly").to_string(),
                     utilization: Some(utilization),
                     remaining: Some(r),
                     used: Some(used),

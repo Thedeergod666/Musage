@@ -22,6 +22,10 @@ use tauri::{
 
 use crate::config::TrayIconStyle;
 use crate::providers::{Provider, ProviderSnapshot, QuotaSnapshot};
+// rust-i18n t! macro 在 crate 根（lib.rs）定义，子模块需显式 use 才能用。
+// 不要在子模块里写 `use rust_i18n::t;` —— 那会找错 macro；必须走 crate::t
+// 才能拿到 i18n!("locales") 生成的那份。
+use crate::t;
 
 // 字体加载：优先用户自选填 `assets/font.ttf`，再走系统字体 fallback，
 // 最后用平台内置的备用路径。全部失败 → 纯色圆点（无文字）。
@@ -110,7 +114,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let menu = build_tray_menu(app)?;
 
     let _tray = TrayIconBuilder::with_id("main-tray")
-        .tooltip("Musage - 加载中…")
+        .tooltip(t!("tray.tooltip.loading").to_string())
         .icon(make_placeholder_icon())
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -201,9 +205,8 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 
 /// 构造 tray 菜单（独立成函数，方便 [`rebuild_tray`] 在 locale 切换时复用）。
 ///
-/// **P0 阶段**：label 仍 hardcode 中文 —— tr!() 在 P1 阶段把 menu 5 条 + tooltip
-/// 8 个模板的 key 抽进 en.json / zh-CN.json 后再走翻译函数。
-/// 现在拆出来是为了 P1 时只需改这一处，setup() / rebuild_tray() 都通过它组装。
+/// 5 条 menu label + 2 个 Win-only force_top 都走 t!()（i18n）。
+/// 切换语言时 [`rebuild_tray`] 重新构造菜单 + set_menu 替换（不闪烁）。
 ///
 /// **Win 端 z-order 逃生口**（2026-06-12）：hover-raise 的 16ms tick +
 /// dual-path + 焦点事件 hook 多管齐下，OS 还是持续 demote `WS_EX_TOPMOST`。
@@ -212,17 +215,17 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 /// 把浮窗真顶到最上面（**会**抢焦点，但用户点菜单那一瞬间本来就在
 /// 操作我们 app，UX 可接受）。
 fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let toggle_i = MenuItem::with_id(app, "toggle", "切换悬浮窗", true, None::<&str>)?;
-    let settings_i = MenuItem::with_id(app, "settings", "设置...", true, None::<&str>)?;
-    let refresh_i = MenuItem::with_id(app, "refresh", "立即刷新", true, None::<&str>)?;
+    let toggle_i = MenuItem::with_id(app, "toggle", t!("tray.menu.toggle").to_string(), true, None::<&str>)?;
+    let settings_i = MenuItem::with_id(app, "settings", t!("tray.menu.settings").to_string(), true, None::<&str>)?;
+    let refresh_i = MenuItem::with_id(app, "refresh", t!("tray.menu.refresh").to_string(), true, None::<&str>)?;
     let force_top_i = MenuItem::with_id(
         app,
         "force_top_floating",
-        "置顶一下",
+        t!("tray.menu.force_top").to_string(),
         cfg!(target_os = "windows"),
         None::<&str>,
     )?;
-    let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
+    let quit_i = MenuItem::with_id(app, "quit", t!("tray.menu.quit").to_string(), true, None::<&str>)?;
     Menu::with_items(
         app,
         &[&toggle_i, &settings_i, &refresh_i, &force_top_i, &quit_i],
@@ -304,6 +307,10 @@ fn render_icon(snap: &QuotaSnapshot, style: TrayIconStyle) -> Image<'static> {
 
 /// 取 MiniMax 行的 5h / 周 utilization（缺则 0.0）。
 /// MiniMax 不存在或失败时返回 None。
+///
+/// P1 i18n：行 label 来自 provider 端 `t!("row.five_hour")` / `t!("row.weekly")`，
+/// 这里也用 t!() 比较，保证跨语言一致（切到 en 时 zh-CN 字符串 "5h"/"周" 不会
+/// 永远匹配不上 en 字符串 "5h"/"Weekly"）。
 fn pick_minimax_rows(snap: &QuotaSnapshot) -> Option<(f64, f64)> {
     let m = snap
         .providers
@@ -312,13 +319,13 @@ fn pick_minimax_rows(snap: &QuotaSnapshot) -> Option<(f64, f64)> {
     let five_h = m
         .rows
         .iter()
-        .find(|r| r.label == "5h")
+        .find(|r| r.label == t!("row.five_hour"))
         .and_then(|r| r.utilization)
         .unwrap_or(0.0);
     let weekly = m
         .rows
         .iter()
-        .find(|r| r.label == "周")
+        .find(|r| r.label == t!("row.weekly"))
         .and_then(|r| r.utilization)
         .unwrap_or(0.0);
     Some((five_h, weekly))
@@ -524,9 +531,9 @@ fn draw_centered_text(
 
 fn tooltip(snap: &QuotaSnapshot) -> String {
     if snap.providers.is_empty() {
-        return "Musage · 加载中…".to_string();
+        return t!("tray.tooltip.loading").to_string();
     }
-    let mut parts = vec!["Musage".to_string()];
+    let mut parts = vec![t!("tray.tooltip.title").to_string()];
     for p in &snap.providers {
         let dot = match p.health_label() {
             "ok" => "🟢",
@@ -541,30 +548,44 @@ fn tooltip(snap: &QuotaSnapshot) -> String {
         let dt = chrono::DateTime::from_timestamp_millis(ms)
             .map(|d| d.format("%H:%M:%S").to_string())
             .unwrap_or_default();
-        parts.push(format!("更新于 {dt}"));
+        parts.push(t!("tray.tooltip.updated_at", time = dt).to_string());
     }
     parts.join(" · ")
 }
 
 fn provider_short_body(p: &ProviderSnapshot) -> String {
     if !p.success {
-        let err = p.error.as_deref().unwrap_or("未知错误");
+        let err = p.error.as_deref().unwrap_or("?");
         // 截短避免 tooltip 太长
-        return format!("{}: {}", p.provider.display_name(), truncate(err, 30));
+        return t!(
+            "tray.tooltip.provider_error",
+            provider = p.provider.display_name(),
+            error = truncate(err, 30)
+        ).to_string();
     }
     match p.provider {
         Provider::Minimax => {
-            // "5h 45% / 周 72%"
+            // "5h 45% / 周 72%"  —— P1 i18n: row labels 来自 t!("row.*")
+            // 跟 provider 端 parse() 用的 key 一致，保证 pick_minimax_rows
+            // 还能用 r.label == t!(...) 找对行。
             let mut parts = Vec::new();
             for r in &p.rows {
                 if let Some(u) = r.utilization {
-                    parts.push(format!("{} {}%", r.label, u.round() as i64));
+                    parts.push(t!(
+                        "tray.tooltip.row_pct",
+                        label = r.label.as_str(),
+                        pct = u.round() as i64
+                    ).to_string());
                 }
             }
             if parts.is_empty() {
                 p.provider.display_name().to_string()
             } else {
-                format!("{} {}", p.provider.display_name(), parts.join(" / "))
+                t!(
+                    "tray.tooltip.provider_rows",
+                    provider = p.provider.display_name(),
+                    rows = parts.join(" / ")
+                ).to_string()
             }
         }
         Provider::Deepseek => {
@@ -575,7 +596,12 @@ fn provider_short_body(p: &ProviderSnapshot) -> String {
                     .map(format_amount_short)
                     .unwrap_or_else(|| "?".to_string());
                 let unit = r.unit.as_deref().unwrap_or("");
-                format!("{} {}{}", p.provider.display_name(), amount, unit)
+                t!(
+                    "tray.tooltip.provider_balance",
+                    provider = p.provider.display_name(),
+                    amount = amount,
+                    unit = unit
+                ).to_string()
             } else {
                 p.provider.display_name().to_string()
             }
@@ -585,13 +611,21 @@ fn provider_short_body(p: &ProviderSnapshot) -> String {
             let mut parts = Vec::new();
             for r in &p.rows {
                 if let Some(u) = r.utilization {
-                    parts.push(format!("{} {}%", r.label, u.round() as i64));
+                    parts.push(t!(
+                        "tray.tooltip.row_pct",
+                        label = r.label.as_str(),
+                        pct = u.round() as i64
+                    ).to_string());
                 }
             }
             if parts.is_empty() {
                 p.provider.display_name().to_string()
             } else {
-                format!("{} {}", p.provider.display_name(), parts.join(" / "))
+                t!(
+                    "tray.tooltip.provider_rows",
+                    provider = p.provider.display_name(),
+                    rows = parts.join(" / ")
+                ).to_string()
             }
         }
     }

@@ -26,6 +26,8 @@ mod xiaomi_login;
 // 必须在 `mod` 声明之后、其他文件 `use rust_i18n` 之前。
 // `fallback = "en"`：找不到 key 时退到英文（开发期抓漏翻的护栏）。
 rust_i18n::i18n!("locales", fallback = "en");
+// 把 t! / tr! macro 重新导出到 crate 根，让所有模块不用各自 import。
+pub use rust_i18n::t;
 
 use std::sync::Arc;
 use tauri::{Listener, Manager};

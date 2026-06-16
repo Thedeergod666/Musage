@@ -1,5 +1,146 @@
 {
-  "_meta": "P0 scaffolding — minimum keys for window titles. Filled in P1. See memory/musage-i18n-conventions.md",
+  "_meta": "P0 + P1 backend strings. Translations by Thedeergod — Chinglish OK for v1, will be proofread later.",
+
+  "tray": {
+    "menu": {
+      "toggle": "Toggle floating window",
+      "settings": "Settings...",
+      "refresh": "Refresh now",
+      "force_top": "Force top",
+      "quit": "Quit"
+    },
+    "tooltip": {
+      "loading": "Musage - loading...",
+      "title": "Musage",
+      "updated_at": "Updated at {time}",
+      "error_unknown": "Unknown error",
+      "provider_error": "{provider}: {error}",
+      "row_pct": "{label} {pct}%",
+      "provider_rows": "{provider} {rows}",
+      "provider_balance": "{provider} {amount}{unit}"
+    }
+  },
+
+  "row": {
+    "five_hour": "5h",
+    "weekly": "Weekly",
+    "balance": "Balance",
+    "plan": "Plan",
+    "compensation": "Bonus",
+    "monthly_total": "Monthly total",
+    "free_tier": "Free tier",
+    "credits": "credits",
+    "calls": "calls",
+    "topup": "Topup",
+    "bonus": "Bonus",
+    "endpoint_search": "search",
+    "endpoint_extract": "extract",
+    "endpoint_crawl": "crawl",
+    "endpoint_map": "map",
+    "endpoint_research": "research"
+  },
+
+  "error": {
+    "common": {
+      "api_key_empty": "API key is empty",
+      "auth_failed": "Auth failed — please check {provider} API key",
+      "forbidden": "No permission to access {provider} (HTTP 403)",
+      "network": "Network error [{url}]: {err}",
+      "parse_json": "Response is not JSON: {err}",
+      "http_error": "{provider} service error (HTTP {status}): {body}",
+      "business_code": "{provider} API error (code {code}): {msg}",
+      "missing_field": "{provider} response missing {field}",
+      "rate_limited": "{provider} rate limited, please try again later"
+    },
+    "provider": {
+      "unconfigured_key": "API key not configured for {provider} (set in Settings)",
+      "not_supported": "{provider} not yet supported: {reason}",
+      "schema_unknown_hint": "Schema not recognized — add candidate field names in Settings → Schema overrides",
+      "minimax_403": "No permission to access MiniMax usage API (HTTP 403)"
+    },
+    "xiaomi": {
+      "unconfigured_both": "API key or Dashboard cookie not configured (set in Settings)",
+      "api_key_unauthorized_hint": "Xiaomi API key unauthorized (HTTP 401) — current usage API only allows dashboard cookies. Use Cookie or both (401 auto-falls back to Cookie path)",
+      "cookie_invalid_hint": "Cookie expired or invalid — re-login at platform.xiaomimimo.com → DevTools → copy new Cookie",
+      "cookie_empty": "Dashboard cookie is empty (Settings → Xiaomi → Dashboard Cookie)",
+      "http_error": "Xiaomi dashboard API error (HTTP {status}): {body}",
+      "business_code": "Xiaomi dashboard API code {code}: {msg}",
+      "schema_unknown_hint": "Response missing plan_total_token / compensation_total_token / month_total_token (schema changed? Add new names in Settings → schema_overrides)",
+      "data_field_missing": "Response missing data field"
+    },
+    "zhipu": {
+      "auth_failed_hint": "Auth failed — Zhipu GLM API key invalid (note: no Bearer prefix; CN/EN keys are not interchangeable)"
+    },
+    "stepfun": {
+      "token_unconfigured_hint": "StepFun Oasis-Token not configured (copy from stepfun.ai → DevTools → Cookies → Oasis-Token)",
+      "token_invalid_hint": "StepFun Oasis-Token invalid or expired (re-login at stepfun.ai and paste new token)"
+    },
+    "claude_official": {
+      "cookie_invalid_hint": "Claude sessionKey cookie invalid or expired (claude.ai login session expires after ~8h — re-extract)"
+    },
+    "custom": {
+      "network": "CustomSource network error: {err}",
+      "http_error": "CustomSource HTTP {status}: {body}",
+      "rate_limited": "CustomSource rate limited, please try again later",
+      "forbidden": "CustomSource no permission (HTTP 403)",
+      "auth_failed": "Auth failed — please check API key",
+      "unconfigured_key": "API key not configured (set in Settings)",
+      "newapi_divide_zero": "NewApi template: divide cannot be 0",
+      "newapi_data_missing": "NewApi template: data.quota / data.used_quota missing or non-numeric",
+      "balance_divide_zero": "Balance template: divide cannot be 0",
+      "balance_path_invalid": "Balance template: path '{path}' invalid or non-numeric",
+      "custom_path_no_match": "Custom template: no paths matched any value"
+    }
+  },
+
+  "commands": {
+    "source_unknown": "Unknown source id: {id}",
+    "field_unknown": "Unknown field identifier: {other} (expected api_key or cookie)",
+    "credential_empty": "Credential cannot be empty",
+    "api_key_empty": "API key cannot be empty",
+    "cookie_empty": "Cookie cannot be empty",
+    "display_mode_unknown_xiaomi": "Unknown Xiaomi display mode: {other} (expected all / plan_only / total_only)",
+    "pin_mode_unknown": "Unknown floating pin mode: {other}",
+    "interval_too_small": "Refresh interval cannot be less than 10 seconds (avoids provider rate limit)",
+    "threshold_invalid": "Color thresholds must satisfy 0 < t0 < t1 < t2 < 100 (actual {t0} / {t1} / {t2})",
+    "wallet_threshold_negative": "Wallet alert threshold must be >= 0 (actual {n})",
+    "color_key_unknown": "Unknown color tier key: {other} (only ok / cyan / warn / alert supported)",
+    "color_value_invalid": "{k} color value must be #RGB / #RRGGBB format (actual {v})",
+    "autostart_enable": "autostart enable: {err}",
+    "autostart_disable": "autostart disable: {err}",
+    "create_settings": "create settings: {err}",
+    "floating_not_found": "Floating window not found",
+    "center_failed": "center: {err}",
+    "size_failed": "size: {err}",
+    "read_config": "read config: {err}",
+    "config_unrecognized": "config.json format unrecognized (neither new nor legacy format): {path}",
+    "config_mkdir": "mkdir: {err}",
+    "config_serialize": "serialize: {err}",
+    "config_write": "write config: {err}",
+    "config_dir_not_found": "Cannot locate config directory",
+    "read_keys": "read keys: {err}",
+    "parse_keys": "parse keys.json: {err}",
+    "keys_io": "{op} keys: {err}",
+    "custom_name_empty": "display_name cannot be empty",
+    "custom_url_invalid": "base_url must start with http:// or https://",
+    "custom_path_invalid": "path must start with /",
+    "custom_method_invalid": "method must be GET or POST, current: {method}",
+    "custom_limit_reached": "Custom source limit reached (50)",
+    "custom_duplicate": "display_name '{name}' already used by another custom source",
+    "custom_not_found": "custom source '{id}' does not exist"
+  },
+
+  "cli": {
+    "dump_unknown_source": "[dump] Unknown source id: {id} (available: {known})",
+    "dump_no_enabled": "[dump] No enabled sources",
+    "dump_header": "\n========== {display_name} ({id}) ==========",
+    "dump_no_credentials": "[dump] No credentials configured. Set them in the GUI Settings panel first.",
+    "dump_read_keys_failed": "[dump] Failed to read keys.json: {err}",
+    "dump_raw_response": "\n--- Raw response ---",
+    "dump_parsed_result": "\n--- Parsed result ---",
+    "dump_fetch_failed": "[dump] Fetch failed: {err}"
+  },
+
   "window": {
     "settings": "Musage · Settings",
     "xiaomi_login": "Login Xiaomi — Musage"

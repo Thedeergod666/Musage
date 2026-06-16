@@ -1,5 +1,146 @@
 {
-  "_meta": "P0 scaffolding — 仅含 window titles 最小集，P1 填实际翻译。详见 memory/musage-i18n-conventions.md",
+  "_meta": "P0 + P1 backend 字符串。中文原文保留。",
+
+  "tray": {
+    "menu": {
+      "toggle": "切换悬浮窗",
+      "settings": "设置...",
+      "refresh": "立即刷新",
+      "force_top": "置顶一下",
+      "quit": "退出"
+    },
+    "tooltip": {
+      "loading": "Musage - 加载中…",
+      "title": "Musage",
+      "updated_at": "更新于 {time}",
+      "error_unknown": "未知错误",
+      "provider_error": "{provider}: {error}",
+      "row_pct": "{label} {pct}%",
+      "provider_rows": "{provider} {rows}",
+      "provider_balance": "{provider} {amount}{unit}"
+    }
+  },
+
+  "row": {
+    "five_hour": "5h",
+    "weekly": "周",
+    "balance": "余额",
+    "plan": "套餐",
+    "compensation": "补偿",
+    "monthly_total": "总额度",
+    "free_tier": "Free tier",
+    "credits": "credits",
+    "calls": "calls",
+    "topup": "充值",
+    "bonus": "奖励",
+    "endpoint_search": "search",
+    "endpoint_extract": "extract",
+    "endpoint_crawl": "crawl",
+    "endpoint_map": "map",
+    "endpoint_research": "research"
+  },
+
+  "error": {
+    "common": {
+      "api_key_empty": "API key 为空",
+      "auth_failed": "鉴权失败，请检查 {provider} API key",
+      "forbidden": "无权限访问 {provider}（HTTP 403）",
+      "network": "网络错误 [{url}]: {err}",
+      "parse_json": "响应不是 JSON: {err}",
+      "http_error": "{provider} 服务异常 (HTTP {status}): {body}",
+      "business_code": "{provider} API error (code {code}): {msg}",
+      "missing_field": "{provider} 响应缺少 {field}",
+      "rate_limited": "{provider} 请求过于频繁，请稍后再试"
+    },
+    "provider": {
+      "unconfigured_key": "未配置 {provider} 的 API key（设置面板填入）",
+      "not_supported": "{provider} 暂未支持：{reason}",
+      "schema_unknown_hint": "未识别 schema — 去设置面板 Schema overrides 加候选字段名",
+      "minimax_403": "无权限访问 MiniMax 用量接口（HTTP 403）"
+    },
+    "xiaomi": {
+      "unconfigured_both": "未配置 API key 或 Dashboard cookie（设置面板填入）",
+      "api_key_unauthorized_hint": "Xiaomi API key 鉴权失败 (HTTP 401) — 当前用量 API 仅对 dashboard cookie 放行，请改填 Cookie 或两者都填（401 会自动退到 Cookie 路径）",
+      "cookie_invalid_hint": "Cookie 失效或无效 —— 请重新登录 platform.xiaomimimo.com → DevTools 复制新 Cookie",
+      "cookie_empty": "Dashboard cookie 为空（设置面板 · Xiaomi · Dashboard Cookie）",
+      "http_error": "Xiaomi dashboard API 异常 (HTTP {status}): {body}",
+      "business_code": "Xiaomi dashboard API code {code}: {msg}",
+      "schema_unknown_hint": "响应里找不到 plan_total_token / compensation_total_token / month_total_token 任何一项（schema 改名？去设置面板 schema_overrides 配新名）",
+      "data_field_missing": "响应缺少 data 字段"
+    },
+    "zhipu": {
+      "auth_failed_hint": "鉴权失败 —— 智谱 GLM API key 无效（注意 key 不要加 Bearer 前缀；CN/EN 区域 key 不通用）"
+    },
+    "stepfun": {
+      "token_unconfigured_hint": "未配置 StepFun Oasis-Token（设置面板填入；从 stepfun.ai 浏览器 DevTools → Cookies → Oasis-Token 复制）",
+      "token_invalid_hint": "StepFun Oasis-Token 无效或已过期（去 stepfun.ai 重新登录并粘贴新 token）"
+    },
+    "claude_official": {
+      "cookie_invalid_hint": "Claude sessionKey Cookie 无效或已过期（claude.ai 登录 session 约 8h 失效，重新提取）"
+    },
+    "custom": {
+      "network": "CustomSource 网络错误: {err}",
+      "http_error": "CustomSource HTTP {status}: {body}",
+      "rate_limited": "CustomSource 请求过于频繁，请稍后再试",
+      "forbidden": "CustomSource 无权限访问（HTTP 403）",
+      "auth_failed": "鉴权失败，请检查 API key",
+      "unconfigured_key": "未配置 API key（设置面板填入）",
+      "newapi_divide_zero": "NewApi 模板：divide 不能为 0",
+      "newapi_data_missing": "NewApi 模板：data.quota / data.used_quota 都缺失或非数字",
+      "balance_divide_zero": "Balance 模板：divide 不能为 0",
+      "balance_path_invalid": "Balance 模板：路径 '{path}' 无效或非数字",
+      "custom_path_no_match": "Custom 模板：所有 path 都没匹配到值"
+    }
+  },
+
+  "commands": {
+    "source_unknown": "未知的 source id: {id}",
+    "field_unknown": "未知的 field 标识: {other}（应为 api_key 或 cookie）",
+    "credential_empty": "凭据不能为空",
+    "api_key_empty": "key 不能为空",
+    "cookie_empty": "cookie 不能为空",
+    "display_mode_unknown_xiaomi": "未知的 Xiaomi 显示模式: {other}（应为 all / plan_only / total_only）",
+    "pin_mode_unknown": "未知的浮窗置顶模式: {other}",
+    "interval_too_small": "轮询间隔不能小于 10 秒（避免触发 provider rate limit）",
+    "threshold_invalid": "色阈值必须满足 0 < t0 < t1 < t2 < 100（实际 {t0} / {t1} / {t2}）",
+    "wallet_threshold_negative": "钱包告警阈值必须 ≥ 0（实际 {n}）",
+    "color_key_unknown": "未知的色档 key: {other}（仅支持 ok / cyan / warn / alert）",
+    "color_value_invalid": "{k} 的颜色值必须是 #RGB / #RRGGBB 形式（实际 {v}）",
+    "autostart_enable": "autostart enable: {err}",
+    "autostart_disable": "autostart disable: {err}",
+    "create_settings": "create settings: {err}",
+    "floating_not_found": "找不到浮窗",
+    "center_failed": "center: {err}",
+    "size_failed": "size: {err}",
+    "read_config": "read config: {err}",
+    "config_unrecognized": "config.json 格式无法识别（既不是新格式也不是旧格式）：{path}",
+    "config_mkdir": "mkdir: {err}",
+    "config_serialize": "serialize: {err}",
+    "config_write": "write config: {err}",
+    "config_dir_not_found": "无法定位配置目录",
+    "read_keys": "read keys: {err}",
+    "parse_keys": "parse keys.json: {err}",
+    "keys_io": "{op} keys: {err}",
+    "custom_name_empty": "display_name 不能为空",
+    "custom_url_invalid": "base_url 必须以 http:// 或 https:// 开头",
+    "custom_path_invalid": "path 必须以 / 开头",
+    "custom_method_invalid": "method 必须是 GET 或 POST，当前: {method}",
+    "custom_limit_reached": "已达自定义来源上限 (50)",
+    "custom_duplicate": "display_name '{name}' 已被其他自定义来源占用",
+    "custom_not_found": "custom source '{id}' 不存在"
+  },
+
+  "cli": {
+    "dump_unknown_source": "[dump] 未知 source id: {id}（可用: {known}）",
+    "dump_no_enabled": "[dump] 没有启用的 source",
+    "dump_header": "\n========== {display_name} ({id}) ==========",
+    "dump_no_credentials": "[dump] 未配置凭据。请先在 GUI 设置面板配置。",
+    "dump_read_keys_failed": "[dump] 读 keys.json 失败: {err}",
+    "dump_raw_response": "\n--- 原始响应 ---",
+    "dump_parsed_result": "\n--- 解析结果 ---",
+    "dump_fetch_failed": "[dump] 拉取失败: {err}"
+  },
+
   "window": {
     "settings": "Musage · 设置",
     "xiaomi_login": "登录小米账号 - Musage"

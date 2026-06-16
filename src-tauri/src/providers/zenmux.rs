@@ -51,10 +51,8 @@ use std::sync::OnceLock;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{
-    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
-    QuotaSource,
-};
+use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource};
+use crate::t;
 
 const URL_PAYG: &str = "https://zenmux.ai/api/v1/management/payg/balance";
 const URL_SUBSCRIPTION: &str = "https://zenmux.ai/api/v1/management/subscription/detail";
@@ -137,7 +135,9 @@ impl QuotaSource for ZenmuxSource {
         Box::pin(async move {
             let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
-                return Err(FetchError::unconfigured("未配置 ZenMux Management API key（设置面板填入）"));
+                return Err(FetchError::unconfigured(
+                    t!("error.provider.unconfigured_key", provider = "ZenMux").into_owned()
+                ));
             }
             let mode = self.mode.get().copied().unwrap_or_default();
             let custom_url = self.base_url.get().map(|s| s.as_str());
@@ -168,26 +168,34 @@ async fn do_fetch(
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| FetchError::network(format!("ZenMux 网络错误: {e}")))?;
+        .map_err(|e| FetchError::network(
+            t!("error.common.network", url = url, err = e.to_string()).into_owned()
+        ))?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(FetchError::auth(
-            "鉴权失败 —— ZenMux 平台 API 需要 Management API Key（在 zenmux.ai/platform/management 创建）",
+            t!("error.provider.unconfigured_key", provider = "ZenMux Management API").into_owned()
         ));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(FetchError::server(format!(
-            "ZenMux 服务异常 (HTTP {status}): {}",
-            body.chars().take(200).collect::<String>()
-        )));
+        return Err(FetchError::server(
+            t!(
+                "error.common.http_error",
+                provider = "ZenMux",
+                status = status.as_u16(),
+                body = body.chars().take(200).collect::<String>()
+            ).into_owned()
+        ));
     }
 
     let raw: Value = resp
         .json()
         .await
-        .map_err(|e| FetchError::parse(format!("响应不是 JSON: {e}")))?;
+        .map_err(|e| FetchError::parse(
+            t!("error.common.parse_json", err = e.to_string()).into_owned()
+        ))?;
 
     match mode {
         ZenmuxMode::Payg => parse_payg(&raw),
@@ -207,12 +215,16 @@ fn parse_payg(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
     if raw.get("success").and_then(|v| v.as_bool()) != Some(true) {
-        let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("Unknown error");
-        return Err(FetchError::server(format!("ZenMux API error: {msg}")));
+        let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        return Err(FetchError::server(
+            t!("error.common.business_code", provider = "ZenMux", code = 0, msg = msg).into_owned()
+        ));
     }
 
     let data = raw.get("data").ok_or_else(|| {
-        FetchError::parse("PAYG 响应缺少 data 字段".to_string())
+        FetchError::parse(
+            t!("error.common.missing_field", provider = "ZenMux", field = "data").into_owned()
+        )
     })?;
 
     // 货币：docs 说固定 "usd"，但允许其它值透传
@@ -223,7 +235,9 @@ fn parse_payg(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         .to_uppercase();
 
     let total = num_f64(data, "total_credits")
-        .ok_or_else(|| FetchError::parse("PAYG 响应缺少 total_credits".to_string()))?;
+        .ok_or_else(|| FetchError::parse(
+            t!("error.common.missing_field", provider = "ZenMux", field = "total_credits").into_owned()
+        ))?;
 
     let top_up = num_f64(data, "top_up_credits");
     let bonus = num_f64(data, "bonus_credits");
@@ -232,7 +246,7 @@ fn parse_payg(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
 
     // 主行 —— 余额（DeepSeek 风格，balance-row）
     rows.push(QuotaRow {
-        label: "余额".to_string(),
+        label: t!("row.balance").to_string(),
         utilization: None,
         remaining: Some(total),
         used: None,
@@ -245,7 +259,7 @@ fn parse_payg(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     // 细分：充值（Tavily 风格，only-used）
     if let Some(v) = top_up {
         rows.push(QuotaRow {
-            label: "充值".to_string(),
+            label: t!("row.topup").to_string(),
             utilization: None,
             remaining: None,
             used: Some(v),
@@ -258,7 +272,7 @@ fn parse_payg(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     // 细分：奖励
     if let Some(v) = bonus {
         rows.push(QuotaRow {
-            label: "奖励".to_string(),
+            label: t!("row.bonus").to_string(),
             utilization: None,
             remaining: None,
             used: Some(v),

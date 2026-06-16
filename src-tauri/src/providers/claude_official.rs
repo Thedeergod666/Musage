@@ -60,9 +60,8 @@ use std::pin::Pin;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use super::{
-    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
-};
+use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource};
+use crate::t;
 
 const URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const USER_AGENT: &str = "claude-code/1.0.0";  // 任意版本号皆可，关键是 "claude-code/" 前缀
@@ -102,7 +101,9 @@ impl QuotaSource for ClaudeOfficialSource {
                 .unwrap_or("")
                 .trim();
             if raw.is_empty() {
-                return Err(FetchError::unconfigured("未配置 Claude sessionKey Cookie（设置面板填入）"));
+                return Err(FetchError::unconfigured(
+                    t!("error.provider.unconfigured_key", provider = "Claude").into_owned()
+                ));
             }
             let session_key = normalize_session_key(raw);
             do_fetch(&session_key).await
@@ -147,33 +148,41 @@ async fn do_fetch(session_key: &str) -> Result<ProviderSnapshot, FetchError> {
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| FetchError::network(format!("Claude 官方 网络错误: {e}")))?;
+        .map_err(|e| FetchError::network(
+            t!("error.common.network", url = URL, err = e.to_string()).into_owned()
+        ))?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(FetchError::auth(
-            "鉴权失败 —— Claude sessionKey Cookie 无效或已过期（claude.ai 登录 session 约 8h 失效，重新提取）",
+            t!("error.claude_official.cookie_invalid_hint").into_owned()
         ));
     }
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
         // 429 频发（claude-code#31021），不重试 —— 直接告诉用户"等一下"
         return Err(FetchError::new(
             ErrorKind::RateLimited,
-            "Claude 官方 触发限流（OAuth usage API 已知问题），请稍后再试",
+            t!("error.common.rate_limited", provider = "Claude").into_owned()
         ));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(FetchError::server(format!(
-            "Claude 官方 服务异常 (HTTP {status}): {}",
-            body.chars().take(200).collect::<String>()
-        )));
+        return Err(FetchError::server(
+            t!(
+                "error.common.http_error",
+                provider = "Claude",
+                status = status.as_u16(),
+                body = body.chars().take(200).collect::<String>()
+            ).into_owned()
+        ));
     }
 
     let raw: Value = resp
         .json()
         .await
-        .map_err(|e| FetchError::parse(format!("响应不是 JSON: {e}")))?;
+        .map_err(|e| FetchError::parse(
+            t!("error.common.parse_json", err = e.to_string()).into_owned()
+        ))?;
 
     parse(&raw)
 }

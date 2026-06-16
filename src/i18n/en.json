@@ -179,16 +179,18 @@
     },
 
     "region": {
-      "section_title": "Region",
-      "help": "First-time setup. Affects default provider order and MiniMax endpoint. Once you customize provider order or endpoint manually, this won't show again.",
+      "section_title": "Region & language",
+      "help": "Language switches UI strings immediately (no restart). Region sets default provider order and MiniMax endpoint. Two settings are independent — overseas Chinese users can pick CN region + English UI.",
+      "lang_label": "UI language",
+      "region_label": "Provider region",
       "option_cn": "Mainland China",
       "desc_cn": "MiniMax domestic endpoint + 智谱 / Kimi / Xiaomi MiMo / DeepSeek / Qwen as defaults",
       "option_global": "Global",
       "desc_global": "OpenRouter / Claude / Tavily / DeepSeek / ZenMux as defaults; MiniMax international endpoint",
       "apply": "Apply",
-      "applied": "✓ Region defaults applied",
-      "banner": "Select your region to apply default providers",
-      "go_to_wizard": "Set region"
+      "applied": "✓ Settings applied",
+      "banner": "Set your region and UI language to get started",
+      "go_to_wizard": "Configure now"
     }
   },
 

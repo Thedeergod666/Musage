@@ -179,16 +179,18 @@
     },
 
     "region": {
-      "section_title": "区域",
-      "help": "首次启动设置。影响默认 provider 顺序 + MiniMax endpoint。一旦手动改过顺序/endpoint 就不再显示。",
+      "section_title": "区域 & 语言",
+      "help": "语言切换 UI 文字立即生效（不用重启）。区域设置默认 provider 顺序 + MiniMax endpoint。两个独立：海外华人可以选 🇨🇳 区域 + 🇺🇸 English UI。",
+      "lang_label": "界面语言",
+      "region_label": "Provider 区域",
       "option_cn": "中国大陆",
       "desc_cn": "MiniMax 国内 endpoint + 智谱 / Kimi / Xiaomi MiMo / DeepSeek / Qwen 优先",
       "option_global": "海外",
       "desc_global": "OpenRouter / Claude / Tavily / DeepSeek / ZenMux 优先；MiniMax 国际 endpoint",
       "apply": "应用",
-      "applied": "✓ 区域默认值已应用",
-      "banner": "选择你的区域以应用默认 provider",
-      "go_to_wizard": "设置区域"
+      "applied": "✓ 设置已应用",
+      "banner": "选择你的区域和界面语言以开始",
+      "go_to_wizard": "立即配置"
     }
   },
 

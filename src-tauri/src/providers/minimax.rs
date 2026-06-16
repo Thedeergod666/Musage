@@ -36,6 +36,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderImpl, ProviderSnapshot, QuotaRow, QuotaSource};
+
+use crate::t;
 use crate::config::ProviderOverrides;
 
 const URL_CN: &str = "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains";
@@ -130,7 +132,9 @@ impl QuotaSource for MinimaxSource {
         Box::pin(async move {
             let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
-                return Err(FetchError::unconfigured("未配置 API key（设置面板填入）"));
+                return Err(FetchError::unconfigured(
+                    t!("error.provider.unconfigured_key", provider = "MiniMax").into_owned()
+                ));
             }
             let state = self.state.read().await.clone();
             Minimax::do_fetch(api_key, state.region, &state.overrides).await.map(|(_, snap)| snap)
@@ -156,7 +160,9 @@ impl Minimax {
         overrides: &ProviderOverrides,
     ) -> Result<(serde_json::Value, ProviderSnapshot), FetchError> {
         if api_key.trim().is_empty() {
-            return Err(FetchError::unconfigured("API key 为空"));
+            return Err(FetchError::unconfigured(
+                t!("error.common.api_key_empty").into_owned()
+            ));
         }
 
         let client = shared_client();
@@ -168,27 +174,39 @@ impl Minimax {
             .header("Content-Type", "application/json")
             .send()
             .await
-            .map_err(|e| FetchError::network(format!("网络错误 [{}]: {e}", region.api_url())))?;
+            .map_err(|e| FetchError::network(
+                t!("error.common.network", url = region.api_url(), err = e.to_string()).into_owned()
+            ))?;
 
         let status = resp.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(FetchError::auth("鉴权失败，请检查 MiniMax API key"));
+            return Err(FetchError::auth(
+                t!("error.common.auth_failed", provider = "MiniMax").into_owned()
+            ));
         }
         if status == reqwest::StatusCode::FORBIDDEN {
-            return Err(FetchError::auth("无权限访问 MiniMax 用量接口（HTTP 403）"));
+            return Err(FetchError::auth(
+                t!("error.provider.minimax_403").into_owned()
+            ));
         }
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
-            return Err(FetchError::server(format!(
-                "MiniMax 服务异常 (HTTP {status}): {}",
-                body.chars().take(200).collect::<String>()
-            )));
+            return Err(FetchError::server(
+                t!(
+                    "error.common.http_error",
+                    provider = "MiniMax",
+                    status = status.as_u16(),
+                    body = body.chars().take(200).collect::<String>()
+                ).into_owned()
+            ));
         }
 
         let raw: serde_json::Value = resp
             .json()
             .await
-            .map_err(|e| FetchError::parse(format!("响应不是 JSON: {e}")))?;
+            .map_err(|e| FetchError::parse(
+                t!("error.common.parse_json", err = e.to_string()).into_owned()
+            ))?;
 
         let snap = parse(&raw, region, overrides);
         Ok((raw, snap))
@@ -226,12 +244,12 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
             let msg = base_resp
                 .get("status_msg")
                 .and_then(|v| v.as_str())
-                .unwrap_or("未知错误");
+                .unwrap_or("");
             return ProviderSnapshot {
                 provider: Provider::Minimax,
                 success: false,
                 rows: vec![],
-                error: Some(format!("MiniMax API code {code}: {msg}")),
+                error: Some(t!("error.common.business_code", provider = "MiniMax", code = code, msg = msg).into_owned()),
                 error_kind: Some(ErrorKind::ServerError),
                 fetched_at: Some(now_ms),
                 raw: Some(raw.clone()),
@@ -264,7 +282,7 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
             provider: Provider::Minimax,
             success: false,
             rows: vec![],
-            error: Some("响应缺少 model_remains[0]".to_string()),
+            error: Some(t!("error.common.missing_field", provider = "MiniMax", field = "model_remains[0]").into_owned()),
             error_kind: Some(ErrorKind::Parse),
             fetched_at: Some(now_ms),
             raw: Some(raw.clone()),
@@ -299,7 +317,7 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
     let mut rows = Vec::new();
     if let Some(t) = five_hour {
         rows.push(QuotaRow {
-            label: "5h".to_string(),
+            label: t!("row.five_hour").to_string(),
             utilization: Some(t.utilization),
             remaining: None,
             used: None,
@@ -311,7 +329,7 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
     }
     if let Some(t) = weekly {
         rows.push(QuotaRow {
-            label: "周".to_string(),
+            label: t!("row.weekly").to_string(),
             utilization: Some(t.utilization),
             remaining: None,
             used: None,
@@ -332,7 +350,7 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
         error: if success {
             None
         } else {
-            Some("未识别 schema，请把 raw 字段贴给开发者，或在设置面板添加候选字段名".to_string())
+            Some(t!("error.provider.schema_unknown_hint").into_owned())
         },
         error_kind: if success { None } else { Some(ErrorKind::SchemaUnknown) },
         fetched_at: Some(now_ms),

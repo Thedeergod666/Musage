@@ -22,7 +22,7 @@ import {
   listCustomSources,
   deleteCustomSource,
 } from "./api";
-import { el, setCurrentKnownIds, flash } from "./utils";
+import { el, setCurrentKnownIds, flash, currentProviderOrder } from "./utils";
 import { getProviderExtras } from "./source-extras";
 import { renderOrderSection } from "./order";
 import { renderCredentialBlock, loadCredentialStatus } from "./credentials";
@@ -82,6 +82,28 @@ export async function renderProvidersSection(container: HTMLElement) {
   // PR 3 UX：3 个 tab (token_plan / balance / official) sticky 置顶，
   // 默认显示 token_plan，点 tab 切换；xiaomi/custom/misc 仍在下面。
   const groups = groupSources(allSources);
+
+  // 3-pre) 套餐区每组内部按「浮窗卡片顺序」（= cfg.provider_order 经
+  // canonicalizeOrder 规范化后写进 currentProviderOrder）排序，让用户在
+  // 浮窗顺序里调过的位置直接反映到下面套餐 tab / 折叠组的内部顺序。
+  // 不在 currentProviderOrder 里的 provider 走组末尾（groupSources 的原始
+  // 顺序 = builtin_sources() 注册顺序，新加的 CustomSource 通常会落到这）。
+  // 跟 [renderOrderSection] 的同一份 currentProviderOrder 配对 —— 改一处
+  // 拖动顺序，套餐区也跟着重排。
+  const orderIdx = new Map(currentProviderOrder.map((id, i) => [id, i]));
+  for (const [key, metas] of groups) {
+    groups.set(
+      key,
+      [...metas].sort((a, b) => {
+        const ai = orderIdx.get(a.id);
+        const bi = orderIdx.get(b.id);
+        // ES2019+ Array.sort 稳定：两个都不在 orderIdx 里时保留 groupSources 的
+        // 原始顺序（= builtin_sources() 顺序），新加 provider 不会跳到组中乱位。
+        return ((ai ?? Number.POSITIVE_INFINITY) - (bi ?? Number.POSITIVE_INFINITY));
+      }),
+    );
+  }
+
   const { tabs, special } = splitGroupsForLayout(groups);
 
   if (tabs.length > 0) {

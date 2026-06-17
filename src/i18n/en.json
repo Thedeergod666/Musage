@@ -292,6 +292,7 @@
     "order": {
       "section_title": "Floating card order",
       "drag_hint": "Hold and drag to adjust floating display count",
+      "panels_follow_hint": "Provider panels below follow this order",
       "move_up_title": "Move up",
       "move_down_title": "Move down",
       "divider_label": "Hidden",

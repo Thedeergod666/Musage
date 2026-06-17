@@ -604,3 +604,17 @@ body[data-low-power] .card-dot.alert {
 body[data-low-power] .bar-fill::after {
   background: rgba(255, 255, 255, 0.55) !important;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+ *  设置面板 — 「浮窗卡片顺序」section 下的提示行
+ * ═══════════════════════════════════════════════════════════════════
+ *
+ * 告诉用户：拖动顺序会同步到下面各套餐 tab / 折叠组的内部顺序。
+ * 字号 / 颜色跟 .hint 接近，不抢视觉重点。
+ */
+.order-hint {
+  font-size: 11px;
+  color: var(--text-faint);
+  margin: 0 0 8px 0;
+  line-height: 1.4;
+}

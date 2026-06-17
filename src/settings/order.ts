@@ -488,6 +488,7 @@ export function renderOrderSection(
     "section",
     { class: "order-section section-card" },
     el("h2", {}, t("settings.order.section_title")),
+    el("p", { class: "order-hint" }, t("settings.order.panels_follow_hint")),
     list,
   );
   const old = container.querySelector(".order-section");

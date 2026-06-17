@@ -292,6 +292,7 @@
     "order": {
       "section_title": "浮窗卡片顺序",
       "drag_hint": "按住拖动可调整浮窗显示数量",
+      "panels_follow_hint": "下方套餐区按此顺序排列",
       "move_up_title": "上移",
       "move_down_title": "下移",
       "divider_label": "已隐藏",

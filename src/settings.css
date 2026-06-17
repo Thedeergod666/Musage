@@ -317,14 +317,21 @@ code { background: #2a2d35; padding: 1px 4px; border-radius: 3px; font-size: 11p
   font-size: var(--fs-lg);
   font-weight: 600;
   color: var(--fg-0);
-  flex: 1;
+}
+/* 组标签：显示在 provider 名右侧，如 "📊 Token Plan"。
+ * 不影响 flex 布局，让 .provider-enabled 自动被推到最右。 */
+.provider-group-tag {
+  font-size: 11px;
+  color: var(--fg-2, #888);
+  white-space: nowrap;
+  opacity: 0.7;
 }
 .provider-enabled {
   display: flex; align-items: center; gap: 6px;
   flex: 0 0 auto;
   font-size: 12px;
   color: var(--fg-2);
-}
+  margin-left: auto; /* 把 checkbox 推到最右 */
 .provider-enabled input { width: auto; margin: 0; }
 .provider-enabled label { margin: 0; color: var(--fg-2); cursor: pointer; }
 

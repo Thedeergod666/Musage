@@ -78,17 +78,89 @@
 
     "providers": {
       "section_title": "Data sources",
-      "show_in_floating": "Show in floating window"
+      "show_in_floating": "Show in floating window",
+      "search_placeholder": "🔍 Search provider (id or name)...",
+      "count_label": "{enabled} enabled / {total} total",
+      "add_custom": "+ Add custom source",
+      "add_custom_title": "Add custom source",
+      "refresh_interval_override": "Refresh interval (override)",
+      "refresh_interval_placeholder": "Default {secs}s (top \"Refresh interval\")",
+      "refresh_interval_help": "Empty = use top \"Refresh interval\". At least 10s (avoid triggering provider rate limit).",
+      "unit_seconds": "sec",
+      "delete_custom_btn_title": "Delete custom source {name}",
+      "delete_custom_confirm": "Delete custom source \"{name}\"?\nIts API key will also be deleted.",
+      "delete_custom_prompt": "To prevent mis-deletion, please enter display_name \"{name}\" again:",
+      "delete_custom_mismatch": "✗ display_name mismatch, not deleted",
+      "delete_custom_done": "✓ {name} deleted",
+      "delete_failed": "✗ Delete failed: {err}",
+      "load_failed": "✗ Failed to load sources: {err}",
+      "flash_toggle_failed": "✗ Toggle display failed: {err}"
     },
 
     "credentials": {
       "api_key_placeholder": "Paste API key...",
       "cookie_placeholder": "Cookie header value",
+      "cookie_textarea_placeholder": "api-platform_serviceToken=\"...\"; userId=...; api-platform_slh=\"...\"; api-platform_ph=\"...\"",
       "login_xiaomi": "🔑 Login Xiaomi account",
       "clear_cookie": "🗑 Clear Cookie",
       "visit_official_site": "🌐 Visit official site",
       "cookie_login_hint": "🚀 Don't want to manually copy Cookie?",
-      "cookie_login_help": "Click the button below → popup login Xiaomi account → backend auto-extracts Cookie and writes to keys.json, no need to touch DevTools throughout."
+      "cookie_login_help": "Click the button below → popup login Xiaomi account → backend auto-extracts Cookie and writes to keys.json, no need to touch DevTools throughout.",
+      "cookie_label": "Cookie header value",
+      "copy_title": "Copy to clipboard",
+      "save": "Save",
+      "delete": "Delete",
+      "save_key": "Save API key",
+      "save_cookie": "Save Cookie",
+      "del_cookie": "Delete Cookie",
+      "api_key_priority_label": "API key (tried first)",
+      "dashboard_cookie_label": "Dashboard Cookie (fallback on 401)",
+      "xiaomi_display_mode_label": "📊 Floating display mode",
+      "xiaomi_display_mode_help": "When \"Total only\" is selected, falls back to plan's monthly reset time (total is also reset monthly).",
+      "xiaomi_mode_all": "Full",
+      "xiaomi_mode_all_hint": "(3 rows, auto-merge when plan and total are identical)",
+      "xiaomi_mode_plan": "Plan only",
+      "xiaomi_mode_plan_hint": "(Show plan usage + reset time only)",
+      "xiaomi_mode_total": "Total only",
+      "xiaomi_mode_total_hint": "(Show monthly total + reset time only)",
+      "xiaomi_mode_changed": "✓ Xiaomi display mode switched to \"{label}\"",
+      "flash_paste": "⚠ Please paste first...",
+      "flash_paste_key": "⚠ Please paste API key first...",
+      "flash_paste_cookie": "⚠ Please paste Cookie first...",
+      "flash_paste_tavily": "⚠ Please paste Tavily API key first...",
+      "flash_paste_zenmux": "⚠ Please paste ZenMux API key first...",
+      "flash_paste_xiaomi_api_key": "⚠ Please paste Xiaomi API key first...",
+      "flash_saved_key": "✓ {name} key saved",
+      "flash_saved_cookie": "✓ {name} Cookie saved",
+      "flash_saved_generic": "✓ {name} saved",
+      "flash_save_failed": "✗ Save failed: {err}",
+      "flash_deleted": "✓ Deleted",
+      "flash_deleted_tavily": "✓ Tavily key deleted",
+      "flash_deleted_zenmux": "✓ ZenMux key deleted",
+      "flash_deleted_cookie": "✓ Cookie deleted",
+      "flash_unset_key": "⚠ {name} key not set",
+      "flash_unset_tavily": "⚠ Tavily key not set",
+      "flash_unset_zenmux": "⚠ ZenMux key not set",
+      "flash_copy_ok": "✓ {name} key copied to clipboard",
+      "flash_copy_ok_tavily": "✓ Tavily key copied to clipboard",
+      "flash_copy_ok_zenmux": "✓ ZenMux key copied to clipboard",
+      "flash_copy_failed": "✗ Copy failed: {err}",
+      "confirm_delete_key": "Delete {name} API key?",
+      "confirm_delete_key_tavily": "Delete Tavily API key?",
+      "confirm_delete_key_zenmux": "Delete ZenMux API key?",
+      "confirm_delete_cookie": "Delete {name} Cookie?",
+      "confirm_clear_xiaomi": "Clear saved Xiaomi Cookie?\nYou'll need to login again.",
+      "xiaomi_login_only": "⚠ Quick login only enabled for Xiaomi",
+      "xiaomi_login_opened": "🔑 Login window opened — will close automatically after login",
+      "xiaomi_login_failed": "✗ Open login window failed: {err}",
+      "xiaomi_clear_done": "✓ Cookie cleared, please click \"🔑 Login Xiaomi account\" again",
+      "xiaomi_login_success": "✓ Xiaomi login succeeded, cookie saved ({bytes} bytes)",
+      "xiaomi_login_failure": "✗ Xiaomi login failed: {err}",
+      "xiaomi_api_key_hint_extra": "Xiaomi usage API currently returns 401 for Bearer — but don't worry, once Cookie is set, Bearer failure auto-falls back (no manual switch needed).",
+      "default_help": "API key saved to local keys.json.",
+      "cookie_status_saved": "✓ Saved to local",
+      "cookie_status_unset": "Not set",
+      "cookie_status_placeholder": "—"
     },
 
     "app": {
@@ -152,7 +224,12 @@
       "threshold_must_be_number": "✗ Thresholds must be numbers",
       "wallet_must_be_number": "✗ Wallet alert threshold must be a number (or uncheck to disable)",
       "display_saved": "✓ Display settings updated",
-      "display_save_failed": "✗ Save failed: {err}"
+      "display_save_failed": "✗ Save failed: {err}",
+      "threshold_t0_title": "ok → cyan boundary (0..100)",
+      "threshold_t1_title": "cyan → warn boundary",
+      "threshold_t2_title": "warn → alert boundary",
+      "tier_labels": "ok / cyan / warn / alert",
+      "threshold_arrow": " → "
     },
 
     "advanced": {
@@ -160,7 +237,22 @@
       "schema_help_1": "Only when",
       "schema_help_2": "parse fails / shows 'Schema unknown'",
       "schema_help_3": "Use. One JSON object per line, ",
-      "schema_help_4": "click Save config (or wait for blur-save in Stage 6). Refer to ccswitch's schema field name reverse-engineering."
+      "schema_help_4": "click Save config (or wait for blur-save in Stage 6). Refer to ccswitch's schema field name reverse-engineering.",
+      "schema_placeholder": "[{\"total\":\"...\",\"remaining\":\"...\",\"end\":\"...\"}]",
+      "minimax_5h_label": "MiniMax · 5h candidate field names",
+      "minimax_weekly_label": "MiniMax · Weekly candidate field names",
+      "xiaomi_monthly_label": "Xiaomi MiMo · Monthly candidate field names",
+      "xiaomi_credentials_title": "🔑 Xiaomi MiMo · Credentials",
+      "xiaomi_credentials_help": "Xiaomi usage API currently returns 401 for Bearer — API key won't work even if filled.\nNormal case: use main panel \"🔑 Login Xiaomi account\"; this is manual fallback.",
+      "xiaomi_api_key_label": "API key (currently invalid, reserved)",
+      "xiaomi_api_key_save": "{save} API key",
+      "xiaomi_cookie_save": "{save} Cookie",
+      "xiaomi_cookie_label": "Dashboard Cookie (fallback on 401)",
+      "xiaomi_cookie_help": "⚠ Xiaomi usage goes through dashboard admin API, requires browser login state.",
+      "xiaomi_cookie_help_2": "How to get it: Chrome login ",
+      "xiaomi_cookie_help_3": " → F12 → Network → any /api/v1/tokenPlan/* request → right-click → Copy → Copy request headers → find ",
+      "xiaomi_cookie_help_4": " row and paste the whole line above.",
+      "xiaomi_cookie_help_5": "Cookie expires when logged out; on expiry (HTTP 401) error message will guide you to re-paste."
     },
 
     "logs": {
@@ -174,8 +266,16 @@
       "copy_filtered": "Copy filtered logs to clipboard",
       "clear_all": "Clear",
       "confirm_clear": "Confirm clearing all logs?",
-      "no_logs_filtered": "No logs under current filter",
-      "no_logs_to_copy": "No logs under current filter to copy"
+      "no_logs_filtered": "— No logs under current filter —",
+      "no_logs_to_copy": "No logs under current filter to copy",
+      "count_all": "{count} entries",
+      "count_filtered": "{filtered} / {total} entries",
+      "load_failed": "✗ Load failed: {err}",
+      "cleared": "✓ Logs cleared",
+      "clear_failed": "✗ Clear failed: {err}",
+      "copy_empty": "⚠ No logs to copy under current filter",
+      "copied": "✓ Copied {count} logs to clipboard",
+      "copy_failed": "✗ Copy failed: {err}"
     },
 
     "about": {
@@ -204,19 +304,47 @@
       "available": "🎉 New version v{version} available",
       "downloading": "Downloading... {pct}%",
       "ready": "✓ Downloaded, click Relaunch to apply",
-      "failed": "✗ {err}"
+      "failed": "✗ {err}",
+      "fallback_error": "Update failed"
     },
 
     "order": {
       "section_title": "Floating card order",
-      "drag_hint": "Hold and drag to adjust floating display count"
+      "drag_hint": "Hold and drag to adjust floating display count",
+      "move_up_title": "Move up",
+      "move_down_title": "Move down",
+      "divider_label": "Hidden",
+      "divider_title": "Hold and drag to adjust floating display count",
+      "divider_label_full": "Hidden (drag above to show in floating)",
+      "flash_moved_to_floating": "✓ {id} moved to floating display",
+      "flash_hidden": "✓ {id} hidden (drag back up to restore)",
+      "flash_cards_added": "✓ Added {delta} cards to floating",
+      "flash_cards_removed": "✓ Hid {-delta} cards",
+      "flash_move_failed": "✗ Toggle display failed: {err}",
+      "flash_moved_to_pos": "✓ {id} moved to position {pos}",
+      "flash_order_failed": "✗ Reorder failed: {err}"
     },
 
     "test": {
       "testing": "Testing...",
       "timeout": "Request timeout (12s)",
       "all_failed": "✗ All failed: {errs}",
-      "success": "✓ {summary}"
+      "success": "✓ {summary}",
+      "minimax_5h": "MiniMax 5h {pct}%",
+      "minimax_ok": "MiniMax OK",
+      "deepseek_balance": "DeepSeek {amount} {unit}",
+      "deepseek_ok": "DeepSeek OK",
+      "xiaomi_plan": "Xiaomi plan {pct}%",
+      "xiaomi_ok": "Xiaomi OK",
+      "tavily_credits": "Tavily {used}/{total} credits",
+      "tavily_ok": "Tavily OK",
+      "kimi_5h": "Kimi 5h {pct}%",
+      "kimi_ok": "Kimi OK",
+      "zhipu_5h": "{label} 5h {pct}%",
+      "zhipu_ok": "{label} OK",
+      "generic_ok": "{id} OK",
+      "failed": "✗ Failed: {err}",
+      "app_help": "Pull all sources once + show summary"
     },
 
     "dialog": {
@@ -227,6 +355,111 @@
 
     "config": {
       "schema_parse_failed": "✗ Schema overrides JSON parse failed: {err}"
+    },
+
+    "groups": {
+      "token_plan_title": "Token Plan",
+      "balance_title": "Balance",
+      "official_title": "Official / Special",
+      "xiaomi_title": "Xiaomi MiMo",
+      "custom_title": "Custom New API",
+      "misc_title": "Misc"
+    },
+
+    "extras": {
+      "minimax_region_label": "MiniMax region",
+      "minimax_region_cn": "🌐 Mainland (api.minimaxi.com)",
+      "minimax_region_en": "🌐 International (api.minimax.io)",
+      "xiaomi_region_label": "Xiaomi MiMo cluster",
+      "xiaomi_region_cn": "🇨🇳 China (token-plan-cn)",
+      "xiaomi_region_sgp": "🌏 Singapore (token-plan-sgp)",
+      "xiaomi_region_ams": "🌍 Europe (token-plan-ams)",
+      "xiaomi_region_help": "Cluster field reserved for future (multi-account / region-specific URL). Currently cookie auth is user-bound, ignored.",
+      "tavily_concise_label": "Floating display",
+      "tavily_concise_checkbox": "Concise mode (show main metric only \"X/Y credits\" + progress bar, hide 5 endpoint details)",
+      "tavily_concise_help": "On by default — 6 rows are too crowded in small floating window. When off, shows search/extract/crawl/map/research endpoint breakdown rows. Click \"Save config\" to apply.",
+      "zenmux_base_url_label": "Custom API URL (optional)",
+      "zenmux_base_url_placeholder": "Default https://zenmux.ai/api/v1/management/payg/balance",
+      "zenmux_base_url_help": "Default uses mode-selected endpoint (PAYG → /payg/balance, subscription → /subscription/detail). Only change for self-hosting / custom path; empty for default.",
+      "zenmux_mode_label": "View mode",
+      "zenmux_mode_payg": "💰 Wallet balance (PAYG, default)",
+      "zenmux_mode_subscription": "📊 Subscription usage (5h / 7d)",
+      "zenmux_mode_help": "PAYG: monitor Pay-As-You-Go wallet balance (like DeepSeek). Subscription: monitor 5h / 7d rolling window subscription usage (like MiniMax).",
+      "zenmux_payg_concise_label": "Show balance only (hide topup / bonus)",
+      "openrouter_help_text": "OpenRouter balance = account credit balance. Regular API key (sk-or-v1-...) works, no Management key needed. Endpoint: GET /api/v1/key.",
+      "zhipu_region_label": "Zhipu GLM region",
+      "zhipu_region_cn": "🇨🇳 Mainland (open.bigmodel.cn)",
+      "zhipu_region_en": "🌍 International (api.z.ai / Z.ai)",
+      "zhipu_region_help": "Mainland uses bigmodel.cn API key; international uses z.ai. Keys are not interchangeable. Same schema (unit=3→5h, unit=6→weekly), only host differs."
+    },
+
+    "custom_source": {
+      "title": "Add custom New API source",
+      "field": {
+        "display_name": "Name",
+        "display_name_placeholder": "DMX API",
+        "base_url": "Base URL",
+        "base_url_placeholder": "https://api.dmx.com",
+        "path": "Path",
+        "path_placeholder": "/api/user/self",
+        "method": "Method",
+        "extract_preset": "Extract template",
+        "plan_name": "Plan name JSON path (optional)",
+        "plan_name_placeholder": "data.group",
+        "accent": "Accent color",
+        "accent_help": "Floating card background color (fallback: first letter + this color)",
+        "api_key": "API key (fill first, used for test + save)",
+        "api_key_placeholder": "sk-...",
+        "divide": "divide (default {value})",
+        "balance_path": "balance JSON path",
+        "balance_path_placeholder": "data.credit",
+        "currency_path": "currency JSON path (optional)",
+        "currency_path_placeholder": "data.unit",
+        "remaining_path": "remaining JSON path (optional)",
+        "remaining_path_placeholder": "data.credits",
+        "used_path": "used JSON path (optional)",
+        "used_path_placeholder": "data.used",
+        "total_path": "total JSON path (optional)",
+        "total_path_placeholder": "data.total",
+        "unit": "unit (fixed string, optional)",
+        "unit_placeholder": "USD / CNY / credits"
+      },
+      "preset": {
+        "new_api": "New API series",
+        "balance": "Balance series",
+        "custom": "Custom"
+      },
+      "preset_help": "New API series = data.quota / data.used_quota (divide 500000); Balance = user fills path; Custom = 3 independent paths",
+      "err": {
+        "name_required": "✗ Name required",
+        "base_url_invalid": "✗ Base URL must start with http:// or https://",
+        "path_invalid": "✗ Path must start with /",
+        "api_key_required": "✗ API key required (fill before saving)",
+        "balance_path_required": "✗ Balance path required",
+        "test_failed": "✗ Test failed: {err}",
+        "test_error": "✗ Test connection error: {err}",
+        "save_failed": "✗ Save failed: {err}"
+      },
+      "test_passing": "✓ Test passed, saving...",
+      "added": "✓ {name} added (id: {id})"
+    },
+
+    "help": {
+      "minimax": "🔒 Key saved to local <code>keys.json</code> with <code>0600</code> permission (same dir as config, no system keychain, no startup password).<br><br>Get it from <a href=\"https://platform.minimaxi.com/user-center/basic-information/interface-key\" target=\"_blank\" class=\"link-ext\">platform.minimaxi.com</a>.",
+      "deepseek": "🔒 Key saved to local <code>keys.json</code> with <code>0600</code> permission (independent of MiniMax key).<br><br>Get it from <a href=\"https://platform.deepseek.com/api_keys\" target=\"_blank\" class=\"link-ext\">platform.deepseek.com</a>.",
+      "xiaomimimo": "🔒 Token Plan key (starts with <code>tp-</code>, not pay-as-you-go <code>sk-</code>).<br><br>Get it after subscribing at <a href=\"https://platform.xiaomimimo.com/tokenplan/subscription\" target=\"_blank\" class=\"link-ext\">platform.xiaomimimo.com</a>.",
+      "tavily": "Tavily is a common search API for AI agents (<strong>not</strong> an LLM token plan).<br><br>Get the API key from <a href=\"https://app.tavily.com/home\" target=\"_blank\" class=\"link-ext\">app.tavily.com</a>.",
+      "zenmux": "ZenMux is an AI model gateway (aggregates Claude / GPT / Gemini etc).<br><br>Create at <a href=\"https://zenmux.ai/platform/management\" target=\"_blank\" class=\"link-ext\">zenmux.ai/platform/management</a>.",
+      "openrouter": "OpenRouter is an AI model gateway (aggregates 130+ models).<br><br>Regular API key (starts with <code>sk-or-v1-</code>) is enough, <strong>no</strong> Management key needed.<br><br>Get it from <a href=\"https://openrouter.ai/settings/keys\" target=\"_blank\" class=\"link-ext\">openrouter.ai/settings/keys</a>.",
+      "kimi": "Kimi is Moonshot AI's coding plan with 5h + weekly windows.<br><br>Create API key at <a href=\"https://platform.moonshot.cn/console/api-keys\" target=\"_blank\" class=\"link-ext\">platform.moonshot.cn</a>.",
+      "zhipu": "Zhipu GLM Coding Plan with 5h + weekly windows.<br><br><strong>Auth special</strong>: <code>Authorization</code> header <strong>without</strong> <code>Bearer</code> prefix — use raw key (<code>id.secret</code> format).<br><br>Pick CN (<a href=\"https://bigmodel.cn/user-center/projection-meter\" target=\"_blank\" class=\"link-ext\">bigmodel.cn</a>) or EN (<a href=\"https://z.ai/manage-apikey/subscription\" target=\"_blank\" class=\"link-ext\">z.ai</a>) in the Region dropdown. The two platforms' keys are not interchangeable.",
+      "stepfun": "StepFun (阶跃星辰) Step Plan subscription with 5h + weekly windows.<br><br><strong>Auth special</strong>: use Oasis-Token (<code>Cookie: Oasis-Token=&lt;value&gt;</code>), not regular Bearer.<br><br>How to get it: Chrome login <a href=\"https://platform.stepfun.com\" target=\"_blank\" class=\"link-ext\">platform.stepfun.com</a> → F12 → Network → any request → find <code>Oasis-Token</code> cookie value and paste the whole thing.<br><br><strong>Known limit</strong>: Oasis-Token typically expires in 7-30 days; on expiry (HTTP 401) you need to re-login and re-extract.<br><br><strong>Not yet supported</strong>: 3-step OAuth auto-login flow (Phase X).",
+      "siliconflow": "SiliconFlow (硅基流动) wallet balance, displayed in CNY.<br><br>Get the API key from <a href=\"https://cloud.siliconflow.cn/account/ak\" target=\"_blank\" class=\"link-ext\">cloud.siliconflow.cn</a>.",
+      "novita": "<strong>⚠️ Novita AI not yet supported</strong> — public API ref has no balance/quota endpoint (confirmed 2026-06-16).<br><br>Can be enabled in settings panel, but fetch will always return \"not supported\". When the public endpoint is available, follow SiliconFlow's pattern to add do_fetch.",
+      "qwen": "<strong>⚠️ Qwen / DashScope not yet supported</strong> — public API has no quota endpoint (confirmed via <a href=\"https://github.com/steipete/CodexBar/issues/612\" target=\"_blank\" class=\"link-ext\">CodexBar issue #612</a>).<br><br>Can be enabled in settings panel, but fetch will always return \"not supported\". Phase X will add Coding Plan OAuth flow.",
+      "claude_official": "Claude Pro / Max official OAuth usage monitor.<br><br><strong>Auth special</strong>: use Cookie <code>sessionKey=&lt;value&gt;</code> (not Bearer API key).<br><br>How to get it: Chrome login <a href=\"https://claude.ai\" target=\"_blank\" class=\"link-ext\">claude.ai</a> → F12 → Application → Cookies → <code>sessionKey</code> full value (you can paste just the value, app auto-adds <code>sessionKey=</code> prefix).<br><br><strong>Known limits</strong>: <ul style=\"margin: 4px 0; padding-left: 20px;\"><li>sessionKey expires in ~8h (when claude.ai login session ends)</li><li>OAuth usage API occasionally 429 (<a href=\"https://github.com/anthropics/claude-code/issues/31021\" target=\"_blank\" class=\"link-ext\">claude-code#31021</a>), this is on Anthropic's side, Musage doesn't retry</li></ul>",
+      "xiaomi_cookie": "⚠️ Xiaomi usage goes through dashboard admin API, requires browser login state.<br><br><strong>How to get it</strong>: Chrome login <a href=\"https://platform.xiaomimimo.com/console/plan-manage\" target=\"_blank\" class=\"link-ext\">platform.xiaomimimo.com</a> → F12 → Network → any <code>/api/v1/tokenPlan/*</code> request → right-click → Copy → Copy request headers → find <code>cookie:</code> row and paste the whole line above.<br><br>Cookie expires when logged out; on expiry (HTTP 401) error message will guide you to re-paste.",
+      "default": "API key saved to local keys.json."
     },
 
     "region": {
@@ -241,7 +474,12 @@
       "apply": "Apply",
       "applied": "✓ Settings applied",
       "banner": "Set your region and UI language to get started",
-      "go_to_wizard": "Configure now"
+      "go_to_wizard": "Configure now",
+      "lang": {
+        "zh-CN": "中文",
+        "en": "English"
+      },
+      "apply_failed": "✗ {err}"
     }
   },
 

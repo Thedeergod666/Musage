@@ -130,7 +130,15 @@ impl LogStore {
         }
 
         // 2. 更新 ring
-        let mut g = self.inner.lock().expect("logstore mutex poisoned");
+        // H11 fix: 之前 .expect("logstore mutex poisoned") —— 一旦任何持锁路径 panic
+        // （虽然极少见，但理论上 push / clear / recent 都共享同一个 std::sync::Mutex），
+        // 后续所有 log 调用全部 panic，反而让用来 debug 的 log 自己先挂。
+        // 改成 unwrap_or_else(|e| e.into_inner()) 自动恢复 —— std::sync::Mutex 的
+        // PoisonError 设计就是支持这种恢复（拿到 poisoned 的 guard 仍然能用 inner）。
+        let mut g = self.inner.lock().unwrap_or_else(|e| {
+            tracing::warn!("logstore mutex poisoned，自动恢复");
+            e.into_inner()
+        });
         g.push_back(entry);
         if g.len() > MAX_ENTRIES {
             g.pop_front();
@@ -139,7 +147,10 @@ impl LogStore {
 
     /// 快照：返回最近 n 条（按时间正序）。n == None → 全部。
     pub fn recent(&self, n: Option<usize>) -> Vec<LogEntry> {
-        let g = self.inner.lock().expect("logstore mutex poisoned");
+        let g = self.inner.lock().unwrap_or_else(|e| {
+            tracing::warn!("logstore mutex poisoned，自动恢复");
+            e.into_inner()
+        });
         match n {
             None => g.iter().cloned().collect(),
             Some(k) => g.iter().rev().take(k).cloned().collect::<Vec<_>>().into_iter().rev().collect(),
@@ -149,7 +160,10 @@ impl LogStore {
     /// 清空内存 + 删文件。
     pub fn clear(&self) {
         {
-            let mut g = self.inner.lock().expect("logstore mutex poisoned");
+            let mut g = self.inner.lock().unwrap_or_else(|e| {
+                tracing::warn!("logstore mutex poisoned，自动恢复");
+                e.into_inner()
+            });
             g.clear();
         }
         if let Ok(path) = log_path() {

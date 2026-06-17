@@ -14,6 +14,7 @@ import {
   testCustomSource,
   listCustomSources,
 } from "./api";
+import { t } from "../i18n";
 import type { CustomSourceSpec, ExtractSpec } from "./types";
 import { renderProvidersSection } from "./providers";
 
@@ -32,9 +33,9 @@ const ACCENT_PALETTE = [
 export function openAddCustomSourceModal(): void {
   const body = buildForm();
   showModal({
-    title: "添加自定义 New API 来源",
+    title: t("custom_source.title"),
     body,
-    submitLabel: "保存",
+    submitLabel: t("settings.common.save"),
     onSubmit: async () => {
       return submitHandler(body);
     },
@@ -49,10 +50,10 @@ function buildForm(): HTMLElement {
 
   // display_name
   root.appendChild(
-    field("display_name", "名称", el("input", {
+    field("display_name", t("custom_source.field.display_name"), el("input", {
       type: "text",
       id: "cs-name",
-      placeholder: "DMX API",
+      placeholder: t("custom_source.field.display_name_placeholder"),
       required: "true",
       autocomplete: "off",
     })),
@@ -60,10 +61,10 @@ function buildForm(): HTMLElement {
 
   // base_url
   root.appendChild(
-    field("base_url", "Base URL", el("input", {
+    field("base_url", t("custom_source.field.base_url"), el("input", {
       type: "url",
       id: "cs-base",
-      placeholder: "https://api.dmx.com",
+      placeholder: t("custom_source.field.base_url_placeholder"),
       required: "true",
       autocomplete: "off",
     })),
@@ -71,10 +72,10 @@ function buildForm(): HTMLElement {
 
   // path
   root.appendChild(
-    field("path", "路径", el("input", {
+    field("path", t("custom_source.field.path"), el("input", {
       type: "text",
       id: "cs-path",
-      placeholder: "/api/user/self",
+      placeholder: t("custom_source.field.path_placeholder"),
       required: "true",
       autocomplete: "off",
     })),
@@ -82,7 +83,7 @@ function buildForm(): HTMLElement {
 
   // method (radio GET / POST)
   const methodGroup = el("div", { class: "field" },
-    el("label", {}, "方法"),
+    el("label", {}, t("custom_source.field.method")),
     el("div", { class: "radio-group" },
       radio("cs-method", "GET", true),
       radio("cs-method", "POST", false),
@@ -92,14 +93,14 @@ function buildForm(): HTMLElement {
 
   // extract preset (3 选 1 radio)
   const presetGroup = el("div", { class: "field" },
-    el("label", {}, "提取模板"),
+    el("label", {}, t("custom_source.field.extract_preset")),
     el("div", { class: "radio-group" },
-      radio("cs-preset", "new_api", true, "New API 系"),
-      radio("cs-preset", "balance", false, "余额系"),
-      radio("cs-preset", "custom", false, "自定义"),
+      radio("cs-preset", "new_api", true, t("custom_source.preset.new_api")),
+      radio("cs-preset", "balance", false, t("custom_source.preset.balance")),
+      radio("cs-preset", "custom", false, t("custom_source.preset.custom")),
     ),
     el("div", { class: "help" },
-      "New API 系 = data.quota / data.used_quota（divide 500000）；余额系 = 用户填 path；自定义 = 3 个独立 path",
+      t("custom_source.preset_help"),
     ),
   );
   root.appendChild(presetGroup);
@@ -110,17 +111,17 @@ function buildForm(): HTMLElement {
 
   // plan_name_path（可选）
   root.appendChild(
-    field("plan_name_path", "套餐名 JSON path（可选）", el("input", {
+    field("plan_name_path", t("custom_source.field.plan_name"), el("input", {
       type: "text",
       id: "cs-plan",
-      placeholder: "data.group",
+      placeholder: t("custom_source.field.plan_name_placeholder"),
       autocomplete: "off",
     })),
   );
 
   // accent 调色板
   const accentGroup = el("div", { class: "field" },
-    el("label", {}, "主题色"),
+    el("label", {}, t("custom_source.field.accent")),
     el("div", { class: "accent-palette", id: "cs-accent-palette" },
       ...ACCENT_PALETTE.map((c) => el("button", {
         type: "button",
@@ -130,16 +131,16 @@ function buildForm(): HTMLElement {
         title: c,
       })),
     ),
-    el("div", { class: "help" }, "浮窗卡片背景色（fallback：首字母 + 此色）"),
+    el("div", { class: "help" }, t("custom_source.field.accent_help")),
   );
   root.appendChild(accentGroup);
 
   // API key
   root.appendChild(
-    field("api_key", "API key（先填，测试 + 保存用）", el("input", {
+    field("api_key", t("custom_source.field.api_key"), el("input", {
       type: "password",
       id: "cs-api-key",
-      placeholder: "sk-...",
+      placeholder: t("custom_source.field.api_key_placeholder"),
       autocomplete: "off",
     })),
   );
@@ -195,7 +196,7 @@ function renderDynamicFields(preset: string): void {
 
   if (preset === "new_api") {
     host.appendChild(
-      field("divide", "divide（默认 500000，New API 经典）", el("input", {
+      field("divide", t("custom_source.field.divide", { value: "500000" }), el("input", {
         type: "number",
         id: "cs-divide",
         value: "500000",
@@ -205,22 +206,22 @@ function renderDynamicFields(preset: string): void {
     );
   } else if (preset === "balance") {
     host.appendChild(
-      field("balance_path", "balance JSON path", el("input", {
+      field("balance_path", t("custom_source.field.balance_path"), el("input", {
         type: "text",
         id: "cs-balance-path",
-        placeholder: "data.credit",
+        placeholder: t("custom_source.field.balance_path_placeholder"),
         required: "true",
       })),
     );
     host.appendChild(
-      field("currency_path", "currency JSON path（可选）", el("input", {
+      field("currency_path", t("custom_source.field.currency_path"), el("input", {
         type: "text",
         id: "cs-currency-path",
-        placeholder: "data.unit",
+        placeholder: t("custom_source.field.currency_path_placeholder"),
       })),
     );
     host.appendChild(
-      field("divide_balance", "divide（默认 1.0）", el("input", {
+      field("divide_balance", t("custom_source.field.divide", { value: "1.0" }), el("input", {
         type: "number",
         id: "cs-divide",
         value: "1.0",
@@ -230,35 +231,35 @@ function renderDynamicFields(preset: string): void {
     );
   } else if (preset === "custom") {
     host.appendChild(
-      field("remaining_path", "remaining JSON path（可选）", el("input", {
+      field("remaining_path", t("custom_source.field.remaining_path"), el("input", {
         type: "text",
         id: "cs-remaining-path",
-        placeholder: "data.credits",
+        placeholder: t("custom_source.field.remaining_path_placeholder"),
       })),
     );
     host.appendChild(
-      field("used_path", "used JSON path（可选）", el("input", {
+      field("used_path", t("custom_source.field.used_path"), el("input", {
         type: "text",
         id: "cs-used-path",
-        placeholder: "data.used",
+        placeholder: t("custom_source.field.used_path_placeholder"),
       })),
     );
     host.appendChild(
-      field("total_path", "total JSON path（可选）", el("input", {
+      field("total_path", t("custom_source.field.total_path"), el("input", {
         type: "text",
         id: "cs-total-path",
-        placeholder: "data.total",
+        placeholder: t("custom_source.field.total_path_placeholder"),
       })),
     );
     host.appendChild(
-      field("unit", "unit（写死字符串，可选）", el("input", {
+      field("unit", t("custom_source.field.unit"), el("input", {
         type: "text",
         id: "cs-unit",
-        placeholder: "USD / CNY / credits",
+        placeholder: t("custom_source.field.unit_placeholder"),
       })),
     );
     host.appendChild(
-      field("divide_custom", "divide（默认 1.0）", el("input", {
+      field("divide_custom", t("custom_source.field.divide", { value: "1.0" }), el("input", {
         type: "number",
         id: "cs-divide",
         value: "1.0",
@@ -282,16 +283,16 @@ async function submitHandler(body: HTMLElement): Promise<boolean> {
   const accent = accentEl ? accentEl.dataset.color ?? null : null;
 
   // 2. 前端基本校验
-  if (!displayName) { flash("✗ 名称不能为空", true); return false; }
+  if (!displayName) { flash(t("custom_source.err.name_required"), true); return false; }
   if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
-    flash("✗ Base URL 必须以 http:// 或 https:// 开头", true);
+    flash(t("custom_source.err.base_url_invalid"), true);
     return false;
   }
   if (!path.startsWith("/")) {
-    flash("✗ 路径必须以 / 开头", true);
+    flash(t("custom_source.err.path_invalid"), true);
     return false;
   }
-  if (!apiKey) { flash("✗ API key 不能为空（先填再保存）", true); return false; }
+  if (!apiKey) { flash(t("custom_source.err.api_key_required"), true); return false; }
 
   // 3. 构造 ExtractSpec
   const divideRaw = (body.querySelector<HTMLInputElement>("#cs-divide")?.value ?? "").trim();
@@ -301,7 +302,7 @@ async function submitHandler(body: HTMLElement): Promise<boolean> {
     extract = { preset: "new_api", divide };
   } else if (preset === "balance") {
     const balancePath = (body.querySelector<HTMLInputElement>("#cs-balance-path")!.value ?? "").trim();
-    if (!balancePath) { flash("✗ Balance path 必填", true); return false; }
+    if (!balancePath) { flash(t("custom_source.err.balance_path_required"), true); return false; }
     const currencyPath = (body.querySelector<HTMLInputElement>("#cs-currency-path")!.value ?? "").trim();
     extract = {
       preset: "balance",
@@ -334,12 +335,12 @@ async function submitHandler(body: HTMLElement): Promise<boolean> {
     };
     const snap = await testCustomSource(testSpec, apiKey);
     if (!snap.success) {
-      flash(`✗ 测试失败: ${snap.error ?? "未知错误"}`, true);
+      flash(t("custom_source.err.test_failed", { err: snap.error ?? t("floating.error.unknown") }), true);
       return false;
     }
-    flash("✓ 测试通过，正在保存...");
+    flash(t("custom_source.test_passing"));
   } catch (e) {
-    flash(`✗ 测试连接出错: ${String(e)}`, true);
+    flash(t("custom_source.err.test_error", { err: String(e) }), true);
     return false;
   }
 
@@ -354,7 +355,7 @@ async function submitHandler(body: HTMLElement): Promise<boolean> {
       plan_name_path: planNamePath || null,
       accent,
     });
-    flash(`✓ ${displayName} 已添加 (id: ${id})`);
+    flash(t("custom_source.added", { name: displayName, id }));
     // 重建 settings providers section
     const container = document.querySelector<HTMLElement>(
       '.section-view[data-section="providers"]',
@@ -366,7 +367,7 @@ async function submitHandler(body: HTMLElement): Promise<boolean> {
     }
     return true;
   } catch (e) {
-    flash(`✗ 保存失败: ${String(e)}`, true);
+    flash(t("custom_source.err.save_failed", { err: String(e) }), true);
     return false;
   }
 }

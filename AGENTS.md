@@ -26,7 +26,7 @@
 | 日志 | tracing + tracing-subscriber |
 | 自动启动 | tauri-plugin-autostart |
 | 前端类型 | `@types/node` 20.x（vite.config.ts 用 `node:url`） |
-| Providers | minimax / deepseek / xiaomimimo / tavily / zenmux / openrouter / kimi / zhipu / stepfun / siliconflow / novita / qwen / claude_official + **用户自定义 New API 中转站 (custom_<uuid>)**（13 内置 + N 动态；v0.1.0 = 6 个，2026-06-14 加 kimi/zhipu，2026-06-16 加 stepfun/siliconflow/novita/qwen/claude_official，**2026-06-16 PR 3 加 CustomSource 动态注册**） |
+| Providers | minimax / deepseek / xiaomimimo / tavily / zenmux / openrouter / kimi / zhipu / stepfun / siliconflow / novita / qwen / claude_official + **用户自定义 New API 中转站 (custom_<uuid>)**（13 内置 + N 动态；v0.1.0 = 6 个，2026-06-14 加 kimi/zhipu，2026-06-15 加 stepfun/siliconflow/novita/qwen/claude_official，**2026-06-15 PR 3 加 CustomSource 动态注册**） |
 
 ## 环境与工具链（2026-06-13 实测，跑 `pnpm tauri build` 必看）
 
@@ -115,7 +115,7 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 ✅ CLI `musage dump` 子命令
 ✅ Rust GNU 工具链已装
 ✅ Pillow 已装（用于生成占位 icons）
-✅ **`cargo check` 0 错 0 警告**（10 个编译错误全部修复）
+✅ **`cargo check` 0 错 20 警告**（dead code: 11 个 `set_state` 未被 caller 调用 + 1 个 `region` field 未读 + 8 个其它；2026-06-17 review 标记为 tech debt,等 P2-C PR 集中清理）
 ✅ **`cargo build` 通过**（修了一个 MinGW 16-bit ordinal 限制坑——见下）
 ✅ 占位 icons 已生成（32/128/ico/icns/128@2x/tray-base）
 ✅ **首次 `pnpm tauri build` 通过**（2026-06-13，NSIS 安装包 2.5 MB）
@@ -211,7 +211,7 @@ D:\Project\Musage\
 │   │   ├── openrouter-logo.png
 │   │   ├── tavily-logo.svg   ← 配合 ?url + assetsInlineLimit: 0
 │   │   └── zenmux-logo.svg   ← 同上
-│   └── settings/             ← 设置面板子模块（18 个 .ts 文件）
+│   └── settings/             ← 设置面板子模块（21 个 .ts 文件；PR 3 后 +3：modal.ts / groups.ts / custom-source-form.ts；P2 后 +2：region-wizard.ts / test.ts）
 │       ├── main.ts / app.ts / config.ts / api.ts
 │       ├── credentials.ts / providers.ts / floating.ts
 │       ├── order.ts / logs.ts / test.ts / about.ts
@@ -219,6 +219,8 @@ D:\Project\Musage\
 │       ├── logos.ts / source-extras.ts
 │       ├── groups.ts           ← PR 3: 6 组分组（token_plan/balance/official/xiaomi/custom/misc）
 │       ├── modal.ts            ← PR 3: 原生 <dialog> 包装
+│       ├── region-wizard.ts    ← P2: set_region command UI（多 region provider 区域选择向导）
+│       ├── test.ts             ← dev-only probe 入口（生产构建排除）
 │       └── custom-source-form.ts  ← PR 3: 「+ 添加自定义来源」表单 + 3 选 1 extract 模板
 └── src-tauri/                ← Rust 后端
     ├── Cargo.toml            ← crate-type = ["staticlib", "rlib"]（不用 cdylib）
@@ -309,7 +311,7 @@ D:\Project\Musage\
 **三处 PROVIDER_META 合一**：
 - ~~`src/settings/utils.ts:providerDisplay`~~ — 删
 - 单一来源：[`src/main.ts:37`](src/main.ts#L37) + 共享 [`src/i18n/{en,zh-CN}.json`](src/i18n/) 的 `provider.<id>.name`
-- 加新 provider 唯一改 3 处（后端 source.rs + main.ts PROVIDER_META + i18n JSON 的 `provider.<id>.name`）
+- 加新 provider 改 3 处（后端 `providers/<id>.rs` + `providers/mod.rs::builtin_sources()` 注册 + `i18n.json` 的 `provider.<id>.name`）。**注**:settings 面板主结构是动态的（PR 3 改完），但 `src/settings/source-extras.ts` 里的 7 个 `renderXxx` 函数（每个有 region/mode/extras 字段的 provider 1 个）+ `EXTRAS` 表注册**不**是零行 — 真正零行修改的场景是"无 region/mode/extras 字段的纯 Bearer provider"
 
 **Locale 切换链路**：
 1. 前端 `setLocale(locale)` → 调 `set_app_locale` Tauri command
@@ -328,7 +330,7 @@ D:\Project\Musage\
 - **Provider 实现**：`src-tauri/src/providers/{minimax,deepseek,xiaomi,tavily,zenmux,openrouter,kimi,zhipu,stepfun,siliconflow,claude_official,novita,qwen}.rs`（v0.1.0 = 6，2026-06-14 +kimi/zhipu，2026-06-16 +5 个；novita/qwen 是 STUB）
 - **托盘 UI**：`src-tauri/src/tray.rs`（合并了原 icon.rs：动态图标 + 文字绘制 + 菜单 + tooltip）
 - **悬浮窗 UI**：`src/main.ts` + `src/styles.css`
-- **设置面板**：`src/settings/main.ts` + `settings.html`（子模块见 `src/settings/` 18 个文件）
+- **设置面板**：`src/settings/main.ts` + `settings.html`（子模块见 `src/settings/` 21 个文件）
 - **Logo 资源**：`src/assets/` + `src/assets.d.ts`（含 `?url` 声明，必读 [浮窗 logo 打包后裂开](#浮窗-logo-打包后裂开2026-06-13-修)）
 
 ## 关键记忆

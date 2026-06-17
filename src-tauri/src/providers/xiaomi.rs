@@ -576,6 +576,7 @@ fn parse(
             Some(ErrorKind::Parse)
         },
         fetched_at: Some(now_ms),
+        next_fetch_at: None,
         raw: Some(raw_usage.clone()),
         is_healthy: success,
         source_id: Some(Provider::Xiaomimimo.id_str().to_string()),
@@ -1046,6 +1047,7 @@ mod tests {
             error: None,
             error_kind: None,
             fetched_at: Some(0),
+            next_fetch_at: None,
             raw: None,
             is_healthy: true,
             source_id: Some("xiaomimimo".to_string()),

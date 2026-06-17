@@ -271,6 +271,7 @@ fn parse(raw: &Value, region: ZhipuRegion) -> Result<ProviderSnapshot, FetchErro
         error: None,
         error_kind: None,
         fetched_at: Some(now_ms),
+        next_fetch_at: None,
         raw: Some(raw.clone()),
         is_healthy: true,
         source_id: Some("zhipu".to_string()),

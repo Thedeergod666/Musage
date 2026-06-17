@@ -799,6 +799,28 @@ pub async fn get_region(state: State<'_, AppState>) -> Result<String, String> {
 
 // ── 核心：refresh_inner ───────────────────────────────────────
 
+/// 根据当前 backoff 状态填充 `next_fetch_at`（下次自动 fetch 的 epoch ms）。
+///
+/// 调用方负责: 先写 `backoff.record()` 更新 interval, 再调本函数。
+/// 本函数只是读 backoff 的当前 interval + 算时间戳,不写 backoff。
+///
+/// 用途: 浮窗错误卡片用 `next_fetch_at` 显示 "下次重试 in Xm" 倒计时。
+/// 2026-06-17 commit 加。
+async fn fill_next_fetch_at(
+    app: &AppHandle,
+    id: &str,
+    default_secs: u64,
+    snap: &mut ProviderSnapshot,
+) {
+    let interval = {
+        let state = app.state::<AppState>();
+        let backoff = state.backoff.read().await;
+        backoff.next_interval_secs(id, default_secs)
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+    snap.next_fetch_at = Some(now + (interval as i64) * 1000);
+}
+
 /// 刷新所有启用的 source。**并发**跑，互不拖累。
 ///
 /// 被 [`refresh_now`] 和 [`crate::poller::tick`] 共用。
@@ -886,11 +908,8 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
         match task.await {
             Ok(Ok(s)) => {
                 // 写 backoff：成功 → reset 退避状态
-                {
-                    let state = app.state::<AppState>();
-                    let mut backoff = state.backoff.write().await;
-                    backoff.record(&id, &s, default_interval_secs);
-                }
+                let mut s = s;
+                fill_next_fetch_at(app, &id, default_interval_secs, &mut s).await;
                 snap.providers.push(s);
             }
             Ok(Err(e)) => {
@@ -898,7 +917,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                 // 子串匹配（旧实现 i18n 一动就破）。
                 let provider = provider_from_id(&id);
                 log_provider_error(app, &id, e.kind, &e.message);
-                let err_snap = ProviderSnapshot::empty_error(
+                let mut err_snap = ProviderSnapshot::empty_error(
                     &app.state::<AppState>(),
                     provider,
                     &id,
@@ -906,26 +925,25 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                     e.message,
                 ).await;
                 // 写 backoff：失败（如果 kind 属于可退避类）→ 翻倍
-                {
-                    let state = app.state::<AppState>();
-                    let mut backoff = state.backoff.write().await;
-                    backoff.record(&id, &err_snap, default_interval_secs);
-                }
+                fill_next_fetch_at(app, &id, default_interval_secs, &mut err_snap).await;
                 snap.providers.push(err_snap);
             }
             Err(join_err) => {
                 let provider = provider_from_id(&id);
                 let msg = format!("任务调度失败: {join_err}");
                 log_provider_error(app, &id, ErrorKind::Other, &msg);
-                snap.providers.push(
-                    ProviderSnapshot::empty_error(
-                        &app.state::<AppState>(),
-                        provider,
-                        &id,
-                        ErrorKind::Other,
-                        msg,
-                    ).await,
+                // join_err 走 Other, next_fetch_at 用默认间隔(无 backoff)
+                let mut err_snap = ProviderSnapshot::empty_error(
+                    &app.state::<AppState>(),
+                    provider,
+                    &id,
+                    ErrorKind::Other,
+                    msg,
+                ).await;
+                err_snap.next_fetch_at = Some(
+                    chrono::Utc::now().timestamp_millis() + (default_interval_secs as i64) * 1000
                 );
+                snap.providers.push(err_snap);
             }
         }
     }
@@ -1002,7 +1020,7 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
     // "未支持" 错就清楚表达 STUB 状态;poller 才按 default_enabled 自动跳过)。
     let creds = config::load_credential_for_id(id)?;
     update_source_state(&src, &cfg).await;
-    let provider_snap = match creds {
+    let mut provider_snap = match creds {
         Some(c) => match src.fetch(&c).await {
             Ok(s) => s,
             Err(e) => {
@@ -1046,6 +1064,8 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
         let mut backoff = state.backoff.write().await;
         backoff.record(id, &provider_snap, default_interval_secs);
     }
+    // 填 next_fetch_at(同 refresh_inner 的 fill_next_fetch_at,逻辑共享)
+    fill_next_fetch_at(app, id, default_interval_secs, &mut provider_snap).await;
 
     // 替换 in-memory snapshot 里对应那条
     let state = app.state::<AppState>();

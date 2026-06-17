@@ -252,6 +252,7 @@ async fn do_fetch(api_key: &str, spec: &CustomSourceSpec) -> Result<ProviderSnap
         error: None,
         error_kind: None,
         fetched_at: Some(chrono::Utc::now().timestamp_millis()),
+        next_fetch_at: None,
         raw: Some(raw),
         is_healthy: true,
         source_id: Some(spec.id.clone()),

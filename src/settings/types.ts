@@ -188,6 +188,9 @@ export interface ProviderSnapshot {
     | "server_error"
     | "other"
     | null;
+  /** 下次自动 fetch 的 epoch ms。浮窗错误卡片用这个显示 "下次重试 in Xm" 倒计时。
+   *  2026-06-17 commit 加。null/undefined = 未知。 */
+  next_fetch_at?: number | null;
 }
 
 // ── PR 3: 用户自定义 New API source ───────────────────────────

@@ -249,6 +249,12 @@ pub struct ProviderSnapshot {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error_kind: Option<ErrorKind>,
     pub fetched_at: Option<i64>,
+    /// 下次自动 fetch 的时间戳（epoch ms）。浮窗错误卡片用这个显示
+    /// "下次重试 in Xm" 倒计时。None = 未知（poller 还在调度但还没到点）。
+    /// 2026-06-17 commit 加。`#[serde(default)]` 让老 snapshot（落 logstore
+    /// 的历史）仍能反序列化。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_fetch_at: Option<i64>,
     /// 原始响应，便于排查
     pub raw: Option<serde_json::Value>,
     /// provider 自身是否健康（用于整体托盘颜色 + tooltip 颜色）
@@ -293,6 +299,9 @@ impl ProviderSnapshot {
             error: Some(error),
             error_kind: Some(kind),
             fetched_at: Some(chrono::Utc::now().timestamp_millis()),
+            // next_fetch_at 留 None:调用方在 record 完 backoff 后填
+            // (record 后才能算下一次间隔)
+            next_fetch_at: None,
             raw: None,
             is_healthy: false,
             source_id: Some(id.to_string()),

@@ -172,6 +172,9 @@ interface ProviderSnapshot {
     | "other"
     | null;
   fetched_at: number | null;
+  /** 下次自动 fetch 的 epoch ms (2026-06-17 commit 加)。
+   *  浮窗错误卡片用这个显示 "Next auto-retry in ~Xm"。 */
+  next_fetch_at?: number | null;
   raw?: unknown;
   is_healthy: boolean;
 }
@@ -533,14 +536,33 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
 
     // ── 持久错误 / 还没拉到过任何成功数据：走老 UI ──
     const label = errorKindLabel(kind);
-    const needsSettings = kind === "unconfigured_key" || kind === "auth_failed";
-    const settingsBtn = needsSettings
-      ? `<button class="err-btn open-settings">${escapeHtml(t("floating.open_settings"))}</button>`
-      : "";
-    const schemaHint =
-      kind === "schema_unknown"
-        ? `<div class="hint">${escapeHtml(t("floating.init_error_hint"))}</div>`
-        : "";
+    const id = p.source_id ?? p.provider;
+    // 按 error_kind 分发按钮 (2026-06-17 commit):
+    // - unconfigured_key / auth_failed: 打开设置面板
+    // - auth_failed + xiaomimimo:        🔑 重新登录 (走 xiaomi_login window)
+    // - auth_failed + claude_official:   打开设置面板 (cookie 在设置面板里改)
+    // - schema_unknown:                  高级设置 (跳到 schema overrides section)
+    // - network / rate_limited / server_error: 🔄 重试 + 下次自动重试倒计时
+    // - parse / other:                   只显示错,无按钮 (开发者向)
+    let actionBtn = "";
+    let retryInfo = "";
+    if (kind === "unconfigured_key" || kind === "auth_failed") {
+      if (kind === "auth_failed" && id === "xiaomimimo") {
+        actionBtn = `<button class="err-btn err-btn-relogin" data-action="relogin-xiaomi">🔑 重新登录</button>`;
+      } else {
+        actionBtn = `<button class="err-btn open-settings">${escapeHtml(t("floating.open_settings"))}</button>`;
+      }
+    } else if (kind === "schema_unknown") {
+      actionBtn = `<button class="err-btn err-btn-advanced" data-section="advanced">⚙ ${escapeHtml(t("settings.nav.advanced"))}</button>`;
+      const schemaHint = `<div class="hint">${escapeHtml(t("floating.init_error_hint"))}</div>`;
+      retryInfo = schemaHint;
+    } else if (kind === "network" || kind === "rate_limited" || kind === "server_error") {
+      actionBtn = `<button class="err-btn err-btn-retry" data-source-id="${escapeHtml(id)}">🔄 Retry</button>`;
+      if (p.next_fetch_at && p.next_fetch_at > Date.now()) {
+        const mins = Math.max(1, Math.ceil((p.next_fetch_at - Date.now()) / 60000));
+        retryInfo = `<div class="hint">Next auto-retry in ~${mins}m</div>`;
+      }
+    }
     card.classList.add("err-card", `err-${kind}`);
     // H8 修复：err-label 加在 .card-head-status 里，CSS 用 row-reverse
     // 把 [dot, label] 渲染成 [label, dot] —— dot 永远在卡片右上角，
@@ -556,8 +578,8 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
     headLabel.textContent = label;
     rowsBox.innerHTML = `
       <div class="err-msg">${escapeHtml(p.error ?? t("floating.error.unknown"))}</div>
-      ${settingsBtn}
-      ${schemaHint}
+      ${actionBtn}
+      ${retryInfo}
     `;
     card.dataset.stale = "";
     return;
@@ -956,12 +978,29 @@ async function init() {
     app.innerHTML = `<div class="err"><div class="err-title">${escapeHtml(t("floating.loading_error_title"))}</div><div class="err-msg">${escapeHtml(String(e))}</div><button class="err-btn open-settings">${escapeHtml(t("floating.open_settings"))}</button><div class="hint">${escapeHtml(t("floating.tray_right_to_settings"))}</div></div>`;
   }
 
-  // 事件代理：所有 .open-settings 按钮
+  // 事件代理：错误卡片的恢复按钮 (2026-06-17 commit)
+  // 5 种 action 通过 data-* 区分:
+  // - .open-settings (无 data-*):  打开设置面板 (原有)
+  // - .err-btn-retry (data-source-id): 立即重拉该 provider (绕过 backoff)
+  // - .err-btn-advanced (data-section="advanced"): 打开设置 + 跳到高级 section
+  // - .err-btn-relogin (data-action="relogin-xiaomi"): 打开小米登录窗
   app.addEventListener("click", (e) => {
     const t = e.target as HTMLElement;
-    if (t.closest(".open-settings")) {
-      e.stopPropagation();
-      invoke("open_settings_window").catch((e) => console.error(e));
+    const target = t.closest<HTMLElement>(".err-btn, .empty-state-cta");
+    if (!target) return;
+    e.stopPropagation();
+    if (target.classList.contains("open-settings")) {
+      invoke("open_settings_window").catch((err) => console.error(err));
+    } else if (target.classList.contains("err-btn-retry")) {
+      const sourceId = target.dataset.sourceId;
+      if (sourceId) {
+        invoke("refresh_single", { id: sourceId }).catch((err) => console.error(err));
+      }
+    } else if (target.classList.contains("err-btn-advanced")) {
+      const section = target.dataset.section ?? "advanced";
+      invoke("open_settings_window", { section }).catch((err) => console.error(err));
+    } else if (target.classList.contains("err-btn-relogin")) {
+      invoke("open_xiaomi_login_window").catch((err) => console.error(err));
     }
   });
 

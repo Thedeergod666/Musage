@@ -196,6 +196,7 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
         error: None,
         error_kind: None,
         fetched_at: Some(chrono::Utc::now().timestamp_millis()),
+        next_fetch_at: None,
         raw: Some(raw),
         is_healthy: is_available,
         source_id: Some(Provider::Deepseek.id_str().to_string()),

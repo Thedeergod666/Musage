@@ -262,6 +262,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         error: None,
         error_kind: None,
         fetched_at: Some(now_ms),
+        next_fetch_at: None,
         raw: Some(raw.clone()),
         is_healthy: success,
         source_id: Some("tavily".to_string()),

@@ -4,6 +4,8 @@
 // v1 不大改，未来 Stage 3+ 加侧边栏 + 动态渲染时也只用 DOM 局部 patch，
 // 不会全量 re-render，所以不需要 reactive 框架。
 
+import { getLocale } from "../i18n";
+
 /// 当前已知的 source id 列表（**派生自后端 registry**，不写死）。
 ///
 /// 之前叫 `BUILTIN_ORDER` —— 写死 8 个 provider id。问题：
@@ -101,7 +103,9 @@ export function flash(msg: string, isError = false) {
 // 调用方迁移：把 \`providerDisplay(x)\` 替换成 \`t(\\\`provider.\\\${x}.name\\\`)\`。
 
 export function formatAmount(v: number): string {
-  return v.toLocaleString("zh-CN", {
+  // P1 fix: 之前硬编码 "zh-CN"，跟当前 locale 无关。改成 getLocale() 当前值。
+  // 数字格式化（千位 / 小数点）跨 locale 差异大：de-DE → 1.234,56，en-US → 1,234.56。
+  return v.toLocaleString(getLocale(), {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });

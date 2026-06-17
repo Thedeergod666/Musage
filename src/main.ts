@@ -548,7 +548,7 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
     let retryInfo = "";
     if (kind === "unconfigured_key" || kind === "auth_failed") {
       if (kind === "auth_failed" && id === "xiaomimimo") {
-        actionBtn = `<button class="err-btn err-btn-relogin" data-action="relogin-xiaomi">🔑 重新登录</button>`;
+        actionBtn = `<button class="err-btn err-btn-relogin" data-action="relogin-xiaomi">${escapeHtml(t("floating.err_btn_relogin_xiaomi"))}</button>`;
       } else {
         actionBtn = `<button class="err-btn open-settings">${escapeHtml(t("floating.open_settings"))}</button>`;
       }
@@ -557,10 +557,10 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
       const schemaHint = `<div class="hint">${escapeHtml(t("floating.init_error_hint"))}</div>`;
       retryInfo = schemaHint;
     } else if (kind === "network" || kind === "rate_limited" || kind === "server_error") {
-      actionBtn = `<button class="err-btn err-btn-retry" data-source-id="${escapeHtml(id)}">🔄 Retry</button>`;
+      actionBtn = `<button class="err-btn err-btn-retry" data-source-id="${escapeHtml(id)}">${escapeHtml(t("floating.err_btn_retry"))}</button>`;
       if (p.next_fetch_at && p.next_fetch_at > Date.now()) {
         const mins = Math.max(1, Math.ceil((p.next_fetch_at - Date.now()) / 60000));
-        retryInfo = `<div class="hint">Next auto-retry in ~${mins}m</div>`;
+        retryInfo = `<div class="hint">${escapeHtml(t("floating.err_retry_in_minutes", { mins }))}</div>`;
       }
     }
     card.classList.add("err-card", `err-${kind}`);
@@ -815,7 +815,8 @@ function formatPct(v: number | null | undefined): string {
 
 function formatAmount(v: number | null | undefined): string {
   if (v == null) return "—";
-  return v.toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  // P1 fix: 之前硬编码 "zh-CN"。getLocale() 已在 i18n/index.ts 顶层导入。
+  return v.toLocaleString(getLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function colorClass(util: number): string {

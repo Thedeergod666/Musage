@@ -167,11 +167,10 @@ function renderZenmuxMode(_meta: SourceMeta, _cfg: AppConfig): HTMLElement {
 
 /// OpenRouter 帮助文案（无需额外字段，只需说明 key 格式）
 function renderOpenrouterHelp(_meta: SourceMeta, _cfg: AppConfig): HTMLElement {
-  // en.json: "OpenRouter 余额 = 账户 credit 余额。普通 API key（`sk-or-v1-...`）即可，不需要 Management key。端点 GET /api/v1/key。"
-  // zh-CN.json: "OpenRouter 余额 = 账户 credit 余额。普通 API key（`sk-or-v1-...`）即可，不需要 Management key。端点 " + link
+  // P1 fix: 之前英文版 baseText 已经内含 "GET /api/v1/key."（重复渲染端点 URL），
+  // 且末尾硬编码中文句号 '。'。统一改成 baseText 只放描述，链接是单独 element。
+  // 句号走 t() 拿当前 locale 的句号（en=".", zh="。"）。
   const baseText = t("extras.openrouter_help_text");
-  // 中文版在末尾用空格 + 链接，英文版自带结尾。这里统一：基础文字 + 句点后接 link。
-  // 注意：英文版的句点已在 baseText 末尾，中文版没有，所以拆开处理。
   const link = el("a", {
     href: "https://openrouter.ai/docs/api/reference/limits",
     target: "_blank",
@@ -185,7 +184,7 @@ function renderOpenrouterHelp(_meta: SourceMeta, _cfg: AppConfig): HTMLElement {
       { class: "help" },
       baseText,
       link,
-      "。",
+      t("common.punctuation_period"),
     ),
   );
 }

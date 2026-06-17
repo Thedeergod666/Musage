@@ -72,7 +72,10 @@
     },
     "error": {
       "unknown": "Unknown error"
-    }
+    },
+    "err_btn_relogin_xiaomi": "🔑 Re-login Xiaomi account",
+    "err_btn_retry": "🔄 Retry",
+    "err_retry_in_minutes": "Next auto-retry in ~{mins}m"
   },
   "settings": {
     "init_failed": "✗ Init failed: {err}",
@@ -98,6 +101,7 @@
       "test": "Test",
       "close": "Close",
       "back": "Back",
+      "punctuation_period": ".",
       "yes": "Yes",
       "no": "No",
       "ok": "OK",
@@ -218,6 +222,8 @@
       "schema_help_2": "parse fails / shows 'Schema unknown'",
       "schema_help_3": "Use. One JSON object per line, ",
       "schema_help_4": "click Save config (or wait for blur-save in Stage 6). Refer to ccswitch's schema field name reverse-engineering.",
+      "schema_hit_note": " must both exist to be a hit, ",
+      "schema_end_optional": " is optional.",
       "schema_placeholder": "[{\"total\":\"...\",\"remaining\":\"...\",\"end\":\"...\"}]",
       "minimax_5h_label": "MiniMax · 5h candidate field names",
       "minimax_weekly_label": "MiniMax · Weekly candidate field names",
@@ -443,7 +449,7 @@
     "zenmux_mode_subscription": "📊 Subscription usage (5h / 7d)",
     "zenmux_mode_help": "PAYG: monitor Pay-As-You-Go wallet balance (like DeepSeek). Subscription: monitor 5h / 7d rolling window subscription usage (like MiniMax).",
     "zenmux_payg_concise_label": "Show balance only (hide topup / bonus)",
-    "openrouter_help_text": "OpenRouter balance = account credit balance. Regular API key (sk-or-v1-...) works, no Management key needed. Endpoint: GET /api/v1/key.",
+    "openrouter_help_text": "OpenRouter balance = account credit balance. Regular API key (sk-or-v1-...) works, no Management key needed. See the endpoint docs: ",
     "zhipu_region_label": "Zhipu GLM region",
     "zhipu_region_cn": "🇨🇳 Mainland (open.bigmodel.cn)",
     "zhipu_region_en": "🌍 International (api.z.ai / Z.ai)",

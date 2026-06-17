@@ -72,7 +72,10 @@
     },
     "error": {
       "unknown": "未知错误"
-    }
+    },
+    "err_btn_relogin_xiaomi": "🔑 重新登录小米账号",
+    "err_btn_retry": "🔄 重试",
+    "err_retry_in_minutes": "下次自动重试约 {mins} 分钟后"
   },
   "settings": {
     "init_failed": "✗ 初始化失败: {err}",
@@ -98,6 +101,7 @@
       "test": "测试",
       "close": "关闭",
       "back": "返回",
+      "punctuation_period": "。",
       "yes": "是",
       "no": "否",
       "ok": "好",
@@ -218,6 +222,8 @@
       "schema_help_2": "解析失败 / 显示 \"Schema 未知\"",
       "schema_help_3": "时用。每行一个 JSON 对象，",
       "schema_help_4": "改完点「保存配置」（或等 Stage 6 改成 blur 即时落盘）。参考 ccswitch 的 schema 字段名逆向。",
+      "schema_hit_note": " 同时存在才算命中，",
+      "schema_end_optional": " 可选。",
       "schema_placeholder": "[{\"total\":\"...\",\"remaining\":\"...\",\"end\":\"...\"}]",
       "minimax_5h_label": "MiniMax · 5h 候选字段名",
       "minimax_weekly_label": "MiniMax · 周 候选字段名",

@@ -638,88 +638,45 @@ button.order-down {
   margin-bottom: var(--sp-3, 8px);
 }
 
-/* PR 3 UX：tab interface (sticky 置顶) ——
- * 3 个高频分组（token_plan / balance / official）改成 tabs：
- * - 顶部一行 tab strip，sticky 置顶方便随时切换
- * - 默认显示 Token Plan；点 tab 切换内容，0 重渲染（只 toggle .active）
- * - 搜索时所有 tab pane 都展开，让结果跨 tab 显示
- * - Xiaomi / custom / misc 仍用 collapsible <details> 放在下面
- * - toolbar (搜索 + 添加) 也 sticky 在 tab strip 上方，避免 sticky 时
- *   "上面的缝隙泄漏内容"
+/* 套餐区扁平列表（feat: 浮窗顺序 = 套餐顺序）
+ * ——
+ * PR 3 用过 3 个 sticky tab + collapsible <details> 折叠组的二段式布局。
+ * 新方案：所有 provider 按 cfg.provider_order 排成一个长列表，组之间
+ * 不再分块；进新组时插一条 inline <h3> 分隔线（带 emoji + 组名）作为
+ * 视觉指示。组本身不再决定位置，浮窗顺序是 single source of truth。
+ *
+ * 优点：
+ * - mimo 即使归 xiaomi 组也会按浮窗位置排到列表第 N 位（之前在 special
+ *   组固定底部，浮窗排第 1 也还是垫底）
+ * - 搜索结果天然跨组展示，不用 .show-all 那种"展开所有 tab"的 hack
+ * - 新加 CustomSource 自动按 cfg.provider_order 末尾排进 custom 组分隔线
+ *   之后，不会出现"隐藏在新 tab 里找不到"的 UX 死角
  */
 .provider-toolbar {
-  /* 之前没 sticky，sticky 时 tab strip 上方会露馅。把它也钉在顶部 */
-  position: sticky;
-  top: 0;
-  z-index: 11;       /* 高于 tab strip (10)，这样 tab strip 在它下方 */
-  margin-bottom: var(--sp-2, 6px);
-  /* 关键：toolbar 背景必须不透明，否则滚动时上方内容漏出 */
-  background: #1a1c22;
-  padding: var(--sp-2, 6px) var(--sp-3, 8px);
-  border-radius: var(--r-md, 6px);
-}
-.provider-tab-strip {
-  display: flex;
-  gap: 2px;
-  border-bottom: 1px solid var(--bg-3, rgba(255, 255, 255, 0.1));
-  margin-bottom: var(--sp-3, 8px);
-  /* sticky 置顶 —— 用户滚到下面时 tab strip 仍在 toolbar 下方 */
-  /* top: 0 但 toolbar z-index=11 在它上面，自然层级 */
+  /* sticky 置顶 —— 滚到下面时搜索框 / 计数 / 添加按钮仍可点 */
   position: sticky;
   top: 0;
   z-index: 10;
-  /* 关键：背景必须不透明 + 跟 body 同色，否则滚过的内容"漏"出来 */
+  margin-bottom: var(--sp-2, 6px);
+  /* 关键：背景必须不透明，否则滚动时上方内容漏出 */
   background: #1a1c22;
-  /* backdrop-filter 是 nice-to-have 视觉打磨，opacity 必须先解决 */
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
-.provider-tab {
-  flex: 1;
-  padding: 10px 12px;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;       /* 跟 strip 的 border-bottom 重叠，避免双线 */
-  color: var(--fg-2, #aaa);
-  font: inherit;
-  font-weight: 500;
-  cursor: pointer;
-  text-align: center;
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
-  white-space: nowrap;
-}
-.provider-tab:hover {
-  color: var(--fg-0, #fff);
-  background: rgba(255, 255, 255, 0.04);
-}
-.provider-tab.active {
-  color: var(--fg-0, #fff);
-  font-weight: 600;
-  border-bottom-color: var(--accent, #9b59ff);
-}
-.provider-tab-pane { display: none; }
-.provider-tab-pane.active,
-.provider-tab-pane.show-all { display: block; }
-.provider-group > summary {
   padding: var(--sp-2, 6px) var(--sp-3, 8px);
-  cursor: pointer;
-  background: var(--bg-2);
   border-radius: var(--r-md, 6px);
-  font-weight: 600;
-  list-style: none;       /* 去掉默认 ▶ 三角 */
 }
-.provider-group > summary::-webkit-details-marker { display: none; } /* Safari */
-.provider-group[open] > summary { border-radius: var(--r-md, 6px) var(--r-md, 6px) 0 0; }
-.provider-group > :not(summary) {
-  padding: var(--sp-3, 8px);
-  background: var(--bg-1);
-  border: 1px solid var(--bg-2);
-  border-top: none;
-  border-radius: 0 0 var(--r-md, 6px) var(--r-md, 6px);
+.providers-flat {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2, 6px);
+}
+.provider-group-divider {
+  margin: var(--sp-3, 8px) 0 var(--sp-1, 4px) 0;
+  padding: 0 var(--sp-2, 6px);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fg-2, #aaa);
+  letter-spacing: 0.02em;
+  /* 不画 border-bottom：分隔线是 inline 视觉标签，不是分区。视觉上
+   * 接近 group definition 的 emoji 标签 → "📊 Token Plan" 一行小字。 */
 }
 
 .hidden { display: none !important; }

@@ -27,7 +27,7 @@ import { getProviderExtras } from "./source-extras";
 import { renderOrderSection } from "./order";
 import { renderCredentialBlock, loadCredentialStatus } from "./credentials";
 import { getProviderMeta } from "./logos";
-import { groupSources, getGroupDef, renderGroup, splitGroupsForLayout } from "./groups";
+import { getGroupDef, groupKeyFor, type GroupKey } from "./groups";
 import { openAddCustomSourceModal } from "./custom-source-form";
 import { t } from "../i18n";
 import type { AppConfig, SourceMeta } from "./types";
@@ -78,94 +78,43 @@ export async function renderProvidersSection(container: HTMLElement) {
   // 2) 顶部"浮窗卡片顺序"（带 enabled/disabled 分区）
   renderOrderSection(container, allSources, cfg.provider_order, cfg);
 
-  // 3) Tab interface + special groups
-  // PR 3 UX：3 个 tab (token_plan / balance / official) sticky 置顶，
-  // 默认显示 token_plan，点 tab 切换；xiaomi/custom/misc 仍在下面。
-  const groups = groupSources(allSources);
-
-  // 3-pre) 套餐区每组内部按「浮窗卡片顺序」（= cfg.provider_order 经
-  // canonicalizeOrder 规范化后写进 currentProviderOrder）排序，让用户在
-  // 浮窗顺序里调过的位置直接反映到下面套餐 tab / 折叠组的内部顺序。
-  // 不在 currentProviderOrder 里的 provider 走组末尾（groupSources 的原始
-  // 顺序 = builtin_sources() 注册顺序，新加的 CustomSource 通常会落到这）。
-  // 跟 [renderOrderSection] 的同一份 currentProviderOrder 配对 —— 改一处
-  // 拖动顺序，套餐区也跟着重排。
+  // 3) 套餐区扁平列表：所有 provider 按「浮窗卡片顺序」铺在一个长列表里，
+  // 跨组不重排 —— mimo 即使归 xiaomi 组也会按浮窗位置排到列表第 N 位，
+  // 不再因为"组本身就是 special"被强制压到底部。
+  // 视觉上保留原 group 归属：进入新组时插一条 inline <h3> 分隔线（带
+  // emoji + 组名），让用户仍能识别"这是一家 token_plan / balance / ...",
+  // 但顺序 = 浮窗顺序。
+  //
+  // 实现：先按 currentProviderOrder 全局排序，再 iterate 时跟踪"上一项
+  // 的 group key"，跨组时插入分隔线。空组（某个 GroupKey 一个 meta 都
+  // 没有）自动不出现在分隔线里。
   const orderIdx = new Map(currentProviderOrder.map((id, i) => [id, i]));
-  for (const [key, metas] of groups) {
-    groups.set(
-      key,
-      [...metas].sort((a, b) => {
-        const ai = orderIdx.get(a.id);
-        const bi = orderIdx.get(b.id);
-        // ES2019+ Array.sort 稳定：两个都不在 orderIdx 里时保留 groupSources 的
-        // 原始顺序（= builtin_sources() 顺序），新加 provider 不会跳到组中乱位。
-        return ((ai ?? Number.POSITIVE_INFINITY) - (bi ?? Number.POSITIVE_INFINITY));
-      }),
-    );
-  }
+  const allSorted = [...allSources].sort((a, b) => {
+    const ai = orderIdx.get(a.id);
+    const bi = orderIdx.get(b.id);
+    // ES2019+ Array.sort 稳定：两个都不在 orderIdx 里时保留 builtin_sources()
+    // 注册顺序，新加 provider 不会跳到列表中乱位。
+    return ((ai ?? Number.POSITIVE_INFINITY) - (bi ?? Number.POSITIVE_INFINITY));
+  });
 
-  const { tabs, special } = splitGroupsForLayout(groups);
-
-  if (tabs.length > 0) {
-    // 3a) Tab strip（sticky 置顶）
-    const tabStrip = el("div", {
-      class: "provider-tab-strip",
-      role: "tablist",
-    });
-    for (const [key, metas] of tabs) {
-      const def = getGroupDef(key);
-      tabStrip.appendChild(
+  const flatContainer = el("div", { class: "providers-flat" });
+  let prevGroup: GroupKey | null = null;
+  for (const meta of allSorted) {
+    const gk = groupKeyFor(meta);
+    if (gk !== prevGroup) {
+      const def = getGroupDef(gk);
+      flatContainer.appendChild(
         el(
-          "button",
-          {
-            type: "button",
-            class: "provider-tab",
-            "data-tab": key,
-            role: "tab",
-            id: `tab-${key}`,
-            "aria-controls": `pane-${key}`,
-          },
-          `${def.icon} ${def.title} (${metas.length})`,
+          "h3",
+          { class: "provider-group-divider", "data-group": gk },
+          `${def.icon} ${def.title}`,
         ),
       );
+      prevGroup = gk;
     }
-    // Tab 点击 → 切换 active class
-    tabStrip.addEventListener("click", (e) => {
-      const t = (e.target as HTMLElement).closest<HTMLElement>(".provider-tab");
-      if (!t) return;
-      const key = t.dataset.tab;
-      if (!key) return;
-      switchTab(key, container);
-    });
-    container.appendChild(tabStrip);
-
-    // 3b) Tab panes（全部 DOM 内，仅 active 可见，切换 0 重渲染）
-    let isFirst = true;
-    for (const [key, metas] of tabs) {
-      const pane = el("div", {
-        class: "provider-tab-pane" + (isFirst ? " active" : ""),
-        "data-pane": key,
-        role: "tabpanel",
-        id: `pane-${key}`,
-        "aria-labelledby": `tab-${key}`,
-      });
-      for (const meta of metas) {
-        pane.appendChild(createProviderPanel(meta, cfg));
-      }
-      container.appendChild(pane);
-      isFirst = false;
-    }
-    // 第一个 tab 默认 active
-    const firstTab = tabStrip.querySelector<HTMLElement>(".provider-tab");
-    firstTab?.classList.add("active");
+    flatContainer.appendChild(createProviderPanel(meta, cfg));
   }
-
-  // 3c) 特殊组（xiaomi / custom / misc）—— 折叠 details，下面堆叠
-  for (const [key, metas] of special) {
-    container.appendChild(
-      renderGroup(key, metas, (m) => createProviderPanel(m, cfg)),
-    );
-  }
+  container.appendChild(flatContainer);
 
   // 4) 搜索 input 事件 → toggle .hidden
   const search = container.querySelector<HTMLInputElement>("#provider-search")!;
@@ -196,46 +145,37 @@ function renderToolbar(sources: SourceMeta[], cfg: AppConfig): HTMLElement {
   );
 }
 
-/// Tab 切换：active class 同步给 tab + pane
-function switchTab(key: string, container: HTMLElement): void {
-  container
-    .querySelectorAll<HTMLElement>(".provider-tab")
-    .forEach((t) => t.classList.toggle("active", t.dataset.tab === key));
-  container
-    .querySelectorAll<HTMLElement>(".provider-tab-pane")
-    .forEach((p) => p.classList.toggle("active", p.dataset.pane === key));
-}
-
-/// 搜索过滤：把不匹配的 .provider-section 标 .hidden。
-/// 搜索时让所有 tab pane 都展开（无视 tab 状态），让结果跨 tab 显示。
+/// 搜索过滤：把不匹配的 .provider-section 标 .hidden。空组的 inline 分隔线
+/// 同步隐藏 —— 避免出现"分隔线悬空"或"两组相邻 divider 紧贴"的视觉。
 function applySearchFilter(q: string, container: HTMLElement): void {
   const needle = q.trim().toLowerCase();
-  const isSearching = needle.length > 0;
   container
     .querySelectorAll<HTMLElement>(".provider-section")
     .forEach((sec) => {
       const id = sec.dataset.id ?? "";
-      const name =
-        sec.querySelector(".provider-name")?.textContent ?? "";
+      const name = sec.querySelector(".provider-name")?.textContent ?? "";
       const hit =
         !needle ||
         id.toLowerCase().includes(needle) ||
         name.toLowerCase().includes(needle);
       sec.classList.toggle("hidden", !hit);
     });
-  // 搜索时让所有 tab pane 都展开（无视 tab 状态）
-  container
-    .querySelectorAll<HTMLElement>(".provider-tab-pane")
-    .forEach((p) => p.classList.toggle("show-all", isSearching));
-  // 特殊组（xiaomi/custom/misc）空组也隐藏
-  container
-    .querySelectorAll<HTMLDetailsElement>(".provider-group")
-    .forEach((g) => {
-      const anyVisible = Array.from(
-        g.querySelectorAll<HTMLElement>(".provider-section"),
-      ).some((s) => !s.classList.contains("hidden"));
-      g.classList.toggle("hidden", !anyVisible);
-    });
+  // Flat list 里 divider 后面会跟一串 .provider-section，扫到下一个 divider
+  // 或 list 末尾截止。空组 → divider 也标 hidden，相邻空组的两个 divider
+  // 会紧贴所以也把"前一个 divider"再清一次避免重复。
+  const flat = container.querySelector<HTMLElement>(".providers-flat");
+  if (!flat) return;
+  const children = [...flat.children] as HTMLElement[];
+  let visibleCountAfter = 0;
+  for (let i = children.length - 1; i >= 0; i--) {
+    const c = children[i];
+    if (c.classList.contains("provider-group-divider")) {
+      c.classList.toggle("hidden", visibleCountAfter === 0);
+      visibleCountAfter = 0;
+    } else if (c.classList.contains("provider-section")) {
+      if (!c.classList.contains("hidden")) visibleCountAfter++;
+    }
+  }
 }
 
 /// 一个 source → 一个 panel（带 header + credentials + EXTRAS + 启用/间隔）

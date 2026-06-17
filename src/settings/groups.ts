@@ -13,7 +13,6 @@
 // - `misc`：catch-all（不应该到这里，但留兜底）
 
 import type { SourceMeta } from "./types";
-import { el } from "./utils";
 import { t, onLocaleChange } from "../i18n";
 
 export type GroupKey =
@@ -86,6 +85,11 @@ const GROUP_ORDER: GroupKey[] = [
   "misc",
 ];
 
+/** 暴露给 providers.ts 用来按固定顺序遍历 + 决定 inline 分隔线插入点。 */
+export function getGroupOrder(): readonly GroupKey[] {
+  return GROUP_ORDER;
+}
+
 /// 第一次被外部调时尝试填一次（settings panel 启动时序不一定在 initLocale 之后）
 function ensureGroupsReady() {
   if (Object.keys(_groupDefinitions).length === 0) {
@@ -107,7 +111,7 @@ export function groupSources(
     misc: [],
   };
   for (const meta of sources) {
-    const key = GROUP_ORDER.find((k) => _groupDefinitions[k].predicate(meta)) ?? "misc";
+    const key = groupKeyFor(meta);
     buckets[key].push(meta);
   }
   // 按 GROUP_ORDER 输出 + 跳过空组
@@ -118,50 +122,16 @@ export function groupSources(
   return result;
 }
 
-/** PR 3 (UX 调整)：把分组拆成「顶部 tabs」+「下面特殊组」两段。
- *
- * - 顶部 tabs (tab strip, sticky 置顶)：token_plan / balance / official
- *   —— 高频类目，tab 切换 + 置顶方便随时切换；默认显示 token_plan
- * - 下面特殊组（collapsible <details>）：xiaomi / custom / misc
- *   —— 这些是低频或动态长内容的
- */
-export function splitGroupsForLayout(groups: Map<GroupKey, SourceMeta[]>): {
-  tabs: Array<[GroupKey, SourceMeta[]]>;
-  special: Array<[GroupKey, SourceMeta[]]>;
-} {
-  const tabKeys: GroupKey[] = ["token_plan", "balance", "official"];
-  const all = Array.from(groups.entries());
-  const tabs = all.filter(([k]) => tabKeys.includes(k));
-  const special = all.filter(([k]) => !tabKeys.includes(k));
-  return { tabs, special };
+/** 单个 meta 命中哪个组（按 GROUP_ORDER 顺序匹配第一个）。fallback = "misc"。 */
+export function groupKeyFor(meta: SourceMeta): GroupKey {
+  ensureGroupsReady();
+  return (
+    GROUP_ORDER.find((k) => _groupDefinitions[k].predicate(meta)) ?? "misc"
+  );
 }
 
 /** 暴露 group definition 给 providers.ts 读 title / icon。 */
 export function getGroupDef(key: GroupKey): GroupDef {
   ensureGroupsReady();
   return _groupDefinitions[key];
-}
-
-/** 渲染单个组（原生 `<details>` + `<summary>`，无 CSS 依赖）。 */
-export function renderGroup(
-  key: GroupKey,
-  metas: SourceMeta[],
-  createPanel: (meta: SourceMeta) => HTMLElement,
-): HTMLElement {
-  ensureGroupsReady();
-  const def = _groupDefinitions[key];
-  const details = el("details", {
-    class: "provider-group",
-    "data-group": key,
-    open: "",
-  });
-  details.appendChild(
-    el(
-      "summary",
-      {},
-      `${def.icon} ${def.title} (${metas.length})`,
-    ),
-  );
-  for (const meta of metas) details.appendChild(createPanel(meta));
-  return details;
 }

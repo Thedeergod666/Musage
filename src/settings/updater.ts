@@ -149,7 +149,7 @@ function renderUpdaterState(s: UpdateState) {
       if (relaunchBtn) relaunchBtn.hidden = false;
       break;
     case "error":
-      status.textContent = t("settings.updater.failed", { err: s.error ?? "更新失败" });
+      status.textContent = t("settings.updater.failed", { err: s.error ?? t("settings.updater.fallback_error") });
       status.style.color = "#f44336";
       if (installBtn) installBtn.hidden = true;
       if (relaunchBtn) relaunchBtn.hidden = true;

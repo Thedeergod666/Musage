@@ -152,15 +152,15 @@ function renderDisplayThresholdsFields(cfg: AppConfig) {
   const [t0, t1, t2] = cfg.color_thresholds ?? [50, 70, 88];
   const t0Input = el("input", {
     type: "number", id: "color-t0", min: "0", max: "99", step: "1",
-    value: String(t0), title: "ok → cyan 分界（0..100）",
+    value: String(t0), title: t("settings.floating.threshold_t0_title"),
   }) as HTMLInputElement;
   const t1Input = el("input", {
     type: "number", id: "color-t1", min: "0", max: "99", step: "1",
-    value: String(t1), title: "cyan → warn 分界",
+    value: String(t1), title: t("settings.floating.threshold_t1_title"),
   }) as HTMLInputElement;
   const t2Input = el("input", {
     type: "number", id: "color-t2", min: "0", max: "99", step: "1",
-    value: String(t2), title: "warn → alert 分界",
+    value: String(t2), title: t("settings.floating.threshold_t2_title"),
   }) as HTMLInputElement;
 
   // ── 4 档自定义色（4 个 color picker） ──
@@ -290,9 +290,9 @@ function renderDisplayThresholdsFields(cfg: AppConfig) {
     el("div", { class: "field" },
       el("label", {}, t("settings.floating.color_thresholds_label")),
       el("div", { class: "row", style: "display: flex; gap: 6px; align-items: center;" },
-        t0Input, el("span", {}, " → "), t1Input, el("span", {}, " → "), t2Input,
+        t0Input, el("span", {}, t("settings.floating.threshold_arrow")), t1Input, el("span", {}, t("settings.floating.threshold_arrow")), t2Input,
         el("span", { style: "color: var(--text-faint); margin-left: 6px; font-size: 11px;" },
-          "ok / cyan / warn / alert"),
+          t("settings.floating.tier_labels")),
       ),
       el("div", { class: "help" }, t("settings.floating.color_thresholds_help")),
     ),

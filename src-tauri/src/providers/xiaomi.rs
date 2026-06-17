@@ -49,9 +49,9 @@ pub enum XiaomiRegion {
 impl XiaomiRegion {
     pub fn label(&self) -> &'static str {
         match self {
-            XiaomiRegion::Cn => "🇨🇳 中国",
-            XiaomiRegion::Sgp => "🌏 新加坡",
-            XiaomiRegion::Ams => "🌍 欧洲",
+            XiaomiRegion::Cn => "中国",
+            XiaomiRegion::Sgp => "新加坡",
+            XiaomiRegion::Ams => "欧洲",
         }
     }
 }

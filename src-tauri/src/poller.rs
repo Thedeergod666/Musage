@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::commands::{refresh_inner, refresh_single};
-use crate::providers::builtin_sources;
+use crate::providers::all_sources;
 use crate::AppState;
 
 pub fn start(app: AppHandle) {
@@ -24,9 +24,15 @@ pub fn start(app: AppHandle) {
         // 跟 tick() 的全量 fetch 并发抢写 state.snapshot —— 那会跟 tick()
         // 的「全量 push」撞出重复 provider 条目）。第一轮 per-provider 调度
         // 会因为 now < entry 而全部 skip，等到各自 interval 后才开始 fire。
-        let cfg0 = app.state::<AppState>().config.read().await.clone();
+        //
+        // H1: builtin_sources() 不含 custom sources。poller 必须用 all_sources
+        // 才能让用户添加的 New API 中转站被定时轮询——否则 custom source 唯一能
+        // 拿数据的时机是「启动时 tick() 全量拉一次」+「用户手动点立即刷新」
+        // （add/update_custom_source 调 refresh_single_inner 那次）。
+        let state = app.state::<AppState>();
+        let cfg0 = state.config.read().await.clone();
         let mut next_fetch: HashMap<String, Instant> = HashMap::new();
-        for src in builtin_sources() {
+        for src in all_sources(&state).await {
             let interval_secs = cfg0
                 .providers
                 .get(src.id().as_ref())
@@ -51,7 +57,8 @@ pub fn start(app: AppHandle) {
             let backoff_guard = state.backoff.read().await;
             let now = Instant::now();
 
-            for src in builtin_sources() {
+            // H1: 同上,改用 all_sources(&state)——custom source 必须能被轮询
+            for src in all_sources(&state).await {
                 let id = src.id();
                 let id_str = id.as_ref();  // Cow → &str，给 is_enabled_id / map.get 用
                 if !cfg.is_enabled_id(id_str) {
@@ -128,6 +135,9 @@ pub async fn tick(app: &AppHandle) -> Result<(), String> {
             }
         }
         guard.fetched_at = new_snap.fetched_at;
+        // 顶层字段(钱包告警阈值)也要同步——refresh_inner 内部已 populate,
+        // 这里只是按 source_id 合并 providers,顶层字段会被忽略,所以手动搬过来。
+        guard.wallet_alert_threshold = new_snap.wallet_alert_threshold;
     }
 
     // 合并后再 emit 一次——refresh_inner 内部 emit 的是它收集的版本，

@@ -36,7 +36,7 @@ use tokio::sync::RwLock;
 use crate::config::AppConfig;
 use crate::logstore::LogStore;
 use crate::poller_backoff::BackoffState;
-use crate::providers::{builtin_sources, CustomSourceSpec, QuotaSnapshot};
+use crate::providers::{builtin_sources, CustomSource, CustomSourceSpec, QuotaSnapshot};
 use crate::commands::apply_pin_mode_to_window;
 
 pub struct AppState {
@@ -213,13 +213,24 @@ pub fn run() {
             }
 
             // 首次启动引导：所有 provider 都没配 key → 自动弹设置窗口
-            let any_key = builtin_sources().iter().any(|src| {
+            // H1: 检查范围扩展到 custom sources —— 用户可能只配了 New API 中转站,
+            // 没动任何 builtin,这种场景不应该再弹"请配 key"的引导。
+            let builtin_has_key = builtin_sources().iter().any(|src| {
                 config::load_credential_for_id(src.id().as_ref())
                     .ok()
                     .flatten()
                     .is_some()
             });
-            if !any_key {
+            let custom_has_key = config::custom_sources::load_custom_sources()
+                .unwrap_or_default()
+                .iter()
+                .any(|spec| {
+                    config::load_credential_for_id(&spec.id)
+                        .ok()
+                        .flatten()
+                        .is_some()
+                });
+            if !builtin_has_key && !custom_has_key {
                 // 首启引导：走和 open_settings_window 同一个 builder，避免
                 // 两处配置漂移（窗口大小 / decorations / background_color 等
                 // 必须一致，否则两个入口的设置窗看上去会不一样）。
@@ -363,26 +374,47 @@ fn spawn_debounced_geom_persister(
 
 /// `musage dump [provider]` 子命令：拉一次用量并打印
 ///
-/// `provider`：可选，`minimax` / `deepseek` / `xiaomimimo` / `tavily`，不传则跑全部启用的。
+/// `provider`：可选，`minimax` / `deepseek` / `xiaomimimo` / `tavily` / `custom_<uuid>`，
+/// 不传则跑全部启用的(builtin + custom 都跑)。
 fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
     let rt = tokio::runtime::Runtime::new().expect("create tokio runtime");
     rt.block_on(async {
         let cfg = AppConfig::load_from_disk().unwrap_or_default();
+        // 加载 custom sources 供 dump CLI 用——standalone CLI 没有 AppState,
+        // 直接从 custom_sources.json 读即可(跟 lib.rs setup() 那条路径同款)。
+        let customs: Vec<CustomSourceSpec> = config::custom_sources::load_custom_sources()
+            .unwrap_or_default();
 
         // 决定要 dump 哪些 source
         let sources: Vec<Box<dyn crate::providers::QuotaSource>> = match provider_filter {
-            None => builtin_sources()
-                .into_iter()
-                .filter(|s| cfg.is_enabled_id(s.id().as_ref()))
-                .collect(),
-            Some(id) => match builtin_sources().into_iter().find(|s| s.id() == id) {
-                Some(s) => vec![s],
-                None => {
-                    let known: Vec<String> = builtin_sources().iter().map(|s| s.id().to_string()).collect();
+            None => {
+                let mut all: Vec<Box<dyn crate::providers::QuotaSource>> = builtin_sources()
+                    .into_iter()
+                    .filter(|s| cfg.is_enabled_id(s.id().as_ref()))
+                    .collect();
+                // custom source 单独 append —— builtin 列表里没有
+                for spec in &customs {
+                    if cfg.is_enabled_id(&spec.id) {
+                        all.push(Box::new(CustomSource::new(spec.clone())));
+                    }
+                }
+                all
+            }
+            Some(id) => {
+                // builtin 优先,然后 custom
+                if let Some(s) = builtin_sources().into_iter().find(|s| s.id() == id) {
+                    vec![s]
+                } else if let Some(spec) = customs.iter().find(|s| s.id == id) {
+                    vec![Box::new(CustomSource::new(spec.clone()))]
+                } else {
+                    // 拼"已知 id"列表(builtin + custom),错误消息更友好
+                    let mut known: Vec<String> = builtin_sources()
+                        .iter().map(|s| s.id().to_string()).collect();
+                    known.extend(customs.iter().map(|s| s.id.clone()));
                     eprintln!("{}", t!("cli.dump_unknown_source", id = id, known = known.join(" / ")));
                     return 2;
                 }
-            },
+            }
         };
 
         if sources.is_empty() {

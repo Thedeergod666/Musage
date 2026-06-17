@@ -24,7 +24,7 @@ use tauri_plugin_autostart::ManagerExt;
 
 use crate::config::{self, AppConfig, FloatingPinMode, ProviderConfig, TrayIconStyle, UserRegion};
 use crate::providers::{
-    builtin_sources, find_source, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderSnapshot, QuotaSnapshot, QuotaSource,
+    all_sources, builtin_sources, find_source, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderSnapshot, QuotaSnapshot, QuotaSource,
 };
 use crate::providers::minimax::Region as MinimaxRegion;
 use crate::providers::xiaomi::XiaomiDisplayMode;
@@ -209,6 +209,7 @@ pub async fn refresh_now(
             }
         }
         guard.fetched_at = snap.fetched_at;
+        guard.wallet_alert_threshold = snap.wallet_alert_threshold;
     }
     // refresh_inner 内部已经 emit 过一次，这里再 emit 合并后的完整快照
     // （refresh_inner emit 的是它自己收集的版本，不含 per-provider 的中间更新）
@@ -260,8 +261,6 @@ pub async fn save_config(
             return Err(t!("commands.color_value_invalid", k = k.as_str(), v = v.as_str()).into_owned());
         }
     }
-    cfg.save()?;
-
     // H2 fix: 先更 in-memory state，再 save + 副作用。
     // 原顺序 cfg.save() → autostart → emit → *guard = cfg，进程若在 save 与 guard 写之间
     // crash，盘上是新值、内存是旧值，下次启动加载新值，但 run-time 一致性已坏。
@@ -842,8 +841,12 @@ async fn fill_next_fetch_at(
 ///
 /// Phase 1：每个 source 自己负责鉴权和 fetch，commands.rs 不再 `match provider`。
 pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnapshot, String> {
-    // 按 cfg 准备好 sources（避免在 spawn 闭包里 .await 持锁）
-    let sources = builtin_sources();
+    // H1: builtin_sources() 不含 custom sources。refresh_inner 必须走 all_sources
+    // 才能让用户添加的 New API 中转站出现在全量刷新里。lock 顺序:
+    // state.config.read() 先拿+释放,再调 all_sources(state) 拿+释放 customs.read(),
+    // 不嵌套,无 deadlock 风险。
+    let state = app.state::<AppState>();
+    let sources = all_sources(&state).await;
     // P1 重构：closure 返 FetchError 而不是 String，kind 在 collect 时直接拿。
     let mut tasks: Vec<(String, u64, tokio::task::JoinHandle<Result<ProviderSnapshot, FetchError>>)> =
         Vec::new();
@@ -885,9 +888,11 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                 // 共享的"，实际不共享 —— 症状：用户在设置面板切到 Xiaomi
                 // 显示模式 "all" 后保存，托盘右键"立即刷新"又把模式拉回默认
                 // "total_only"，因为 fetch 用的是新建 src_box 的默认空 state）。
-                let src_box: Box<dyn QuotaSource> = builtin_sources()
-                    .into_iter()
-                    .find(|s| s.id() == id)
+                //
+                // H1: 必须用 find_source(state, id) 而不是 builtin_sources().find(),
+                // 否则 custom_<uuid> 在这里 expect("source still registered") 会 panic。
+                let src_box: Box<dyn QuotaSource> = find_source(&state, &id)
+                    .await
                     .expect("source still registered");
                 update_source_state(&src_box, cfg).await;
                 // P1 重构：返回 FetchError 而不是 String，kind 在 closure 内就
@@ -975,6 +980,8 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
         cfg_read.is_enabled_id(id)
     });
     apply_provider_order(&mut snap, &cfg_read);
+    // 把全局余额告警阈值带到 snapshot —— health_label 据此翻红/翻黄
+    snap.wallet_alert_threshold = cfg_read.wallet_alert_threshold;
     let tray_style = cfg_read.tray_icon_style;
     drop(cfg_read);
     // 刷新托盘 + 推送
@@ -1029,9 +1036,12 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
     if !cfg.is_enabled_id(id) {
         return Ok(());  // 已被关掉，跳过
     }
-    let src = builtin_sources()
-        .into_iter()
-        .find(|s| s.id() == id)
+    // H1: builtin_sources() 不含 custom sources,改用 find_source(state, id)
+    // ——这才能让 custom_<uuid> 被单源刷新(add/update_custom_source 后立即拉
+    // 第一条数据、set_source_credential 后立即拉数据,都走这条路径)。
+    let state = app.state::<AppState>();
+    let src = find_source(&state, id)
+        .await
         .ok_or_else(|| t!("error.common.unknown_source_id", id = id).into_owned())?;
     // 手动 "立即刷新" 始终拉取 —— 即便是 STUB (用户显式点击,让 fetch 返
     // "未支持" 错就清楚表达 STUB 状态;poller 才按 default_enabled 自动跳过)。
@@ -1121,6 +1131,8 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
         cfg2_snapshot.is_enabled_id(id)
     });
     apply_provider_order(&mut snap, &cfg2_snapshot);
+    // 同步全局余额告警阈值(per-provider 调度只更一个 provider,不能丢顶层字段)
+    snap.wallet_alert_threshold = cfg2_snapshot.wallet_alert_threshold;
     let tray_style = cfg2_snapshot.tray_icon_style;
     let emit_snap = snap.clone();
     drop(snap);
@@ -1358,15 +1370,18 @@ pub async fn set_display_thresholds(
     Ok(())
 }
 
-/// 校验 CSS 颜色串：`#RGB` / `#RRGGBB` 形式的 hex（区分大小写不敏感）。
-/// 与 `<input type="color">` 的输出格式严格对齐。
+/// 校验 CSS 颜色串：`#RGB` / `#RRGGBB` / `#RRGGBBAA` 形式的 hex（区分大小写不敏感）。
+/// 与 `<input type="color">` 的 6 位输出对齐,同时接受 8 位(带 alpha)的 hex——
+/// 浏览器 DevTools / 系统取色器复制出来常带 alpha,过去会被静默拒掉。
+/// 4 位 `#RGBA` 太罕见(<input type="color"> 不产,且 hex 与 RGBA 短形式容易混淆),
+/// 不接受。
 fn is_valid_hex_color(s: &str) -> bool {
     let s = s.trim();
     if !s.starts_with('#') {
         return false;
     }
     let hex = &s[1..];
-    matches!(hex.len(), 3 | 6) && hex.chars().all(|c| c.is_ascii_hexdigit())
+    matches!(hex.len(), 3 | 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// 设置面板「📋 日志」拉取最近 N 条（最新在末尾）。
@@ -1390,10 +1405,13 @@ pub fn get_recent_logs(
 /// 两个机制叠加让用户真切看到「已清空」状态（1 分钟内），不被立刻涌出的
 /// 新错误淹没。
 const LOG_CLEAR_GRACE_MS: i64 = 60_000;
-static LAST_CLEAR_TS: std::sync::Mutex<Option<i64>> = std::sync::Mutex::new(None);
+// 跟同文件 dedup_cache() 同款 pattern —— OnceLock<Mutex<Option<i64>>>,
+// init 只跑一次。原版直接 `static Mutex::new(None)` 也能跑(Mutex::new 是 const fn),
+// 但风格上跟 dedup_cache 不一致,统一过来少一种"两种风格并存"的认知负担。
+static LAST_CLEAR_TS: std::sync::OnceLock<std::sync::Mutex<Option<i64>>> = std::sync::OnceLock::new();
 
 pub(crate) fn is_in_clear_grace(now_ms: i64) -> bool {
-    let g = match LAST_CLEAR_TS.lock() {
+    let g = match LAST_CLEAR_TS.get_or_init(|| std::sync::Mutex::new(None)).lock() {
         Ok(g) => g,
         Err(_) => return false,
     };
@@ -1410,7 +1428,10 @@ pub fn clear_logs(state: State<'_, AppState>) {
         g.clear();
     }
     // 记下清空时间戳，宽限期内 log_provider_error 直接 return
-    if let Ok(mut g) = LAST_CLEAR_TS.lock() {
+    if let Ok(mut g) = LAST_CLEAR_TS
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+    {
         *g = Some(chrono::Utc::now().timestamp_millis());
     }
 }

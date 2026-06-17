@@ -43,8 +43,8 @@ export async function loadKeyStatus(provider: ProviderId) {
   const has = await hasApiKeyFor(provider);
   const el = $(`#api-key-status-${provider}`);
   el.textContent = has
-    ? t("settings.credentials.cookie_status_saved")
-    : t("settings.credentials.cookie_status_unset");
+    ? t("credentials.cookie_status_saved")
+    : t("credentials.cookie_status_unset");
   el.className = `status ${has ? "ok" : ""}`;
 }
 
@@ -52,27 +52,27 @@ export async function saveKey(provider: ProviderId) {
   const input = $(`#api-key-${provider}`) as HTMLInputElement;
   const key = input.value.trim();
   if (!key) {
-    flash(t("settings.credentials.flash_paste_key"), true);
+    flash(t("credentials.flash_paste_key"), true);
     return;
   }
   try {
     await setApiKeyFor(provider, key);
     input.value = "";
     await loadKeyStatus(provider);
-    flash(t("settings.credentials.flash_saved_key", { name: t(`provider.${provider}.name`) }));
+    flash(t("credentials.flash_saved_key", { name: t(`provider.${provider}.name`) }));
     // 立即拉一次
     const { refreshNow } = await import("./api");
     await refreshNow();
   } catch (e) {
-    flash(t("settings.credentials.flash_save_failed", { err: String(e) }), true);
+    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
   }
 }
 
 export async function deleteKey(provider: ProviderId) {
-  if (!confirm(t("settings.credentials.confirm_delete_key", { name: t(`provider.${provider}.name`) }))) return;
+  if (!confirm(t("credentials.confirm_delete_key", { name: t(`provider.${provider}.name`) }))) return;
   await deleteApiKeyFor(provider);
   await loadKeyStatus(provider);
-  flash(t("settings.credentials.flash_deleted"));
+  flash(t("credentials.flash_deleted"));
 }
 
 // 从 keys.json 读明文 → 写剪贴板。用完即弃，不在 JS 侧长期保存。
@@ -80,13 +80,13 @@ export async function copyKey(provider: ProviderId) {
   try {
     const key = await getApiKeyFor(provider);
     if (!key) {
-      flash(t("settings.credentials.flash_unset_key", { name: t(`provider.${provider}.name`) }), true);
+      flash(t("credentials.flash_unset_key", { name: t(`provider.${provider}.name`) }), true);
       return;
     }
     await navigator.clipboard.writeText(key);
-    flash(t("settings.credentials.flash_copy_ok", { name: t(`provider.${provider}.name`) }));
+    flash(t("credentials.flash_copy_ok", { name: t(`provider.${provider}.name`) }));
   } catch (e) {
-    flash(t("settings.credentials.flash_copy_failed", { err: String(e) }), true);
+    flash(t("credentials.flash_copy_failed", { err: String(e) }), true);
   }
 }
 
@@ -97,8 +97,8 @@ export async function loadCookieStatus(provider: ProviderId) {
   const el = document.getElementById(`cookie-status-${provider}`);
   if (el) {
     el.textContent = has
-      ? t("settings.credentials.cookie_status_saved")
-      : t("settings.credentials.cookie_status_unset");
+      ? t("credentials.cookie_status_saved")
+      : t("credentials.cookie_status_unset");
     el.className = `status ${has ? "ok" : ""}`;
   }
 }
@@ -110,24 +110,24 @@ export async function saveCookie(provider: ProviderId) {
   if (!input) return;
   const cookie = input.value.trim();
   if (!cookie) {
-    flash(t("settings.credentials.flash_paste_cookie"), true);
+    flash(t("credentials.flash_paste_cookie"), true);
     return;
   }
   try {
     await setCookieFor(provider, cookie);
     input.value = "";
     await loadCookieStatus(provider);
-    flash(t("settings.credentials.flash_saved_cookie", { name: t(`provider.${provider}.name`) }));
+    flash(t("credentials.flash_saved_cookie", { name: t(`provider.${provider}.name`) }));
   } catch (e) {
-    flash(t("settings.credentials.flash_save_failed", { err: String(e) }), true);
+    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
   }
 }
 
 export async function deleteCookie(provider: ProviderId) {
-  if (!confirm(t("settings.credentials.confirm_delete_cookie", { name: t(`provider.${provider}.name`) }))) return;
+  if (!confirm(t("credentials.confirm_delete_cookie", { name: t(`provider.${provider}.name`) }))) return;
   await deleteCookieFor(provider);
   await loadCookieStatus(provider);
-  flash(t("settings.credentials.flash_deleted_cookie"));
+  flash(t("credentials.flash_deleted_cookie"));
 }
 
 // ── 新 id-based API（tavily / zenmux） ────────────────────────
@@ -137,8 +137,8 @@ async function loadIdKeyStatus(id: string) {
   const el = document.getElementById(`api-key-status-${id}`);
   if (el) {
     el.textContent = has
-      ? t("settings.credentials.cookie_status_saved")
-      : t("settings.credentials.cookie_status_unset");
+      ? t("credentials.cookie_status_saved")
+      : t("credentials.cookie_status_unset");
     el.className = `status ${has ? "ok" : ""}`;
   }
 }
@@ -154,39 +154,39 @@ export async function saveTavilyKey() {
   if (!input) return;
   const key = input.value.trim();
   if (!key) {
-    flash(t("settings.credentials.flash_paste_tavily"), true);
+    flash(t("credentials.flash_paste_tavily"), true);
     return;
   }
   try {
     await setSourceCredential("tavily", key);
     input.value = "";
     await loadTavilyKeyStatus();
-    flash(t("settings.credentials.flash_saved_key", { name: t("provider.tavily.name") }));
+    flash(t("credentials.flash_saved_key", { name: t("provider.tavily.name") }));
     const { refreshNow } = await import("./api");
     await refreshNow();
   } catch (e) {
-    flash(t("settings.credentials.flash_save_failed", { err: String(e) }), true);
+    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
   }
 }
 
 export async function deleteTavilyKey() {
-  if (!confirm(t("settings.credentials.confirm_delete_key_tavily"))) return;
+  if (!confirm(t("credentials.confirm_delete_key_tavily"))) return;
   await deleteSourceCredential("tavily");
   await loadTavilyKeyStatus();
-  flash(t("settings.credentials.flash_deleted_tavily"));
+  flash(t("credentials.flash_deleted_tavily"));
 }
 
 export async function copyTavilyKey() {
   try {
     const key = await getSourceCredential("tavily");
     if (!key) {
-      flash(t("settings.credentials.flash_unset_tavily"), true);
+      flash(t("credentials.flash_unset_tavily"), true);
       return;
     }
     await navigator.clipboard.writeText(key);
-    flash(t("settings.credentials.flash_copy_ok_tavily"));
+    flash(t("credentials.flash_copy_ok_tavily"));
   } catch (e) {
-    flash(t("settings.credentials.flash_copy_failed", { err: String(e) }), true);
+    flash(t("credentials.flash_copy_failed", { err: String(e) }), true);
   }
 }
 
@@ -201,39 +201,39 @@ export async function saveZenmuxKey() {
   if (!input) return;
   const key = input.value.trim();
   if (!key) {
-    flash(t("settings.credentials.flash_paste_zenmux"), true);
+    flash(t("credentials.flash_paste_zenmux"), true);
     return;
   }
   try {
     await setSourceCredential("zenmux", key);
     input.value = "";
     await loadZenmuxKeyStatus();
-    flash(t("settings.credentials.flash_saved_key", { name: t("provider.zenmux.name") }));
+    flash(t("credentials.flash_saved_key", { name: t("provider.zenmux.name") }));
     const { refreshNow } = await import("./api");
     await refreshNow();
   } catch (e) {
-    flash(t("settings.credentials.flash_save_failed", { err: String(e) }), true);
+    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
   }
 }
 
 export async function deleteZenmuxKey() {
-  if (!confirm(t("settings.credentials.confirm_delete_key_zenmux"))) return;
+  if (!confirm(t("credentials.confirm_delete_key_zenmux"))) return;
   await deleteSourceCredential("zenmux");
   await loadZenmuxKeyStatus();
-  flash(t("settings.credentials.flash_deleted_zenmux"));
+  flash(t("credentials.flash_deleted_zenmux"));
 }
 
 export async function copyZenmuxKey() {
   try {
     const key = await getSourceCredential("zenmux");
     if (!key) {
-      flash(t("settings.credentials.flash_unset_zenmux"), true);
+      flash(t("credentials.flash_unset_zenmux"), true);
       return;
     }
     await navigator.clipboard.writeText(key);
-    flash(t("settings.credentials.flash_copy_ok_zenmux"));
+    flash(t("credentials.flash_copy_ok_zenmux"));
   } catch (e) {
-    flash(t("settings.credentials.flash_copy_failed", { err: String(e) }), true);
+    flash(t("credentials.flash_copy_failed", { err: String(e) }), true);
   }
 }
 
@@ -262,7 +262,7 @@ export function renderCredentialBlock(meta: SourceMeta): HTMLElement {
       id: `copy-key-${meta.id}`,
       "data-id": meta.id,
       "data-action": "copy-key",
-      title: t("settings.credentials.copy_title"),
+      title: t("credentials.copy_title"),
     }, "📋");
     block.appendChild(
       el("div", { class: "input-row" }, input, copy),
@@ -272,12 +272,12 @@ export function renderCredentialBlock(meta: SourceMeta): HTMLElement {
         class: "status",
         id: `api-key-status-${meta.id}`,
         "data-id": meta.id,
-      }, t("settings.credentials.cookie_status_placeholder")),
+      }, t("credentials.cookie_status_placeholder")),
     );
     block.appendChild(
       el("div", { class: "row" },
-        el("button", { class: "primary", id: `save-key-${meta.id}`, "data-id": meta.id, "data-action": "save-key" }, t("settings.credentials.save")),
-        el("button", { class: "danger", id: `del-key-${meta.id}`, "data-id": meta.id, "data-action": "del-key" }, t("settings.credentials.delete")),
+        el("button", { class: "primary", id: `save-key-${meta.id}`, "data-id": meta.id, "data-action": "save-key" }, t("credentials.save")),
+        el("button", { class: "danger", id: `del-key-${meta.id}`, "data-id": meta.id, "data-action": "del-key" }, t("credentials.delete")),
       ),
     );
     block.appendChild(
@@ -297,19 +297,19 @@ export function renderCredentialBlock(meta: SourceMeta): HTMLElement {
       id: `cookie-${meta.id}`,
       "data-id": meta.id,
       rows: "4",
-      placeholder: t("settings.credentials.cookie_textarea_placeholder"),
+      placeholder: t("credentials.cookie_textarea_placeholder"),
     }) as HTMLTextAreaElement;
     block.appendChild(
       el("div", { class: "field" },
-        el("label", {}, t("settings.credentials.cookie_label")),
+        el("label", {}, t("credentials.cookie_label")),
         textarea,
-        el("div", { class: "status", id: `cookie-status-${meta.id}`, "data-id": meta.id }, t("settings.credentials.cookie_status_placeholder")),
+        el("div", { class: "status", id: `cookie-status-${meta.id}`, "data-id": meta.id }, t("credentials.cookie_status_placeholder")),
       ),
     );
     block.appendChild(
       el("div", { class: "row" },
-        el("button", { class: "primary", id: `save-cookie-${meta.id}`, "data-id": meta.id, "data-action": "save-cookie" }, t("settings.credentials.save_cookie")),
-        el("button", { class: "danger", id: `del-cookie-${meta.id}`, "data-id": meta.id, "data-action": "del-cookie" }, t("settings.credentials.del_cookie")),
+        el("button", { class: "primary", id: `save-cookie-${meta.id}`, "data-id": meta.id, "data-action": "save-cookie" }, t("credentials.save_cookie")),
+        el("button", { class: "danger", id: `del-cookie-${meta.id}`, "data-id": meta.id, "data-action": "del-cookie" }, t("credentials.del_cookie")),
       ),
     );
     block.appendChild(
@@ -343,9 +343,9 @@ function renderMultiAuthBlock(meta: SourceMeta): HTMLElement {
     block.appendChild(
       el("div", { class: "quick-login-banner" },
         el("div", { class: "quick-login-text" },
-          el("strong", {}, t("settings.credentials.cookie_login_hint")),
+          el("strong", {}, t("credentials.cookie_login_hint")),
           el("br"),
-          t("settings.credentials.cookie_login_help"),
+          t("credentials.cookie_login_help"),
         ),
         el("div", { class: "row" },
           el("button", {
@@ -353,19 +353,19 @@ function renderMultiAuthBlock(meta: SourceMeta): HTMLElement {
             id: `xiaomi-login-${meta.id}`,
             "data-id": meta.id,
             "data-action": "xiaomi-login",
-          }, t("settings.credentials.login_xiaomi")),
+          }, t("credentials.login_xiaomi")),
           el("button", {
             class: "danger",
             id: `xiaomi-clear-cookie-${meta.id}`,
             "data-id": meta.id,
             "data-action": "xiaomi-clear-cookie",
-          }, t("settings.credentials.clear_cookie")),
+          }, t("credentials.clear_cookie")),
           el("a", {
             class: "link-ext",
             href: "https://platform.xiaomimimo.com",
             target: "_blank",
             rel: "noopener noreferrer",
-          }, t("settings.credentials.visit_official_site")),
+          }, t("credentials.visit_official_site")),
         ),
       ),
     );
@@ -375,7 +375,7 @@ function renderMultiAuthBlock(meta: SourceMeta): HTMLElement {
   if (!meta.hide_credentials) {
     block.appendChild(
       el("div", { class: "field" },
-        el("label", {}, t("settings.credentials.api_key_priority_label")),
+        el("label", {}, t("credentials.api_key_priority_label")),
         el("div", { class: "input-row" },
           el("input", {
             type: "password",
@@ -385,33 +385,33 @@ function renderMultiAuthBlock(meta: SourceMeta): HTMLElement {
             autocomplete: "off",
           }) as HTMLInputElement,
         ),
-        el("div", { class: "status", id: `api-key-status-${meta.id}`, "data-id": meta.id }, t("settings.credentials.cookie_status_placeholder")),
+        el("div", { class: "status", id: `api-key-status-${meta.id}`, "data-id": meta.id }, t("credentials.cookie_status_placeholder")),
         el("div", { class: "row" },
-          el("button", { class: "primary", id: `save-key-${meta.id}`, "data-id": meta.id, "data-action": "save-key" }, t("settings.credentials.save_key")),
-          el("button", { class: "danger", id: `del-key-${meta.id}`, "data-id": meta.id, "data-action": "del-key" }, t("settings.credentials.delete")),
+          el("button", { class: "primary", id: `save-key-${meta.id}`, "data-id": meta.id, "data-action": "save-key" }, t("credentials.save_key")),
+          el("button", { class: "danger", id: `del-key-${meta.id}`, "data-id": meta.id, "data-action": "del-key" }, t("credentials.delete")),
         ),
         el("div", { class: "help" },
           apiKeyHelpNode(meta.id),
           el("br"),
           el("strong", {}, "提示："),
-          t("settings.credentials.xiaomi_api_key_hint_extra"),
+          t("credentials.xiaomi_api_key_hint_extra"),
         ),
       ),
     );
 
     block.appendChild(
       el("div", { class: "field" },
-        el("label", {}, t("settings.credentials.dashboard_cookie_label")),
+        el("label", {}, t("credentials.dashboard_cookie_label")),
         el("textarea", {
           id: `cookie-${meta.id}`,
           "data-id": meta.id,
           rows: "4",
-          placeholder: t("settings.credentials.cookie_textarea_placeholder"),
+          placeholder: t("credentials.cookie_textarea_placeholder"),
         }) as HTMLTextAreaElement,
-        el("div", { class: "status", id: `cookie-status-${meta.id}`, "data-id": meta.id }, t("settings.credentials.cookie_status_placeholder")),
+        el("div", { class: "status", id: `cookie-status-${meta.id}`, "data-id": meta.id }, t("credentials.cookie_status_placeholder")),
         el("div", { class: "row" },
-          el("button", { class: "primary", id: `save-cookie-${meta.id}`, "data-id": meta.id, "data-action": "save-cookie" }, t("settings.credentials.save_cookie")),
-          el("button", { class: "danger", id: `del-cookie-${meta.id}`, "data-id": meta.id, "data-action": "del-cookie" }, t("settings.credentials.delete")),
+          el("button", { class: "primary", id: `save-cookie-${meta.id}`, "data-id": meta.id, "data-action": "save-cookie" }, t("credentials.save_cookie")),
+          el("button", { class: "danger", id: `del-cookie-${meta.id}`, "data-id": meta.id, "data-action": "del-cookie" }, t("credentials.delete")),
         ),
         el("div", { class: "help" },
           cookieHelpNode(),
@@ -447,10 +447,10 @@ function renderMultiAuthBlock(meta: SourceMeta): HTMLElement {
     }
     block.appendChild(
       el("div", { class: "field" },
-        el("label", { for: `xiaomi-display-mode-${meta.id}` }, t("settings.credentials.xiaomi_display_mode_label")),
+        el("label", { for: `xiaomi-display-mode-${meta.id}` }, t("credentials.xiaomi_display_mode_label")),
         modeSelect,
         el("div", { class: "help" },
-          t("settings.credentials.xiaomi_display_mode_help"),
+          t("credentials.xiaomi_display_mode_help"),
         ),
       ),
     );
@@ -501,8 +501,8 @@ function cookieHelpNode(): HTMLElement {
 export async function loadCredentialStatus(id: string) {
   const has = await hasSourceCredential(id);
   const text = has
-    ? t("settings.credentials.cookie_status_saved")
-    : t("settings.credentials.cookie_status_unset");
+    ? t("credentials.cookie_status_saved")
+    : t("credentials.cookie_status_unset");
   const cls = `status ${has ? "ok" : ""}`;
   // 更新主面板 + 高级 tab 的 status 元素
   for (const suffix of ["", "-adv"]) {
@@ -522,7 +522,7 @@ export async function saveCredentialAction(id: string, action: "key" | "cookie",
   if (!input) return;
   const value = input.value.trim();
   if (!value) {
-    flash(t("settings.credentials.flash_paste"), true);
+    flash(t("credentials.flash_paste"), true);
     return;
   }
   try {
@@ -536,13 +536,13 @@ export async function saveCredentialAction(id: string, action: "key" | "cookie",
     const statusId = action === "key" ? `api-key-status-${id}` : `cookie-status-${id}`;
     const status = document.getElementById(statusId);
     if (status) {
-      status.textContent = t("settings.credentials.cookie_status_saved");
+      status.textContent = t("credentials.cookie_status_saved");
       status.className = "status ok";
     }
-    flash(t("settings.credentials.flash_saved_generic", { name: t(`provider.${id as ProviderId}.name`) }));
+    flash(t("credentials.flash_saved_generic", { name: t(`provider.${id as ProviderId}.name`) }));
     await refreshNow();
   } catch (e) {
-    flash(t("settings.credentials.flash_save_failed", { err: String(e) }), true);
+    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
   }
 }
 
@@ -553,20 +553,20 @@ export async function deleteCredentialAction(id: string, action: "key" | "cookie
   // 后端 delete_source_credential 会同时清 api_key 和 cookie，统一用一个入口
   await deleteSourceCredential(id);
   await loadCredentialStatus(id);
-  flash(t("settings.credentials.flash_deleted"));
+  flash(t("credentials.flash_deleted"));
 }
 
 export async function copyCredentialAction(id: string) {
   try {
     const value = await getSourceCredential(id);
     if (!value) {
-      flash(t("settings.credentials.flash_unset_key", { name: t(`provider.${id as ProviderId}.name`) }), true);
+      flash(t("credentials.flash_unset_key", { name: t(`provider.${id as ProviderId}.name`) }), true);
       return;
     }
     await navigator.clipboard.writeText(value);
-    flash(t("settings.credentials.flash_copy_ok", { name: t(`provider.${id as ProviderId}.name`) }));
+    flash(t("credentials.flash_copy_ok", { name: t(`provider.${id as ProviderId}.name`) }));
   } catch (e) {
-    flash(t("settings.credentials.flash_copy_failed", { err: String(e) }), true);
+    flash(t("credentials.flash_copy_failed", { err: String(e) }), true);
   }
 }
 
@@ -580,14 +580,14 @@ export async function copyCredentialAction(id: string) {
 /// 5. 本函数在 init 时绑一次事件监听（见 `bindXiaomiLoginEvents`）
 export async function xiaomiLoginAction(id: string) {
   if (id !== "xiaomimimo") {
-    flash(t("settings.credentials.xiaomi_login_only"), true);
+    flash(t("credentials.xiaomi_login_only"), true);
     return;
   }
   try {
     await invoke("open_xiaomi_login_window");
-    flash(t("settings.credentials.xiaomi_login_opened"));
+    flash(t("credentials.xiaomi_login_opened"));
   } catch (e) {
-    flash(t("settings.credentials.xiaomi_login_failed", { err: String(e) }), true);
+    flash(t("credentials.xiaomi_login_failed", { err: String(e) }), true);
   }
 }
 
@@ -595,9 +595,9 @@ export async function xiaomiLoginAction(id: string) {
 /// 用于 cookie 过期（API 返 401）时，一键清掉旧 cookie + 刷新状态。
 export async function xiaomiClearCookieAction(id: string) {
   if (id !== "xiaomimimo") return;
-  if (!confirm(t("settings.credentials.confirm_clear_xiaomi"))) return;
+  if (!confirm(t("credentials.confirm_clear_xiaomi"))) return;
   await deleteSourceCredential(id);
-  flash(t("settings.credentials.xiaomi_clear_done"));
+  flash(t("credentials.xiaomi_clear_done"));
   await loadCredentialStatus(id);
 }
 
@@ -611,12 +611,12 @@ export function bindXiaomiLoginEvents() {
   if (_xiaomiListenersBound) return;
   void listen<number>("musage://xiaomi-login-success", (e) => {
     const savedLen = e.payload;
-    flash(t("settings.credentials.xiaomi_login_success", { bytes: savedLen }));
+    flash(t("credentials.xiaomi_login_success", { bytes: savedLen }));
     // 立即刷新状态徽章
     void loadCredentialStatus("xiaomimimo");
   }).then((un) => _xiaomiListeners.push(un));
   void listen<string>("musage://xiaomi-login-failed", (e) => {
-    flash(t("settings.credentials.xiaomi_login_failure", { err: e.payload }), true);
+    flash(t("credentials.xiaomi_login_failure", { err: e.payload }), true);
   }).then((un) => _xiaomiListeners.push(un));
   _xiaomiListenersBound = true;
 }
@@ -682,7 +682,7 @@ async function xiaomiDisplayModeAction(
       plan_only: "xiaomi_mode_plan",
       total_only: "xiaomi_mode_total",
     };
-    flash(t("settings.credentials.xiaomi_mode_changed", { label: t(`credentials.${labelKey[mode]}`) }));
+    flash(t("credentials.xiaomi_mode_changed", { label: t(`credentials.${labelKey[mode]}`) }));
   } catch (e) {
     flash(t("settings.app.switch_failed", { err: String(e) }), true);
   }

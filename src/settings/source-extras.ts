@@ -36,10 +36,10 @@ function renderRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
   const current = cfg.providers?.minimax?.region ?? "cn";
   const select = el("select", { "data-id": "region", id: "region" });
   select.appendChild(
-    el("option", { value: "cn" }, t("settings.extras.minimax_region_cn")),
+    el("option", { value: "cn" }, t("extras.minimax_region_cn")),
   );
   select.appendChild(
-    el("option", { value: "en" }, t("settings.extras.minimax_region_en")),
+    el("option", { value: "en" }, t("extras.minimax_region_en")),
   );
   select.value = current;
   // 即时生效：change → save_config（最简版 v1 仍走总保存，但 select 是 Stage 5 才换即时）
@@ -48,7 +48,7 @@ function renderRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
   return el(
     "div",
     { class: "field" },
-    el("label", {}, t("settings.extras.minimax_region_label")),
+    el("label", {}, t("extras.minimax_region_label")),
     select,
   );
 }
@@ -57,15 +57,15 @@ function renderRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
 function renderXiaomiRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
   const current = cfg.providers?.xiaomimimo?.xiaomi_region ?? "cn";
   const select = el("select", { "data-id": "xiaomi-region", id: "xiaomi-region" });
-  select.appendChild(el("option", { value: "cn" }, t("settings.extras.xiaomi_region_cn")));
-  select.appendChild(el("option", { value: "sgp" }, t("settings.extras.xiaomi_region_sgp")));
-  select.appendChild(el("option", { value: "ams" }, t("settings.extras.xiaomi_region_ams")));
+  select.appendChild(el("option", { value: "cn" }, t("extras.xiaomi_region_cn")));
+  select.appendChild(el("option", { value: "sgp" }, t("extras.xiaomi_region_sgp")));
+  select.appendChild(el("option", { value: "ams" }, t("extras.xiaomi_region_ams")));
   select.value = current;
   return el(
     "div",
     { class: "field" },
-    el("label", {}, t("settings.extras.xiaomi_region_label")),
-    el("div", { class: "help" }, t("settings.extras.xiaomi_region_help")),
+    el("label", {}, t("extras.xiaomi_region_label")),
+    el("div", { class: "help" }, t("extras.xiaomi_region_help")),
     select,
   );
 }
@@ -86,7 +86,7 @@ function renderConciseModeCheckbox(_meta: SourceMeta, cfg: AppConfig): HTMLEleme
     el(
       "label",
       {},
-      t("settings.extras.tavily_concise_label"),
+      t("extras.tavily_concise_label"),
     ),
     el(
       "div",
@@ -95,13 +95,13 @@ function renderConciseModeCheckbox(_meta: SourceMeta, cfg: AppConfig): HTMLEleme
       el(
         "label",
         { for: "tavily-concise-mode" },
-        t("settings.extras.tavily_concise_checkbox"),
+        t("extras.tavily_concise_checkbox"),
       ),
     ),
     el(
       "div",
       { class: "help" },
-      t("settings.extras.tavily_concise_help"),
+      t("extras.tavily_concise_help"),
     ),
   );
 }
@@ -113,19 +113,19 @@ function renderBaseUrlInput(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
     type: "text",
     id: "zenmux-base-url",
     "data-id": "zenmux-base-url",
-    placeholder: t("settings.extras.zenmux_base_url_placeholder"),
+    placeholder: t("extras.zenmux_base_url_placeholder"),
     autocomplete: "off",
   }) as HTMLInputElement;
   input.value = value;
   return el(
     "div",
     { class: "field" },
-    el("label", {}, t("settings.extras.zenmux_base_url_label")),
+    el("label", {}, t("extras.zenmux_base_url_label")),
     el("div", { class: "input-row" }, input),
     el(
       "div",
       { class: "help" },
-      t("settings.extras.zenmux_base_url_help"),
+      t("extras.zenmux_base_url_help"),
     ),
   );
 }
@@ -135,8 +135,8 @@ function renderZenmuxMode(_meta: SourceMeta, _cfg: AppConfig): HTMLElement {
   // Stage 4 暂保留硬编码的初始值（注意：动态读 cfg 还需要 zhipu 端加对应字段）
   // TODO Stage 5 接 cfg.zenmux_mode
   const select = el("select", { id: "zenmux-mode" });
-  select.appendChild(el("option", { value: "payg" }, t("settings.extras.zenmux_mode_payg")));
-  select.appendChild(el("option", { value: "subscription" }, t("settings.extras.zenmux_mode_subscription")));
+  select.appendChild(el("option", { value: "payg" }, t("extras.zenmux_mode_payg")));
+  select.appendChild(el("option", { value: "subscription" }, t("extras.zenmux_mode_subscription")));
   select.value = "payg";
 
   const cb = el("input", {
@@ -149,18 +149,18 @@ function renderZenmuxMode(_meta: SourceMeta, _cfg: AppConfig): HTMLElement {
   return el(
     "div",
     { class: "field" },
-    el("label", {}, t("settings.extras.zenmux_mode_label")),
+    el("label", {}, t("extras.zenmux_mode_label")),
     el("div", { class: "input-row" }, select),
     el(
       "div",
       { class: "help" },
-      t("settings.extras.zenmux_mode_help"),
+      t("extras.zenmux_mode_help"),
     ),
     el(
       "div",
       { class: "check", id: "zenmux-payg-concise-wrap", style: "margin-top: 8px;" },
       cb,
-      el("label", { for: "zenmux-payg-concise-mode" }, t("settings.extras.zenmux_payg_concise_label")),
+      el("label", { for: "zenmux-payg-concise-mode" }, t("extras.zenmux_payg_concise_label")),
     ),
   );
 }
@@ -169,7 +169,7 @@ function renderZenmuxMode(_meta: SourceMeta, _cfg: AppConfig): HTMLElement {
 function renderOpenrouterHelp(_meta: SourceMeta, _cfg: AppConfig): HTMLElement {
   // en.json: "OpenRouter 余额 = 账户 credit 余额。普通 API key（`sk-or-v1-...`）即可，不需要 Management key。端点 GET /api/v1/key。"
   // zh-CN.json: "OpenRouter 余额 = 账户 credit 余额。普通 API key（`sk-or-v1-...`）即可，不需要 Management key。端点 " + link
-  const baseText = t("settings.extras.openrouter_help_text");
+  const baseText = t("extras.openrouter_help_text");
   // 中文版在末尾用空格 + 链接，英文版自带结尾。这里统一：基础文字 + 句点后接 link。
   // 注意：英文版的句点已在 baseText 末尾，中文版没有，所以拆开处理。
   const link = el("a", {
@@ -195,18 +195,18 @@ function renderOpenrouterHelp(_meta: SourceMeta, _cfg: AppConfig): HTMLElement {
 function renderZhipuRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
   const current = cfg.zhipu_region ?? "cn";
   const select = el("select", { id: "zhipu-region", "data-id": "zhipu-region" });
-  select.appendChild(el("option", { value: "cn" }, t("settings.extras.zhipu_region_cn")));
-  select.appendChild(el("option", { value: "en" }, t("settings.extras.zhipu_region_en")));
+  select.appendChild(el("option", { value: "cn" }, t("extras.zhipu_region_cn")));
+  select.appendChild(el("option", { value: "en" }, t("extras.zhipu_region_en")));
   select.value = current;
 
   const helpDiv = document.createElement("div");
   helpDiv.className = "help";
-  helpDiv.innerHTML = t("settings.extras.zhipu_region_help");
+  helpDiv.innerHTML = t("extras.zhipu_region_help");
 
   return el(
     "div",
     { class: "field" },
-    el("label", { for: "zhipu-region" }, t("settings.extras.zhipu_region_label")),
+    el("label", { for: "zhipu-region" }, t("extras.zhipu_region_label")),
     select,
     helpDiv,
   );

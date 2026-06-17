@@ -56,8 +56,10 @@
     "footer": {
       "hint_unconfigured": "No provider key configured → right-click tray → Settings",
       "hint_normal": "Drag to move · right-click menu",
-      "count_one": "{count} provider · {hint}",
-      "count_other": "{count} providers · {hint}"
+      "count": {
+        "one": "{count} provider · {hint}",
+        "other": "{count} providers · {hint}"
+      }
     },
     "countdown": {
       "reset_suffix": " reset",

@@ -56,8 +56,10 @@
     "footer": {
       "hint_unconfigured": "未配置 provider 的 key → 右键托盘 → 设置",
       "hint_normal": "拖动移动 · 右键菜单",
-      "count_one": "{count} 个 provider · {hint}",
-      "count_other": "{count} 个 provider · {hint}"
+      "count": {
+        "one": "{count} 个 provider · {hint}",
+        "other": "{count} 个 provider · {hint}"
+      }
     },
     "countdown": {
       "reset_suffix": "重置",

@@ -87,7 +87,9 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
-            // 读取配置
+            // 启动时清理上次崩溃留下的孤儿 .tmp 文件（F2/M10 修复连带）
+            config::cleanup_orphan_tmp_files();
+            // 读取配置（load_from_disk 已会在损坏时备份到 .bak.<ts>，不再静默吞掉）
             let config = AppConfig::load(&app.handle()).unwrap_or_default();
 
             // P0：把 cfg.locale 推到 rust_i18n 的进程内 state，让 tr!() 立刻生效。

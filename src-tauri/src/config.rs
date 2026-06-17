@@ -395,12 +395,20 @@ impl Default for AppConfig {
 
 impl AppConfig {
     /// 从磁盘加载；不存在或损坏则返回默认
+    /// 损坏时：**先备份**原文件到 `config.json.bak.<ts>` 再返回 Ok(default)，
+    /// 同时 log error（不再像 v0.1 那样静默吞掉，让用户配置被清零）。
     pub fn load_from_disk() -> Result<Self, String> {
         let path = config_path()?;
         if !path.exists() {
             return Ok(Self::default());
         }
-        let s = std::fs::read_to_string(&path).map_err(|e| t!("commands.read_config", err = e.to_string()).into_owned())?;
+        let s = match std::fs::read_to_string(&path) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::error!(error = %e, path = %path.display(), "config.json 读失败，回退默认");
+                return Ok(Self::default());
+            }
+        };
 
         // 尝试新格式
         if let Ok(cfg) = serde_json::from_str::<AppConfig>(&s) {
@@ -445,7 +453,21 @@ impl AppConfig {
             return Ok(cfg);
         }
 
-        Err(t!("commands.config_unrecognized", path = path.display().to_string()).into_owned())
+        // 新格式 + 旧格式都不匹配 → 备份损坏文件，返回默认
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let backup = path.with_extension(format!("json.bak.{ts}"));
+        if let Err(e) = std::fs::copy(&path, &backup) {
+            tracing::error!(error = %e, path = %path.display(), "config.json 损坏且备份失败");
+        } else {
+            tracing::error!(
+                backup = %backup.display(),
+                "config.json 无法解析，已备份到 .bak.<ts>，使用默认值启动"
+            );
+        }
+        Ok(Self::default())
     }
 
     /// 兼容入口：带 AppHandle 时使用
@@ -701,7 +723,21 @@ fn read_keys() -> Result<KeysMap, String> {
     if s.trim().is_empty() {
         return Ok(BTreeMap::new());
     }
-    serde_json::from_str::<KeysMap>(&s).map_err(|e| t!("commands.parse_keys", err = e.to_string()).into_owned())
+    // parse 失败：先备份损坏的 keys.json 到 .bak.<ts>，再返回 Err。
+    // 不静默 fallback 到空 map —— 否则下一次 save_*_key 会用空 map 写回，
+    // 把所有其他 provider 的 key 一起删光（这是 review 报告里的 F3 critical bug）。
+    match serde_json::from_str::<KeysMap>(&s) {
+        Ok(m) => Ok(m),
+        Err(e) => {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let backup = path.with_extension(format!("json.bak.{ts}"));
+            let _ = std::fs::copy(&path, &backup);
+            Err(t!("commands.parse_keys", err = format!("{e}; 备份到 {}", backup.display())).into_owned())
+        }
+    }
 }
 
 pub fn load_api_key_for(provider: Provider) -> Result<Option<String>, String> {
@@ -710,13 +746,13 @@ pub fn load_api_key_for(provider: Provider) -> Result<Option<String>, String> {
 }
 
 pub fn save_api_key_for(provider: Provider, key: &str) -> Result<(), String> {
-    let mut map = read_keys().unwrap_or_default();
+    let mut map = read_keys()?;  // F3 fix: 传播错误，不要 unwrap_or_default（会删光其他 key）
     map.insert(provider.id_str().to_string(), key.to_string());
     write_keys_atomic(&map)
 }
 
 pub fn delete_api_key_for(provider: Provider) -> Result<(), String> {
-    let mut map = read_keys().unwrap_or_default();
+    let mut map = read_keys()?;  // 同上
     map.remove(provider.id_str());
     if map.is_empty() {
         // 全部删完就连文件一起删，避免空文件 + 0 字节文件混在目录里
@@ -742,13 +778,13 @@ pub fn load_cookie_for(provider: Provider) -> Result<Option<String>, String> {
 }
 
 pub fn save_cookie_for(provider: Provider, cookie: &str) -> Result<(), String> {
-    let mut map = read_keys().unwrap_or_default();
+    let mut map = read_keys()?;  // F3 fix
     map.insert(cookie_key(provider), cookie.to_string());
     write_keys_atomic(&map)
 }
 
 pub fn delete_cookie_for(provider: Provider) -> Result<(), String> {
-    let mut map = read_keys().unwrap_or_default();
+    let mut map = read_keys()?;  // F3 fix
     map.remove(&cookie_key(provider));
     if map.is_empty() {
         let path = keys_path()?;
@@ -777,7 +813,7 @@ pub fn load_credential_for_id(id: &str) -> Result<Option<Credentials>, String> {
 }
 
 pub fn save_credential_for_id(id: &str, cred: &Credentials) -> Result<(), String> {
-    let mut map = read_keys().unwrap_or_default();
+    let mut map = read_keys()?;  // F3 fix
     match (&cred.api_key, &cred.cookie) {
         (Some(k), _) => { map.insert(id.to_string(), k.clone()); }
         (None, Some(c)) => { map.insert(format!("{id}:cookie"), c.clone()); }
@@ -790,7 +826,7 @@ pub fn save_credential_for_id(id: &str, cred: &Credentials) -> Result<(), String
 }
 
 pub fn delete_credential_for_id(id: &str) -> Result<(), String> {
-    let mut map = read_keys().unwrap_or_default();
+    let mut map = read_keys()?;  // F3 fix
     map.remove(id);
     map.remove(&format!("{id}:cookie"));
     if map.is_empty() {

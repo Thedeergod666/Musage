@@ -262,6 +262,15 @@ pub async fn save_config(
     }
     cfg.save()?;
 
+    // H2 fix: 先更 in-memory state，再 save + 副作用。
+    // 原顺序 cfg.save() → autostart → emit → *guard = cfg，进程若在 save 与 guard 写之间
+    // crash，盘上是新值、内存是旧值，下次启动加载新值，但 run-time 一致性已坏。
+    // 现在 in-memory 永远是真相之源，磁盘 + 平台副作用最后再 commit。
+    {
+        let mut guard = state.config.write().await;
+        *guard = cfg.clone();
+    }
+
     // 同步 autostart
     let mgr = app.autolaunch();
     if cfg.autostart {
@@ -271,17 +280,23 @@ pub async fn save_config(
     }
 
     // 同步「全屏自动隐藏」开关到平台层（watcher 始终运行，这里翻原子开关）
+    // 注：platform::set_auto_hide_in_fullscreen 当前是 infallible swap；future 如果加
+    // 真可能失败的 platform call，再改成 Result<(), String> 传播
     crate::platform::set_auto_hide_in_fullscreen(&app, cfg.auto_hide_in_fullscreen);
 
     // 广播省电模式给浮窗，让前端 toggle body[data-low-power]
-    let _ = app.emit("musage://low-power-mode-changed", cfg.low_power_mode);
-
-    {
-        let mut guard = state.config.write().await;
-        *guard = cfg;
+    // 失败 log warn 但不阻断（emit 失败不应让 user 重试整个 save_config）
+    if let Err(e) = app.emit("musage://low-power-mode-changed", cfg.low_power_mode) {
+        tracing::warn!(error = %e, "emit low-power-mode-changed 失败");
     }
+
+    // 最后 save —— 此时副作用已经成功，save 是 commit 动作
+    cfg.save()?;
+
     // 广播「配置变了」给浮窗，让浮窗按需 re-fetch（比如 Tavily 简洁模式开关）
-    let _ = app.emit("musage://config-changed", ());
+    if let Err(e) = app.emit("musage://config-changed", ()) {
+        tracing::warn!(error = %e, "emit config-changed 失败");
+    }
     Ok(())
 }
 

@@ -586,8 +586,9 @@ fn tooltip(snap: &QuotaSnapshot) -> String {
         return t!("tray.tooltip.loading").to_string();
     }
     let mut parts = vec![t!("tray.tooltip.title").to_string()];
+    let threshold = snap.wallet_alert_threshold;
     for p in &snap.providers {
-        let dot = match p.health_label() {
+        let dot = match p.health_label(threshold) {
             "ok" => "🟢",
             "warn" => "🟡",
             "alert" => "🔴",

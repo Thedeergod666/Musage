@@ -311,9 +311,25 @@ impl ProviderSnapshot {
     }
 
     /// 计算 health 等级：ok / warn / alert / unknown
-    pub fn health_label(&self) -> &'static str {
+    ///
+    /// `wallet_alert_threshold`: 全局余额告警阈值。
+    /// - None → 不消费,余额类 source 永远走 "ok"(utilization = 0.0)
+    /// - Some(n) → 任一 row 的 `remaining` < n 时直接返 "alert",不再走 utilization 分支
+    ///
+    /// 设计:这个检查在 match self.provider 之前——DeepSeek 走 is_healthy 分支
+    /// 时(API 直接告诉钱包健康状态),如果 remaining 也 < 阈值,balance_low 更
+    /// 重要,优先翻红。Minimax / Xiaomimimo 没 remaining,这条短路无效,继续
+    /// 走 utilization 判断。
+    pub fn health_label(&self, wallet_alert_threshold: Option<f64>) -> &'static str {
         if !self.success {
             return "alert";
+        }
+        if let Some(threshold) = wallet_alert_threshold {
+            if self.rows.iter().any(|r| {
+                r.remaining.map(|rem| rem < threshold).unwrap_or(false)
+            }) {
+                return "alert";
+            }
         }
         match self.provider {
             Provider::Deepseek => {
@@ -341,6 +357,15 @@ pub struct QuotaSnapshot {
     pub providers: Vec<ProviderSnapshot>,
     /// 最近一次任一 provider 刷新的时间戳
     pub fetched_at: Option<i64>,
+    /// 全局"余额/钱包行低额告警"阈值。None = 关闭(余额类 source 不会因为
+    /// remaining < N 翻红); Some(n) = 任一 row 的 remaining < n 时 health_label
+    /// 返 "alert",托盘 dot 翻红。
+    ///
+    /// 从 AppConfig.wallet_alert_threshold 复制,前端不需要再单独传(看 tray tooltip
+    /// 渲染逻辑)。每个 refresh 路径(refresh_inner / refresh_now / refresh_single_inner)
+    /// 都要 populate 这个字段。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wallet_alert_threshold: Option<f64>,
 }
 
 impl QuotaSnapshot {
@@ -348,7 +373,7 @@ impl QuotaSnapshot {
     pub fn worst_health(&self) -> &'static str {
         let mut worst = "ok";
         for p in &self.providers {
-            let h = p.health_label();
+            let h = p.health_label(self.wallet_alert_threshold);
             worst = match (worst, h) {
                 (_, "alert") => "alert",
                 ("ok", "warn") => "warn",

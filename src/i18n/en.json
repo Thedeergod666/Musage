@@ -77,6 +77,17 @@
     "err_btn_retry": "Retry",
     "err_retry_in_minutes": "Next auto-retry in ~{mins}m"
   },
+  "row": {
+    "five_hour": "5h",
+    "weekly": "Weekly",
+    "balance": "Balance",
+    "topup": "Top-up",
+    "bonus": "Bonus",
+    "plan": "Plan",
+    "compensation": "Compensation",
+    "monthly_total": "Monthly total",
+    "free_tier": "Free tier"
+  },
   "settings": {
     "init_failed": "Init failed: {err}",
     "nav": {

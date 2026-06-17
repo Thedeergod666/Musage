@@ -77,6 +77,17 @@
     "err_btn_retry": "重试",
     "err_retry_in_minutes": "下次自动重试约 {mins} 分钟后"
   },
+  "row": {
+    "five_hour": "5h",
+    "weekly": "周",
+    "balance": "余额",
+    "topup": "充值",
+    "bonus": "奖励",
+    "plan": "套餐",
+    "compensation": "补偿",
+    "monthly_total": "总额度",
+    "free_tier": "免费版"
+  },
   "settings": {
     "init_failed": "初始化失败: {err}",
     "nav": {

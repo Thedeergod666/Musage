@@ -338,12 +338,12 @@ fn parse_subscription(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     let mut rows = Vec::new();
 
     if let Some(q) = data.get("quota_5_hour") {
-        if let Some(row) = parse_subscription_window(q, "5h") {
+        if let Some(row) = parse_subscription_window(q, &t!("row.five_hour").to_string()) {
             rows.push(row);
         }
     }
     if let Some(q) = data.get("quota_7_day") {
-        if let Some(row) = parse_subscription_window(q, "周") {
+        if let Some(row) = parse_subscription_window(q, &t!("row.weekly").to_string()) {
             rows.push(row);
         }
     }

@@ -55,20 +55,26 @@ export function canonicalizeOrder(order: string[]): ProviderId[] {
   const known = getCurrentKnownIds();
   const knownSet = new Set(known);
   if (knownSet.size === 0) {
+    const seen = new Set<string>();
     const dedup: string[] = [];
     for (const id of order) {
-      if (!dedup.includes(id)) dedup.push(id);
+      if (!seen.has(id)) { seen.add(id); dedup.push(id); }
     }
     return dedup as ProviderId[];
   }
+  const seen = new Set<string>();
   const ordered: ProviderId[] = [];
   for (const id of order) {
-    if (knownSet.has(id) && !(ordered as string[]).includes(id)) {
+    if (knownSet.has(id) && !seen.has(id)) {
+      seen.add(id);
       ordered.push(id as ProviderId);
     }
   }
   for (const id of known) {
-    if (!(ordered as string[]).includes(id)) ordered.push(id as ProviderId);
+    if (!seen.has(id)) {
+      seen.add(id);
+      ordered.push(id as ProviderId);
+    }
   }
   return ordered;
 }
@@ -256,12 +262,11 @@ function onDragMouseUp(_e: MouseEvent) {
   const adjusted = orderIdx;
   currentProviderOrder.splice(adjusted, 0, moved);
 
-  // DOM 重建（含 divider）
-  if (listRef) buildOrderItems(listRef);
-
   if (crossedDivider) {
-    // ── 乐观更新（fix bug #3 + #4）：先在内存里翻 enabled flag、sync
-    // provider panel checkbox + 立即 rebuild，再异步 IPC 落盘。──
+    // ── 乐观更新：先翻 enabled flag + sync checkbox，再 rebuild DOM，再 IPC ──
+    // 顺序必须是 orderCfg → buildOrderItems，否则 buildOrderItems 读旧
+    // enabled flag 把卡片画回原分区（bug #2）。
+    const wasEnabled = !willBeEnabled; // 翻转前的状态，用于 catch 回滚
     if (orderCfg && dragSrcId) {
       if (!orderCfg.providers) orderCfg.providers = {};
       const entry = orderCfg.providers[dragSrcId] ?? { enabled: willBeEnabled };
@@ -271,8 +276,13 @@ function onDragMouseUp(_e: MouseEvent) {
       const cb = document.getElementById(`enabled-${dragSrcId}`) as HTMLInputElement | null;
       if (cb) cb.checked = willBeEnabled;
     }
+    // orderCfg 已更新，现在 rebuild 才会把卡片画到正确分区
+    if (listRef) buildOrderItems(listRef);
     refreshPosLabels();
 
+    // suppressConfigRebuild：防止 main.ts 的 config-changed 监听器用后端旧
+    // config 覆盖我们的乐观更新（bug #3 的卡片拖拽侧）。
+    suppressConfigRebuild = true;
     void (async () => {
       try {
         await setProviderEnabled(dragSrcId!, willBeEnabled);
@@ -283,7 +293,26 @@ function onDragMouseUp(_e: MouseEvent) {
             : t("settings.order.flash_hidden", { id: dragSrcId! }),
         );
       } catch (e) {
+        // IPC 失败 → 回滚 orderCfg + DOM（bug #4）
+        if (orderCfg?.providers?.[dragSrcId!]) {
+          orderCfg.providers[dragSrcId!] = {
+            ...orderCfg.providers[dragSrcId!],
+            enabled: wasEnabled,
+          };
+        }
+        if (dragSrcId) {
+          const cb = document.getElementById(`enabled-${dragSrcId}`) as HTMLInputElement | null;
+          if (cb) cb.checked = wasEnabled;
+        }
+        if (listRef) buildOrderItems(listRef);
+        refreshPosLabels();
         flash(t("settings.order.flash_move_failed", { err: String(e) }), true);
+      } finally {
+        suppressConfigRebuild = false;
+        // 最终 resync：确保与后端一致
+        const cfg = await import("./api").then((m) => m.getConfig());
+        orderCfg = cfg;
+        if (listRef) buildOrderItems(listRef);
       }
     })();
   } else {
@@ -480,9 +509,15 @@ export function renderOrderSection(
   listRef = list;
   buildOrderItems(list);
 
-  // 绑定 mousedown（卡片拖拽 + 分隔线拖拽）
-  list.addEventListener("mousedown", onDragMouseDown);
-  list.addEventListener("mousedown", onDividerMouseDown);
+  // 绑定 mousedown（统一路由：分隔线 → onDividerMouseDown，卡片 → onDragMouseDown）
+  list.addEventListener("mousedown", (e) => {
+    const target = e.target as HTMLElement;
+    if (target.closest("li.order-divider") && !target.closest("li.order-row")) {
+      onDividerMouseDown(e);
+    } else if (target.closest("li.order-row") && !target.closest("button")) {
+      onDragMouseDown(e);
+    }
+  });
 
   const section = el(
     "section",
@@ -657,7 +692,9 @@ export async function moveProviderInOrder(id: string, dir: "up" | "down") {
     if (listRef) buildOrderItems(listRef);
     refreshPosLabels();
 
-    // IPC 后端落盘 + emit snapshot（异步，不阻塞视觉）
+    // suppressConfigRebuild：防止 main.ts 的 config-changed 监听器用后端旧
+    // config 覆盖我们的乐观更新（bug #3）。
+    suppressConfigRebuild = true;
     void (async () => {
       try {
         await setProviderEnabled(id, newEnabled);
@@ -678,6 +715,12 @@ export async function moveProviderInOrder(id: string, dir: "up" | "down") {
         if (listRef) buildOrderItems(listRef);
         refreshPosLabels();
         flash(t("settings.order.flash_move_failed", { err: String(e) }), true);
+      } finally {
+        suppressConfigRebuild = false;
+        // 最终 resync：确保与后端一致
+        const cfg = await import("./api").then((m) => m.getConfig());
+        orderCfg = cfg;
+        if (listRef) buildOrderItems(listRef);
       }
     })();
     return;
@@ -736,7 +779,7 @@ function refreshPosLabels() {
       upBtn.disabled = isFirstEnabled;
     }
     if (downBtn) {
-      const row = upBtn?.closest("li.order-row");
+      const row = downBtn?.closest("li.order-row");
       const isLastDisabled =
         !!row?.classList.contains("order-row-disabled") &&
         i === currentProviderOrder.length - 1;

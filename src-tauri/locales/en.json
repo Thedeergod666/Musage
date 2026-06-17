@@ -51,7 +51,8 @@
       "http_error_simple": "HTTP {status} ({provider})",
       "business_code": "{provider} API error (code {code}): {msg}",
       "missing_field": "{provider} response missing {field}",
-      "rate_limited": "{provider} rate limited, please try again later"
+      "rate_limited": "{provider} rate limited, please try again later",
+      "rate_limited_with_retry": "{provider} rate limited, retry in about {retry_secs} seconds"
     },
     "provider": {
       "unconfigured_key": "API key not configured for {provider} (set in Settings)",

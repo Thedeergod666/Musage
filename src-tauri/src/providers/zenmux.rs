@@ -173,9 +173,17 @@ async fn do_fetch(
         ))?;
 
     let status = resp.status();
+    // H6 fix: 429 显式 → RateLimited
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(FetchError::new(
+            ErrorKind::RateLimited,
+            t!("error.common.rate_limited", provider = "ZenMux").into_owned(),
+        ));
+    }
+    // H7 fix: 401/403 用 auth_failed 模板，而不是 unconfigured_key（误导用户"key 没填"）
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(FetchError::auth(
-            t!("error.provider.unconfigured_key", provider = "ZenMux Management API").into_owned()
+            t!("error.common.auth_failed", provider = "ZenMux").into_owned()
         ));
     }
     if !status.is_success() {

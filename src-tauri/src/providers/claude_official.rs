@@ -159,11 +159,34 @@ async fn do_fetch(session_key: &str) -> Result<ProviderSnapshot, FetchError> {
         ));
     }
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        // 429 频发（claude-code#31021），不重试 —— 直接告诉用户"等一下"
-        return Err(FetchError::new(
-            ErrorKind::RateLimited,
-            t!("error.common.rate_limited", provider = "Claude").into_owned()
-        ));
+        // M14 fix: 解析 Retry-After header（RFC 6585 §4）—— 可能是秒数也可能是 HTTP-date。
+        // 把 wait_seconds 附加到 error message，让用户知道大概要等多久。
+        let retry_secs = resp
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+            .or_else(|| {
+                // 尝试 HTTP-date（RFC 7231）—— 解析为 epoch seconds 差
+                use chrono::DateTime;
+                resp.headers()
+                    .get(reqwest::header::RETRY_AFTER)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| DateTime::parse_from_rfc2822(s).ok())
+                    .map(|dt| {
+                        let now = chrono::Utc::now();
+                        (dt.with_timezone(&chrono::Utc) - now).num_seconds().max(0) as u64
+                    })
+            });
+        let msg = match retry_secs {
+            Some(s) => t!(
+                "error.common.rate_limited_with_retry",
+                provider = "Claude",
+                retry_secs = s
+            ).into_owned(),
+            None => t!("error.common.rate_limited", provider = "Claude").into_owned(),
+        };
+        return Err(FetchError::new(ErrorKind::RateLimited, msg));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();

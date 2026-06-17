@@ -179,6 +179,13 @@ impl Minimax {
             ))?;
 
         let status = resp.status();
+        // M16 fix: 429 显式 → RateLimited（前端用 RateLimited UI 展示 + poller 走 backoff）
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(FetchError::new(
+                ErrorKind::RateLimited,
+                t!("error.common.rate_limited", provider = "MiniMax").into_owned(),
+            ));
+        }
         if status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(FetchError::auth(
                 t!("error.common.auth_failed", provider = "MiniMax").into_owned()

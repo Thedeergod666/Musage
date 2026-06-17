@@ -44,7 +44,7 @@ use std::pin::Pin;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use super::{shared_client, AuthKind, Credentials, FetchError, ProviderSnapshot, QuotaRow, QuotaSource};
+use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource};
 use crate::t;
 
 const URL: &str = "https://api.kimi.com/coding/v1/usages";
@@ -100,6 +100,13 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
         ))?;
 
     let status = resp.status();
+    // H6 fix: 429 显式 → RateLimited
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(FetchError::new(
+            ErrorKind::RateLimited,
+            t!("error.common.rate_limited", provider = "Kimi").into_owned(),
+        ));
+    }
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(FetchError::auth(
             t!("error.common.auth_failed", provider = "Kimi").into_owned()

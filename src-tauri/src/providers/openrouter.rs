@@ -102,6 +102,14 @@ async fn fetch_credits(
         ))?;
 
     let status = resp.status();
+    // H6 fix: 429 显式 → RateLimited（之前的 is_success() 兜底会归到 ServerError，
+    // 触发 fallback 到 /key 端点，浪费请求）
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(FetchError::new(
+            ErrorKind::RateLimited,
+            t!("error.common.rate_limited", provider = "OpenRouter").into_owned(),
+        ));
+    }
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(FetchError::auth(
             t!("error.common.auth_failed", provider = "OpenRouter").into_owned()
@@ -139,6 +147,13 @@ async fn fetch_key(
         ))?;
 
     let status = resp.status();
+    // 同 fetch_credits：429 显式 → RateLimited
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(FetchError::new(
+            ErrorKind::RateLimited,
+            t!("error.common.rate_limited", provider = "OpenRouter").into_owned(),
+        ));
+    }
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(FetchError::auth(
             t!("error.common.auth_failed", provider = "OpenRouter").into_owned()

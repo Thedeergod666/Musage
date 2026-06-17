@@ -39,6 +39,10 @@ impl QuotaSource for QwenSource {
     fn id(&self) -> Cow<'_, str> { Cow::Borrowed("qwen") }
     fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("Qwen（DashScope）") }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
+    // STUB: 阿里 DashScope 公开 API 无 quota endpoint,默认不拉。
+    // Phase X 走 Coding Plan OAuth flow 实装后改回 true。
+    fn default_enabled(&self) -> bool { false }
+    fn is_stub(&self) -> bool { true }
 
     fn set_state<'a>(
         &'a self,

@@ -58,6 +58,9 @@ export interface SourceMeta {
   enabled: boolean;
   /** true = 主面板不渲染凭据字段（移至"高级"tab） */
   hide_credentials?: boolean;
+  /** true = STUB（公开 API 无 quota endpoint，2026-06-17 commit 加）。
+   *  UI 加灰显 + "未支持" 角标；老面板忽略该字段不影响渲染。 */
+  is_stub?: boolean;
 }
 
 /// Xiaomi MiMo 浮窗显示模式：

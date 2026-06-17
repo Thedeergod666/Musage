@@ -62,6 +62,7 @@ export async function renderProvidersSection(container: HTMLElement) {
     display_name: c.display_name,
     auth_kind: "api_key" as const,
     enabled: cfg.providers?.[c.id]?.enabled ?? true,
+    is_stub: false,  // customs 不打 STUB 标（用户自己加的，知道在干啥）
   }));
   const allSources: SourceMeta[] = [...sources, ...customsAsMeta];
   // 让 utils.currentKnownIds 跟上（含 customs），order section 立即能用
@@ -219,7 +220,11 @@ function applySearchFilter(q: string, container: HTMLElement): void {
 export function createProviderPanel(meta: SourceMeta, cfg: AppConfig): HTMLElement {
   const section = el(
     "section",
-    { class: "provider-section", "data-id": meta.id },
+    {
+      class: "provider-section" + (meta.is_stub ? " provider-section--stub" : ""),
+      "data-id": meta.id,
+      ...(meta.is_stub ? { "data-stub": "true" } : {}),
+    },
   );
 
   // 拿 logo 资产（沿用浮窗 [src/main.ts:15-30] 同款 import）
@@ -253,6 +258,22 @@ export function createProviderPanel(meta: SourceMeta, cfg: AppConfig): HTMLEleme
       { class: "provider-header" },
       ...(logoImg ? [logoImg] : []),
       el("span", { class: "provider-name" }, meta.display_name),
+      // STUB 角标（2026-06-17 commit）：公开 API 无 quota endpoint 的
+      // provider 显示"🚧 STUB"小角标，避免用户配 key 后看 30 min 退避风暴。
+      // 用 data-stub-notice 属性挂载文本，CSS ::after 显示，i18n 走属性。
+      ...(meta.is_stub
+        ? [
+            el(
+              "span",
+              {
+                class: "provider-stub-badge",
+                "data-stub-notice": "STUB",
+                title: "Public API has no quota endpoint",
+              },
+              "🚧 STUB",
+            ),
+          ]
+        : []),
       el(
         "div",
         { class: "provider-enabled" },

@@ -299,6 +299,11 @@ pub struct SourceMeta {
     /// API key 对 Bearer 永远 401，手动 cookie 是兜底，都放高级 tab。
     #[serde(default)]
     pub hide_credentials: bool,
+    /// true = STUB（公开 API 无 quota endpoint，fetch 永远返"未支持"错）。
+    /// UI 用这个加灰显 + "未支持" 角标。2026-06-17 commit 加。
+    /// 老前端如果没识别这个字段会忽略，对老面板渲染无影响。
+    #[serde(default)]
+    pub is_stub: bool,
 }
 
 /// 列出所有内置 source 的元信息 + 当前启用状态。
@@ -318,6 +323,7 @@ pub async fn list_sources(state: State<'_, AppState>) -> Result<Vec<SourceMeta>,
             enabled: cfg.is_enabled_id(s.id().as_ref()),
             // Xiaomi: API key (Bearer) 永远 401，手动 cookie 是兜底 → 都放高级 tab
             hide_credentials: s.id() == "xiaomimimo",
+            is_stub: s.is_stub(),
         })
         .collect())
 }
@@ -812,6 +818,12 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
         if !cfg.is_enabled_id(id_str) {
             continue;
         }
+        // STUB 默认 disabled: 公开 API 无 quota endpoint 的 provider
+        // (novita / qwen) 用户没显式启用 → 跳过,避免 30 min 退避风暴。
+        // 用户可在设置面板手动勾选启用,显式覆盖默认值。
+        if !src.default_enabled() && !cfg.providers.contains_key(id_str) {
+            continue;
+        }
 
         // 默认间隔（per-provider override 优先）—— backoff 写入时用
         let default_interval_secs = cfg
@@ -986,6 +998,8 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
         .into_iter()
         .find(|s| s.id() == id)
         .ok_or_else(|| format!("未知的 source id: {id}"))?;
+    // 手动 "立即刷新" 始终拉取 —— 即便是 STUB (用户显式点击,让 fetch 返
+    // "未支持" 错就清楚表达 STUB 状态;poller 才按 default_enabled 自动跳过)。
     let creds = config::load_credential_for_id(id)?;
     update_source_state(&src, &cfg).await;
     let provider_snap = match creds {

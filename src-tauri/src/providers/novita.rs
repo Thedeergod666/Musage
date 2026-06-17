@@ -41,6 +41,9 @@ impl QuotaSource for NovitaSource {
     fn id(&self) -> Cow<'_, str> { Cow::Borrowed("novita") }
     fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("Novita AI") }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
+    // STUB: 公开 API 无 quota endpoint,默认不拉。用户显式启用 → 仍可拉(返 "未支持" 错)。
+    fn default_enabled(&self) -> bool { false }
+    fn is_stub(&self) -> bool { true }
 
     fn set_state<'a>(
         &'a self,

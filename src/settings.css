@@ -327,6 +327,31 @@ code { background: #2a2d35; padding: 1px 4px; border-radius: 3px; font-size: 11p
 .provider-enabled input { width: auto; margin: 0; }
 .provider-enabled label { margin: 0; color: var(--fg-2); cursor: pointer; }
 
+/* STUB provider (2026-06-17 commit): 公开 API 无 quota endpoint 的
+ * provider (novita / qwen) 灰显 + 🚧 STUB 角标,避免用户配 key 后
+ * 看到 30 min 退避风暴以为 key 失效。`data-stub="true"` 由后端 is_stub()
+ * 决定,前端不写死 source id 列表。 */
+.provider-section--stub {
+  opacity: 0.55;
+}
+.provider-section--stub .provider-name {
+  color: var(--fg-2);
+  font-weight: 500;
+}
+.provider-stub-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--bg-3);
+  color: var(--fg-2);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  border: 1px dashed var(--fg-2);
+  flex: 0 0 auto;
+}
+
 /* provider body: 4px 上内边距让 cred-block 不贴 header */
 .provider-section > .cred-block,
 .provider-section > .field,

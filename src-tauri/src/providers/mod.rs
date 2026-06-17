@@ -370,6 +370,18 @@ pub trait QuotaSource: Send + Sync {
     fn display_name(&self) -> Cow<'_, str>;
     /// 鉴权方式（决定设置面板显示什么输入框）
     fn auth_kind(&self) -> AuthKind;
+    /// 默认是否启用。**false = STUB**（公开 API 无 quota endpoint，等官方
+    /// 开放后再实装）。Poller / refresh_inner 在用户没显式配置时跳过。
+    /// 用户在设置面板可显式勾选启用（覆盖默认值），多用于"提前知道是 stub
+    /// 也想看其他卡片的布局"。
+    ///
+    /// 默认 `true`（绝大多数 provider 是真实现）。
+    fn default_enabled(&self) -> bool { true }
+    /// 是否是 STUB（公开 API 无 quota endpoint、fetch 永远返 `error.provider.not_supported`）。
+    /// UI 用这个加灰显 + "未支持" 角标，避免用户配 key 后看到 30 min 退避风暴。
+    ///
+    /// 默认 `false`。
+    fn is_stub(&self) -> bool { false }
     /// 更新运行时状态（region / overrides）。`value` 是 [`AppConfig`] 的
     /// 完整 JSON 序列化，source 自己按需取字段。无状态的 source 可以忽略。
     ///

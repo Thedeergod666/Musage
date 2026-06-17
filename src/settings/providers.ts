@@ -29,6 +29,7 @@ import { renderCredentialBlock, loadCredentialStatus } from "./credentials";
 import { getProviderMeta } from "./logos";
 import { groupSources, getGroupDef, renderGroup, splitGroupsForLayout } from "./groups";
 import { openAddCustomSourceModal } from "./custom-source-form";
+import { t } from "../i18n";
 import type { AppConfig, SourceMeta } from "./types";
 
 /// 主入口：渲染整个 "数据源" section。
@@ -48,7 +49,7 @@ export async function renderProvidersSection(container: HTMLElement) {
       getConfig(),
     ]);
   } catch (e) {
-    container.innerHTML = `<div class="section-empty error">✗ 加载 sources 失败: ${String(e)}</div>`;
+    container.innerHTML = `<div class="section-empty error">${t("settings.providers.load_failed", { err: String(e) })}</div>`;
     return;
   }
 
@@ -159,14 +160,15 @@ function renderToolbar(sources: SourceMeta[], cfg: AppConfig): HTMLElement {
     el("input", {
       type: "search",
       id: "provider-search",
-      placeholder: "🔍 搜索 provider (id 或名字)...",
+      placeholder: t("settings.providers.search_placeholder"),
       autocomplete: "off",
     }),
-    el("span", { class: "provider-count" }, `启用 ${enabled} / 共 ${sources.length}`),
+    el("span", { class: "provider-count" },
+      t("settings.providers.count_label", { enabled, total: sources.length })),
     el(
       "button",
       { type: "button", id: "add-custom-source", class: "btn-primary" },
-      "+ 添加自定义来源",
+      t("settings.providers.add_custom"),
     ),
   );
 }
@@ -241,7 +243,7 @@ export function createProviderPanel(meta: SourceMeta, cfg: AppConfig): HTMLEleme
   // 即时生效
   enabledCheckbox.addEventListener("change", () => {
     setProviderEnabled(meta.id, enabledCheckbox.checked).catch((e) => {
-      flash(`✗ 切换显示失败: ${e}`, true);
+      flash(t("settings.providers.flash_toggle_failed", { err: String(e) }), true);
     });
   });
 
@@ -259,7 +261,7 @@ export function createProviderPanel(meta: SourceMeta, cfg: AppConfig): HTMLEleme
           ? [renderDeleteCustomButton(meta)]
           : []),
         enabledCheckbox,
-        el("label", { for: `enabled-${meta.id}` }, "在浮窗显示"),
+        el("label", { for: `enabled-${meta.id}` }, t("settings.providers.show_in_floating")),
       ),
     ),
   );
@@ -287,18 +289,19 @@ function renderIntervalOverride(id: string, cfg: AppConfig): HTMLElement {
     "data-id": id,
     min: "10",
     step: "5",
-    placeholder: `默认 ${cfg.refresh_interval_secs ?? 60} 秒（顶部「轮询间隔」）`,
+    placeholder: t("settings.providers.refresh_interval_placeholder",
+      { secs: cfg.refresh_interval_secs ?? 60 }),
   }) as HTMLInputElement;
   if (v != null) input.value = String(v);
   return el(
     "div",
     { class: "field" },
-    el("label", {}, "轮询间隔（覆盖）"),
-    el("div", { class: "input-row" }, input, el("span", { class: "unit-suffix" }, "秒")),
+    el("label", {}, t("settings.providers.refresh_interval_override")),
+    el("div", { class: "input-row" }, input, el("span", { class: "unit-suffix" }, t("settings.providers.unit_seconds"))),
     el(
       "div",
       { class: "help" },
-      "留空 = 用顶部「轮询间隔」。至少 10 秒（避免触发 provider rate limit）。",
+      t("settings.providers.refresh_interval_help"),
     ),
   );
 }
@@ -310,30 +313,30 @@ function renderDeleteCustomButton(meta: SourceMeta): HTMLElement {
     type: "button",
     class: "btn-delete-custom",
     "data-id": meta.id,
-    title: `删除自定义来源 ${meta.display_name}`,
+    title: t("settings.providers.delete_custom_btn_title", { name: meta.display_name }),
   }, "🗑️");
   btn.addEventListener("click", async () => {
-    if (!confirm(`确认删除自定义来源 "${meta.display_name}"？\n其 API key 也会被一起删除。`)) {
+    if (!confirm(t("settings.providers.delete_custom_confirm", { name: meta.display_name }))) {
       return;
     }
     // 二次输入：防误删短 id（custom_<uuid> 看起来都差不多）
     const input = prompt(
-      `为防误删，请再次输入 display_name "${meta.display_name}"：`,
+      t("settings.providers.delete_custom_prompt", { name: meta.display_name }),
     )?.trim();
     if (input !== meta.display_name) {
-      flash("✗ display_name 不匹配，未删除", true);
+      flash(t("settings.providers.delete_custom_mismatch"), true);
       return;
     }
     try {
       await deleteCustomSource(meta.id);
-      flash(`✓ ${meta.display_name} 已删除`);
+      flash(t("settings.providers.delete_custom_done", { name: meta.display_name }));
       // 重建整个 providers section
       const container = document.querySelector<HTMLElement>(
         '.section-view[data-section="providers"]',
       );
       if (container) await renderProvidersSection(container);
     } catch (e) {
-      flash(`✗ 删除失败: ${String(e)}`, true);
+      flash(t("settings.providers.delete_failed", { err: String(e) }), true);
     }
   });
   return btn;

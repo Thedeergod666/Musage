@@ -75,6 +75,7 @@
     }
   },
   "settings": {
+    "init_failed": "✗ Init failed: {err}",
     "nav": {
       "providers": "Data sources",
       "floating": "Floating window",
@@ -186,7 +187,7 @@
       "auto_hide_label": "Auto-hide floating window in fullscreen",
       "auto_hide_help": "When any app enters fullscreen (menu bar auto-hides) → floating window temporarily hides; exit fullscreen → auto-restores. Currently macOS only.",
       "footer_hint_label": "Show footer hint (provider count + quick actions)",
-      "footer_hint_help": "Hidden by default. When enabled, the floating window bottom shows '{count} providers · drag to move · right-click menu' hint, window height auto-adjusts.",
+      "footer_hint_help_no_placeholder": "Hidden by default. When enabled, the floating window bottom shows the provider count and 'drag to move · right-click menu' hint. Window height auto-adjusts.",
       "position_help": "Window position + size are auto-remembered and restored on next launch. Click reset to move the window to the current main screen center.",
       "color_thresholds_label": "🎨 Color tier thresholds (%)",
       "color_thresholds_help": "Default [50, 70, 88]. Changes take effect immediately (no save needed). Backend validates 0 < t0 < t1 < t2 < 100.",
@@ -293,7 +294,7 @@
       "flash_moved_to_floating": "✓ {id} moved to floating display",
       "flash_hidden": "✓ {id} hidden (drag back up to restore)",
       "flash_cards_added": "✓ Added {delta} cards to floating",
-      "flash_cards_removed": "✓ Hid {-delta} cards",
+      "flash_cards_removed": "✓ Hid {count} cards",
       "flash_move_failed": "✗ Toggle display failed: {err}",
       "flash_moved_to_pos": "✓ {id} moved to position {pos}",
       "flash_order_failed": "✗ Reorder failed: {err}"

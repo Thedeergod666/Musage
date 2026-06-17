@@ -70,6 +70,11 @@ setupTabs();
 
 async function init() {
   try {
+    // P0 fix: 等 initLocale 完再渲染。原顺序是 initI18n() 与 init() 并行 fire-and-forget，
+    // IPC 竞速下 init() 先跑完 → 渲染时 dicts 是空的 → 所有 t() 返原始 key。
+    // initI18n() 内部 loadLocale 已带缓存，二次调是 O(1) noop，所以这里 await 安全。
+    await initI18n();
+
     // 全局事件委托（只绑一次，document-level）
     bindCredentialButtonsGlobal();
     bindXiaomiLoginEvents();
@@ -134,7 +139,7 @@ async function init() {
     });
   } catch (e) {
     console.error("[settings] init failed", e);
-    flash(`✗ 初始化失败: ${e}`, true);
+    flash(t("settings.init_failed", { err: String(e) }), true);
   }
 }
 

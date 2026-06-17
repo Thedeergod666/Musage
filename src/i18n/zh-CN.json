@@ -75,6 +75,7 @@
     }
   },
   "settings": {
+    "init_failed": "✗ 初始化失败: {err}",
     "nav": {
       "providers": "数据源",
       "floating": "浮窗",
@@ -186,7 +187,7 @@
       "auto_hide_label": "全屏时自动隐藏浮窗",
       "auto_hide_help": "检测到任何 app 进入全屏（菜单栏自动隐藏）→ 浮窗暂时隐藏；退出全屏 → 自动恢复。目前仅 macOS 生效。",
       "footer_hint_label": "显示底部提示行（provider 数量 + 快捷操作）",
-      "footer_hint_help": "默认隐藏。开启后浮窗底部会显示「X 个 provider · 拖动移动 · 右键菜单」提示，窗口高度会自动适配。",
+      "footer_hint_help_no_placeholder": "默认隐藏。开启后浮窗底部会显示 provider 数量 + 「拖动移动 · 右键菜单」提示。窗口高度会自动适配。",
       "position_help": "浮窗位置 + 大小已经自动记忆，下次启动恢复。点归位可把窗口挪到当前主屏幕正中央。",
       "color_thresholds_label": "🎨 颜色档位阈值（%）",
       "color_thresholds_help": "默认 [50, 70, 88]。改动会立即生效（不需点保存）。后端校验 0 < t0 < t1 < t2 < 100。",
@@ -293,7 +294,7 @@
       "flash_moved_to_floating": "✓ {id} 已移到浮窗显示区",
       "flash_hidden": "✓ {id} 已隐藏（拖回上方可恢复）",
       "flash_cards_added": "✓ 已新增 {delta} 张卡片到浮窗",
-      "flash_cards_removed": "✓ 已隐藏 {-delta} 张卡片",
+      "flash_cards_removed": "✓ 已隐藏 {count} 张卡片",
       "flash_move_failed": "✗ 切换显示失败: {err}",
       "flash_moved_to_pos": "✓ {id} 已移到位置 {pos}",
       "flash_order_failed": "✗ 调整顺序失败: {err}"

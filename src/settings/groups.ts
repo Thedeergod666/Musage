@@ -14,7 +14,7 @@
 
 import type { SourceMeta } from "./types";
 import { el } from "./utils";
-import { t } from "../i18n";
+import { t, onLocaleChange } from "../i18n";
 
 export type GroupKey =
   | "token_plan"
@@ -31,39 +31,51 @@ interface GroupDef {
   predicate: (meta: SourceMeta) => boolean;
 }
 
-const GROUP_DEFINITIONS: Record<GroupKey, GroupDef> = {
-  token_plan: {
-    title: t("groups.token_plan_title"),
-    icon: "📊",
-    predicate: (m) => ["minimax", "kimi", "zhipu", "qwen"].includes(m.id),
-  },
-  balance: {
-    title: t("groups.balance_title"),
-    icon: "💰",
-    predicate: (m) =>
-      ["deepseek", "siliconflow", "novita", "stepfun", "openrouter"].includes(m.id),
-  },
-  official: {
-    title: t("groups.official_title"),
-    icon: "🏛️",
-    predicate: (m) => ["tavily", "zenmux", "claude_official"].includes(m.id),
-  },
-  xiaomi: {
-    title: t("groups.xiaomi_title"),
-    icon: "🍚",
-    predicate: (m) => m.id === "xiaomimimo",
-  },
-  custom: {
-    title: t("groups.custom_title"),
-    icon: "🧩",
-    predicate: (m) => m.id.startsWith("custom_"),
-  },
-  misc: {
-    title: t("groups.misc_title"),
-    icon: "🔧",
-    predicate: () => true, // catch-all
-  },
-};
+/// P0 fix: 之前 `const GROUP_DEFINITIONS = { ... }` 在模块顶层求值，import 时 t() 同步调
+/// 用但 dicts 还没 load（initLocale 是 async fire-and-forget），所以 title 永远 = 原始
+/// key 字符串。改成像 main.ts::buildProviderMeta() 那样用函数延迟求值。
+export function buildGroupDefinitions(): Record<GroupKey, GroupDef> {
+  return {
+    token_plan: {
+      title: t("groups.token_plan_title"),
+      icon: "📊",
+      predicate: (m) => ["minimax", "kimi", "zhipu", "qwen"].includes(m.id),
+    },
+    balance: {
+      title: t("groups.balance_title"),
+      icon: "💰",
+      predicate: (m) =>
+        ["deepseek", "siliconflow", "novita", "stepfun", "openrouter"].includes(m.id),
+    },
+    official: {
+      title: t("groups.official_title"),
+      icon: "🏛️",
+      predicate: (m) => ["tavily", "zenmux", "claude_official"].includes(m.id),
+    },
+    xiaomi: {
+      title: t("groups.xiaomi_title"),
+      icon: "🍚",
+      predicate: (m) => m.id === "xiaomimimo",
+    },
+    custom: {
+      title: t("groups.custom_title"),
+      icon: "🧩",
+      predicate: (m) => m.id.startsWith("custom_"),
+    },
+    misc: {
+      title: t("groups.misc_title"),
+      icon: "🔧",
+      predicate: () => true, // catch-all
+    },
+  };
+}
+
+let _groupDefinitions: Record<GroupKey, GroupDef> = {} as Record<GroupKey, GroupDef>;
+
+// locale 切换时重建（settings panel 调用方需要监听这个然后重渲整组列表）
+onLocaleChange(() => {
+  _groupDefinitions = buildGroupDefinitions();
+});
 
 const GROUP_ORDER: GroupKey[] = [
   "token_plan",
@@ -74,10 +86,18 @@ const GROUP_ORDER: GroupKey[] = [
   "misc",
 ];
 
-/** 把 SourceMeta[] 按 GROUP_DEFINITIONS 分配到各组。空组会被剔除。 */
+/// 第一次被外部调时尝试填一次（settings panel 启动时序不一定在 initLocale 之后）
+function ensureGroupsReady() {
+  if (Object.keys(_groupDefinitions).length === 0) {
+    _groupDefinitions = buildGroupDefinitions();
+  }
+}
+
+/** 把 SourceMeta[] 按 _groupDefinitions 分配到各组。空组会被剔除。 */
 export function groupSources(
   sources: SourceMeta[],
 ): Map<GroupKey, SourceMeta[]> {
+  ensureGroupsReady();
   const buckets: Record<GroupKey, SourceMeta[]> = {
     token_plan: [],
     balance: [],
@@ -87,7 +107,7 @@ export function groupSources(
     misc: [],
   };
   for (const meta of sources) {
-    const key = GROUP_ORDER.find((k) => GROUP_DEFINITIONS[k].predicate(meta)) ?? "misc";
+    const key = GROUP_ORDER.find((k) => _groupDefinitions[k].predicate(meta)) ?? "misc";
     buckets[key].push(meta);
   }
   // 按 GROUP_ORDER 输出 + 跳过空组
@@ -118,7 +138,8 @@ export function splitGroupsForLayout(groups: Map<GroupKey, SourceMeta[]>): {
 
 /** 暴露 group definition 给 providers.ts 读 title / icon。 */
 export function getGroupDef(key: GroupKey): GroupDef {
-  return GROUP_DEFINITIONS[key];
+  ensureGroupsReady();
+  return _groupDefinitions[key];
 }
 
 /** 渲染单个组（原生 `<details>` + `<summary>`，无 CSS 依赖）。 */
@@ -127,7 +148,8 @@ export function renderGroup(
   metas: SourceMeta[],
   createPanel: (meta: SourceMeta) => HTMLElement,
 ): HTMLElement {
-  const def = GROUP_DEFINITIONS[key];
+  ensureGroupsReady();
+  const def = _groupDefinitions[key];
   const details = el("details", {
     class: "provider-group",
     "data-group": key,

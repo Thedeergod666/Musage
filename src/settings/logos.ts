@@ -9,7 +9,7 @@
 // 跟 src/main.ts:37 PROVIDER_META 共享 src/i18n/{en,zh-CN}.json 同一组 key。
 // settings 侧不再 hardcode "智谱 GLM" / "Z.ai" 等显示名。
 
-import { t } from "../i18n";
+import { t, onLocaleChange } from "../i18n";
 import minimaxLogo from "../assets/minimax-logo.png";
 import deepseekLogo from "../assets/deepseek-icon.png";
 import xiaomimimoLogo from "../assets/xiaomimimo-logo.png";
@@ -52,39 +52,54 @@ function escapeXml(s: string): string {
   );
 }
 
-/// id → 浮窗同款 logo + 名字 + 标识色（跟 tokens.css 的 --id-* 对齐）
-///
-/// P1 改动：name 走 t()（i18n），不再 hardcode "智谱 GLM" / "Z.ai"。
-/// 跟 src/main.ts:37 PROVIDER_META 共享同一组 src/i18n key。
-/// 智谱 GLM 在 main.ts 用 id "zhipu" / "Z.ai" 两套 key，settings 侧用 "zhipu" / "zhipu_en" 区分。
-///
-/// 加新 provider 时如果暂时没 logo 文件，把 `logo` 留空字符串，
-/// getLogoSrc() 会自动用首字母 + accent 色生成 data: URL fallback。
-export const PROVIDER_META: Record<string, ProviderMeta> = {
-  minimax: { name: t("provider.minimax.name"), logo: minimaxLogo, accent: "var(--id-minimax)" },
-  deepseek: { name: t("provider.deepseek.name"), logo: deepseekLogo, accent: "var(--id-deepseek)" },
-  xiaomimimo: { name: t("provider.xiaomimimo.name"), logo: xiaomimimoLogo, accent: "var(--id-xiaomimimo)" },
-  tavily: { name: t("provider.tavily.name"), logo: tavilyLogo, accent: "var(--id-tavily)" },
-  zenmux: { name: t("provider.zenmux.name"), logo: zenmuxLogo, accent: "var(--id-zenmux)" },
-  openrouter: { name: t("provider.openrouter.name"), logo: openrouterLogo, accent: "var(--id-openrouter)" },
-  kimi: { name: t("provider.kimi.name"), logo: kimiLogo, accent: "var(--id-kimi)" },
-  zhipu: { name: t("provider.zhipu_cn.name"), logo: zhipuLogo, accent: "var(--id-zhipu)" },
-  zhipu_en: { name: t("provider.zhipu_en.name"), logo: zhipuEnLogo, accent: "var(--id-zhipu)" },
-  stepfun: { name: t("provider.stepfun.name"), logo: stepfunLogo, accent: "#6366f1" },
-  siliconflow: { name: t("provider.siliconflow.name"), logo: siliconflowLogo, accent: "#ff6b35" },
-  novita: { name: t("provider.novita.name"), logo: novitaLogo, accent: "#9333ea" },
-  qwen: { name: t("provider.qwen.name"), logo: qwenLogo, accent: "#615ced" },
-  claude_official: { name: t("provider.claude_official.name"), logo: claudeLogo, accent: "#d97706" },
-};
+/// P0 fix: 之前 `export const PROVIDER_META = { ... }` 在模块顶层求值，import 时
+/// `t()` 被同步调用但 dicts 还没 load（initLocale 是 async fire-and-forget），
+/// 所以每个 name 都是原始 key 字符串 ("provider.minimax.name" 等)。
+/// 改成像 main.ts::buildProviderMeta() 那样用函数延迟求值，locale 切换时重建。
+export function buildProviderMeta(): Record<string, ProviderMeta> {
+  return {
+    minimax: { name: t("provider.minimax.name"), logo: minimaxLogo, accent: "var(--id-minimax)" },
+    deepseek: { name: t("provider.deepseek.name"), logo: deepseekLogo, accent: "var(--id-deepseek)" },
+    xiaomimimo: { name: t("provider.xiaomimimo.name"), logo: xiaomimimoLogo, accent: "var(--id-xiaomimimo)" },
+    tavily: { name: t("provider.tavily.name"), logo: tavilyLogo, accent: "var(--id-tavily)" },
+    zenmux: { name: t("provider.zenmux.name"), logo: zenmuxLogo, accent: "var(--id-zenmux)" },
+    openrouter: { name: t("provider.openrouter.name"), logo: openrouterLogo, accent: "var(--id-openrouter)" },
+    kimi: { name: t("provider.kimi.name"), logo: kimiLogo, accent: "var(--id-kimi)" },
+    zhipu: { name: t("provider.zhipu_cn.name"), logo: zhipuLogo, accent: "var(--id-zhipu)" },
+    zhipu_en: { name: t("provider.zhipu_en.name"), logo: zhipuEnLogo, accent: "var(--id-zhipu)" },
+    stepfun: { name: t("provider.stepfun.name"), logo: stepfunLogo, accent: "#6366f1" },
+    siliconflow: { name: t("provider.siliconflow.name"), logo: siliconflowLogo, accent: "#ff6b35" },
+    novita: { name: t("provider.novita.name"), logo: novitaLogo, accent: "#9333ea" },
+    qwen: { name: t("provider.qwen.name"), logo: qwenLogo, accent: "#615ced" },
+    claude_official: { name: t("provider.claude_official.name"), logo: claudeLogo, accent: "#d97706" },
+  };
+}
+
+/// 当前 locale 的 provider 元数据缓存。初始为 {}，initLocale 后 + locale 变化时重建。
+let _providerMeta: Record<string, ProviderMeta> = {};
+
+/// 第一次被外部调时尝试填一次（settings panel 启动时序不一定在 initLocale 之后）
+export function ensureProviderMetaReady() {
+  if (Object.keys(_providerMeta).length === 0) {
+    _providerMeta = buildProviderMeta();
+  }
+}
+
+// 每次 locale 切换重建（settings panel 调用方需要监听这个然后重渲）
+onLocaleChange(() => {
+  _providerMeta = buildProviderMeta();
+});
 
 export function getProviderMeta(id: string): ProviderMeta | undefined {
-  return PROVIDER_META[id];
+  ensureProviderMetaReady();
+  return _providerMeta[id];
 }
 
 /// 解析 meta：有 logo 直接用，没 logo 走首字母 fallback。
 /// 返回 `{ logo, name }`，调用方拿这两个值设到 `<img>` 或别处。
 export function getProviderDisplay(id: string, fallbackName?: string): { logo: string; name: string } {
-  const meta = PROVIDER_META[id];
+  ensureProviderMetaReady();
+  const meta = _providerMeta[id];
   if (meta) {
     return {
       logo: meta.logo || fallbackLogo(meta.name, meta.accent),

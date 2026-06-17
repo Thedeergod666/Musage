@@ -445,7 +445,10 @@ function onDividerMouseUp(_e: MouseEvent) {
       flash(
         delta > 0
           ? t("settings.order.flash_cards_added", { delta })
-          : t("settings.order.flash_cards_removed", { "-delta": -delta }),
+          // P0 fix: 之前用 "{-delta}" 配 t() 的替换正则 /\{(\w+)\}/g —— \w 不含连字符，
+          // 所以占位符永远不被替换。改成 {count}（positive number，翻译里就显式说
+          // "隐藏 N 张" 而非 "隐藏 {-N} 张"），同时传 Math.abs(delta) 直接用正数。
+          : t("settings.order.flash_cards_removed", { count: Math.abs(delta) }),
       );
     } catch (e) {
       flash(t("settings.order.flash_move_failed", { err: String(e) }), true);

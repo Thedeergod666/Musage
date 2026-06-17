@@ -547,9 +547,12 @@ export async function saveCredentialAction(id: string, action: "key" | "cookie",
 }
 
 export async function deleteCredentialAction(id: string, action: "key" | "cookie") {
-  const label = action === "key" ? "API key" : "Cookie";
-  if (!confirm(t(action === "key" ? "settings.credentials.confirm_delete_key" : "settings.credentials.confirm_delete_cookie",
-    { name: `${t(`provider.${id as ProviderId}.name`)} ${label}` }))) return;
+  // P0 fix: 之前传 { name: "<provider> API key" } 给 confirm_delete_key，模板是
+  // "Delete {name} API key?" → 渲染 "Delete Tavily API key API key?"（"API key" 重复）。
+  // 改成只传 provider 名字，让模板自带 "API key" / "Cookie" 后缀。
+  const providerName = t(`provider.${id as ProviderId}.name`);
+  const key = action === "key" ? "credentials.confirm_delete_key" : "credentials.confirm_delete_cookie";
+  if (!confirm(t(key, { name: providerName }))) return;
   // 后端 delete_source_credential 会同时清 api_key 和 cookie，统一用一个入口
   await deleteSourceCredential(id);
   await loadCredentialStatus(id);

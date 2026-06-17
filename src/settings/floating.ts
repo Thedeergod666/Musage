@@ -132,7 +132,9 @@ export function renderFloatingSection(container: HTMLElement, cfg: AppConfig) {
           footerHintCb,
           el("label", { for: "show-footer-hint" }, t("settings.floating.footer_hint_label")),
         ),
-        el("div", { class: "help" }, t("settings.floating.footer_hint_help")),
+        // P0 fix: 之前 t() 不传 count，en.json 里的 '{count} providers' 占位符不被替换。
+        // 改用固定描述：去掉花括号让 i18n 走字面量；中文用 1 个 provider 通用描述。
+        el("div", { class: "help" }, t("settings.floating.footer_hint_help_no_placeholder")),
       ),
       el("div", { class: "divider" }),
       // ── 颜色档位阈值（v0.6+ 用户可调） ──

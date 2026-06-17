@@ -275,6 +275,10 @@ async fn extract_and_save(window: &tauri::WebviewWindow) -> Result<usize, String
         ).into_owned());
     }
 
+    // F4 fix: require at least `api-platform_serviceToken` AND `userId` to be present
+    // (these are the auth-critical ones per providers/xiaomi.rs comment). Before this,
+    // extraction accepted any non-empty subset, so a stale extraction that only got
+    // `userId` (1/4 cookies) would silently overwrite a valid saved cookie with junk.
     let mut cookie_parts: Vec<String> = relevant
         .iter()
         .map(|c| {
@@ -298,6 +302,26 @@ async fn extract_and_save(window: &tauri::WebviewWindow) -> Result<usize, String
                 cookie_parts.push(format!("userId={uid}"));
             }
         }
+    }
+
+    // F4 fix: 在写入 keys.json 前做完整性校验。两个 auth-critical cookie 必须同时存在：
+    // - api-platform_serviceToken：真正的认证 token
+    // - userId：dashboard API 路由参数
+    // 任何一个缺失就 return Err，不覆盖原有的有效 cookie（避免用户被锁在"看似登录了但 API 401"的状态）。
+    let has_service_token = cookie_parts.iter().any(|p| p.starts_with("api-platform_serviceToken="));
+    let has_user_id = cookie_parts.iter().any(|p| p.starts_with("userId="));
+    if !(has_service_token && has_user_id) {
+        tracing::error!(
+            has_service_token,
+            has_user_id,
+            got = ?cookie_parts.iter().map(|p| p.split('=').next().unwrap_or("?")).collect::<Vec<_>>(),
+            "cookie 不完整 (缺 api-platform_serviceToken 或 userId)，不写入"
+        );
+        return Err(t!(
+            "xiaomi_login.cookies_incomplete",
+            has_service_token = has_service_token,
+            has_user_id = has_user_id
+        ).into_owned());
     }
 
     let cookie_str = cookie_parts.join("; ");

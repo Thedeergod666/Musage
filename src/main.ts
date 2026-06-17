@@ -769,6 +769,12 @@ function updateFoot(snap: QuotaSnapshot) {
   const text = t("floating.footer.count", { count: snap.providers.length, hint });
   if (foot) {
     foot.textContent = text;
+    // M22 fix: 已有 foot 时只更新 text，不 reposition。reorder 循环会调
+    // insertBefore 把新 card 插到 firstChild，可能把 foot 推到中间。
+    // 强制 reposition 到末尾。
+    if (foot !== app.lastChild) {
+      app.appendChild(foot);
+    }
   } else {
     foot = document.createElement("div");
     foot.className = "foot";

@@ -743,7 +743,12 @@ function refreshPosLabels() {
 
 // ── 全局按钮委托 ────────────────────────────────────────────
 
+// M23 fix: 之前 document.addEventListener 无幂等保护，重复调会累积 N 个 listener。
+// 改成 module-scope flag，第一次调才绑，后续 return。
+let _orderListenerBound = false;
 export function bindOrderButtonsGlobal() {
+  if (_orderListenerBound) return;
+  _orderListenerBound = true;
   document.addEventListener("click", (e) => {
     const target = e.target as HTMLElement;
     if (target.classList.contains("order-up")) {

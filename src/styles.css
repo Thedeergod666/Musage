@@ -414,6 +414,10 @@ body[data-hover] #app .err-server_error     .err-label { color: #ff453a; backgro
   font-size: 11px;
   color: var(--text-mute);
   word-break: break-all;
+  /* M21 fix: 保留 error message 里的 \n —— provider 返的多行错误（如
+     "HTTP 401\nPlease re-paste Cookie"）被 escapeHtml 压成一行。
+     white-space: pre-wrap 让 \n / 多空格按原文渲染。 */
+  white-space: pre-wrap;
   text-shadow: var(--text-shadow);
 }
 

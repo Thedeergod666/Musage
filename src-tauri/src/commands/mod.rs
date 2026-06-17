@@ -1054,7 +1054,9 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
         None => {
             let provider = provider_from_id(id);
             let kind = ErrorKind::UnconfiguredKey;
-            let msg = "未配置凭据（设置面板填入）".to_string();
+            // H12 fix: 之前硬编码中文。其它错误消息都走 tr!()，这个漏了。
+            // 用 error.common.no_credential 模板（Provider 行追加 "{provider}" 上下文）。
+            let msg = t!("error.common.no_credential").into_owned();
             log_provider_error(app, id, kind, &msg);
             ProviderSnapshot::empty_error(
                 &app.state::<AppState>(),

@@ -149,18 +149,21 @@ export function renderFloatingSection(container: HTMLElement, cfg: AppConfig) {
 /// 失败回退到旧值 + flash 报错。
 function renderDisplayThresholdsFields(cfg: AppConfig) {
   // ── 颜色档位阈值（3 个 number input） ──
-  const [t0, t1, t2] = cfg.color_thresholds ?? [50, 70, 88];
+  const [t0Init, t1Init, t2Init] = cfg.color_thresholds ?? [50, 70, 88];
+  // M19 fix: 之前是 const [t0, t1, t2] = ...，applyAll 失败时回填旧值但旧值永远是
+  // 初始 cfg 拷贝。改成 mutable 数组，成功后更新它，失败回填用"最近一次成功值"。
+  const currentThresholds: [number, number, number] = [t0Init, t1Init, t2Init];
   const t0Input = el("input", {
     type: "number", id: "color-t0", min: "0", max: "99", step: "1",
-    value: String(t0), title: t("settings.floating.threshold_t0_title"),
+    value: String(currentThresholds[0]), title: t("settings.floating.threshold_t0_title"),
   }) as HTMLInputElement;
   const t1Input = el("input", {
     type: "number", id: "color-t1", min: "0", max: "99", step: "1",
-    value: String(t1), title: t("settings.floating.threshold_t1_title"),
+    value: String(currentThresholds[1]), title: t("settings.floating.threshold_t1_title"),
   }) as HTMLInputElement;
   const t2Input = el("input", {
     type: "number", id: "color-t2", min: "0", max: "99", step: "1",
-    value: String(t2), title: t("settings.floating.threshold_t2_title"),
+    value: String(currentThresholds[2]), title: t("settings.floating.threshold_t2_title"),
   }) as HTMLInputElement;
 
   // ── 4 档自定义色（4 个 color picker） ──
@@ -179,6 +182,9 @@ function renderDisplayThresholdsFields(cfg: AppConfig) {
     alert: t("settings.floating.color_alert"),
   };
   const overrides = cfg.color_overrides ?? {};
+  // M19 fix: mutable 副本，applyAll 成功后写入，失败回填用最近成功值
+  let currentOverrides: Record<string, string> = { ...overrides };
+  let currentWallet: number | null = cfg.wallet_alert_threshold ?? null;
   const colorPickers: Record<typeof colorKeys[number], HTMLInputElement> = {} as any;
   for (const key of colorKeys) {
     colorPickers[key] = el("input", {
@@ -226,18 +232,23 @@ function renderDisplayThresholdsFields(cfg: AppConfig) {
     }
     try {
       await setDisplayThresholds([v0, v1, v2], wallet, newOverrides);
+      // M19 fix: 成功后更新 currentThresholds / currentWallet / currentOverrides，
+      // 失败回填用"最近一次成功值"而不是 init 时的 cfg 拷贝
+      currentThresholds[0] = v0;
+      currentThresholds[1] = v1;
+      currentThresholds[2] = v2;
+      currentWallet = wallet;
+      currentOverrides = newOverrides;
       flash(t("settings.floating.display_saved"));
     } catch (e) {
       flash(t("settings.floating.display_save_failed", { err: String(e) }), true);
-      // 回填旧值
-      t0Input.value = String(t0);
-      t1Input.value = String(t1);
-      t2Input.value = String(t2);
-      walletInput.value = cfg.wallet_alert_threshold != null
-        ? String(cfg.wallet_alert_threshold)
-        : "";
+      // 回填最近一次成功值
+      t0Input.value = String(currentThresholds[0]);
+      t1Input.value = String(currentThresholds[1]);
+      t2Input.value = String(currentThresholds[2]);
+      walletInput.value = currentWallet != null ? String(currentWallet) : "";
       for (const key of colorKeys) {
-        colorPickers[key].value = overrides[key] ?? DEFAULT_PALETTE[key];
+        colorPickers[key].value = currentOverrides[key] ?? DEFAULT_PALETTE[key];
       }
     }
   };

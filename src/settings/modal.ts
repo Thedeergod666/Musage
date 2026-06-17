@@ -9,6 +9,7 @@
 // 0 runtime dep 的 vanilla TS。
 
 import { el } from "./utils";
+import { t } from "../i18n";
 
 export interface ModalOptions {
   title: string;
@@ -32,12 +33,12 @@ export function showModal(opts: ModalOptions): void {
       el(
         "button",
         { type: "button", value: "cancel", class: "btn-secondary" },
-        opts.cancelLabel ?? "取消",
+        opts.cancelLabel ?? t("settings.common.cancel"),
       ),
       el(
         "button",
         { type: "submit", value: "submit", class: "btn-primary" },
-        opts.submitLabel ?? "保存",
+        opts.submitLabel ?? t("settings.common.save"),
       ),
     ),
   );

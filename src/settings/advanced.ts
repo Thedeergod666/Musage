@@ -85,7 +85,7 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
   const xmCookieInput = el("textarea", {
     id: "cookie-xiaomimimo-adv",
     rows: "4",
-    placeholder: t("credentials.cookie_textarea_placeholder"),
+    placeholder: t("settings.credentials.cookie_textarea_placeholder"),
   }) as HTMLTextAreaElement;
 
   // 顶部 help：拆为多段（en/zh 不需要 1:1 翻，但 help 5 段更模块化）
@@ -109,7 +109,7 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
     el("div", { class: "field" },
       el("label", {}, t("settings.advanced.xiaomi_api_key_label")),
       xmApiKeyInput,
-      el("div", { class: "status", id: "api-key-status-xiaomimimo-adv" }, t("credentials.cookie_status_placeholder")),
+      el("div", { class: "status", id: "api-key-status-xiaomimimo-adv" }, t("settings.credentials.cookie_status_placeholder")),
       el("div", { class: "row" },
         el("button", {
           class: "primary",
@@ -131,7 +131,7 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
     el("div", { class: "field" },
       el("label", {}, t("settings.advanced.xiaomi_cookie_label")),
       xmCookieInput,
-      el("div", { class: "status", id: "cookie-status-xiaomimimo-adv" }, t("credentials.cookie_status_placeholder")),
+      el("div", { class: "status", id: "cookie-status-xiaomimimo-adv" }, t("settings.credentials.cookie_status_placeholder")),
       el("div", { class: "row" },
         el("button", {
           class: "primary",

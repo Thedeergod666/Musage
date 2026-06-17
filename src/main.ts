@@ -130,7 +130,7 @@ function applyColorOverrides(): void {
   }
 }
 
-import { t, initLocale, onLocaleChange, setLocale } from "./i18n";
+import { t, initLocale, onLocaleChange, setLocale, getLocale } from "./i18n";
 
 
 
@@ -900,10 +900,11 @@ async function init() {
     if (snap) render(snap);
   });
   // 监听 Rust 端 locale-changed 事件（设置面板切语言时触发，跨 webview 同步）
+  // 防无限循环：若当前 locale 与事件相同，跳过（避免 set_app_locale 二次触发再 emit）
   listen<string>("musage://locale-changed", async (e) => {
     const newLocale = e.payload;
-    if (newLocale === "en" || newLocale === "zh-CN") {
-      await setLocale(newLocale); // loadLocale + current 更新 + onLocaleChange 触发
+    if ((newLocale === "en" || newLocale === "zh-CN") && newLocale !== getLocale()) {
+      await setLocale(newLocale);
     }
   });
 

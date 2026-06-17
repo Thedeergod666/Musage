@@ -258,7 +258,13 @@ function errorKindLabel(k: string): string {
 function render(snap: QuotaSnapshot) {
   lastRenderedSnap = snap;
   if (!snap.providers || snap.providers.length === 0) {
-    renderLoading();
+    renderEmptyState();
+    return;
+  }
+  // 首启空态:所有 provider 都未配 key → 不显示假 Loading,直接展示引导页
+  // (大按钮「打开设置面板」)。比"⏳ Loading..."更明确告诉新用户干嘛。
+  if (snap.providers.every((p) => !p.success && p.error_kind === "unconfigured_key")) {
+    renderEmptyState();
     return;
   }
 
@@ -387,15 +393,22 @@ async function autoResizeWindow(snap: QuotaSnapshot) {
   if (fp === lastFitFingerprint) return;
   lastFitFingerprint = fp;
 
+  await resizeWindowToContent(appEl);
+}
+
+/// 空态 resize（renderEmptyState 后调用）:不走 contentFingerprint 去重,
+/// 每次都量当前 DOM 高度。
+async function autoResizeWindowToContent() {
+  await new Promise<void>((r) => requestAnimationFrame(() => r()));
+  const appEl = document.getElementById("app");
+  if (!appEl) return;
+  await resizeWindowToContent(appEl);
+}
+
+async function resizeWindowToContent(appEl: HTMLElement) {
   const contentH = appEl.scrollHeight;
-  // 跟随 monitor 工作区兜底：8+ provider 时 scrollHeight 能轻松超过屏幕高度，
-  // 窗口顶到屏幕边外底部卡片被任务栏盖住。`screen.availHeight` 已扣掉任务栏/Dock
-  // 是 CSS 像素（Chromium/WebView 行为一致），留 80px 给窗口边距和不可视区。
-  // 兜底后窗口最多到工作区高，超出部分由 #app 的 overflow-y:auto 接管滚动。
-  // 后端 commands.rs:resize_floating_window 还有 clamp(100, 2400) 兜底防御 OS 层。
   const screenH = window.screen?.availHeight ?? 2400;
   const maxH = Math.max(200, screenH - 80);
-  // 已经在 1px 容差内就跳过，避免子像素抖动触发的 re-resize
   const currentH = window.innerHeight;
   const desired = Math.min(contentH, maxH);
   if (Math.abs(currentH - desired) <= 1) return;
@@ -407,11 +420,24 @@ async function autoResizeWindow(snap: QuotaSnapshot) {
   }
 }
 
-function renderLoading() {
-  // 留一个占位 .err —— 首次启动 / 还没拉到数据时
-  if (!app.querySelector(".err")) {
-    app.innerHTML = `<div class="err"><div class="err-title">${escapeHtml(t("floating.loading"))}</div></div>`;
-  }
+function renderEmptyState() {
+  // 首启空态:用户还没配任何 API key 时,展示引导页 + 大按钮"打开设置面板"。
+  // 取代原来的假"⏳ Loading..."占位(2026-06-17 commit 删)。文案:
+  //   - 标题:🚀 Musage  (品牌 + emoji,不需要 i18n)
+  //   - 副标题:t("floating.footer.hint_unconfigured")  (复用已有 key,跟
+  //            footer 提示保持一致;新用户首屏也最需要这条信息)
+  //   - 按钮:t("floating.open_settings")  (已有 key)
+  //   - 提示:t("floating.tray_right_to_settings")  (已有 key)
+  // 不引入新 i18n key,等 P0-P2 收尾的 agent 统一加"empty_state.title"再升级。
+  app.innerHTML = `
+    <div class="empty-state">
+      <div class="empty-state-title">🚀 Musage</div>
+      <div class="empty-state-subtitle">${escapeHtml(t("floating.footer.hint_unconfigured"))}</div>
+      <button class="empty-state-cta open-settings">${escapeHtml(t("floating.open_settings"))}</button>
+      <div class="empty-state-hint">${escapeHtml(t("floating.tray_right_to_settings"))}</div>
+    </div>
+  `;
+  void autoResizeWindowToContent();
 }
 
 // ── 卡片 ──
@@ -915,10 +941,9 @@ async function init() {
     setLowPowerAttr(e.payload);
   }).then((fn) => (unlistenLowPower = fn));
 
-  // 启动时立即 render loading 占位，避免空白窗口
-  app.innerHTML = `<div class="err"><div class="err-title">${escapeHtml(t("floating.loading"))}</div></div>`;
-
-  // 初次拉取
+  // 启动时立即调 render —— render() 内部检测"所有 provider 都未配 key"会
+  // 走 renderEmptyState(),不再显示"⏳ Loading..."这个假占位 (2026-06-17 commit
+  // 删)。第一次启动时 get_snapshot 会返空 snap → renderEmptyState() 立刻展示。
   try {
     const snap = await invoke<QuotaSnapshot>("get_snapshot");
     if (snap.fetched_at && snap.providers.length > 0) {

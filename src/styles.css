@@ -434,6 +434,57 @@ body[data-hover] #app .err-server_error     .err-label { color: #ff453a; backgro
 .err-btn:hover  { background: #2294ff; }
 .err-btn:active { transform: scale(0.96); }
 
+/* ── 首启空态 (2026-06-17 commit) ──
+ * 取代原来的"⏳ Loading..."假占位。新用户没配 key 时展示引导页:
+ *   标题:🚀 Musage (品牌,无 i18n)
+ *   副标题:复用 floating.footer.hint_unconfigured
+ *   CTA 按钮:打开设置面板
+ *   提示:托盘右键也管用
+ * 样式走 macOS Sonoma+ 卡片风格,跟 .card 一致。*/
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-6) var(--sp-5);
+  text-align: center;
+  min-width: 240px;
+  max-width: 320px;
+}
+.empty-state-title {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--fg-0);
+  text-shadow: var(--text-shadow);
+  letter-spacing: 0.02em;
+}
+.empty-state-subtitle {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--fg-1);
+  text-shadow: var(--text-shadow);
+}
+.empty-state-cta {
+  margin-top: var(--sp-2);
+  padding: 8px 22px;
+  border: none;
+  border-radius: 999px;
+  background: #007aff;  /* iOS 系统蓝,跟 macOS Sonoma 原生 button 一致 */
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 122, 255, 0.3);
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+.empty-state-cta:hover  { background: #2294ff; }
+.empty-state-cta:active { transform: scale(0.96); }
+.empty-state-hint {
+  font-size: 10px;
+  color: var(--text-faint);
+  text-shadow: var(--text-shadow);
+}
+
 .hint {
   font-size: 10px;
   color: var(--text-faint);

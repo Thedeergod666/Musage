@@ -207,9 +207,8 @@ export function createProviderPanel(meta: SourceMeta, cfg: AppConfig): HTMLEleme
     : null;
 
   // ── Header: [logo] [display_name] [group tag] ........ [在浮窗显示 checkbox] ──
-  // 组标签（如 "📊 Token Plan"）让用户一眼看出 provider 归属哪个类目，
-  // 不用靠 divider 行来推断。跟 provider-group-divider 用同一个
-  // getGroupDef() 拿 icon + title，视觉一致。
+  // 组标签（如 "Token Plan"）让用户一眼看出 provider 归属哪个类目，
+  // 不用靠 divider 行来推断。
   const gk = groupKeyFor(meta);
   const gDef = getGroupDef(gk);
   const groupTag = el(

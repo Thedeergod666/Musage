@@ -124,7 +124,7 @@ code { background: #2a2d35; padding: 1px 4px; border-radius: 3px; font-size: 11p
   height: 18px;
   flex: 0 0 auto;
   opacity: 0.7;
-  color: inherit; /* 让 SVG 的 stroke="currentColor" 跟文字色走 */
+  filter: invert(1); /* Lucide SVG stroke 黑色 → 深色主题下翻白 */
   transition: opacity var(--t-fast) var(--ease);
 }
 .nav-item.active .nav-emoji { opacity: 1; }
@@ -664,26 +664,16 @@ button.order-down {
 }
 
 /* 套餐区扁平列表（feat: 浮窗顺序 = 套餐顺序）
- * ——
- * PR 3 用过 3 个 sticky tab + collapsible <details> 折叠组的二段式布局。
- * 新方案：所有 provider 按 cfg.provider_order 排成一个长列表，组之间
- * 不再分块；进新组时插一条 inline <h3> 分隔线（带 emoji + 组名）作为
- * 视觉指示。组本身不再决定位置，浮窗顺序是 single source of truth。
  *
- * 优点：
- * - mimo 即使归 xiaomi 组也会按浮窗位置排到列表第 N 位（之前在 special
- *   组固定底部，浮窗排第 1 也还是垫底）
- * - 搜索结果天然跨组展示，不用 .show-all 那种"展开所有 tab"的 hack
- * - 新加 CustomSource 自动按 cfg.provider_order 末尾排进 custom 组分隔线
- *   之后，不会出现"隐藏在新 tab 里找不到"的 UX 死角
+ * 所有 provider 按 cfg.provider_order 排成一个长列表，组归属通过
+ * 每个 provider header 里的 .provider-group-tag（如 "Token Plan"）
+ * 体现，不再需要顶部的组分隔线。
  */
 .provider-toolbar {
-  /* sticky 置顶 —— 滚到下面时搜索框 / 计数 / 添加按钮仍可点 */
   position: sticky;
   top: 0;
   z-index: 10;
   margin-bottom: var(--sp-2, 6px);
-  /* 关键：背景必须不透明，否则滚动时上方内容漏出 */
   background: #1a1c22;
   padding: var(--sp-2, 6px) var(--sp-3, 8px);
   border-radius: var(--r-md, 6px);
@@ -692,16 +682,6 @@ button.order-down {
   display: flex;
   flex-direction: column;
   gap: var(--sp-2, 6px);
-}
-.provider-group-divider {
-  margin: var(--sp-3, 8px) 0 var(--sp-1, 4px) 0;
-  padding: 0 var(--sp-2, 6px);
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--fg-2, #aaa);
-  letter-spacing: 0.02em;
-  /* 不画 border-bottom：分隔线是 inline 视觉标签，不是分区。视觉上
-   * 接近 group definition 的 emoji 标签 → "📊 Token Plan" 一行小字。 */
 }
 
 .hidden { display: none !important; }

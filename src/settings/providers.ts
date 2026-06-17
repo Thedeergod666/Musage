@@ -27,7 +27,7 @@ import { getProviderExtras } from "./source-extras";
 import { renderOrderSection } from "./order";
 import { renderCredentialBlock, loadCredentialStatus } from "./credentials";
 import { getProviderMeta } from "./logos";
-import { getGroupDef, groupKeyFor, groupIconUrl, type GroupKey } from "./groups";
+import { getGroupDef, groupKeyFor } from "./groups";
 import { openAddCustomSourceModal } from "./custom-source-form";
 import { t } from "../i18n";
 import { trashIcon } from "../icons";
@@ -79,16 +79,9 @@ export async function renderProvidersSection(container: HTMLElement) {
   // 2) 顶部"浮窗卡片顺序"（带 enabled/disabled 分区）
   renderOrderSection(container, allSources, cfg.provider_order, cfg);
 
-  // 3) 套餐区扁平列表：所有 provider 按「浮窗卡片顺序」铺在一个长列表里，
-  // 跨组不重排 —— mimo 即使归 xiaomi 组也会按浮窗位置排到列表第 N 位，
-  // 不再因为"组本身就是 special"被强制压到底部。
-  // 视觉上保留原 group 归属：进入新组时插一条 inline <h3> 分隔线（带
-  // emoji + 组名），让用户仍能识别"这是一家 token_plan / balance / ...",
-  // 但顺序 = 浮窗顺序。
-  //
-  // 实现：先按 currentProviderOrder 全局排序，再 iterate 时跟踪"上一项
-  // 的 group key"，跨组时插入分隔线。空组（某个 GroupKey 一个 meta 都
-  // 没有）自动不出现在分隔线里。
+  // 3) 套餐区扁平列表：所有 provider 按「浮窗卡片顺序」铺在一个长列表里。
+  // 组归属通过每个 provider header 里的 .provider-group-tag 体现（如
+  // "Token Plan"），不再需要顶部的组分隔线。
   const orderIdx = new Map(currentProviderOrder.map((id, i) => [id, i]));
   const allSorted = [...allSources].sort((a, b) => {
     const ai = orderIdx.get(a.id);
@@ -99,25 +92,7 @@ export async function renderProvidersSection(container: HTMLElement) {
   });
 
   const flatContainer = el("div", { class: "providers-flat" });
-  let prevGroup: GroupKey | null = null;
   for (const meta of allSorted) {
-    const gk = groupKeyFor(meta);
-    if (gk !== prevGroup) {
-      const def = getGroupDef(gk);
-      const iconImg = document.createElement("img");
-      iconImg.src = groupIconUrl(gk);
-      iconImg.alt = "";
-      iconImg.className = "icon icon-16";
-      flatContainer.appendChild(
-        el(
-          "h3",
-          { class: "provider-group-divider", "data-group": gk },
-          iconImg,
-          ` ${def.title}`,
-        ),
-      );
-      prevGroup = gk;
-    }
     flatContainer.appendChild(createProviderPanel(meta, cfg));
   }
   container.appendChild(flatContainer);
@@ -166,22 +141,6 @@ function applySearchFilter(q: string, container: HTMLElement): void {
         name.toLowerCase().includes(needle);
       sec.classList.toggle("hidden", !hit);
     });
-  // Flat list 里 divider 后面会跟一串 .provider-section，扫到下一个 divider
-  // 或 list 末尾截止。空组 → divider 也标 hidden，相邻空组的两个 divider
-  // 会紧贴所以也把"前一个 divider"再清一次避免重复。
-  const flat = container.querySelector<HTMLElement>(".providers-flat");
-  if (!flat) return;
-  const children = [...flat.children] as HTMLElement[];
-  let visibleCountAfter = 0;
-  for (let i = children.length - 1; i >= 0; i--) {
-    const c = children[i];
-    if (c.classList.contains("provider-group-divider")) {
-      c.classList.toggle("hidden", visibleCountAfter === 0);
-      visibleCountAfter = 0;
-    } else if (c.classList.contains("provider-section")) {
-      if (!c.classList.contains("hidden")) visibleCountAfter++;
-    }
-  }
 }
 
 /// 一个 source → 一个 panel（带 header + credentials + EXTRAS + 启用/间隔）

@@ -12,7 +12,9 @@
 use ab_glyph::{Font, FontVec, PxScale, ScaleFont};
 use image::Rgba;
 use imageproc::drawing::draw_text_mut;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem},
@@ -26,6 +28,33 @@ use crate::providers::{Provider, ProviderSnapshot, QuotaSnapshot};
 // 不要在子模块里写 `use rust_i18n::t;` —— 那会找错 macro；必须走 crate::t
 // 才能拿到 i18n!("locales") 生成的那份。
 use crate::t;
+
+/// 防御 NSStatusItem 合成事件误触发 toggle：
+///
+/// macOS 端 `rightMouseDown:` → `on_tray_click(Right)` → `ns_button.performClick(None)`
+/// 会**模拟**一次左键 click 走 `mouseUp:`，派发 `Click{button:Left, state:Up}`
+/// 到我们 `on_tray_icon_event`。我们的 toggle 模式 `if let ... button: Left,
+/// state: Up` **会匹配**这个合成事件，触发 `w.hide()` → 浮窗消失 → app 失焦
+/// → 菜单立即关闭（用户看到"闪一下就消失"）。
+///
+/// 修法：记录最近一次真 `Left Down` 的时间戳，`Left Up` 触发 toggle 前校验
+/// —— 必须是过去 500ms 内有对应 `Left Down` 才认作用户真点击，否则视作
+/// 合成事件丢弃。
+///
+/// 500ms 阈值远大于任何真用户的 down→up 间隔（典型 < 200ms），又短到能
+/// 把隔夜的陈旧 Down 视为失效（防止上次 app 关闭时的 Down 状态影响下次）。
+static LAST_LEFT_DOWN_MS: AtomicU64 = AtomicU64::new(0);
+
+#[inline]
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 真左键 click 的 down→up 间隔上限。超过这个值的 Up 视为合成事件或脏状态。
+const LEFT_DOWN_UP_WINDOW_MS: u64 = 500;
 
 // 字体加载：优先用户自选填 `assets/font.ttf`，再走系统字体 fallback，
 // 最后用平台内置的备用路径。全部失败 → 纯色圆点（无文字）。
@@ -179,23 +208,46 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            // 左键单击切换悬浮窗显隐
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                let app = tray.app_handle();
-                if let Some(w) = app.get_webview_window("floating") {
-                    if w.is_visible().unwrap_or(false) {
-                        let _ = w.hide();
-                    } else {
-                        let _ = w.unminimize();
-                        let _ = w.show();
-                        let _ = w.set_focus();
+            // 左键单击切换悬浮窗显隐。Down 时记时间戳，Up 时校验：
+            // 真用户 click 的 down→up 间隔 < 500ms，合成事件无对应 Down 直接丢。
+            match event {
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Down,
+                    ..
+                } => {
+                    LAST_LEFT_DOWN_MS.store(now_ms(), Ordering::SeqCst);
+                }
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } => {
+                    let down = LAST_LEFT_DOWN_MS.load(Ordering::SeqCst);
+                    let up = now_ms();
+                    // 0 = 从未收到过 Down（启动后首次 Up 一定是合成的）
+                    // up - down > 500 = 陈旧 Down，丢
+                    if down == 0 || up.saturating_sub(down) > LEFT_DOWN_UP_WINDOW_MS {
+                        tracing::trace!(
+                            down,
+                            up,
+                            since_down_ms = up.saturating_sub(down),
+                            "ignore synthesized Left/Up (no fresh Down within 500ms)"
+                        );
+                        return;
+                    }
+                    let app = tray.app_handle();
+                    if let Some(w) = app.get_webview_window("floating") {
+                        if w.is_visible().unwrap_or(false) {
+                            let _ = w.hide();
+                        } else {
+                            let _ = w.unminimize();
+                            let _ = w.show();
+                            let _ = w.set_focus();
+                        }
                     }
                 }
+                _ => {}
             }
         })
         .build(app)?;

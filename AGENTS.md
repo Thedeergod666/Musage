@@ -152,6 +152,71 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
    - 首选：`src-tauri/target/release/bundle/nsis/Musage_*_x64-setup.exe`（双击安装，自动处理 WebView2）
    - 备用：裸 `src-tauri/target/release/musage.exe`（需朋友自己装 WebView2 Runtime）
 
+## macOS 安装后显示「应用已损坏」（2026-06-17 修）
+
+**症状**：从 GitHub release 下载 `Musage_0.1.0_aarch64.dmg`，挂载后把 `Musage.app` 拖进 `/Applications`，双击启动弹窗 "「Musage」已损坏，无法打开。你应该将它移到废纸篓"。
+
+**根因**（已确证）：
+- DMG 上有 `com.apple.quarantine` xattr（Edge 下载的产物）→ `xattr -l Musage_0.1.0_aarch64.dmg` 能看到 `com.apple.quarantine: 0281;...;Edge;...`
+- DMG / `.app` **完全没有代码签名** → `codesign -dv /Users/wyh/Downloads/Musage_0.1.0_aarch64.dmg` 报 `code object is not signed at all`
+- `tauri.conf.json` 的 `bundle.macOS` 字段原本**完全缺失**（没有 `signingIdentity` / `entitlements`）
+- 触发链：quarantine xattr 存在 + 没有 Developer ID 签名 → macOS Gatekeeper (Big Sur+) 拦截，显示"已损坏"。**和"应用真坏了"无关**，是签名/公证问题。
+
+**修法**（两步）：
+
+**A. 项目侧**（已落地，本次 commit）：
+- 新增 [`src-tauri/entitlements.plist`](src-tauri/entitlements.plist) — Hardened Runtime 必需的 entitlement 集合：
+  - `com.apple.security.cs.allow-jit` — WKWebView 内部 JIT
+  - `com.apple.security.cs.allow-unsigned-executable-memory` — WKWebView 内部
+  - `com.apple.security.cs.disable-library-validation` — 让 objc2 链系统 framework + `setLevel(-1)` 等私有 API 生效
+  - `com.apple.security.network.client` / `.server` — 13 provider 拉 API + Tauri 自动更新
+  - **不**开 `com.apple.security.app-sandbox`（与 `platform/macos.rs` 把窗口放到 `kCGNormalWindowLevel - 1` 互斥）
+- `tauri.conf.json` 加 `bundle.macOS`：
+  ```json
+  "macOS": {
+    "signingIdentity": null,            // null = 跳过签名 → 出 unsigned dmg
+    "providerShortName": null,          // signingIdentity 非 null 时填 notarytool keychain profile
+    "entitlements": "entitlements.plist",
+    "minimumSystemVersion": "10.15"
+  }
+  ```
+
+**B. 用户侧应急**（针对已下载的 v0.1.0 dmg，无 Apple Developer ID 也能跑）：
+```bash
+# 1. 挂载 dmg,把 Musage.app 拖进 /Applications
+open /Users/wyh/Downloads/Musage_0.1.0_aarch64.dmg
+cp -R /Volumes/Musage/Musage.app /Applications/
+
+# 2. 清 quarantine + ad-hoc 签
+xattr -cr /Applications/Musage.app
+codesign --force --deep --options runtime --sign - /Applications/Musage.app
+
+# 3. 双击启动即可 (spctl 会报 rejected, 但能跑)
+```
+
+**有 Apple Developer ID 之后**（走真签名 + 公证，零提示弹窗）：
+```bash
+# 1. 一次性配置 notarytool keychain profile
+xcrun notarytool store-credentials Thedeergod666-Notary \
+    --apple-id "you@example.com" --team-id "TEAMID" --password "app-specific-pw"
+
+# 2. 改 tauri.conf.json:
+#    signingIdentity: "Developer ID Application: Your Name (TEAMID)"
+#    providerShortName: "Thedeergod666-Notary"
+# 3. pnpm tauri build   # Tauri 自动签名 + 公证 + staple
+```
+
+**为什么用 Hardened Runtime + 这些 entitlement**：
+- Tauri 2 的 `app.macOSPrivateApi: true`（`tauri.conf.json:13`）启用 Tauri 内部用私有 macOS API，**必须** Hardened Runtime
+- 后端 `src-tauri/src/platform/macos.rs` 用 `objc2` 直接调 `NSWindow.setLevel(-1)` —— 需要 `disable-library-validation` 让 objc2 链系统 framework
+- Hardened Runtime 默认拒绝以上行为 → 必须显式 grant entitlement
+
+**为什么 `signingIdentity: null` 而不是"想办法签上"**：
+- macOS 上**没有** Apple Developer ID 没法真签（用户机器 `security find-identity -p codesigning -v` 报 `0 valid identities found`）
+- 留 null 走未签名构建是 honest default：build 不会偷偷失败，输出 unsigned dmg 让你明明白白手动 ad-hoc sign
+
+**已知次生坑**：昨天的 crash report `~/Library/Logs/DiagnosticReports/musage-2026-06-16-133409.ips` 是 dev 模式（`parentProc: "node"` = Tauri dev server）+ Tauri 自己 subprocess 跑飞，跟本 bug **无关**，是另一条线。
+
 ## 浮窗 logo 打包后裂开（2026-06-13 修）
 
 **症状**：dev 模式正常，打包后 Tavily / ZenMux 浮窗卡片上的 logo 显示成 broken image（裂开图标 🖼️💥），其余 4 个 provider（minimax / deepseek / xiaomimimo / openrouter）正常。

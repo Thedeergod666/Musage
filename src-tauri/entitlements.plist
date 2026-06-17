@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!--
+      Musage — macOS Hardened Runtime entitlements
+      ==============================================
+      2026-06-17 加, 修 macOS "应用已损坏" bug。
+      关联 commit: tauri.conf.json 的 bundle.macOS.entitlements 引用此文件。
+
+      为什么需要这些 entitlement:
+      - macos-private-api (Tauri 2 setting) 启用 Tauri 自己用私有 macOS API
+        —— 必须在 Hardened Runtime 下签, 否则被 macOS 拦截
+      - 后端 platform/macos.rs 用 objc2 直接调 NSWindow.setLevel(-1),
+        需要 disable-library-validation 才能让 objc2 链上系统 framework
+      - WebView 内部 JIT (WKWebView) 触发 allow-jit / allow-unsigned-executable-memory
+      - 13 个 provider 都走 HTTPS 调各家 quota API → 需要 network.client
+
+      注意:
+      - App **不上沙盒** (没开 com.apple.security.app-sandbox):
+        因为 platform/macos.rs 要把窗口放到 kCGNormalWindowLevel - 1,
+        沙盒不允许这种"入侵式"窗口级别。沙盒 + 自定义 level 互斥。
+      - 没 Apple Developer ID 也能用此文件 + codesign --sign - (ad-hoc),
+        只是 spctl --assess 会报 "rejected"; 用户能跑就行。
+      - 走 Developer ID 正式分发时, 替换 signingIdentity + 跑
+        xcrun notarytool submit, 此文件不需要改。
+    -->
+
+    <!-- Hardened Runtime 必需: 允许 JIT (WKWebView 内部用) -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+
+    <!-- Hardened Runtime 必需: 允许未签名可执行内存 (WKWebView 内部) -->
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+
+    <!-- Hardened Runtime 必需: 关掉库签名校验, objc2 + 私有 API 才能 load 系统 framework -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+
+    <!-- 网络出站: 13 个 provider 全部走 HTTPS 拉 quota -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!-- Tauri 自动更新需要从 GitHub release 下载 new bundle (HTTPS) -->
+    <key>com.apple.security.network.server</key>
+    <true/>
+</dict>
+</plist>

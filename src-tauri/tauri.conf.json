@@ -47,7 +47,13 @@
     ],
     "category": "Utility",
     "shortDescription": "MiniMax Token Plan 实时用量监控",
-    "longDescription": "桌面悬浮窗 + 系统托盘，实时显示 MiniMax M2 系列模型的 5h / 周用量"
+    "longDescription": "桌面悬浮窗 + 系统托盘，实时显示 MiniMax M2 系列模型的 5h / 周用量",
+    "macOS": {
+      "signingIdentity": null,
+      "providerShortName": null,
+      "entitlements": "entitlements.plist",
+      "minimumSystemVersion": "10.15"
+    }
   },
   "plugins": {
     "updater": {

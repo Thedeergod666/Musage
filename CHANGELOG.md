@@ -49,6 +49,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CI 跨平台 dist 一致性**:HTML 100% 一致 + Vite `[hash]` 拿掉 + 双重 UTF-8 修复 (commits `707e342` / `8a45787` / `2a7d794`)
 - **CI release 修 verify**:`checkout` 显式 + pnpm 钉到 9.15.4 对齐 `packageManager` + 注释掉 `APPLE_*` 走未签名构建 + 死代码清理 (commits `8790596` / `5ef0fe7` / `25b6aa6` / `fa785e7`)
 - 多个 CI 诊断 / normalize 脚本抽 `.cjs` (commits `1ab3d67` / `a1c1255` / `519e9e3` / `107ded6` / `fa701bc`)
+- **macOS 安装后打开显示「应用已损坏」**:加 `bundle.macOS` 配置 + `entitlements.plist` (Hardened Runtime:allow-jit / allow-unsigned-executable-memory / disable-library-validation / network.client / network.server),`signingIdentity` 留 `null` 走未签名构建,用户手动 ad-hoc sign + `xattr -cr` 即用;后续有 Apple Developer ID 改 `signingIdentity` 走真签名 + `notarytool` 自动公证
+- **浮窗错误态按 error_kind 分发恢复按钮** + 浮窗显示「Next auto-retry in ~Xm」倒计时 (commit `5b976e2`):unconfigured_key/auth_failed → 打开设置 / auth_failed + xiaomimimo → 重新登录 / schema_unknown → ⚙ Advanced / network/rate_limited/server_error → 🔄 Retry 绕过 backoff 立即重拉
 
 ### Changed
 - 浮窗默认显示模式从 All 改为 TotalOnly (commit `c3577f1`)

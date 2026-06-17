@@ -52,7 +52,8 @@
       "business_code": "{provider} API error (code {code}): {msg}",
       "missing_field": "{provider} 响应缺少 {field}",
       "rate_limited": "{provider} 请求过于频繁，请稍后再试",
-      "rate_limited_with_retry": "{provider} 请求过于频繁，约 {retry_secs} 秒后可重试"
+      "rate_limited_with_retry": "{provider} 请求过于频繁，约 {retry_secs} 秒后可重试",
+      "url_scheme_invalid": "URL 必须以 https:// 开头（拒绝明文 / file:// / javascript: 等）。当前值：{url}"
     },
     "provider": {
       "unconfigured_key": "未配置 {provider} 的 API key（设置面板填入）",

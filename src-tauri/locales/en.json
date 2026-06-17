@@ -52,7 +52,8 @@
       "business_code": "{provider} API error (code {code}): {msg}",
       "missing_field": "{provider} response missing {field}",
       "rate_limited": "{provider} rate limited, please try again later",
-      "rate_limited_with_retry": "{provider} rate limited, retry in about {retry_secs} seconds"
+      "rate_limited_with_retry": "{provider} rate limited, retry in about {retry_secs} seconds",
+      "url_scheme_invalid": "URL must start with https:// (rejects http://, file://, javascript:, etc). Current value: {url}"
     },
     "provider": {
       "unconfigured_key": "API key not configured for {provider} (set in Settings)",

@@ -160,6 +160,14 @@ async fn do_fetch(
     custom_url: Option<&str>,
 ) -> Result<ProviderSnapshot, FetchError> {
     let url = custom_url.unwrap_or_else(|| mode.default_url());
+    // H9 fix: 校验 URL scheme —— user-provided base_url 可能来自篡改的 config.json
+    // 或 settings panel 误输入。拒绝 http://（泄露 API key 走明文）/ file:// / javascript: /
+    // 任何非 https:// 协议。即使 mode 默认 URL 也校验（防御 config 损坏）。
+    if !url.starts_with("https://") {
+        return Err(FetchError::auth(
+            t!("error.common.url_scheme_invalid", url = url).into_owned()
+        ));
+    }
     let client = shared_client();
 
     let resp = client

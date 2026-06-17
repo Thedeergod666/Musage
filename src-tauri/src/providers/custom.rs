@@ -183,6 +183,14 @@ async fn do_fetch(api_key: &str, spec: &CustomSourceSpec) -> Result<ProviderSnap
         spec.base_url.trim_end_matches('/'),
         spec.path
     );
+    // H9 fix: SSRF / protocol confusion 防护 —— user-provided base_url 必须 https://
+    // 拒绝 http:// (泄露 API key 走明文) / file:// / javascript: / 其他 scheme。
+    // 即使 saved config 也每次都校验（防御篡改）。
+    if !url.starts_with("https://") {
+        return Err(FetchError::auth(
+            t!("error.common.url_scheme_invalid", url = url).into_owned()
+        ));
+    }
 
     let client = shared_client();
     let mut req = match spec.method.to_uppercase().as_str() {

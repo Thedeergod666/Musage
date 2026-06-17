@@ -121,11 +121,25 @@ unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
         ZOrder::NotTopMost => HWND_NOTOPMOST,
     };
 
-    // 路 B：直接改 style bit（OR 不 wipe）
-    if matches!(z, ZOrder::TopMost) {
-        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
-        let new_style: i32 = ex_style | (WS_EX_TOPMOST as i32);
-        SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
+    // 路 B：直接改 style bit（OR 不能 wipe，AND 清除时不能保留其它 bit）
+    //
+    // TopMost: OR WS_EX_TOPMOST
+    // Bottom: AND 清除 WS_EX_TOPMOST(显式清掉,避免 SetWindowPos(HWND_BOTTOM)
+    //         之后 bit 残留——HWND_BOTTOM 不会自动清 bit)
+    // NotTopMost: 不动 bit(SetWindowPos(HWND_NOTOPMOST) 按 Win32 文档
+    //         自身会清 bit,不需要这里重复做)
+    match z {
+        ZOrder::TopMost => {
+            let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+            let new_style: i32 = ex_style | (WS_EX_TOPMOST as i32);
+            SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
+        }
+        ZOrder::Bottom => {
+            let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+            let new_style: i32 = ex_style & !(WS_EX_TOPMOST as i32);
+            SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
+        }
+        ZOrder::NotTopMost => {}
     }
 
     // 路 A：z-order API + flush 路 B 的 cache

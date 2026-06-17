@@ -18,7 +18,6 @@ import { el, flash } from "./utils";
 import { t, setLocale, getLocale } from "../i18n";
 import { setRegion, getRegion } from "./api";
 import type { AppConfig } from "./types";
-import { regionFlag, regionGlobe } from "../icons";
 
 export async function renderRegionSection(container: HTMLElement) {
   // getRegion 是 Tauri command（async），getLocale 是前端 i18n helper（同步，进程内 state）
@@ -38,31 +37,25 @@ export async function renderRegionSection(container: HTMLElement) {
       value: opt.value,
     }) as HTMLInputElement;
     if (currentLocale === opt.value) radio.checked = true;
-    const iconImg = document.createElement("img");
-    iconImg.src = regionFlag;
-    iconImg.alt = "";
-    iconImg.className = "icon icon-16";
     langRadios.appendChild(
       el("label", { class: "region-opt" },
         radio,
         el("div", { class: "region-opt-body" },
-          el("div", { class: "region-opt-title" }, iconImg, ` ${opt.title}`),
+          el("div", { class: "region-opt-title" }, opt.title),
         ),
       ),
     );
   }
 
   // ── 区域 radio ──
-  const regionOpts: Array<{ value: string; icon: string; title: string; desc: string }> = [
+  const regionOpts: Array<{ value: string; title: string; desc: string }> = [
     {
       value: "cn",
-      icon: regionFlag,
       title: t("settings.region.option_cn"),
       desc: t("settings.region.desc_cn"),
     },
     {
       value: "global",
-      icon: regionGlobe,
       title: t("settings.region.option_global"),
       desc: t("settings.region.desc_global"),
     },
@@ -75,15 +68,11 @@ export async function renderRegionSection(container: HTMLElement) {
       value: opt.value,
     }) as HTMLInputElement;
     if (currentRegion === opt.value) radio.checked = true;
-    const iconImg = document.createElement("img");
-    iconImg.src = opt.icon;
-    iconImg.alt = "";
-    iconImg.className = "icon icon-16";
     regionRadios.appendChild(
       el("label", { class: "region-opt" },
         radio,
         el("div", { class: "region-opt-body" },
-          el("div", { class: "region-opt-title" }, iconImg, ` ${opt.title}`),
+          el("div", { class: "region-opt-title" }, opt.title),
           el("div", { class: "region-opt-desc" }, opt.desc),
         ),
       ),
@@ -116,7 +105,7 @@ export async function renderRegionSection(container: HTMLElement) {
 
   container.appendChild(
     el("section", { class: "section-card", id: "region-section" },
-      (() => { const img = document.createElement("img"); img.src = regionGlobe; img.alt = ""; img.className = "icon icon-20"; return el("h2", {}, img, ` ${t("settings.region.section_title")}`); })(),
+      el("h2", {}, t("settings.region.section_title")),
       el("div", { class: "help" }, t("settings.region.help")),
       // 语言子组
       el("div", { class: "region-subgroup" },

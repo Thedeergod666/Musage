@@ -26,7 +26,6 @@ import siliconflowLogo from "./assets/siliconflow-logo.svg?url";
 import novitaLogo from "./assets/novita-logo.svg?url";
 import qwenLogo from "./assets/qwen-logo.svg?url";
 import claudeLogo from "./assets/claude-logo.svg?url";
-import { logoEmpty, navAdvancedIcon } from "./icons";
 import "./styles.css";
 
 /// 静态映射：provider id → 官网 logo + 显示名 + accent 色
@@ -435,7 +434,7 @@ function renderEmptyState() {
   // 不引入新 i18n key,等 P0-P2 收尾的 agent 统一加"empty_state.title"再升级。
   app.innerHTML = `
     <div class="empty-state">
-      <div class="empty-state-title"><img class="icon icon-32" src="${logoEmpty}" alt=""> Musage</div>
+      <div class="empty-state-title">Musage</div>
       <div class="empty-state-subtitle">${escapeHtml(t("floating.footer.hint_unconfigured"))}</div>
       <button class="empty-state-cta open-settings">${escapeHtml(t("floating.open_settings"))}</button>
       <div class="empty-state-hint">${escapeHtml(t("floating.tray_right_to_settings"))}</div>
@@ -554,7 +553,7 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
         actionBtn = `<button class="err-btn open-settings">${escapeHtml(t("floating.open_settings"))}</button>`;
       }
     } else if (kind === "schema_unknown") {
-      actionBtn = `<button class="err-btn err-btn-advanced" data-section="advanced"><img class="icon icon-16" src="${navAdvancedIcon}" alt=""> ${escapeHtml(t("settings.nav.advanced"))}</button>`;
+      actionBtn = `<button class="err-btn err-btn-advanced" data-section="advanced">${escapeHtml(t("settings.nav.advanced"))}</button>`;
       const schemaHint = `<div class="hint">${escapeHtml(t("floating.init_error_hint"))}</div>`;
       retryInfo = schemaHint;
     } else if (kind === "network" || kind === "rate_limited" || kind === "server_error") {

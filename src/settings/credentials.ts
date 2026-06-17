@@ -24,7 +24,6 @@ import {
 } from "./api";
 import { $, el, flash } from "./utils";
 import { t } from "../i18n";
-import { copyIcon } from "../icons";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ProviderId, SourceMeta } from "./types";
@@ -264,12 +263,7 @@ export function renderCredentialBlock(meta: SourceMeta): HTMLElement {
       "data-id": meta.id,
       "data-action": "copy-key",
       title: t("credentials.copy_title"),
-    });
-    const copyImg = document.createElement("img");
-    copyImg.src = copyIcon;
-    copyImg.alt = "";
-    copyImg.className = "icon icon-16";
-    copyBtn.appendChild(copyImg);
+    }, "Copy");
     block.appendChild(
       el("div", { class: "input-row" }, input, copyBtn),
     );

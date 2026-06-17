@@ -5,7 +5,6 @@
 // 不会全量 re-render，所以不需要 reactive 框架。
 
 import { getLocale } from "../i18n";
-import { flashCheck, flashX, flashWarn } from "../icons";
 
 /// 当前已知的 source id 列表（**派生自后端 registry**，不写死）。
 ///
@@ -103,23 +102,10 @@ export function flash(kindOrMsg: FlashKind | string, msgOrErr?: string | boolean
     text = msgOrErr;
   }
 
-  const ICON_URL =
-    kind === "ok" ? flashCheck : kind === "warn" ? flashWarn : flashX;
-
   const flashEl = $("#flash") as HTMLElement;
-  flashEl.replaceChildren();
-  flashEl.append(
-    Object.assign(document.createElement("img"), {
-      className: "icon icon-16 flash-icon",
-      src: ICON_URL,
-      alt: "",
-    }),
-    Object.assign(document.createElement("span"), {
-      className: `flash-text flash-${kind}`,
-      textContent: text,
-    }),
-  );
-  flashEl.style.display = "flex";
+  flashEl.textContent = text;
+  flashEl.style.color = kind === "ok" ? "#4caf50" : kind === "warn" ? "#ff9800" : "#f44336";
+  flashEl.style.display = "block";
   if (flashTimer !== null) clearTimeout(flashTimer);
   flashTimer = window.setTimeout(() => {
     flashEl.replaceChildren();

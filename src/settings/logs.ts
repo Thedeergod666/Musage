@@ -64,11 +64,14 @@ export async function loadLogs() {
     if (count) {
       count.textContent =
         filter === "all"
-          ? `${entries.length} 条`
-          : `${filtered.length} / ${entries.length} 条`;
+          ? t("settings.logs.count_all", { count: entries.length })
+          : t("settings.logs.count_filtered", {
+              filtered: filtered.length,
+              total: entries.length,
+            });
     }
   } catch (e) {
-    list.innerHTML = `<div class="logs-empty error">✗ 加载失败: ${escapeHtml(String(e))}</div>`;
+    list.innerHTML = `<div class="logs-empty error">${t("settings.logs.load_failed", { err: escapeHtml(String(e)) })}</div>`;
     if (count) count.textContent = "";
     console.error("[logs] load failed", e);
   }
@@ -78,7 +81,7 @@ function renderLogs(entries: LogEntry[]) {
   const list = document.getElementById("logs-list");
   if (!list) return;
   if (entries.length === 0) {
-    list.innerHTML = `<div class="logs-empty">— 当前筛选下暂无日志 —</div>`;
+    list.innerHTML = `<div class="logs-empty">${t("settings.logs.no_logs_filtered")}</div>`;
     return;
   }
   // 后端按时间正序返回（oldest → newest）。用户要"最新在最前面" → 翻过来。
@@ -101,13 +104,13 @@ function renderLogs(entries: LogEntry[]) {
 }
 
 export async function clearLogs() {
-  if (!confirm("确认清空所有日志？")) return;
+  if (!confirm(t("settings.logs.confirm_clear"))) return;
   try {
     await clearLogsIPC();
     await loadLogs();
-    flash("✓ 日志已清空");
+    flash(t("settings.logs.cleared"));
   } catch (e) {
-    flash(`✗ 清空失败: ${e}`, true);
+    flash(t("settings.logs.clear_failed", { err: String(e) }), true);
     console.error("[logs] clear failed", e);
   }
 }
@@ -129,7 +132,7 @@ export async function copyLogs() {
     const filtered =
       filter === "all" ? entries : entries.filter((e) => e.level === filter);
     if (filtered.length === 0) {
-      flash(`⚠ 当前筛选下没有日志可复制`, true);
+      flash(t("settings.logs.copy_empty"), true);
       return;
     }
     const lines = filtered.map((e) => {
@@ -138,9 +141,9 @@ export async function copyLogs() {
     });
     const text = lines.join("\n");
     await navigator.clipboard.writeText(text);
-    flash(`✓ 已复制 ${filtered.length} 条日志到剪贴板`);
+    flash(t("settings.logs.copied", { count: filtered.length }));
   } catch (e) {
-    flash(`✗ 复制失败: ${e}`, true);
+    flash(t("settings.logs.copy_failed", { err: String(e) }), true);
     console.error("[logs] copy failed", e);
   }
 }

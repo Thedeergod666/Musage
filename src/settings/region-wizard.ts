@@ -26,8 +26,8 @@ export async function renderRegionSection(container: HTMLElement) {
 
   // ── 语言 radio ──
   const langOpts: Array<{ value: "zh-CN" | "en"; emoji: string; title: string }> = [
-    { value: "zh-CN", emoji: "🇨🇳", title: "中文" },
-    { value: "en",    emoji: "🇺🇸", title: "English" },
+    { value: "zh-CN", emoji: "🇨🇳", title: t("settings.region.lang.zh-CN") },
+    { value: "en",    emoji: "🇺🇸", title: t("settings.region.lang.en") },
   ];
   const langRadios = el("div", { class: "region-wizard" });
   for (const opt of langOpts) {
@@ -99,7 +99,7 @@ export async function renderRegionSection(container: HTMLElement) {
       await Promise.all(tasks);
       flash(t("settings.region.applied"));
     } catch (e) {
-      flash(`✗ ${e}`, true);
+      flash(t("settings.region.apply_failed", { err: String(e) }), true);
     } finally {
       applyBtn.disabled = false;
     }

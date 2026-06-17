@@ -36,6 +36,7 @@ import {
   setCurrentProviderOrder,
 } from "./utils";
 import { getProviderMeta } from "./logos";
+import { t } from "../i18n";
 import type { AppConfig, ProviderId, SourceMeta } from "./types";
 
 /// 把 cfg.provider_order 规整成「已知 + 按 builtin 注册表补齐」的有序列表。
@@ -278,11 +279,11 @@ function onDragMouseUp(_e: MouseEvent) {
         await setProviderOrder(currentProviderOrder);
         flash(
           willBeEnabled
-            ? `✓ ${dragSrcId} 已移到浮窗显示区`
-            : `✓ ${dragSrcId} 已隐藏（拖回上方可恢复）`,
+            ? t("settings.order.flash_moved_to_floating", { id: dragSrcId! })
+            : t("settings.order.flash_hidden", { id: dragSrcId! }),
         );
       } catch (e) {
-        flash(`✗ 切换显示失败: ${e}`, true);
+        flash(t("settings.order.flash_move_failed", { err: String(e) }), true);
       }
     })();
   } else {
@@ -443,11 +444,11 @@ function onDividerMouseUp(_e: MouseEvent) {
       const delta = newBoundaryPos - oldBoundary;
       flash(
         delta > 0
-          ? `✓ 已新增 ${delta} 张卡片到浮窗`
-          : `✓ 已隐藏 ${-delta} 张卡片`,
+          ? t("settings.order.flash_cards_added", { delta })
+          : t("settings.order.flash_cards_removed", { "-delta": -delta }),
       );
     } catch (e) {
-      flash(`✗ 调整失败: ${e}`, true);
+      flash(t("settings.order.flash_move_failed", { err: String(e) }), true);
     } finally {
       suppressConfigRebuild = false;
       // 最终 resync：以防乐观更新与后端状态有微小偏差（不可能，但兜底）
@@ -483,7 +484,7 @@ export function renderOrderSection(
   const section = el(
     "section",
     { class: "order-section section-card" },
-    el("h2", {}, "浮窗卡片顺序"),
+    el("h2", {}, t("settings.order.section_title")),
     list,
   );
   const old = container.querySelector(".order-section");
@@ -539,11 +540,11 @@ function buildDivider(): HTMLElement {
     {
       class: "order-divider",
       "aria-hidden": "true",
-      title: "按住拖动可调整浮窗显示数量",
+      title: t("settings.order.divider_title"),
     },
     el("span", { class: "order-divider-grip", "aria-hidden": "true" }, "⋮⋮"),
     el("span", { class: "order-divider-line" }),
-    el("span", { class: "order-divider-label" }, "已隐藏"),
+    el("span", { class: "order-divider-label" }, t("settings.order.divider_label")),
     el("span", { class: "order-divider-line" }),
   );
 }
@@ -572,8 +573,8 @@ function buildRow(id: string, idx: number, total: number, section: "enabled" | "
     el(
       "div",
       { class: "order-btns" },
-      el("button", { class: "order-up", "data-id": id, type: "button", title: "上移" }, "↑"),
-      el("button", { class: "order-down", "data-id": id, type: "button", title: "下移" }, "↓"),
+      el("button", { class: "order-up", "data-id": id, type: "button", title: t("settings.order.move_up_title") }, "↑"),
+      el("button", { class: "order-down", "data-id": id, type: "button", title: t("settings.order.move_down_title") }, "↓"),
     ),
   );
   refreshRowButtons(li, idx, total);
@@ -658,8 +659,8 @@ export async function moveProviderInOrder(id: string, dir: "up" | "down") {
         await setProviderEnabled(id, newEnabled);
         flash(
           wasEnabled
-            ? `✓ ${id} 已隐藏（点 ↑ 或拖回上方可恢复）`
-            : `✓ ${id} 已移到浮窗显示区`,
+            ? t("settings.order.flash_hidden", { id })
+            : t("settings.order.flash_moved_to_floating", { id }),
         );
       } catch (e) {
         // IPC 失败 → 回滚
@@ -672,7 +673,7 @@ export async function moveProviderInOrder(id: string, dir: "up" | "down") {
         if (cb) cb.checked = wasEnabled;
         if (listRef) buildOrderItems(listRef);
         refreshPosLabels();
-        flash(`✗ 切换失败: ${e}`, true);
+        flash(t("settings.order.flash_move_failed", { err: String(e) }), true);
       }
     })();
     return;
@@ -711,9 +712,9 @@ export async function moveProviderInOrder(id: string, dir: "up" | "down") {
 async function commitOrder(finalIdx: number, id: string) {
   try {
     await setProviderOrder(currentProviderOrder);
-    flash(`✓ ${id} 已移到位置 ${finalIdx + 1}`);
+    flash(t("settings.order.flash_moved_to_pos", { id, pos: finalIdx + 1 }));
   } catch (e) {
-    flash(`✗ 调整顺序失败: ${e}`, true);
+    flash(t("settings.order.flash_order_failed", { err: String(e) }), true);
   }
 }
 

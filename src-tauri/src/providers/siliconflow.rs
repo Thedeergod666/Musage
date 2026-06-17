@@ -152,7 +152,11 @@ fn parse(raw: &serde_json::Value) -> Result<ProviderSnapshot, FetchError> {
         ));
     }
     let code = raw.get("code").and_then(|v| v.as_i64()).unwrap_or(0);
-    if code != 0 && code != 20000 {
+    // M13 fix: 严格只接受 code == 20000（SiliconFlow 文档的成功码）。
+    // 之前兼容 code == 0 是防御性容错，但代码路径里 raw.get("status") == Some(false)
+    // 已经会提前 return，这里再放 code == 0 等于把 'status=true + code=0' 这种
+    // 不规范响应当成功吞下。改为严格 20000，不规范响应走 server error。
+    if code != 20000 {
         let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
         return Err(FetchError::server(
             t!("error.common.business_code", provider = "SiliconFlow", code = code, msg = msg).into_owned()

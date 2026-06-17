@@ -37,6 +37,36 @@ const URL_KEY: &str = "https://openrouter.ai/api/v1/key";
 
 pub struct OpenrouterSource;
 
+// M15 fix: fallback 缓存 —— /credits 和 /key 两个端点都可能被 401 / 5xx 拒绝。
+// 之前每次 fetch 都要先试 /credits（失败）再试 /key，浪费 50% 请求。
+// 缓存最近 5 分钟内成功的端点；TTL 过后重新探测（应对 endpoint 状态变化）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Endpoint {
+    Credits,
+    Key,
+}
+static LAST_SUCCESSFUL: std::sync::OnceLock<std::sync::Mutex<Option<(std::time::Instant, Endpoint)>>> =
+    std::sync::OnceLock::new();
+
+fn last_successful() -> &'static std::sync::Mutex<Option<(std::time::Instant, Endpoint)>> {
+    LAST_SUCCESSFUL.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+fn remember_endpoint(ep: Endpoint) {
+    if let Ok(mut g) = last_successful().lock() {
+        *g = Some((std::time::Instant::now(), ep));
+    }
+}
+
+fn should_skip_endpoint(ep: Endpoint) -> bool {
+    // 如果最近 5 分钟内有别的 endpoint 成功，跳过这个
+    let Ok(g) = last_successful().lock() else { return false };
+    match g.as_ref() {
+        Some((ts, last)) if ts.elapsed() < std::time::Duration::from_secs(300) => last != &ep,
+        _ => false,
+    }
+}
+
 impl Default for OpenrouterSource {
     fn default() -> Self { Self }
 }
@@ -73,17 +103,30 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
     let client = shared_client();
 
     // ── 第一优先：/api/v1/credits（账户余额，准确） ──
-    match fetch_credits(client, api_key).await {
-        Ok(snap) => return Ok(snap),
-        Err(e) if matches!(e.kind, ErrorKind::AuthFailed | ErrorKind::ServerError) => {
-            // Management key 被拒 / 5xx → fallback 到 /api/v1/key
-            tracing::debug!(error = %e, "openrouter /credits 失败，fallback 到 /key");
+    // M15 fix: 最近 5 分钟内 /key 成功过 → 跳过 /credits 探测（避免重复 401 浪费请求）
+    let try_credits = !should_skip_endpoint(Endpoint::Credits);
+    if try_credits {
+        match fetch_credits(client, api_key).await {
+            Ok(snap) => {
+                remember_endpoint(Endpoint::Credits);
+                return Ok(snap);
+            }
+            Err(e) if matches!(e.kind, ErrorKind::AuthFailed | ErrorKind::ServerError) => {
+                // Management key 被拒 / 5xx → fallback 到 /api/v1/key
+                tracing::debug!(error = %e, "openrouter /credits 失败，fallback 到 /key");
+            }
+            Err(e) => return Err(e), // 网络 / 解析错误直接报
         }
-        Err(e) => return Err(e), // 网络 / 解析错误直接报
     }
 
     // ── fallback：/api/v1/key（per-key 限额，任何 key 都行） ──
-    fetch_key(client, api_key).await
+    match fetch_key(client, api_key).await {
+        Ok(snap) => {
+            remember_endpoint(Endpoint::Key);
+            Ok(snap)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// `GET /api/v1/credits` → 账户余额

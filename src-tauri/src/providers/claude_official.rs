@@ -64,7 +64,10 @@ use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provide
 use crate::t;
 
 const URL: &str = "https://api.anthropic.com/api/oauth/usage";
-const USER_AGENT: &str = "claude-code/1.0.0";  // 任意版本号皆可，关键是 "claude-code/" 前缀
+// H10 fix: 之前硬编码 "claude-code/1.0.0" —— 全部用户共享一个版本，Anthropic
+// 一收紧 UA 全部同时崩。改成从 CARGO_PKG_VERSION 取（Musage 自己版本号跟随
+// 每个 release 走），未来 musage 升版本自动带新 UA 出去。
+const USER_AGENT: &str = concat!("claude-code/", env!("CARGO_PKG_VERSION"));
 const OAUTH_BETA: &str = "oauth-2025-04-20";
 
 // ── QuotaSource 实现 ─────────────────────────────────────────────

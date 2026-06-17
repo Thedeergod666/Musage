@@ -14,6 +14,7 @@
 
 import type { SourceMeta } from "./types";
 import { el } from "./utils";
+import { t } from "../i18n";
 
 export type GroupKey =
   | "token_plan"
@@ -32,33 +33,33 @@ interface GroupDef {
 
 const GROUP_DEFINITIONS: Record<GroupKey, GroupDef> = {
   token_plan: {
-    title: "Token Plan 套餐",
+    title: t("groups.token_plan_title"),
     icon: "📊",
     predicate: (m) => ["minimax", "kimi", "zhipu", "qwen"].includes(m.id),
   },
   balance: {
-    title: "余额查询",
+    title: t("groups.balance_title"),
     icon: "💰",
     predicate: (m) =>
       ["deepseek", "siliconflow", "novita", "stepfun", "openrouter"].includes(m.id),
   },
   official: {
-    title: "官方 / 特殊",
+    title: t("groups.official_title"),
     icon: "🏛️",
     predicate: (m) => ["tavily", "zenmux", "claude_official"].includes(m.id),
   },
   xiaomi: {
-    title: "Xiaomi MiMo",
+    title: t("groups.xiaomi_title"),
     icon: "🍚",
     predicate: (m) => m.id === "xiaomimimo",
   },
   custom: {
-    title: "用户自定义 New API",
+    title: t("groups.custom_title"),
     icon: "🧩",
     predicate: (m) => m.id.startsWith("custom_"),
   },
   misc: {
-    title: "其他",
+    title: t("groups.misc_title"),
     icon: "🔧",
     predicate: () => true, // catch-all
   },

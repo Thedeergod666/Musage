@@ -14,6 +14,14 @@
 
 import type { SourceMeta } from "./types";
 import { t, onLocaleChange } from "../i18n";
+import {
+  groupTokenPlanIcon,
+  groupBalanceIcon,
+  groupOfficialIcon,
+  groupXiaomiIcon,
+  groupCustomIcon,
+  groupMiscIcon,
+} from "../icons";
 
 export type GroupKey =
   | "token_plan"
@@ -134,4 +142,18 @@ export function groupKeyFor(meta: SourceMeta): GroupKey {
 export function getGroupDef(key: GroupKey): GroupDef {
   ensureGroupsReady();
   return _groupDefinitions[key];
+}
+
+/** GroupKey → Lucide icon URL（providers.ts divider 渲染用）。 */
+const GROUP_ICON_URL: Record<GroupKey, string> = {
+  token_plan: groupTokenPlanIcon,
+  balance: groupBalanceIcon,
+  official: groupOfficialIcon,
+  xiaomi: groupXiaomiIcon,
+  custom: groupCustomIcon,
+  misc: groupMiscIcon,
+};
+
+export function groupIconUrl(key: GroupKey): string {
+  return GROUP_ICON_URL[key];
 }

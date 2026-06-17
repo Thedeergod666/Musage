@@ -27,7 +27,7 @@ import { getProviderExtras } from "./source-extras";
 import { renderOrderSection } from "./order";
 import { renderCredentialBlock, loadCredentialStatus } from "./credentials";
 import { getProviderMeta } from "./logos";
-import { getGroupDef, groupKeyFor, type GroupKey } from "./groups";
+import { getGroupDef, groupKeyFor, groupIconUrl, type GroupKey } from "./groups";
 import { openAddCustomSourceModal } from "./custom-source-form";
 import { t } from "../i18n";
 import type { AppConfig, SourceMeta } from "./types";
@@ -103,11 +103,16 @@ export async function renderProvidersSection(container: HTMLElement) {
     const gk = groupKeyFor(meta);
     if (gk !== prevGroup) {
       const def = getGroupDef(gk);
+      const iconImg = document.createElement("img");
+      iconImg.src = groupIconUrl(gk);
+      iconImg.alt = "";
+      iconImg.className = "icon icon-16";
       flatContainer.appendChild(
         el(
           "h3",
           { class: "provider-group-divider", "data-group": gk },
-          `${def.icon} ${def.title}`,
+          iconImg,
+          ` ${def.title}`,
         ),
       );
       prevGroup = gk;
@@ -200,7 +205,18 @@ export function createProviderPanel(meta: SourceMeta, cfg: AppConfig): HTMLEleme
       })
     : null;
 
-  // ── Header: [logo] [display_name] ........ [在浮窗显示 checkbox] ──
+  // ── Header: [logo] [display_name] [group tag] ........ [在浮窗显示 checkbox] ──
+  // 组标签（如 "📊 Token Plan"）让用户一眼看出 provider 归属哪个类目，
+  // 不用靠 divider 行来推断。跟 provider-group-divider 用同一个
+  // getGroupDef() 拿 icon + title，视觉一致。
+  const gk = groupKeyFor(meta);
+  const gDef = getGroupDef(gk);
+  const groupTag = el(
+    "span",
+    { class: "provider-group-tag", "data-group": gk },
+    `${gDef.icon} ${gDef.title}`,
+  );
+
   const enabledCheckbox = el("input", {
     type: "checkbox",
     id: `enabled-${meta.id}`,
@@ -220,6 +236,7 @@ export function createProviderPanel(meta: SourceMeta, cfg: AppConfig): HTMLEleme
       { class: "provider-header" },
       ...(logoImg ? [logoImg] : []),
       el("span", { class: "provider-name" }, meta.display_name),
+      groupTag,
       // STUB 角标（2026-06-17 commit）：公开 API 无 quota endpoint 的
       // provider 显示"🚧 STUB"小角标，避免用户配 key 后看 30 min 退避风暴。
       // 用 data-stub-notice 属性挂载文本，CSS ::after 显示，i18n 走属性。

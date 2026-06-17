@@ -61,9 +61,12 @@
     },
     "xiaomi": {
       "unconfigured_both": "未配置 API key 或 Dashboard cookie（设置面板填入）",
+      "unconfigured_key": "未配置 Xiaomi API key（设置面板填入）",
+      "unconfigured_cookie": "未配置 Xiaomi Dashboard cookie（设置面板填入）",
       "api_key_unauthorized_hint": "Xiaomi API key 鉴权失败 (HTTP 401) — 当前用量 API 仅对 dashboard cookie 放行，请改填 Cookie 或两者都填（401 会自动退到 Cookie 路径）",
       "cookie_invalid_hint": "Cookie 失效或无效 —— 请重新登录 platform.xiaomimimo.com → DevTools 复制新 Cookie",
       "cookie_empty": "Dashboard cookie 为空（设置面板 · Xiaomi · Dashboard Cookie）",
+      "cookie_format_invalid": "Cookie 格式无效（包含非法字符 {ch}）。请重新从浏览器 DevTools Application → Cookies 复制整段 Cookie 字符串（不要带换行）",
       "http_error": "Xiaomi dashboard API 异常 (HTTP {status}): {body}",
       "business_code": "Xiaomi dashboard API code {code}: {msg}",
       "schema_unknown_hint": "响应里找不到 plan_total_token / compensation_total_token / month_total_token 任何一项（schema 改名？去设置面板 schema_overrides 配新名）",
@@ -158,6 +161,7 @@
     "parse_url": "parse url: {err}",
     "cookies_for_url_failed": "webview.cookies_for_url 失败: {err}",
     "cookies_not_found": "没找到 Xiaomi dashboard cookies（共 {count} 个 cookie，白名单期望 {expected} 个：{wanted}）。实际可用：{available}",
+    "cookies_incomplete": "提取的 cookie 不完整（api-platform_serviceToken={has_service_token}, userId={has_user_id}）。两者都必须存在才能调用 dashboard API —— 未写入，原有 cookie 保留。请重新登录。",
     "save_keys_failed": "写 keys.json 失败: {err}"
   }
 }

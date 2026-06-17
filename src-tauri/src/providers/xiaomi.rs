@@ -162,21 +162,42 @@ impl QuotaSource for XiaomimimoSource {
                     t!("error.xiaomi.unconfigured_both").into_owned()
                 )),
                 AuthStrategy::BearerOnly => {
-                    // 安全：strategy 保证 Some
-                    let key = credentials.api_key.as_deref().unwrap();
-                    Xiaomimimo::do_fetch_bearer(key, state.region, &state.overrides)
-                        .await
-                        .map(|(_, snap)| snap)
+                    // H14 fix: 之前是 .unwrap()，依赖 decide_auth_strategy 的不变量。
+                    // 若 decide 逻辑改了（比如新增 Unknown 变体），这里会 panic。
+                    // 改成 explicit Some/None match，None 走 unconfigured 错误而不是 panic。
+                    match credentials.api_key.as_deref() {
+                        Some(key) => Xiaomimimo::do_fetch_bearer(key, state.region, &state.overrides)
+                            .await
+                            .map(|(_, snap)| snap),
+                        None => Err(FetchError::unconfigured(
+                            t!("error.xiaomi.unconfigured_key").into_owned()
+                        )),
+                    }
                 }
                 AuthStrategy::CookieOnly => {
-                    let cookie = credentials.cookie.as_deref().unwrap();
-                    Xiaomimimo::do_fetch(cookie, state.region, &state.overrides)
-                        .await
-                        .map(|(_, snap)| snap)
+                    match credentials.cookie.as_deref() {
+                        Some(cookie) => Xiaomimimo::do_fetch(cookie, state.region, &state.overrides)
+                            .await
+                            .map(|(_, snap)| snap),
+                        None => Err(FetchError::unconfigured(
+                            t!("error.xiaomi.unconfigured_cookie").into_owned()
+                        )),
+                    }
                 }
                 AuthStrategy::BearerThenCookie => {
-                    let key = credentials.api_key.as_deref().unwrap();
-                    let cookie = credentials.cookie.as_deref().unwrap();
+                    // 同 H14 fix —— None 走 unconfigured 而不是 panic
+                    let key = match credentials.api_key.as_deref() {
+                        Some(k) => k,
+                        None => return Err(FetchError::unconfigured(
+                            t!("error.xiaomi.unconfigured_key").into_owned()
+                        )),
+                    };
+                    let cookie = match credentials.cookie.as_deref() {
+                        Some(c) => c,
+                        None => return Err(FetchError::unconfigured(
+                            t!("error.xiaomi.unconfigured_cookie").into_owned()
+                        )),
+                    };
                     // 先 Bearer，401/403 退到 Cookie（其他错误原样返）
                     match Xiaomimimo::do_fetch_bearer(key, state.region, &state.overrides).await {
                         Ok((_, snap)) => {
@@ -318,7 +339,20 @@ impl Xiaomimimo {
             .await
         {
             Ok(r) if r.status().is_success() => {
-                r.json().await.unwrap_or(serde_json::Value::Null)
+                // M1 fix: 之前 r.json().await.unwrap_or(Value::Null) 静默吞掉 parse 失败。
+                // 用户看到 plan_name=None / no resets_at 时完全无诊断。
+                // 改成 log warn 然后 fallback Null，dev 模式至少能看见。
+                match r.json().await {
+                    Ok(v) => v,
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            url = DETAIL_URL,
+                            "Xiaomi DETAIL 响应 JSON parse 失败，fallback Null"
+                        );
+                        serde_json::Value::Null
+                    }
+                }
             }
             _ => serde_json::Value::Null,
         };
@@ -338,6 +372,16 @@ impl Xiaomimimo {
             ));
         }
 
+        // H8 fix: 校验 cookie 格式。用户从 DevTools 复制时偶尔会带上 CR/LF/NUL 或
+        // 行首空白，reqwest 的 HeaderValue 会把这些字符静默丢弃或 reject，但错误
+        // 表现为 "Cookie header value is invalid" 而不是清晰的 "请重新复制"。
+        // 这里在 send 前过滤常见异常字符 + 给出友好的 FetchError::auth。
+        if let Some(bad) = cookie.chars().find(|c| matches!(c, '\r' | '\n' | '\t' | '\0')) {
+            return Err(FetchError::auth(
+                t!("error.xiaomi.cookie_format_invalid", ch = format!("{bad:?}")).into_owned()
+            ));
+        }
+
         let client = shared_client();
 
         // ── 1. 拉用量
@@ -353,9 +397,25 @@ impl Xiaomimimo {
 
         let status = resp.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(FetchError::auth(
-                t!("error.xiaomi.cookie_invalid_hint").into_owned()
-            ));
+            // H15 fix: 401 可能是 CDN 短暂 origin outage（返 HTML login 页）而不是真实
+            // auth 失败。看 body 区分：含 login/session 关键字 = auth 类；其他 = server 类。
+            let body_preview = resp.text().await.unwrap_or_default();
+            let looks_like_auth = body_preview.to_lowercase().contains("login")
+                || body_preview.to_lowercase().contains("session")
+                || body_preview.to_lowercase().contains("token");
+            if looks_like_auth {
+                return Err(FetchError::auth(
+                    t!("error.xiaomi.cookie_invalid_hint").into_owned()
+                ));
+            } else {
+                return Err(FetchError::server(
+                    t!(
+                        "error.xiaomi.http_error",
+                        status = status.as_u16(),
+                        body = body_preview.chars().take(200).collect::<String>()
+                    ).into_owned()
+                ));
+            }
         }
         if status == reqwest::StatusCode::FORBIDDEN {
             return Err(FetchError::auth(

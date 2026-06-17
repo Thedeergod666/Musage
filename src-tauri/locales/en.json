@@ -61,9 +61,12 @@
     },
     "xiaomi": {
       "unconfigured_both": "API key or Dashboard cookie not configured (set in Settings)",
+      "unconfigured_key": "Xiaomi API key not configured (set in Settings)",
+      "unconfigured_cookie": "Xiaomi Dashboard cookie not configured (set in Settings)",
       "api_key_unauthorized_hint": "Xiaomi API key unauthorized (HTTP 401) — current usage API only allows dashboard cookies. Use Cookie or both (401 auto-falls back to Cookie path)",
       "cookie_invalid_hint": "Cookie expired or invalid — re-login at platform.xiaomimimo.com → DevTools → copy new Cookie",
       "cookie_empty": "Dashboard cookie is empty (Settings → Xiaomi → Dashboard Cookie)",
+      "cookie_format_invalid": "Cookie format invalid (contains illegal character {ch}). Please re-copy from browser DevTools Application → Cookies (no line breaks)",
       "http_error": "Xiaomi dashboard API error (HTTP {status}): {body}",
       "business_code": "Xiaomi dashboard API code {code}: {msg}",
       "schema_unknown_hint": "Response missing plan_total_token / compensation_total_token / month_total_token (schema changed? Add new names in Settings → schema_overrides)",
@@ -158,6 +161,7 @@
     "parse_url": "parse url: {err}",
     "cookies_for_url_failed": "webview.cookies_for_url failed: {err}",
     "cookies_not_found": "No Xiaomi dashboard cookies found ({count} total, expected {expected}: {wanted}). Actually available: {available}",
+    "cookies_incomplete": "Extracted cookies incomplete (api-platform_serviceToken={has_service_token}, userId={has_user_id}). Both must be present to call the dashboard API — not saved, original cookie kept. Please log in again.",
     "save_keys_failed": "Failed to write keys.json: {err}"
   }
 }

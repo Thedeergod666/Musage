@@ -24,21 +24,21 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
   const ta5h = el("textarea", {
     id: "overrides-5h-minimax",
     rows: "3",
-    placeholder: '[{"total":"...","remaining":"...","end":"..."}]',
+    placeholder: t("settings.advanced.schema_placeholder"),
   }) as HTMLTextAreaElement;
   ta5h.value = JSON.stringify(mm.five_hour?.count_candidates ?? [], null, 2);
 
   const taWeek = el("textarea", {
     id: "overrides-weekly-minimax",
     rows: "3",
-    placeholder: '[{"total":"...","remaining":"...","end":"..."}]',
+    placeholder: t("settings.advanced.schema_placeholder"),
   }) as HTMLTextAreaElement;
   taWeek.value = JSON.stringify(mm.weekly?.count_candidates ?? [], null, 2);
 
   const taXmMonth = el("textarea", {
     id: "overrides-monthly-xiaomimimo",
     rows: "3",
-    placeholder: '[{"total":"...","remaining":"...","end":"..."}]',
+    placeholder: t("settings.advanced.schema_placeholder"),
   }) as HTMLTextAreaElement;
   taXmMonth.value = JSON.stringify(xm.monthly?.count_candidates ?? [], null, 2);
 
@@ -60,15 +60,15 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
         t("settings.advanced.schema_help_4"),
       ),
       el("div", { class: "field" },
-        el("label", { for: "overrides-5h-minimax" }, "MiniMax · 5h 候选字段名"),
+        el("label", { for: "overrides-5h-minimax" }, t("settings.advanced.minimax_5h_label")),
         ta5h,
       ),
       el("div", { class: "field" },
-        el("label", { for: "overrides-weekly-minimax" }, "MiniMax · 周 候选字段名"),
+        el("label", { for: "overrides-weekly-minimax" }, t("settings.advanced.minimax_weekly_label")),
         taWeek,
       ),
       el("div", { class: "field" },
-        el("label", { for: "overrides-monthly-xiaomimimo" }, "Xiaomi MiMo · 月度 候选字段名"),
+        el("label", { for: "overrides-monthly-xiaomimimo" }, t("settings.advanced.xiaomi_monthly_label")),
         taXmMonth,
       ),
     ),
@@ -85,21 +85,31 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
   const xmCookieInput = el("textarea", {
     id: "cookie-xiaomimimo-adv",
     rows: "4",
-    placeholder: 'api-platform_serviceToken="..."; userId=...; api-platform_slh="..."; api-platform_ph="..."',
+    placeholder: t("credentials.cookie_textarea_placeholder"),
   }) as HTMLTextAreaElement;
 
+  // 顶部 help：拆为多段（en/zh 不需要 1:1 翻，但 help 5 段更模块化）
+  const help = el("div", { class: "help" });
+  help.innerHTML = t("settings.advanced.xiaomi_credentials_help");
+
+  const cookieHelp = el("div", { class: "help" });
+  cookieHelp.innerHTML =
+    t("settings.advanced.xiaomi_cookie_help") + "<br>" +
+    t("settings.advanced.xiaomi_cookie_help_2") +
+    `<a href="https://platform.xiaomimimo.com" target="_blank">platform.xiaomimimo.com</a>` +
+    t("settings.advanced.xiaomi_cookie_help_3") +
+    `<code>cookie:</code>` +
+    t("settings.advanced.xiaomi_cookie_help_4") + "<br>" +
+    t("settings.advanced.xiaomi_cookie_help_5");
+
   const xmSection = el("section", { class: "section-card" },
-    el("h2", {}, "🔑 Xiaomi MiMo · 凭据"),
-    el("div", { class: "help" },
-      "Xiaomi 用量 API 当前对 Bearer 返 401，API key 填了也不会生效。",
-      el("br"),
-      "正常情况下用主面板的「🔑 登录小米账号」即可，这里只做手动兜底。",
-    ),
+    el("h2", {}, t("settings.advanced.xiaomi_credentials_title")),
+    help,
     // API key
     el("div", { class: "field" },
-      el("label", {}, "API key（当前无效，预留）"),
+      el("label", {}, t("settings.advanced.xiaomi_api_key_label")),
       xmApiKeyInput,
-      el("div", { class: "status", id: "api-key-status-xiaomimimo-adv" }, "—"),
+      el("div", { class: "status", id: "api-key-status-xiaomimimo-adv" }, t("credentials.cookie_status_placeholder")),
       el("div", { class: "row" },
         el("button", {
           class: "primary",
@@ -107,7 +117,7 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
           "data-id": "xiaomimimo",
           "data-action": "save-key",
           "data-advanced": "true",
-        }, t("settings.common.save") + " API key"),
+        }, t("settings.advanced.xiaomi_api_key_save", { save: t("settings.common.save") })),
         el("button", {
           class: "danger",
           id: "del-key-xiaomimimo-adv",
@@ -119,9 +129,9 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
     ),
     // Cookie
     el("div", { class: "field" },
-      el("label", {}, "Dashboard Cookie（兜底：401 时自动退到这里）"),
+      el("label", {}, t("settings.advanced.xiaomi_cookie_label")),
       xmCookieInput,
-      el("div", { class: "status", id: "cookie-status-xiaomimimo-adv" }, "—"),
+      el("div", { class: "status", id: "cookie-status-xiaomimimo-adv" }, t("credentials.cookie_status_placeholder")),
       el("div", { class: "row" },
         el("button", {
           class: "primary",
@@ -129,7 +139,7 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
           "data-id": "xiaomimimo",
           "data-action": "save-cookie",
           "data-advanced": "true",
-        }, t("settings.common.save") + " Cookie"),
+        }, t("settings.advanced.xiaomi_cookie_save", { save: t("settings.common.save") })),
         el("button", {
           class: "danger",
           id: "del-cookie-xiaomimimo-adv",
@@ -138,17 +148,7 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
           "data-advanced": "true",
         }, t("settings.common.delete")),
       ),
-      el("div", { class: "help" },
-        "⚠ Xiaomi 用量走 dashboard admin API，需要浏览器登录态。",
-        el("br"),
-        "获取方法：Chrome 登录 ",
-        el("a", { href: "https://platform.xiaomimimo.com", target: "_blank" }, "platform.xiaomimimo.com"),
-        " → F12 → Network → 任意 /api/v1/tokenPlan/* 请求 → 右键 → Copy → Copy request headers → 找 ",
-        el("code", {}, "cookie:"),
-        " 这一行整段粘贴到上面。",
-        el("br"),
-        "Cookie 登出后失效，过期时 (HTTP 401) 错误信息会引导重粘。",
-      ),
+      cookieHelp,
     ),
   );
   container.appendChild(xmSection);

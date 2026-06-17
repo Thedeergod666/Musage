@@ -410,7 +410,18 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
             update_source_state_for_dump(&src, &cfg).await;
 
             // 走 registry 路径（Phase 1 起的新路径）
-            let result = src.fetch(&creds).await;
+            // M5 fix: 包 30s timeout —— shared reqwest client 默认 10s timeout，但
+            // 某些 provider (deepseek / stepfun) 偶发挂 30s+ 不返；dump CLI 不应挂死。
+            let result = match tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                src.fetch(&creds),
+            ).await {
+                Ok(r) => r,
+                Err(_) => {
+                    eprintln!("[musage dump] {} fetch 超时（30s）", src.id());
+                    continue;
+                }
+            };
 
             match result {
                 Ok(snap) => {

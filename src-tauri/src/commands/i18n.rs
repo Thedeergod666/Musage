@@ -38,7 +38,10 @@ pub async fn set_app_locale(
         cfg.save()?;
     }
     // 广播给前端（让 src/i18n/index.ts 重新 render）+ 给自己（tray rebuild listener）
-    let _ = app.emit("musage://locale-changed", &locale);
+    // M3 fix: emit 失败 log warn，避免静默丢事件（前端保持旧语言直到下次 reload）
+    if let Err(e) = app.emit("musage://locale-changed", &locale) {
+        tracing::warn!(error = %e, "emit musage://locale-changed 失败，前端可能未刷新");
+    }
     Ok(())
 }
 

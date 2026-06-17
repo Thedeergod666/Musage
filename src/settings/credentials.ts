@@ -25,7 +25,7 @@ import {
 import { $, el, flash } from "./utils";
 import { t } from "../i18n";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ProviderId, SourceMeta } from "./types";
 
 /// 把 i18n 字符串里的 HTML 片段（<code>/<a>/<br> 等）一次性渲染为
@@ -603,17 +603,22 @@ export async function xiaomiClearCookieAction(id: string) {
 
 /// 绑一次后端登录事件 → UI 反馈。
 /// 在 main.ts init() 末尾调一次就行（**只绑一次**，多次绑会重复响应）。
+// M8 fix: 之前 void listen(...) 丢 unlisten。模块 scope 存 unlisten 句柄，第二次
+// 调用先 unlisten 再绑，防止 listener 累积（init 重试 / dev hot-reload 场景）。
+const _xiaomiListeners: UnlistenFn[] = [];
+let _xiaomiListenersBound = false;
 export function bindXiaomiLoginEvents() {
-  // 走 Tauri 2 标准 listen API（不是 window.__TAURI__ 全局，TS 类型干净）
+  if (_xiaomiListenersBound) return;
   void listen<number>("musage://xiaomi-login-success", (e) => {
     const savedLen = e.payload;
     flash(t("settings.credentials.xiaomi_login_success", { bytes: savedLen }));
     // 立即刷新状态徽章
     void loadCredentialStatus("xiaomimimo");
-  });
+  }).then((un) => _xiaomiListeners.push(un));
   void listen<string>("musage://xiaomi-login-failed", (e) => {
     flash(t("settings.credentials.xiaomi_login_failure", { err: e.payload }), true);
-  });
+  }).then((un) => _xiaomiListeners.push(un));
+  _xiaomiListenersBound = true;
 }
 
 /// document-level 委托：处理动态 panel 里的 save-key / del-key / copy-key / save-cookie / del-cookie / xiaomi-login

@@ -482,6 +482,10 @@ pub fn shared_client() -> &'static reqwest::Client {
             .timeout(std::time::Duration::from_secs(10))
             .connect_timeout(std::time::Duration::from_secs(5))
             .user_agent(concat!("Musage/", env!("CARGO_PKG_VERSION")))
+            // M9 fix: 长跑 tray app idle TCP 永久堆积。每个 host 最多 2 idle conn，
+            // 30s 没流量就关。
+            .pool_max_idle_per_host(2)
+            .pool_idle_timeout(std::time::Duration::from_secs(30))
             .build()
             .expect("build shared reqwest client")
     })

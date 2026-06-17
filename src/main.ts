@@ -1013,7 +1013,8 @@ async function init() {
 
   // ── 启动 5s 后静默检查更新（不弹窗、不抢焦点） ──
   // 延迟是为了让首屏数据先到位，不要跟初始拉取抢资源
-  setTimeout(() => {
+  // M6 fix: 存 handle 到 module-scope，beforeunload 清理。dev hot-reload 之前会泄漏。
+  const updateTimer = window.setTimeout(() => {
     checkForUpdate(/* silent */ true)
       .then((s) => {
         if (s.status === "available" && s.version) {
@@ -1106,6 +1107,7 @@ async function init() {
     if (unlistenLowPower) unlistenLowPower();
     if (unlistenCfg) unlistenCfg();
     if (countdownTimer !== null) clearInterval(countdownTimer);
+    window.clearTimeout(updateTimer);  // M6 fix
   });
 }
 

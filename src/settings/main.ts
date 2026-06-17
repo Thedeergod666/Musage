@@ -20,6 +20,14 @@ import { bindCredentialButtonsGlobal, bindXiaomiLoginEvents, loadXiaomiDisplayMo
 import { bindOrderButtonsGlobal, updateOrderConfig, isSuppressingConfigRebuild } from "./order";
 import { flash } from "./utils";
 import { t, initLocale, onLocaleChange } from "../i18n";
+import {
+  navProvidersIcon,
+  navFloatingIcon,
+  navAppIcon,
+  navAdvancedIcon,
+  navLogsIcon,
+  navAboutIcon,
+} from "../icons";
 
 // ── 1) 同步：sidebar 切换 + tabs ───────────────────────────────
 
@@ -47,7 +55,30 @@ void initI18n();
 function setupNav() {
   const navItems = document.querySelectorAll<HTMLButtonElement>(".nav-item");
   const sections = document.querySelectorAll<HTMLElement>(".section-view");
+
+  // 按 data-section 注入 Lucide icon（settings.html 里 .nav-emoji 是空 span）
+  const iconBySection: Record<string, string> = {
+    providers: navProvidersIcon,
+    floating: navFloatingIcon,
+    app: navAppIcon,
+    advanced: navAdvancedIcon,
+    logs: navLogsIcon,
+    about: navAboutIcon,
+  };
   navItems.forEach((item) => {
+    const section = item.dataset.section;
+    const iconUrl = section ? iconBySection[section] : undefined;
+    if (iconUrl) {
+      const slot = item.querySelector<HTMLElement>(".nav-emoji");
+      if (slot) {
+        const img = document.createElement("img");
+        img.src = iconUrl;
+        img.alt = "";
+        img.className = "nav-emoji";
+        slot.replaceWith(img);
+      }
+    }
+
     item.addEventListener("click", () => {
       const target = item.dataset.section;
       if (!target) return;

@@ -15,33 +15,33 @@
     <div class="app-shell">
       <!-- 顶部 header -->
       <header class="app-header">
-        <span class="app-title">⚙ <span data-i18n="window.settings">Musage · 设置</span></span>
+        <span class="app-title"><span data-i18n="window.settings">Musage · 设置</span></span>
       </header>
 
-      <!-- 左侧导航：emoji 替代旧 dot（v0.6+ 视觉调优）-->
+      <!-- 左侧导航：Lucide icon 由 setupNav() 在 main.ts init 时按 data-section 注入 -->
       <aside id="nav" class="nav">
         <button class="nav-item active" data-section="providers">
-          <span class="nav-emoji">📊</span>
+          <span class="nav-emoji"></span>
           <span class="nav-label" data-i18n="settings.nav.providers">数据源</span>
         </button>
         <button class="nav-item" data-section="floating">
-          <span class="nav-emoji">🪟</span>
+          <span class="nav-emoji"></span>
           <span class="nav-label" data-i18n="settings.nav.floating">浮窗</span>
         </button>
         <button class="nav-item" data-section="app">
-          <span class="nav-emoji">⚙</span>
+          <span class="nav-emoji"></span>
           <span class="nav-label" data-i18n="settings.nav.app">应用</span>
         </button>
         <button class="nav-item" data-section="advanced">
-          <span class="nav-emoji">🔧</span>
+          <span class="nav-emoji"></span>
           <span class="nav-label" data-i18n="settings.nav.advanced">高级</span>
         </button>
         <button class="nav-item" data-section="logs">
-          <span class="nav-emoji">📋</span>
+          <span class="nav-emoji"></span>
           <span class="nav-label" data-i18n="settings.nav.logs">日志</span>
         </button>
         <button class="nav-item" data-section="about">
-          <span class="nav-emoji">ℹ</span>
+          <span class="nav-emoji"></span>
           <span class="nav-label" data-i18n="settings.nav.about">关于</span>
         </button>
       </aside>

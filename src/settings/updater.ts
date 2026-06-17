@@ -57,7 +57,7 @@ export function setupUpdaterSection() {
     void doInstall();
   });
   document.getElementById("updater-relaunch")?.addEventListener("click", () => {
-    relaunchApp().catch((e) => flash(`✗ ${e}`, true));
+    relaunchApp().catch((e) => flash("err", String(e)));
   });
 
   // 订阅状态

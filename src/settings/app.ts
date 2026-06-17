@@ -10,6 +10,7 @@ import { el, flash } from "./utils";
 import { setTrayIconStyle } from "./api";
 import { testConn } from "./test";
 import { t } from "../i18n";
+import { navAppIcon } from "../icons";
 import type { AppConfig } from "./types";
 
 export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
@@ -74,7 +75,7 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
 
   container.appendChild(
     el("section", { class: "section-card" },
-      el("h2", {}, `⚙ ${t("settings.nav.app")}`),
+      (() => { const img = document.createElement("img"); img.src = navAppIcon; img.alt = ""; img.className = "icon icon-20"; return el("h2", {}, img, ` ${t("settings.nav.app")}`); })(),
       // 轮询间隔
       el("div", { class: "field" },
         el("label", { for: "interval" }, t("settings.app.refresh_interval")),

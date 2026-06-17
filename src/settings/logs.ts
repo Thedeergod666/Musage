@@ -11,6 +11,7 @@
 import { clearLogs as clearLogsIPC, getRecentLogs } from "./api";
 import { el, escapeHtml, flash, formatLogTime } from "./utils";
 import { t } from "../i18n";
+import { navLogsIcon } from "../icons";
 import type { LogEntry } from "./types";
 
 /// v0.6+ 把 logs 渲染到独立 section。
@@ -42,7 +43,7 @@ export function renderLogsSection(container: HTMLElement) {
 
   container.appendChild(
     el("section", { class: "section-card", id: "logs-section" },
-      el("h2", {}, `📋 ${t("settings.logs.section_title")}`),
+      (() => { const img = document.createElement("img"); img.src = navLogsIcon; img.alt = ""; img.className = "icon icon-20"; return el("h2", {}, img, ` ${t("settings.logs.section_title")}`); })(),
       el("div", { class: "help" }, t("settings.logs.section_help")),
       el("div", { class: "row row-tight" }, filter, refresh, copy, clear, count),
       list,

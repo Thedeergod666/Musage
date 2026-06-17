@@ -5,6 +5,7 @@
 // 不会全量 re-render，所以不需要 reactive 框架。
 
 import { getLocale } from "../i18n";
+import { flashCheck, flashX, flashWarn } from "../icons";
 
 /// 当前已知的 source id 列表（**派生自后端 registry**，不写死）。
 ///
@@ -81,16 +82,48 @@ export function setupTabs() {
 
 // ── 全局 flash（顶部 #flash，schema overrides 等整段错误用）──
 
+export type FlashKind = "ok" | "warn" | "err";
+
 let flashTimer: number | null = null;
-export function flash(msg: string, isError = false) {
-  const el = $("#flash") as HTMLElement;
-  el.textContent = msg;
-  el.style.color = isError ? "#f44336" : "#4caf50";
-  el.style.display = "block";
+
+/**
+ * 双签名：
+ * - 旧风格 flash(msg) / flash(msg, true) — 57 处调用兼容
+ * - 新风格 flash("ok", msg) / flash("err", msg) / flash("warn", msg)
+ */
+export function flash(kindOrMsg: FlashKind | string, msgOrErr?: string | boolean) {
+  let kind: FlashKind;
+  let text: string;
+  if (typeof msgOrErr === "boolean" || msgOrErr === undefined) {
+    // 旧风格: flash(msg) / flash(msg, true)
+    text = kindOrMsg as string;
+    kind = msgOrErr === true ? "err" : "ok";
+  } else {
+    kind = kindOrMsg as FlashKind;
+    text = msgOrErr;
+  }
+
+  const ICON_URL =
+    kind === "ok" ? flashCheck : kind === "warn" ? flashWarn : flashX;
+
+  const flashEl = $("#flash") as HTMLElement;
+  flashEl.replaceChildren();
+  flashEl.append(
+    Object.assign(document.createElement("img"), {
+      className: "icon icon-16 flash-icon",
+      src: ICON_URL,
+      alt: "",
+    }),
+    Object.assign(document.createElement("span"), {
+      className: `flash-text flash-${kind}`,
+      textContent: text,
+    }),
+  );
+  flashEl.style.display = "flex";
   if (flashTimer !== null) clearTimeout(flashTimer);
   flashTimer = window.setTimeout(() => {
-    el.textContent = "";
-    el.style.display = "none";
+    flashEl.replaceChildren();
+    flashEl.style.display = "none";
   }, 2500);
 }
 

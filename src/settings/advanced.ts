@@ -9,6 +9,7 @@ import { el } from "./utils";
 import type { AppConfig } from "./types";
 import { apiKeyPlaceholder, loadCredentialStatus } from "./credentials";
 import { t } from "../i18n";
+import { navAdvancedIcon } from "../icons";
 
 export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
   const ov = cfg.schema_overrides ?? {};
@@ -45,7 +46,7 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
   // ── Schema Overrides ──
   container.appendChild(
     el("section", { class: "section-card" },
-      el("h2", {}, `🔧 ${t("settings.nav.advanced")}`),
+      (() => { const img = document.createElement("img"); img.src = navAdvancedIcon; img.alt = ""; img.className = "icon icon-20"; return el("h2", {}, img, ` ${t("settings.nav.advanced")}`); })(),
       el("div", { class: "help" },
         t("settings.advanced.schema_help_1"),
         el("strong", {}, t("settings.advanced.schema_help_2")),

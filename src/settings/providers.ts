@@ -30,6 +30,7 @@ import { getProviderMeta } from "./logos";
 import { getGroupDef, groupKeyFor, groupIconUrl, type GroupKey } from "./groups";
 import { openAddCustomSourceModal } from "./custom-source-form";
 import { t } from "../i18n";
+import { trashIcon } from "../icons";
 import type { AppConfig, SourceMeta } from "./types";
 
 /// 主入口：渲染整个 "数据源" section。
@@ -214,7 +215,7 @@ export function createProviderPanel(meta: SourceMeta, cfg: AppConfig): HTMLEleme
   const groupTag = el(
     "span",
     { class: "provider-group-tag", "data-group": gk },
-    `${gDef.icon} ${gDef.title}`,
+    gDef.title,
   );
 
   const enabledCheckbox = el("input", {
@@ -249,7 +250,7 @@ export function createProviderPanel(meta: SourceMeta, cfg: AppConfig): HTMLEleme
                 "data-stub-notice": "STUB",
                 title: "Public API has no quota endpoint",
               },
-              "🚧 STUB",
+              "STUB",
             ),
           ]
         : []),
@@ -314,7 +315,12 @@ function renderDeleteCustomButton(meta: SourceMeta): HTMLElement {
     class: "btn-delete-custom",
     "data-id": meta.id,
     title: t("settings.providers.delete_custom_btn_title", { name: meta.display_name }),
-  }, "🗑️");
+  });
+  const trashImg = document.createElement("img");
+  trashImg.src = trashIcon;
+  trashImg.alt = "";
+  trashImg.className = "icon icon-16";
+  btn.appendChild(trashImg);
   btn.addEventListener("click", async () => {
     if (!confirm(t("settings.providers.delete_custom_confirm", { name: meta.display_name }))) {
       return;

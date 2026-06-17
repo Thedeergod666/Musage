@@ -32,6 +32,7 @@ import copyIcon from "lucide-static/icons/copy.svg?url";
 import regionFlag from "lucide-static/icons/flag.svg?url";
 import regionGlobe from "lucide-static/icons/globe.svg?url";
 import logoEmpty from "lucide-static/icons/zap.svg?url";
+import trashIcon from "lucide-static/icons/trash-2.svg?url";
 
 export {
   navProvidersIcon,
@@ -53,4 +54,5 @@ export {
   regionFlag,
   regionGlobe,
   logoEmpty,
+  trashIcon,
 };

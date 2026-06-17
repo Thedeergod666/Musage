@@ -45,33 +45,33 @@ export function buildGroupDefinitions(): Record<GroupKey, GroupDef> {
   return {
     token_plan: {
       title: t("groups.token_plan_title"),
-      icon: "📊",
+      icon: "wallet",
       predicate: (m) => ["minimax", "kimi", "zhipu", "qwen"].includes(m.id),
     },
     balance: {
       title: t("groups.balance_title"),
-      icon: "💰",
+      icon: "piggy-bank",
       predicate: (m) =>
         ["deepseek", "siliconflow", "novita", "stepfun", "openrouter"].includes(m.id),
     },
     official: {
       title: t("groups.official_title"),
-      icon: "🏛️",
+      icon: "building-2",
       predicate: (m) => ["tavily", "zenmux", "claude_official"].includes(m.id),
     },
     xiaomi: {
       title: t("groups.xiaomi_title"),
-      icon: "🍚",
+      icon: "utensils",
       predicate: (m) => m.id === "xiaomimimo",
     },
     custom: {
       title: t("groups.custom_title"),
-      icon: "🧩",
+      icon: "puzzle",
       predicate: (m) => m.id.startsWith("custom_"),
     },
     misc: {
       title: t("groups.misc_title"),
-      icon: "🔧",
+      icon: "package",
       predicate: () => true, // catch-all
     },
   };

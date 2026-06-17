@@ -99,7 +99,7 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
       // 测试连接
       el("div", { class: "field" },
         el("div", { class: "row" }, testBtn),
-        el("div", { class: "help" }, t("settings.updater.checking") /* placeholder, see real help */),
+        el("div", { class: "help" }, t("settings.test.app_help")),
       ),
     ),
   );

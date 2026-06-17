@@ -390,7 +390,7 @@
       "zhipu_region_label": "智谱 GLM 区域",
       "zhipu_region_cn": "🇨🇳 国区 (open.bigmodel.cn)",
       "zhipu_region_en": "🌍 国际 (api.z.ai / Z.ai)",
-      "zhipu_region_help": "国区用 bigmodel.cn 创建的 API key；国际版用 z.ai 创建的。两个平台的 key 不通用。schema 一致（unit=3→5h, unit=6→周），只是 host 不同。"
+      "zhipu_region_help": "国区用 <a href=\"https://bigmodel.cn/user-center/projection-meter\" target=\"_blank\" class=\"link-ext\">bigmodel.cn</a> 创建的 API key；国际版用 <a href=\"https://z.ai/manage-apikey/subscription\" target=\"_blank\" class=\"link-ext\">z.ai</a> 创建的。两个平台的 key <strong>不通用</strong>。schema 一致（unit=3→5h, unit=6→周），只是 host 不同。"
     },
 
     "custom_source": {

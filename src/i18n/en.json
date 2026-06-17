@@ -390,7 +390,7 @@
       "zhipu_region_label": "Zhipu GLM region",
       "zhipu_region_cn": "🇨🇳 Mainland (open.bigmodel.cn)",
       "zhipu_region_en": "🌍 International (api.z.ai / Z.ai)",
-      "zhipu_region_help": "Mainland uses bigmodel.cn API key; international uses z.ai. Keys are not interchangeable. Same schema (unit=3→5h, unit=6→weekly), only host differs."
+      "zhipu_region_help": "Mainland uses <a href=\"https://bigmodel.cn/user-center/projection-meter\" target=\"_blank\" class=\"link-ext\">bigmodel.cn</a> API key; international uses <a href=\"https://z.ai/manage-apikey/subscription\" target=\"_blank\" class=\"link-ext\">z.ai</a>. Keys are <strong>not</strong> interchangeable. Same schema (unit=3→5h, unit=6→weekly), only host differs."
     },
 
     "custom_source": {

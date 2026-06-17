@@ -8,6 +8,7 @@
 // 主流程。
 
 import { el } from "./utils";
+import { t } from "../i18n";
 import type { AppConfig, SourceMeta } from "./types";
 
 export type ExtraBlock = (meta: SourceMeta, cfg: AppConfig) => HTMLElement;
@@ -35,10 +36,10 @@ function renderRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
   const current = cfg.providers?.minimax?.region ?? "cn";
   const select = el("select", { "data-id": "region", id: "region" });
   select.appendChild(
-    el("option", { value: "cn" }, "🌐 国内 (api.minimaxi.com)"),
+    el("option", { value: "cn" }, t("extras.minimax_region_cn")),
   );
   select.appendChild(
-    el("option", { value: "en" }, "🌐 国际 (api.minimax.io)"),
+    el("option", { value: "en" }, t("extras.minimax_region_en")),
   );
   select.value = current;
   // 即时生效：change → save_config（最简版 v1 仍走总保存，但 select 是 Stage 5 才换即时）
@@ -47,7 +48,7 @@ function renderRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
   return el(
     "div",
     { class: "field" },
-    el("label", {}, "MiniMax 区域"),
+    el("label", {}, t("extras.minimax_region_label")),
     select,
   );
 }
@@ -56,15 +57,15 @@ function renderRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
 function renderXiaomiRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
   const current = cfg.providers?.xiaomimimo?.xiaomi_region ?? "cn";
   const select = el("select", { "data-id": "xiaomi-region", id: "xiaomi-region" });
-  select.appendChild(el("option", { value: "cn" }, "🇨🇳 中国 (token-plan-cn)"));
-  select.appendChild(el("option", { value: "sgp" }, "🌏 新加坡 (token-plan-sgp)"));
-  select.appendChild(el("option", { value: "ams" }, "🌍 欧洲 (token-plan-ams)"));
+  select.appendChild(el("option", { value: "cn" }, t("extras.xiaomi_region_cn")));
+  select.appendChild(el("option", { value: "sgp" }, t("extras.xiaomi_region_sgp")));
+  select.appendChild(el("option", { value: "ams" }, t("extras.xiaomi_region_ams")));
   select.value = current;
   return el(
     "div",
     { class: "field" },
-    el("label", {}, "Xiaomi MiMo 集群"),
-    el("div", { class: "help" }, "集群字段当前用于未来扩展（多账号 / region-specific URL）。当前 cookie auth 已绑定 user，无视。"),
+    el("label", {}, t("extras.xiaomi_region_label")),
+    el("div", { class: "help" }, t("extras.xiaomi_region_help")),
     select,
   );
 }
@@ -85,7 +86,7 @@ function renderConciseModeCheckbox(_meta: SourceMeta, cfg: AppConfig): HTMLEleme
     el(
       "label",
       {},
-      "浮窗显示",
+      t("extras.tavily_concise_label"),
     ),
     el(
       "div",
@@ -94,13 +95,13 @@ function renderConciseModeCheckbox(_meta: SourceMeta, cfg: AppConfig): HTMLEleme
       el(
         "label",
         { for: "tavily-concise-mode" },
-        "简洁模式（只显示主指标 \"X/Y credits\" + 进度条，隐藏 5 个 endpoint 细分）",
+        t("extras.tavily_concise_checkbox"),
       ),
     ),
     el(
       "div",
       { class: "help" },
-      "默认开启 —— 6 行在小浮窗里太挤。关掉后会显示 search/extract/crawl/map/research 五个 endpoint 的细分行。改完点「保存配置」生效。",
+      t("extras.tavily_concise_help"),
     ),
   );
 }
@@ -112,19 +113,19 @@ function renderBaseUrlInput(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
     type: "text",
     id: "zenmux-base-url",
     "data-id": "zenmux-base-url",
-    placeholder: "默认 https://zenmux.ai/api/v1/management/payg/balance",
+    placeholder: t("extras.zenmux_base_url_placeholder"),
     autocomplete: "off",
   }) as HTMLInputElement;
   input.value = value;
   return el(
     "div",
     { class: "field" },
-    el("label", {}, "自定义 API URL（可选）"),
+    el("label", {}, t("extras.zenmux_base_url_label")),
     el("div", { class: "input-row" }, input),
     el(
       "div",
       { class: "help" },
-      "默认走 mode 选的端点（PAYG → /payg/balance，订阅 → /subscription/detail）。自部署 / 改了路径才需要改；留空用默认。",
+      t("extras.zenmux_base_url_help"),
     ),
   );
 }
@@ -134,8 +135,8 @@ function renderZenmuxMode(_meta: SourceMeta, _cfg: AppConfig): HTMLElement {
   // Stage 4 暂保留硬编码的初始值（注意：动态读 cfg 还需要 zhipu 端加对应字段）
   // TODO Stage 5 接 cfg.zenmux_mode
   const select = el("select", { id: "zenmux-mode" });
-  select.appendChild(el("option", { value: "payg" }, "💰 钱包余额（PAYG，默认）"));
-  select.appendChild(el("option", { value: "subscription" }, "📊 订阅用量（5h / 7d）"));
+  select.appendChild(el("option", { value: "payg" }, t("extras.zenmux_mode_payg")));
+  select.appendChild(el("option", { value: "subscription" }, t("extras.zenmux_mode_subscription")));
   select.value = "payg";
 
   const cb = el("input", {
@@ -148,33 +149,42 @@ function renderZenmuxMode(_meta: SourceMeta, _cfg: AppConfig): HTMLElement {
   return el(
     "div",
     { class: "field" },
-    el("label", {}, "查看模式"),
+    el("label", {}, t("extras.zenmux_mode_label")),
     el("div", { class: "input-row" }, select),
     el(
       "div",
       { class: "help" },
-      "PAYG：监控 Pay-As-You-Go 钱包余额（仿 DeepSeek）。订阅：监控 5h / 7d 滚动窗口的订阅用量（仿 MiniMax）。",
+      t("extras.zenmux_mode_help"),
     ),
     el(
       "div",
       { class: "check", id: "zenmux-payg-concise-wrap", style: "margin-top: 8px;" },
       cb,
-      el("label", { for: "zenmux-payg-concise-mode" }, "只显示余额（不显示充值 / 奖励）"),
+      el("label", { for: "zenmux-payg-concise-mode" }, t("extras.zenmux_payg_concise_label")),
     ),
   );
 }
 
 /// OpenRouter 帮助文案（无需额外字段，只需说明 key 格式）
 function renderOpenrouterHelp(_meta: SourceMeta, _cfg: AppConfig): HTMLElement {
+  // en.json: "OpenRouter 余额 = 账户 credit 余额。普通 API key（`sk-or-v1-...`）即可，不需要 Management key。端点 GET /api/v1/key。"
+  // zh-CN.json: "OpenRouter 余额 = 账户 credit 余额。普通 API key（`sk-or-v1-...`）即可，不需要 Management key。端点 " + link
+  const baseText = t("extras.openrouter_help_text");
+  // 中文版在末尾用空格 + 链接，英文版自带结尾。这里统一：基础文字 + 句点后接 link。
+  // 注意：英文版的句点已在 baseText 末尾，中文版没有，所以拆开处理。
+  const link = el("a", {
+    href: "https://openrouter.ai/docs/api/reference/limits",
+    target: "_blank",
+    class: "link-ext",
+  }, "GET /api/v1/key");
   return el(
     "div",
     { class: "field" },
     el(
       "div",
       { class: "help" },
-      "OpenRouter 余额 = 账户 credit 余额。普通 API key（`sk-or-v1-...`）即可，",
-      "不需要 Management key。端点 ",
-      el("a", { href: "https://openrouter.ai/docs/api/reference/limits", target: "_blank", class: "link-ext" }, "GET /api/v1/key"),
+      baseText,
+      link,
       "。",
     ),
   );
@@ -185,25 +195,19 @@ function renderOpenrouterHelp(_meta: SourceMeta, _cfg: AppConfig): HTMLElement {
 function renderZhipuRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
   const current = cfg.zhipu_region ?? "cn";
   const select = el("select", { id: "zhipu-region", "data-id": "zhipu-region" });
-  select.appendChild(el("option", { value: "cn" }, "🇨🇳 国区 (open.bigmodel.cn)"));
-  select.appendChild(el("option", { value: "en" }, "🌍 国际 (api.z.ai / Z.ai)"));
+  select.appendChild(el("option", { value: "cn" }, t("extras.zhipu_region_cn")));
+  select.appendChild(el("option", { value: "en" }, t("extras.zhipu_region_en")));
   select.value = current;
+
+  const helpDiv = document.createElement("div");
+  helpDiv.className = "help";
+  helpDiv.innerHTML = t("extras.zhipu_region_help");
 
   return el(
     "div",
     { class: "field" },
-    el("label", { for: "zhipu-region" }, "智谱 GLM 区域"),
+    el("label", { for: "zhipu-region" }, t("extras.zhipu_region_label")),
     select,
-    el(
-      "div",
-      { class: "help" },
-      "国区用 ",
-      el("a", { href: "https://bigmodel.cn/user-center/projection-meter", target: "_blank", class: "link-ext" }, "bigmodel.cn"),
-      " 创建的 API key；国际版用 ",
-      el("a", { href: "https://z.ai/manage-apikey/subscription", target: "_blank", class: "link-ext" }, "z.ai"),
-      " 创建的。两个平台的 key ",
-      el("strong", {}, "不通用"),
-      "。schema 一致（unit=3→5h, unit=6→周），只是 host 不同。",
-    ),
+    helpDiv,
   );
 }

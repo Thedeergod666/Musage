@@ -28,12 +28,23 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { ProviderId, SourceMeta } from "./types";
 
+/// 把 i18n 字符串里的 HTML 片段（<code>/<a>/<br> 等）一次性渲染为
+/// HTMLElement 节点。`help.<id>` 键的 value 已经在 json 里写好 HTML，
+/// 信任度高（无用户输入），可以直接 innerHTML。
+function renderHelp(html: string): HTMLElement {
+  const div = document.createElement("div");
+  div.innerHTML = html;
+  return div;
+}
+
 // ── 旧 enum-based API（minimax / deepseek / xiaomimimo api_key）──
 
 export async function loadKeyStatus(provider: ProviderId) {
   const has = await hasApiKeyFor(provider);
   const el = $(`#api-key-status-${provider}`);
-  el.textContent = has ? "✓ 已保存到本机" : "未设置";
+  el.textContent = has
+    ? t("credentials.cookie_status_saved")
+    : t("credentials.cookie_status_unset");
   el.className = `status ${has ? "ok" : ""}`;
 }
 
@@ -41,27 +52,27 @@ export async function saveKey(provider: ProviderId) {
   const input = $(`#api-key-${provider}`) as HTMLInputElement;
   const key = input.value.trim();
   if (!key) {
-    flash("⚠ 请先粘贴 API key", true);
+    flash(t("credentials.flash_paste_key"), true);
     return;
   }
   try {
     await setApiKeyFor(provider, key);
     input.value = "";
     await loadKeyStatus(provider);
-    flash(`✓ ${t(`provider.${provider}.name`)} key 已保存`);
+    flash(t("credentials.flash_saved_key", { name: t(`provider.${provider}.name`) }));
     // 立即拉一次
     const { refreshNow } = await import("./api");
     await refreshNow();
   } catch (e) {
-    flash(`✗ 保存失败: ${e}`, true);
+    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
   }
 }
 
 export async function deleteKey(provider: ProviderId) {
-  if (!confirm(`确认删除 ${t(`provider.${provider}.name`)} 的 API key？`)) return;
+  if (!confirm(t("credentials.confirm_delete_key", { name: t(`provider.${provider}.name`) }))) return;
   await deleteApiKeyFor(provider);
   await loadKeyStatus(provider);
-  flash("✓ 已删除");
+  flash(t("credentials.flash_deleted"));
 }
 
 // 从 keys.json 读明文 → 写剪贴板。用完即弃，不在 JS 侧长期保存。
@@ -69,13 +80,13 @@ export async function copyKey(provider: ProviderId) {
   try {
     const key = await getApiKeyFor(provider);
     if (!key) {
-      flash(`⚠ ${t(`provider.${provider}.name`)} 未设置 key`, true);
+      flash(t("credentials.flash_unset_key", { name: t(`provider.${provider}.name`) }), true);
       return;
     }
     await navigator.clipboard.writeText(key);
-    flash(`✓ ${t(`provider.${provider}.name`)} key 已复制到剪贴板`);
+    flash(t("credentials.flash_copy_ok", { name: t(`provider.${provider}.name`) }));
   } catch (e) {
-    flash(`✗ 复制失败: ${e}`, true);
+    flash(t("credentials.flash_copy_failed", { err: String(e) }), true);
   }
 }
 
@@ -85,7 +96,9 @@ export async function loadCookieStatus(provider: ProviderId) {
   const has = await hasCookieFor(provider);
   const el = document.getElementById(`cookie-status-${provider}`);
   if (el) {
-    el.textContent = has ? "✓ 已保存到本机" : "未设置";
+    el.textContent = has
+      ? t("credentials.cookie_status_saved")
+      : t("credentials.cookie_status_unset");
     el.className = `status ${has ? "ok" : ""}`;
   }
 }
@@ -97,24 +110,24 @@ export async function saveCookie(provider: ProviderId) {
   if (!input) return;
   const cookie = input.value.trim();
   if (!cookie) {
-    flash("⚠ 请先粘贴 Cookie", true);
+    flash(t("credentials.flash_paste_cookie"), true);
     return;
   }
   try {
     await setCookieFor(provider, cookie);
     input.value = "";
     await loadCookieStatus(provider);
-    flash(`✓ ${t(`provider.${provider}.name`)} Cookie 已保存`);
+    flash(t("credentials.flash_saved_cookie", { name: t(`provider.${provider}.name`) }));
   } catch (e) {
-    flash(`✗ 保存失败: ${e}`, true);
+    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
   }
 }
 
 export async function deleteCookie(provider: ProviderId) {
-  if (!confirm(`确认删除 ${t(`provider.${provider}.name`)} 的 Cookie？`)) return;
+  if (!confirm(t("credentials.confirm_delete_cookie", { name: t(`provider.${provider}.name`) }))) return;
   await deleteCookieFor(provider);
   await loadCookieStatus(provider);
-  flash("✓ Cookie 已删除");
+  flash(t("credentials.flash_deleted_cookie"));
 }
 
 // ── 新 id-based API（tavily / zenmux） ────────────────────────
@@ -123,7 +136,9 @@ async function loadIdKeyStatus(id: string) {
   const has = await hasSourceCredential(id);
   const el = document.getElementById(`api-key-status-${id}`);
   if (el) {
-    el.textContent = has ? "✓ 已保存到本机" : "未设置";
+    el.textContent = has
+      ? t("credentials.cookie_status_saved")
+      : t("credentials.cookie_status_unset");
     el.className = `status ${has ? "ok" : ""}`;
   }
 }
@@ -139,39 +154,39 @@ export async function saveTavilyKey() {
   if (!input) return;
   const key = input.value.trim();
   if (!key) {
-    flash("⚠ 请先粘贴 Tavily API key", true);
+    flash(t("credentials.flash_paste_tavily"), true);
     return;
   }
   try {
     await setSourceCredential("tavily", key);
     input.value = "";
     await loadTavilyKeyStatus();
-    flash("✓ Tavily key 已保存");
+    flash(t("credentials.flash_saved_key", { name: t("provider.tavily.name") }));
     const { refreshNow } = await import("./api");
     await refreshNow();
   } catch (e) {
-    flash(`✗ 保存失败: ${e}`, true);
+    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
   }
 }
 
 export async function deleteTavilyKey() {
-  if (!confirm("确认删除 Tavily 的 API key？")) return;
+  if (!confirm(t("credentials.confirm_delete_key_tavily"))) return;
   await deleteSourceCredential("tavily");
   await loadTavilyKeyStatus();
-  flash("✓ Tavily key 已删除");
+  flash(t("credentials.flash_deleted_tavily"));
 }
 
 export async function copyTavilyKey() {
   try {
     const key = await getSourceCredential("tavily");
     if (!key) {
-      flash("⚠ Tavily 未设置 key", true);
+      flash(t("credentials.flash_unset_tavily"), true);
       return;
     }
     await navigator.clipboard.writeText(key);
-    flash("✓ Tavily key 已复制到剪贴板");
+    flash(t("credentials.flash_copy_ok_tavily"));
   } catch (e) {
-    flash(`✗ 复制失败: ${e}`, true);
+    flash(t("credentials.flash_copy_failed", { err: String(e) }), true);
   }
 }
 
@@ -186,39 +201,39 @@ export async function saveZenmuxKey() {
   if (!input) return;
   const key = input.value.trim();
   if (!key) {
-    flash("⚠ 请先粘贴 ZenMux API key", true);
+    flash(t("credentials.flash_paste_zenmux"), true);
     return;
   }
   try {
     await setSourceCredential("zenmux", key);
     input.value = "";
     await loadZenmuxKeyStatus();
-    flash("✓ ZenMux key 已保存");
+    flash(t("credentials.flash_saved_key", { name: t("provider.zenmux.name") }));
     const { refreshNow } = await import("./api");
     await refreshNow();
   } catch (e) {
-    flash(`✗ 保存失败: ${e}`, true);
+    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
   }
 }
 
 export async function deleteZenmuxKey() {
-  if (!confirm("确认删除 ZenMux 的 API key？")) return;
+  if (!confirm(t("credentials.confirm_delete_key_zenmux"))) return;
   await deleteSourceCredential("zenmux");
   await loadZenmuxKeyStatus();
-  flash("✓ ZenMux key 已删除");
+  flash(t("credentials.flash_deleted_zenmux"));
 }
 
 export async function copyZenmuxKey() {
   try {
     const key = await getSourceCredential("zenmux");
     if (!key) {
-      flash("⚠ ZenMux 未设置 key", true);
+      flash(t("credentials.flash_unset_zenmux"), true);
       return;
     }
     await navigator.clipboard.writeText(key);
-    flash("✓ ZenMux key 已复制到剪贴板");
+    flash(t("credentials.flash_copy_ok_zenmux"));
   } catch (e) {
-    flash(`✗ 复制失败: ${e}`, true);
+    flash(t("credentials.flash_copy_failed", { err: String(e) }), true);
   }
 }
 
@@ -247,7 +262,7 @@ export function renderCredentialBlock(meta: SourceMeta): HTMLElement {
       id: `copy-key-${meta.id}`,
       "data-id": meta.id,
       "data-action": "copy-key",
-      title: "复制到剪贴板",
+      title: t("credentials.copy_title"),
     }, "📋");
     block.appendChild(
       el("div", { class: "input-row" }, input, copy),
@@ -257,17 +272,17 @@ export function renderCredentialBlock(meta: SourceMeta): HTMLElement {
         class: "status",
         id: `api-key-status-${meta.id}`,
         "data-id": meta.id,
-      }, "—"),
+      }, t("credentials.cookie_status_placeholder")),
     );
     block.appendChild(
       el("div", { class: "row" },
-        el("button", { class: "primary", id: `save-key-${meta.id}`, "data-id": meta.id, "data-action": "save-key" }, "保存"),
-        el("button", { class: "danger", id: `del-key-${meta.id}`, "data-id": meta.id, "data-action": "del-key" }, "删除"),
+        el("button", { class: "primary", id: `save-key-${meta.id}`, "data-id": meta.id, "data-action": "save-key" }, t("credentials.save")),
+        el("button", { class: "danger", id: `del-key-${meta.id}`, "data-id": meta.id, "data-action": "del-key" }, t("credentials.delete")),
       ),
     );
     block.appendChild(
       el("div", { class: "help" },
-        ...apiKeyHelpNodes(meta.id),
+        apiKeyHelpNode(meta.id),
       ),
     );
   } else if (meta.auth_kind === "api_key_or_cookie") {
@@ -282,24 +297,24 @@ export function renderCredentialBlock(meta: SourceMeta): HTMLElement {
       id: `cookie-${meta.id}`,
       "data-id": meta.id,
       rows: "4",
-      placeholder: 'api-platform_serviceToken="..."; userId=...; api-platform_slh="..."; api-platform_ph="..."',
+      placeholder: t("credentials.cookie_textarea_placeholder"),
     }) as HTMLTextAreaElement;
     block.appendChild(
       el("div", { class: "field" },
-        el("label", {}, "Cookie header 值"),
+        el("label", {}, t("credentials.cookie_label")),
         textarea,
-        el("div", { class: "status", id: `cookie-status-${meta.id}`, "data-id": meta.id }, "—"),
+        el("div", { class: "status", id: `cookie-status-${meta.id}`, "data-id": meta.id }, t("credentials.cookie_status_placeholder")),
       ),
     );
     block.appendChild(
       el("div", { class: "row" },
-        el("button", { class: "primary", id: `save-cookie-${meta.id}`, "data-id": meta.id, "data-action": "save-cookie" }, "保存 Cookie"),
-        el("button", { class: "danger", id: `del-cookie-${meta.id}`, "data-id": meta.id, "data-action": "del-cookie" }, "删除 Cookie"),
+        el("button", { class: "primary", id: `save-cookie-${meta.id}`, "data-id": meta.id, "data-action": "save-cookie" }, t("credentials.save_cookie")),
+        el("button", { class: "danger", id: `del-cookie-${meta.id}`, "data-id": meta.id, "data-action": "del-cookie" }, t("credentials.del_cookie")),
       ),
     );
     block.appendChild(
       el("div", { class: "help" },
-        ...cookieHelpNodes(),
+        cookieHelpNode(),
       ),
     );
   }
@@ -328,10 +343,9 @@ function renderMultiAuthBlock(meta: SourceMeta): HTMLElement {
     block.appendChild(
       el("div", { class: "quick-login-banner" },
         el("div", { class: "quick-login-text" },
-          el("strong", {}, "🚀 不想手动抄 Cookie？"),
+          el("strong", {}, t("credentials.cookie_login_hint")),
           el("br"),
-          "点下面按钮 → 弹窗登录小米账号 → 后端自动提取 Cookie 写进 keys.json，",
-          "全程不需要碰 DevTools。",
+          t("credentials.cookie_login_help"),
         ),
         el("div", { class: "row" },
           el("button", {
@@ -339,19 +353,19 @@ function renderMultiAuthBlock(meta: SourceMeta): HTMLElement {
             id: `xiaomi-login-${meta.id}`,
             "data-id": meta.id,
             "data-action": "xiaomi-login",
-          }, "🔑 登录小米账号"),
+          }, t("credentials.login_xiaomi")),
           el("button", {
             class: "danger",
             id: `xiaomi-clear-cookie-${meta.id}`,
             "data-id": meta.id,
             "data-action": "xiaomi-clear-cookie",
-          }, "🗑 清除 Cookie"),
+          }, t("credentials.clear_cookie")),
           el("a", {
             class: "link-ext",
             href: "https://platform.xiaomimimo.com",
             target: "_blank",
             rel: "noopener noreferrer",
-          }, "🌐 访问官网"),
+          }, t("credentials.visit_official_site")),
         ),
       ),
     );
@@ -361,7 +375,7 @@ function renderMultiAuthBlock(meta: SourceMeta): HTMLElement {
   if (!meta.hide_credentials) {
     block.appendChild(
       el("div", { class: "field" },
-        el("label", {}, "API key（优先尝试）"),
+        el("label", {}, t("credentials.api_key_priority_label")),
         el("div", { class: "input-row" },
           el("input", {
             type: "password",
@@ -371,37 +385,36 @@ function renderMultiAuthBlock(meta: SourceMeta): HTMLElement {
             autocomplete: "off",
           }) as HTMLInputElement,
         ),
-        el("div", { class: "status", id: `api-key-status-${meta.id}`, "data-id": meta.id }, "—"),
+        el("div", { class: "status", id: `api-key-status-${meta.id}`, "data-id": meta.id }, t("credentials.cookie_status_placeholder")),
         el("div", { class: "row" },
-          el("button", { class: "primary", id: `save-key-${meta.id}`, "data-id": meta.id, "data-action": "save-key" }, "保存 API key"),
-          el("button", { class: "danger", id: `del-key-${meta.id}`, "data-id": meta.id, "data-action": "del-key" }, "删除"),
+          el("button", { class: "primary", id: `save-key-${meta.id}`, "data-id": meta.id, "data-action": "save-key" }, t("credentials.save_key")),
+          el("button", { class: "danger", id: `del-key-${meta.id}`, "data-id": meta.id, "data-action": "del-key" }, t("credentials.delete")),
         ),
         el("div", { class: "help" },
-          ...apiKeyHelpNodes(meta.id),
+          apiKeyHelpNode(meta.id),
           el("br"),
           el("strong", {}, "提示："),
-          "Xiaomi 用量 API 当前对 Bearer 返 401，但别担心——",
-          "下面的 Cookie 一旦配好，Bearer 失败时会自动 fallback（你不用手动切）。",
+          t("credentials.xiaomi_api_key_hint_extra"),
         ),
       ),
     );
 
     block.appendChild(
       el("div", { class: "field" },
-        el("label", {}, "Dashboard Cookie（兜底：401 时自动退到这里）"),
+        el("label", {}, t("credentials.dashboard_cookie_label")),
         el("textarea", {
           id: `cookie-${meta.id}`,
           "data-id": meta.id,
           rows: "4",
-          placeholder: 'api-platform_serviceToken="..."; userId=...; api-platform_slh="..."; api-platform_ph="..."',
+          placeholder: t("credentials.cookie_textarea_placeholder"),
         }) as HTMLTextAreaElement,
-        el("div", { class: "status", id: `cookie-status-${meta.id}`, "data-id": meta.id }, "—"),
+        el("div", { class: "status", id: `cookie-status-${meta.id}`, "data-id": meta.id }, t("credentials.cookie_status_placeholder")),
         el("div", { class: "row" },
-          el("button", { class: "primary", id: `save-cookie-${meta.id}`, "data-id": meta.id, "data-action": "save-cookie" }, "保存 Cookie"),
-          el("button", { class: "danger", id: `del-cookie-${meta.id}`, "data-id": meta.id, "data-action": "del-cookie" }, "删除"),
+          el("button", { class: "primary", id: `save-cookie-${meta.id}`, "data-id": meta.id, "data-action": "save-cookie" }, t("credentials.save_cookie")),
+          el("button", { class: "danger", id: `del-cookie-${meta.id}`, "data-id": meta.id, "data-action": "del-cookie" }, t("credentials.delete")),
         ),
         el("div", { class: "help" },
-          ...cookieHelpNodes(),
+          cookieHelpNode(),
         ),
       ),
     );
@@ -417,22 +430,27 @@ function renderMultiAuthBlock(meta: SourceMeta): HTMLElement {
       "data-id": meta.id,
       "data-action": "xiaomi-display-mode",
     }) as HTMLSelectElement;
-    const options: Array<{ value: "all" | "plan_only" | "total_only"; label: string; hint: string }> = [
-      { value: "all",        label: "完整",     hint: "（3 行，套餐和总额度数字一致时自动合并）" },
-      { value: "plan_only",  label: "只看套餐", hint: "（只显示套餐用量 + 重置时间）" },
-      { value: "total_only", label: "只看总额度", hint: "（只显示本月总消耗 + 重置时间）" },
+    const options: Array<{ value: "all" | "plan_only" | "total_only"; key: string }> = [
+      { value: "all",        key: "xiaomi_mode_all" },
+      { value: "plan_only",  key: "xiaomi_mode_plan" },
+      { value: "total_only", key: "xiaomi_mode_total" },
     ];
+    const hintKey = (v: string) =>
+      v === "all" ? "xiaomi_mode_all_hint" :
+      v === "plan_only" ? "xiaomi_mode_plan_hint" :
+      "xiaomi_mode_total_hint";
     for (const o of options) {
       modeSelect.appendChild(
-        el("option", { value: o.value }, `${o.label} ${o.hint}`),
+        el("option", { value: o.value },
+          `${t(`credentials.${o.key}`)} ${t(`credentials.${hintKey(o.value)}`)}`),
       );
     }
     block.appendChild(
       el("div", { class: "field" },
-        el("label", { for: `xiaomi-display-mode-${meta.id}` }, "📊 浮窗显示模式"),
+        el("label", { for: `xiaomi-display-mode-${meta.id}` }, t("credentials.xiaomi_display_mode_label")),
         modeSelect,
         el("div", { class: "help" },
-          "切到'只看总额度'时会复用套餐的月度重置时间（总额度也是按月清零）。",
+          t("credentials.xiaomi_display_mode_help"),
         ),
       ),
     );
@@ -462,205 +480,29 @@ export function apiKeyPlaceholder(id: string): string {
   }
 }
 
-/// 返回 help 文本的节点数组（含 inline 链接用 a 元素）
-function apiKeyHelpNodes(id: string): (Node | string)[] {
-  switch (id) {
-    case "minimax":
-      return [
-        "🔒 密钥以 ",
-        el("code", {}, "0600"),
-        " 权限存到本机 ",
-        el("code", {}, "keys.json"),
-        "（与 config 同目录，不走系统钥匙串，启动零弹窗）。",
-        el("br"),
-        "从 ",
-        el("a", { href: "https://platform.minimaxi.com/user-center/basic-information/interface-key", target: "_blank", class: "link-ext" }, "platform.minimaxi.com"),
-        " 获取。",
-      ];
-    case "deepseek":
-      return [
-        "🔒 密钥以 ",
-        el("code", {}, "0600"),
-        " 权限存到本机 ",
-        el("code", {}, "keys.json"),
-        "（与 MiniMax 的 key 互不影响）。",
-        el("br"),
-        "从 ",
-        el("a", { href: "https://platform.deepseek.com/api_keys", target: "_blank", class: "link-ext" }, "platform.deepseek.com"),
-        " 获取。",
-      ];
-    case "xiaomimimo":
-      return [
-        "🔒 Token Plan 专用 key（",
-        el("code", {}, "tp-"),
-        " 开头，区别于 pay-as-you-go 的 ",
-        el("code", {}, "sk-"),
-        "）。",
-        el("br"),
-        "从 ",
-        el("a", { href: "https://platform.xiaomimimo.com/tokenplan/subscription", target: "_blank", class: "link-ext" }, "platform.xiaomimimo.com"),
-        " 订阅后获取。",
-      ];
-    case "tavily":
-      return [
-        "Tavily 是 AI agent 常用的 search API（",
-        el("strong", {}, "不是"),
-        " LLM token plan）。",
-        el("br"),
-        "从 ",
-        el("a", { href: "https://app.tavily.com/home", target: "_blank", class: "link-ext" }, "app.tavily.com"),
-        " 获取 API key。",
-      ];
-    case "zenmux":
-      return [
-        "ZenMux 是 AI model gateway（聚合 Claude / GPT / Gemini 等）。",
-        el("br"),
-        "从 ",
-        el("a", { href: "https://zenmux.ai/platform/management", target: "_blank", class: "link-ext" }, "zenmux.ai/platform/management"),
-        " 创建。",
-      ];
-    case "openrouter":
-      return [
-        "OpenRouter 是 AI model gateway（聚合 130+ 模型）。",
-        el("br"),
-        "用普通 API key（",
-        el("code", {}, "sk-or-v1-"),
-        " 开头）即可，",
-        el("strong", {}, "不需要"),
-        " Management key。",
-        el("br"),
-        "从 ",
-        el("a", { href: "https://openrouter.ai/settings/keys", target: "_blank", class: "link-ext" }, "openrouter.ai/settings/keys"),
-        " 获取。",
-      ];
-    case "kimi":
-      return [
-        "Kimi 是月之暗面（Moonshot AI）的编程套餐，5h + 周双窗口。",
-        el("br"),
-        "从 ",
-        el("a", { href: "https://platform.moonshot.cn/console/api-keys", target: "_blank", class: "link-ext" }, "platform.moonshot.cn"),
-        " 创建 API key。",
-      ];
-    case "zhipu":
-      return [
-        "智谱 GLM Coding Plan 套餐，5h + 周双窗口。",
-        el("br"),
-        el("strong", {}, "鉴权特殊"),
-        "：",
-        el("code", {}, "Authorization"),
-        " 头",
-        el("strong", {}, "不加"),
-        " ",
-        el("code", {}, "Bearer"),
-        " 前缀 —— 直接用裸 key（",
-        el("code", {}, "id.secret"),
-        " 格式）。",
-        el("br"),
-        "在「区域」下拉里选 CN（",
-        el("a", { href: "https://bigmodel.cn/user-center/projection-meter", target: "_blank", class: "link-ext" }, "bigmodel.cn"),
-        "）或 EN（",
-        el("a", { href: "https://z.ai/manage-apikey/subscription", target: "_blank", class: "link-ext" }, "z.ai"),
-        "）。两个平台的 key 不通用。",
-      ];
-    // ── 2026-06-16 新增（PR 2）──
-    case "stepfun":
-      return [
-        "StepFun（阶跃星辰）Step Plan 订阅套餐，5h + 周双窗口。",
-        el("br"),
-        el("strong", {}, "鉴权特殊"),
-        "：用 Oasis-Token（",
-        el("code", {}, "Cookie: Oasis-Token=<value>"),
-        "），不是普通 Bearer。",
-        el("br"),
-        "获取方法：Chrome 登录 ",
-        el("a", { href: "https://platform.stepfun.com", target: "_blank", class: "link-ext" }, "platform.stepfun.com"),
-        " → F12 → Network → 任意请求 → 找 ",
-        el("code", {}, "Oasis-Token"),
-        " Cookie value 整段复制。",
-        el("br"),
-        el("strong", {}, "已知限制"),
-        "：Oasis-Token 一般 7-30 天过期，过期时（HTTP 401）需重新登录提取。",
-        el("br"),
-        el("strong", {}, "暂不支持"),
-        " 3 步 OAuth 自动登录流（Phase X 补）。",
-      ];
-    case "siliconflow":
-      return [
-        "SiliconFlow（硅基流动）钱包余额，按 CNY 显示。",
-        el("br"),
-        "从 ",
-        el("a", { href: "https://cloud.siliconflow.cn/account/ak", target: "_blank", class: "link-ext" }, "cloud.siliconflow.cn"),
-        " 获取 API key。",
-      ];
-    case "novita":
-      return [
-        el("strong", {}, "⚠️ Novita AI 暂未支持"),
-        " —— 公开 API ref 没有 balance/quota endpoint（2026-06-16 确认）。",
-        el("br"),
-        "设置面板可启用，但 fetch 永远返回「未支持」错。等官方公开后可参考 SiliconFlow 模式补 do_fetch。",
-      ];
-    case "qwen":
-      return [
-        el("strong", {}, "⚠️ Qwen / DashScope 暂未支持"),
-        " —— 公开 API 无 quota endpoint（",
-        el("a", { href: "https://github.com/steipete/CodexBar/issues/612", target: "_blank", class: "link-ext" }, "CodexBar issue #612"),
-        " 实测确认）。",
-        el("br"),
-        "设置面板可启用，但 fetch 永远返回「未支持」错。Phase X 走 Coding Plan OAuth flow 补。",
-      ];
-    case "claude_official":
-      return [
-        "Claude Pro / Max 官方 OAuth 用量监控。",
-        el("br"),
-        el("strong", {}, "鉴权特殊"),
-        "：用 Cookie ",
-        el("code", {}, "sessionKey=<value>"),
-        "（不是 Bearer API key）。",
-        el("br"),
-        "获取方法：Chrome 登录 ",
-        el("a", { href: "https://claude.ai", target: "_blank", class: "link-ext" }, "claude.ai"),
-        " → F12 → Application → Cookies → ",
-        el("code", {}, "sessionKey"),
-        " 整段 value 复制（或只粘纯 value 也行，程序自动补 ",
-        el("code", {}, "sessionKey="),
-        " 前缀）。",
-        el("br"),
-        el("strong", {}, "已知限制"),
-        "：",
-        el("ol", { style: "margin: 4px 0; padding-left: 20px;" },
-          el("li", {}, "sessionKey 约 8h 过期（claude.ai 登录 session 失效）"),
-          el("li", {}, "OAuth usage API 偶发 429（",
-            el("a", { href: "https://github.com/anthropics/claude-code/issues/31021", target: "_blank", class: "link-ext" }, "claude-code#31021"),
-            "），属 Anthropic 端问题，Musage 不重试"),
-        ),
-      ];
-    default:
-      return ["API key 存到本机 keys.json。"];
+/// 返回单个 provider 的 help 节点（i18n 字符串内联 HTML，innerHTML 一次渲染）。
+function apiKeyHelpNode(id: string): HTMLElement {
+  const key = `help.${id}`;
+  const html = t(key);
+  // t() 找不到时会原样回退 key 字符串（"help.minimax"），但 JSON 里若漏
+  // 配某个 id，我们走 default。dev 模式会有 console.warn。
+  if (html === key) {
+    return renderHelp(t("help.default"));
   }
+  return renderHelp(html);
 }
 
-function cookieHelpNodes(): (Node | string)[] {
-  return [
-    "⚠️ Xiaomi 用量走 dashboard admin API，需要浏览器登录态。",
-    el("br"),
-    el("strong", {}, "获取方法"),
-    "：Chrome 登录 ",
-    el("a", { href: "https://platform.xiaomimimo.com/console/plan-manage", target: "_blank", class: "link-ext" }, "platform.xiaomimimo.com"),
-    " → F12 → Network → 任意 ",
-    el("code", {}, "/api/v1/tokenPlan/*"),
-    " 请求 → 右键 → Copy → Copy request headers → 找 ",
-    el("code", {}, "cookie:"),
-    " 这一行整段粘贴到上面。",
-    el("br"),
-    "Cookie 登出后失效，过期时 (HTTP 401) 错误信息会引导重粘。",
-  ];
+function cookieHelpNode(): HTMLElement {
+  return renderHelp(t("help.xiaomi_cookie"));
 }
 
 // ── 统一 id-based 凭据操作（动态 panel 按钮事件委托走这里）──
 
 export async function loadCredentialStatus(id: string) {
   const has = await hasSourceCredential(id);
-  const text = has ? "✓ 已保存到本机" : "未设置";
+  const text = has
+    ? t("credentials.cookie_status_saved")
+    : t("credentials.cookie_status_unset");
   const cls = `status ${has ? "ok" : ""}`;
   // 更新主面板 + 高级 tab 的 status 元素
   for (const suffix of ["", "-adv"]) {
@@ -680,7 +522,7 @@ export async function saveCredentialAction(id: string, action: "key" | "cookie",
   if (!input) return;
   const value = input.value.trim();
   if (!value) {
-    flash("⚠ 请先粘贴", true);
+    flash(t("credentials.flash_paste"), true);
     return;
   }
   try {
@@ -694,36 +536,37 @@ export async function saveCredentialAction(id: string, action: "key" | "cookie",
     const statusId = action === "key" ? `api-key-status-${id}` : `cookie-status-${id}`;
     const status = document.getElementById(statusId);
     if (status) {
-      status.textContent = "✓ 已保存到本机";
+      status.textContent = t("credentials.cookie_status_saved");
       status.className = "status ok";
     }
-    flash(`✓ ${t(`provider.${id as ProviderId}.name`)} 已保存`);
+    flash(t("credentials.flash_saved_generic", { name: t(`provider.${id as ProviderId}.name`) }));
     await refreshNow();
   } catch (e) {
-    flash(`✗ 保存失败: ${e}`, true);
+    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
   }
 }
 
 export async function deleteCredentialAction(id: string, action: "key" | "cookie") {
   const label = action === "key" ? "API key" : "Cookie";
-  if (!confirm(`确认删除 ${t(`provider.${id as ProviderId}.name`)} 的 ${label}？`)) return;
+  if (!confirm(t(action === "key" ? "credentials.confirm_delete_key" : "credentials.confirm_delete_cookie",
+    { name: `${t(`provider.${id as ProviderId}.name`)} ${label}` }))) return;
   // 后端 delete_source_credential 会同时清 api_key 和 cookie，统一用一个入口
   await deleteSourceCredential(id);
   await loadCredentialStatus(id);
-  flash("✓ 已删除");
+  flash(t("credentials.flash_deleted"));
 }
 
 export async function copyCredentialAction(id: string) {
   try {
     const value = await getSourceCredential(id);
     if (!value) {
-      flash(`⚠ ${t(`provider.${id as ProviderId}.name`)} 未设置 key`, true);
+      flash(t("credentials.flash_unset_key", { name: t(`provider.${id as ProviderId}.name`) }), true);
       return;
     }
     await navigator.clipboard.writeText(value);
-    flash(`✓ ${t(`provider.${id as ProviderId}.name`)} key 已复制到剪贴板`);
+    flash(t("credentials.flash_copy_ok", { name: t(`provider.${id as ProviderId}.name`) }));
   } catch (e) {
-    flash(`✗ 复制失败: ${e}`, true);
+    flash(t("credentials.flash_copy_failed", { err: String(e) }), true);
   }
 }
 
@@ -737,14 +580,14 @@ export async function copyCredentialAction(id: string) {
 /// 5. 本函数在 init 时绑一次事件监听（见 `bindXiaomiLoginEvents`）
 export async function xiaomiLoginAction(id: string) {
   if (id !== "xiaomimimo") {
-    flash("⚠ 一键登录只对 Xiaomi 启用", true);
+    flash(t("credentials.xiaomi_login_only"), true);
     return;
   }
   try {
     await invoke("open_xiaomi_login_window");
-    flash("🔑 已打开登录窗口 —— 登录完成后会自动关闭窗口");
+    flash(t("credentials.xiaomi_login_opened"));
   } catch (e) {
-    flash(`✗ 打开登录窗口失败: ${e}`, true);
+    flash(t("credentials.xiaomi_login_failed", { err: String(e) }), true);
   }
 }
 
@@ -752,9 +595,9 @@ export async function xiaomiLoginAction(id: string) {
 /// 用于 cookie 过期（API 返 401）时，一键清掉旧 cookie + 刷新状态。
 export async function xiaomiClearCookieAction(id: string) {
   if (id !== "xiaomimimo") return;
-  if (!confirm("确认清除已保存的 Xiaomi Cookie？\n清除后需要重新登录。")) return;
+  if (!confirm(t("credentials.confirm_clear_xiaomi"))) return;
   await deleteSourceCredential(id);
-  flash("✓ Cookie 已清除，请重新点击「🔑 登录小米账号」");
+  flash(t("credentials.xiaomi_clear_done"));
   await loadCredentialStatus(id);
 }
 
@@ -764,12 +607,12 @@ export function bindXiaomiLoginEvents() {
   // 走 Tauri 2 标准 listen API（不是 window.__TAURI__ 全局，TS 类型干净）
   void listen<number>("musage://xiaomi-login-success", (e) => {
     const savedLen = e.payload;
-    flash(`✓ Xiaomi 登录成功，已保存 cookie（${savedLen} 字节）`);
+    flash(t("credentials.xiaomi_login_success", { bytes: savedLen }));
     // 立即刷新状态徽章
     void loadCredentialStatus("xiaomimimo");
   });
   void listen<string>("musage://xiaomi-login-failed", (e) => {
-    flash(`✗ Xiaomi 登录失败: ${e.payload}`, true);
+    flash(t("credentials.xiaomi_login_failure", { err: e.payload }), true);
   });
 }
 
@@ -829,14 +672,14 @@ async function xiaomiDisplayModeAction(
   try {
     await setXiaomiDisplayMode(mode);
     // 不需要显式调 refreshNow：后端 command 内部会 refresh_single
-    const labelMap: Record<typeof mode, string> = {
-      all: "完整",
-      plan_only: "只看套餐",
-      total_only: "只看总额度",
+    const labelKey: Record<typeof mode, string> = {
+      all: "xiaomi_mode_all",
+      plan_only: "xiaomi_mode_plan",
+      total_only: "xiaomi_mode_total",
     };
-    flash(`✓ Xiaomi 显示模式已切到「${labelMap[mode]}」`);
+    flash(t("credentials.xiaomi_mode_changed", { label: t(`credentials.${labelKey[mode]}`) }));
   } catch (e) {
-    flash(`✗ 切换失败: ${e}`, true);
+    flash(t("settings.app.switch_failed", { err: String(e) }), true);
   }
 }
 

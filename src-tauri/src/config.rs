@@ -19,6 +19,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
@@ -30,6 +31,17 @@ use crate::t;
 
 const CONFIG_FILE: &str = "config.json";
 const KEYS_FILE: &str = "keys.json";
+
+/// 当前 AppConfig schema 版本号。每次往 AppConfig 加 required 字段时 +1。
+/// 老 config.json 缺这字段时 serde_default 走 1（与 v0.6 之前的所有格式兼容）。
+const CURRENT_SCHEMA_VERSION: u32 = 2;
+
+/// 进程级 save lock —— 串行化所有 cfg.save() / write_keys_atomic() 调用，
+/// 避免 geom debouncer (500ms) 与 settings save 同时 fire 时 last-writer-wins 覆盖。
+fn save_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
@@ -109,6 +121,11 @@ pub enum TrayIconStyle {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
+    /// Schema 版本号。`#[serde(default = 1)]` 让老 config.json（无这字段）走 1，
+    /// migrate() 会把 < CURRENT_SCHEMA_VERSION 的版本逐步升上来。
+    /// 加新 required 字段时：版本号 +1 + 在 migrate() 加迁移逻辑。
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
     /// provider id → 配置
     pub providers: BTreeMap<String, ProviderConfig>,
     pub refresh_interval_secs: u64,
@@ -248,6 +265,10 @@ fn default_locale() -> String {
     "zh-CN".to_string()
 }
 
+const fn default_schema_version() -> u32 {
+    1
+}
+
 const fn tavily_concise_default() -> bool {
     true
 }
@@ -344,6 +365,7 @@ impl Default for AppConfig {
             },
         );
         Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
             providers,
             refresh_interval_secs: 60,
             floating_x: None,
@@ -431,8 +453,26 @@ impl AppConfig {
         Self::load_from_disk()
     }
 
-    /// 加载后兜底：补齐所有 provider（防止老配置文件缺了某个）
+    /// 加载后兜底：补齐所有 provider（防止老配置文件缺了某个）+ 跑版本迁移
     fn migrated(mut self) -> Self {
+        // schema 迁移：当前版本 → CURRENT_SCHEMA_VERSION
+        // 加新 required 字段时：version +1，并在下面 match 加分支
+        while self.schema_version < CURRENT_SCHEMA_VERSION {
+            let next = self.schema_version + 1;
+            match self.schema_version {
+                1 => {
+                    // v1 → v2: 加了 schema_version 字段本身（迁移占位，预留给未来）
+                }
+                _ => {
+                    tracing::warn!(
+                        from = self.schema_version,
+                        "未知的 schema_version 迁移路径，跳过"
+                    );
+                    break;
+                }
+            }
+            self.schema_version = next;
+        }
         for p in Provider::all() {
             self.providers
                 .entry(p.id_str().to_string())
@@ -563,13 +603,49 @@ impl AppConfig {
     }
 
     pub fn save(&self) -> Result<(), String> {
+        // save_lock 串行化并发 save：geom debouncer (500ms tick) + 用户改设置同时触发
+        // 时，read-modify-write race 会让 last writer 覆盖另一方的内容。Mutex<()> 极小。
+        let _g = save_lock().lock().unwrap_or_else(|e| e.into_inner());
         let path = config_path()?;
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| t!("commands.config_mkdir", err = e.to_string()).into_owned())?;
+            std::fs::create_dir_all(parent)
+                .map_err(|e| t!("commands.config_mkdir", err = e.to_string()).into_owned())?;
         }
-        let s = serde_json::to_string_pretty(self).map_err(|e| t!("commands.config_serialize", err = e.to_string()).into_owned())?;
-        std::fs::write(&path, s).map_err(|e| t!("commands.config_write", err = e.to_string()).into_owned())?;
+        let s = serde_json::to_string_pretty(self)
+            .map_err(|e| t!("commands.config_serialize", err = e.to_string()).into_owned())?;
+        // 原子写：tmp + rename（参考 write_keys_atomic 的同款 pattern）
+        // 避免 panic / 断电把 config.json 截断成空 → 启动时 unwrap_or_default 把用户配置清零
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, &s)
+            .map_err(|e| t!("commands.config_write", err = e.to_string()).into_owned())?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // config.json 也按 0600，避免把 floating_x/y 这种弱隐私信息暴露给同机用户
+            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+        }
+        if let Err(e) = std::fs::rename(&tmp, &path) {
+            // rename 失败时清理 tmp，避免下次启动看到孤儿
+            let _ = std::fs::remove_file(&tmp);
+            return Err(t!("commands.config_write", err = e.to_string()).into_owned());
+        }
         Ok(())
+    }
+}
+
+/// 启动时清理上次崩溃留下的孤儿 .tmp 文件（在 cfg_dir 下扫 `*.json.tmp`）。
+/// 不阻塞启动；最佳努力。
+pub fn cleanup_orphan_tmp_files() {
+    let Ok(dir) = config_dir() else { return };
+    let Ok(entries) = std::fs::read_dir(&dir) else { return };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("tmp")
+            && path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(".json.tmp"))
+        {
+            tracing::info!(path = %path.display(), "清理孤儿 .tmp");
+            let _ = std::fs::remove_file(&path);
+        }
     }
 }
 

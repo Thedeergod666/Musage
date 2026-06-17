@@ -172,6 +172,24 @@ pub struct AppConfig {
     /// key = provider.id_str()，value = 该 provider 的 overrides
     #[serde(default)]
     pub schema_overrides: BTreeMap<String, ProviderOverrides>,
+    /// ZenMux 自定义 Management API endpoint URL。空 = 走 zenmux.rs 的默认 URL。
+    /// 序列化时 None 跳过（避免老 config.json 出现 `"zenmux_base_url": null`）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zenmux_base_url: Option<String>,
+    /// ZenMux 查看模式（"payg" / "subscription"）。None = 走 zenmux.rs 默认 Payg。
+    /// 顶层字段（不嵌 `providers.zenmux.*`）因为 settings.ts 写到这里 + zenmux.rs
+    /// set_state 也从这里读——加进 AppConfig 避免每次 save 都丢（之前 set_state 永远
+    /// 拿不到 cfg 里的字段,只能 fallback 默认值）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zenmux_mode: Option<String>,
+    /// ZenMux PAYG 简洁模式：只显示余额，隐藏 Top-up / Bonus 细分。None = 走默认 true。
+    /// 2026-06-16 commit 加。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zenmux_payg_concise_mode: Option<bool>,
+    /// 智谱 GLM 区域（"cn" / "en"）。None = 走 zhipu.rs 默认 Cn。
+    /// 顶层字段,跟 zenmux_mode 同款原因。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zhipu_region: Option<String>,
     /// 托盘图标渲染样式（v0.6+ 新增）。`#[serde(default)]` 让老 config.json
     /// 缺字段时走 `Percent`（也是新装用户默认值）。
     #[serde(default)]
@@ -381,6 +399,12 @@ impl Default for AppConfig {
             show_footer_hint: false,
             provider_order: Vec::new(),
             schema_overrides: BTreeMap::new(),
+            // 4 个 source-specific 设置：None 让 source 内部用各自的默认值
+            // (zenmux → Payg / zhipu → Cn / zenmux_payg_concise → true / base_url → 内置 URL)
+            zenmux_base_url: None,
+            zenmux_mode: None,
+            zenmux_payg_concise_mode: None,
+            zhipu_region: None,
             tray_icon_style: TrayIconStyle::default(),
             color_thresholds: default_color_thresholds(),
             wallet_alert_threshold: None,
@@ -814,13 +838,23 @@ pub fn load_credential_for_id(id: &str) -> Result<Option<Credentials>, String> {
 
 pub fn save_credential_for_id(id: &str, cred: &Credentials) -> Result<(), String> {
     let mut map = read_keys()?;  // F3 fix
-    match (&cred.api_key, &cred.cookie) {
-        (Some(k), _) => { map.insert(id.to_string(), k.clone()); }
-        (None, Some(c)) => { map.insert(format!("{id}:cookie"), c.clone()); }
-        (None, None) => {
-            map.remove(id);
-            map.remove(&format!("{id}:cookie"));
-        }
+    // 防御性写法:分别处理 api_key / cookie 两个字段。
+    // 旧实现的 match 在 (Some, Some) 时只插 api_key,cookie 被静默丢弃——
+    // 当前 build_credentials 强制二选一所以不会触发,但 API 是 public 的,
+    // 未来给用户同时填两个 key 就会撞这里。改成 if-let 链就不会丢。
+    let mut wrote_any = false;
+    if let Some(k) = &cred.api_key {
+        map.insert(id.to_string(), k.clone());
+        wrote_any = true;
+    }
+    if let Some(c) = &cred.cookie {
+        map.insert(format!("{id}:cookie"), c.clone());
+        wrote_any = true;
+    }
+    if !wrote_any {
+        // 两个都 None → 删光 (跟 delete_credential_for_id 行为一致)
+        map.remove(id);
+        map.remove(&format!("{id}:cookie"));
     }
     write_keys_atomic(&map)
 }

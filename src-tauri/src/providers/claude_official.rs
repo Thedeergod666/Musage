@@ -80,7 +80,7 @@ impl Default for ClaudeOfficialSource {
 
 impl QuotaSource for ClaudeOfficialSource {
     fn id(&self) -> Cow<'_, str> { Cow::Borrowed("claude_official") }
-    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("Claude 官方") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Owned(t!("provider_name.claude_official").into_owned()) }
     fn auth_kind(&self) -> AuthKind { AuthKind::Cookie }
 
     fn set_state<'a>(
@@ -237,7 +237,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
 
     if rows.is_empty() {
         return Err(FetchError::parse(
-            "Claude 官方 响应里没找到 five_hour / seven_day 字段".to_string(),
+            t!("error.claude_official.missing_five_hour_seven_day").into_owned(),
         ));
     }
 
@@ -252,7 +252,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         raw: Some(raw.clone()),
         is_healthy: true,
         source_id: Some("claude_official".to_string()),
-        source_display_name: Some("Claude 官方".to_string()),
+        source_display_name: Some(t!("provider_name.claude_official").into_owned()),
         plan_name: Some("Pro/Max".to_string()),
     })
 }
@@ -315,7 +315,7 @@ mod tests {
         let snap = parse(&raw).expect("parse");
         assert!(snap.success);
         assert_eq!(snap.source_id.as_deref(), Some("claude_official"));
-        assert_eq!(snap.source_display_name.as_deref(), Some("Claude 官方"));
+        assert_eq!(snap.source_display_name.as_deref(), Some(t!("provider_name.claude_official")));
         assert_eq!(snap.plan_name.as_deref(), Some("Pro/Max"));
         assert_eq!(snap.rows.len(), 2);
 

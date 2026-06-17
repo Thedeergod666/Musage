@@ -113,7 +113,7 @@ impl XiaomimimoSource {
 
 impl QuotaSource for XiaomimimoSource {
     fn id(&self) -> Cow<'_, str> { Cow::Borrowed("xiaomimimo") }
-    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("Xiaomi MiMo") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Owned(t!("provider_name.xiaomimimo").into_owned()) }
     /// 优先 Bearer（API key），401 时降级到 Cookie。两个输入都展示在设置面板。
     /// 决策逻辑见 [`decide_auth_strategy`] + [`Xiaomimimo::fetch`]。
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKeyOrCookie }

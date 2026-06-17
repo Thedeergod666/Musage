@@ -59,7 +59,7 @@ impl Default for KimiSource {
 
 impl QuotaSource for KimiSource {
     fn id(&self) -> Cow<'_, str> { Cow::Borrowed("kimi") }
-    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("Kimi") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Owned(t!("provider_name.kimi").into_owned()) }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
 
     fn set_state<'a>(

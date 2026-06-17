@@ -55,7 +55,7 @@ impl Default for SiliconflowSource {
 
 impl QuotaSource for SiliconflowSource {
     fn id(&self) -> Cow<'_, str> { Cow::Borrowed("siliconflow") }
-    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("SiliconFlow") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Owned(t!("provider_name.siliconflow").into_owned()) }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
 
     fn set_state<'a>(
@@ -165,11 +165,15 @@ fn parse(raw: &serde_json::Value) -> Result<ProviderSnapshot, FetchError> {
 
     let data = raw
         .get("data")
-        .ok_or_else(|| FetchError::parse("SiliconFlow 响应缺少 data 字段".to_string()))?;
+        .ok_or_else(|| FetchError::parse(
+            t!("error.common.missing_data_field", provider = "SiliconFlow").into_owned()
+        ))?;
 
     // 余额字段是字符串 → parse_f64 容错
     let balance = parse_f64(data.get("balance"))
-        .ok_or_else(|| FetchError::parse("SiliconFlow 响应缺少 data.balance".to_string()))?;
+        .ok_or_else(|| FetchError::parse(
+            t!("error.common.missing_field_generic", field = "data.balance").into_owned()
+        ))?;
 
     let account_status = data
         .get("status")

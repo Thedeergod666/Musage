@@ -272,7 +272,9 @@ fn parse_key(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
     let data = raw
         .get("data")
-        .ok_or_else(|| FetchError::parse("key 响应缺少 data 字段".to_string()))?;
+        .ok_or_else(|| FetchError::parse(
+            t!("error.common.missing_data_field", provider = "OpenRouter").into_owned()
+        ))?;
 
     let remaining = num_f64(data, "limit_remaining");
     let limit = num_f64(data, "limit");
@@ -300,7 +302,9 @@ fn parse_key(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     }
 
     if rows.is_empty() {
-        return Err(FetchError::parse("key 响应缺少 limit_remaining 字段".to_string()));
+        return Err(FetchError::parse(
+            t!("error.common.missing_field_generic", field = "limit_remaining").into_owned()
+        ));
     }
 
     Ok(ProviderSnapshot {

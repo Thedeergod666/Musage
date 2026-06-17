@@ -113,7 +113,7 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
     let app_for_callback = app.clone();
 
     WebviewWindowBuilder::new(&app, "xiaomi-login", WebviewUrl::External(url))
-        .title("登录小米账号 - Musage")
+        .title(t!("window.xiaomi_login").to_string())
         .inner_size(960.0, 720.0)
         .min_inner_size(640.0, 540.0)
         .resizable(true)

@@ -117,7 +117,7 @@ impl Default for ZhipuSource {
 
 impl QuotaSource for ZhipuSource {
     fn id(&self) -> Cow<'_, str> { Cow::Borrowed("zhipu") }
-    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("智谱 GLM") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Owned(t!("provider_name.zhipu_cn").into_owned()) }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
 
     fn set_state<'a>(

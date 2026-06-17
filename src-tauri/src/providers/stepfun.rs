@@ -79,7 +79,7 @@ impl Default for StepfunSource {
 
 impl QuotaSource for StepfunSource {
     fn id(&self) -> Cow<'_, str> { Cow::Borrowed("stepfun") }
-    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("StepFun Step Plan") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Owned(t!("provider_name.stepfun").into_owned()) }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
 
     fn set_state<'a>(
@@ -216,7 +216,9 @@ fn parse(rate_raw: Value, plan_name: Option<String>) -> Result<ProviderSnapshot,
 
     let data = rate_raw
         .get("data")
-        .ok_or_else(|| FetchError::parse("StepFun 响应缺少 data 字段".to_string()))?;
+        .ok_or_else(|| FetchError::parse(
+            t!("error.common.missing_data_field", provider = "StepFun").into_owned()
+        ))?;
 
     let mut rows = Vec::new();
 

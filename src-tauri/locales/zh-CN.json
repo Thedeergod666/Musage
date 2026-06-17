@@ -54,7 +54,12 @@
       "rate_limited": "{provider} 请求过于频繁，请稍后再试",
       "rate_limited_with_retry": "{provider} 请求过于频繁，约 {retry_secs} 秒后可重试",
       "url_scheme_invalid": "URL 必须以 https:// 开头（拒绝明文 / file:// / javascript: 等）。当前值：{url}",
-      "no_credential": "未配置凭据（设置面板填入）"
+      "no_credential": "未配置凭据（设置面板填入）",
+      "missing_data_field": "{provider} 响应缺少 data 字段",
+      "missing_field_generic": "响应缺少 {field} 字段",
+      "read_keys_failed": "读 keys.json 失败: {err}",
+      "join_task_failed": "任务调度失败: {err}",
+      "unknown_source_id": "未知的 source id: {id}"
     },
     "provider": {
       "unconfigured_key": "未配置 {provider} 的 API key（设置面板填入）",
@@ -83,7 +88,8 @@
       "token_invalid_hint": "StepFun Oasis-Token 无效或已过期（去 stepfun.ai 重新登录并粘贴新 token）"
     },
     "claude_official": {
-      "cookie_invalid_hint": "Claude sessionKey Cookie 无效或已过期（claude.ai 登录 session 约 8h 失效，重新提取）"
+      "cookie_invalid_hint": "Claude sessionKey Cookie 无效或已过期（claude.ai 登录 session 约 8h 失效，重新提取）",
+      "missing_five_hour_seven_day": "Claude 响应里没找到 five_hour / seven_day 字段"
     },
     "custom": {
       "network": "CustomSource 网络错误: {err}",
@@ -153,6 +159,22 @@
   "window": {
     "settings": "Musage · 设置",
     "xiaomi_login": "登录小米账号 - Musage"
+  },
+  "provider_name": {
+    "minimax": "MiniMax",
+    "deepseek": "DeepSeek",
+    "xiaomimimo": "Xiaomi MiMo",
+    "tavily": "Tavily",
+    "zenmux": "ZenMux",
+    "openrouter": "OpenRouter",
+    "kimi": "Kimi",
+    "zhipu_cn": "智谱 GLM",
+    "zhipu_en": "Z.ai",
+    "stepfun": "阶跃星辰 Step Plan",
+    "siliconflow": "SiliconFlow",
+    "novita": "Novita AI",
+    "qwen": "Qwen（DashScope）",
+    "claude_official": "Claude 官方"
   },
 
   "xiaomi_login": {

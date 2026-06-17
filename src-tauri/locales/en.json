@@ -54,7 +54,12 @@
       "rate_limited": "{provider} rate limited, please try again later",
       "rate_limited_with_retry": "{provider} rate limited, retry in about {retry_secs} seconds",
       "url_scheme_invalid": "URL must start with https:// (rejects http://, file://, javascript:, etc). Current value: {url}",
-      "no_credential": "No credentials configured (set in Settings panel)"
+      "no_credential": "No credentials configured (set in Settings panel)",
+      "missing_data_field": "{provider} response missing 'data' field",
+      "missing_field_generic": "Response missing {field} field",
+      "read_keys_failed": "Failed to read keys.json: {err}",
+      "join_task_failed": "Failed to join task: {err}",
+      "unknown_source_id": "Unknown source id: {id}"
     },
     "provider": {
       "unconfigured_key": "API key not configured for {provider} (set in Settings)",
@@ -83,7 +88,8 @@
       "token_invalid_hint": "StepFun Oasis-Token invalid or expired (re-login at stepfun.ai and paste new token)"
     },
     "claude_official": {
-      "cookie_invalid_hint": "Claude sessionKey cookie invalid or expired (claude.ai login session expires after ~8h — re-extract)"
+      "cookie_invalid_hint": "Claude sessionKey cookie invalid or expired (claude.ai login session expires after ~8h — re-extract)",
+      "missing_five_hour_seven_day": "Claude response missing five_hour / seven_day field"
     },
     "custom": {
       "network": "CustomSource network error: {err}",
@@ -153,6 +159,22 @@
   "window": {
     "settings": "Musage · Settings",
     "xiaomi_login": "Login Xiaomi — Musage"
+  },
+  "provider_name": {
+    "minimax": "MiniMax",
+    "deepseek": "DeepSeek",
+    "xiaomimimo": "Xiaomi MiMo",
+    "tavily": "Tavily",
+    "zenmux": "ZenMux",
+    "openrouter": "OpenRouter",
+    "kimi": "Kimi",
+    "zhipu_cn": "Zhipu GLM",
+    "zhipu_en": "Z.ai",
+    "stepfun": "StepFun Step Plan",
+    "siliconflow": "SiliconFlow",
+    "novita": "Novita AI",
+    "qwen": "Qwen (DashScope)",
+    "claude_official": "Claude"
   },
 
   "xiaomi_login": {

@@ -97,7 +97,7 @@ impl MinimaxSource {
 
 impl QuotaSource for MinimaxSource {
     fn id(&self) -> Cow<'_, str> { Cow::Borrowed("minimax") }
-    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("MiniMax") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Owned(t!("provider_name.minimax").into_owned()) }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
 
     fn set_state<'a>(

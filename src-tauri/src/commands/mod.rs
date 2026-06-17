@@ -573,7 +573,7 @@ pub(crate) fn build_settings_window(
         "settings",
         tauri::WebviewUrl::App("settings.html".into()),
     )
-    .title("Musage · 设置")
+    .title(t!("window.settings").to_string())
     .inner_size(780.0, 680.0)
     .min_inner_size(720.0, 600.0)
     .resizable(true)
@@ -910,7 +910,9 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                 let task = tokio::spawn(async move {
                     // 读 keys.json 失败归到 Network（IO 错误类），不归到 Other
                     // 让前端能正确分类显示
-                    Err(FetchError::network(format!("读 keys.json 失败: {e}")))
+                    Err(FetchError::network(
+                        t!("error.common.read_keys_failed", err = e.to_string()).into_owned()
+                    ))
                 });
                 tasks.push((id_owned, default_interval_secs, task));
             }
@@ -945,7 +947,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
             }
             Err(join_err) => {
                 let provider = provider_from_id(&id);
-                let msg = format!("任务调度失败: {join_err}");
+                let msg = t!("error.common.join_task_failed", err = join_err.to_string()).into_owned();
                 log_provider_error(app, &id, ErrorKind::Other, &msg);
                 // join_err 走 Other, next_fetch_at 用默认间隔(无 backoff)
                 let mut err_snap = ProviderSnapshot::empty_error(
@@ -1030,7 +1032,7 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
     let src = builtin_sources()
         .into_iter()
         .find(|s| s.id() == id)
-        .ok_or_else(|| format!("未知的 source id: {id}"))?;
+        .ok_or_else(|| t!("error.common.unknown_source_id", id = id).into_owned())?;
     // 手动 "立即刷新" 始终拉取 —— 即便是 STUB (用户显式点击,让 fetch 返
     // "未支持" 错就清楚表达 STUB 状态;poller 才按 default_enabled 自动跳过)。
     let creds = config::load_credential_for_id(id)?;

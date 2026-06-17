@@ -59,7 +59,7 @@ impl Default for TavilySource {
 
 impl QuotaSource for TavilySource {
     fn id(&self) -> Cow<'_, str> { Cow::Borrowed("tavily") }
-    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("Tavily") }
+    fn display_name(&self) -> Cow<'_, str> { Cow::Owned(t!("provider_name.tavily").into_owned()) }
     fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
 
     fn set_state<'a>(

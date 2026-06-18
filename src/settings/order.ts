@@ -162,25 +162,26 @@ function onDragMouseMove(e: MouseEvent) {
   // 移动 ghost（保持 mousedown 时的 offset，光标位置 = ghost.top + offset）
   dragGhost.style.top = `${e.clientY - dragOffsetY}px`;
 
-  // 找到光标所在的 <li>（不含 placeholder、divider、隐藏的 src li）
-  const items = [...listRef.querySelectorAll("li.order-row:not(.order-placeholder):not([style*='display: none'])")] as HTMLLIElement[];
-  let insertIdx = items.length; // 默认插到末尾
-
-  for (let i = 0; i < items.length; i++) {
-    const rect = items[i].getBoundingClientRect();
-    const midY = rect.top + rect.height / 2;
-    if (e.clientY < midY) {
-      insertIdx = i;
-      break;
-    }
-  }
-
-  // 移动 placeholder 到 insertIdx
+  // 找到光标所在的 <li>。注意：这里**不**用 `li.order-row` 过滤 —— 必须
+  // 包含 divider，否则当用户在 divider 下方 (隐藏段内) 拖动时，
+  // `insertIdx` 索引到的 `visibleItems[i]` 跨过 divider 位置一格，
+  // 出现"drop 在第 N 行上方却落到第 N-1 行"的位置错位。
+  //
+  // 之前版本 (fix-drag-index-2026-06-18 之前) 用两套数组：
+  //   - `items`  = order-row 集合 (不含 divider) → 算 insertIdx
+  //   - `visibleItems` = children 过滤 (含 divider) → insertBefore
+  // 两边索引不对应，divider 之后的所有 drop 位置都比预期高 1 格。
+  // 现在统一用一份数组（含 divider）做 midY 检测 + insertBefore。
   if (dragPlaceholder && listRef) {
     const children = [...listRef.children] as HTMLElement[];
     const visibleItems = children.filter(
       (c) => c !== dragPlaceholder && !(c as HTMLElement).style?.display?.includes("none"),
     );
+    const rects = visibleItems.map((el) => {
+      const r = el.getBoundingClientRect();
+      return { top: r.top, height: r.height };
+    });
+    const insertIdx = computeInsertIndex(rects, e.clientY);
     if (insertIdx < visibleItems.length) {
       listRef.insertBefore(dragPlaceholder, visibleItems[insertIdx]);
     } else {
@@ -207,7 +208,7 @@ function onDragMouseUp(_e: MouseEvent) {
     if (newIdx < 0) newIdx = currentProviderOrder.length;
     // 检测 placeholder 是否落在 divider 之后 → 视为"未勾选"区
     const dividerIdx = children.findIndex((c) => c.classList.contains("order-divider"));
-    placeholderBeforeDivider = dividerIdx < 0 || newIdx < dividerIdx;
+    placeholderBeforeDivider = isPlaceholderBeforeDivider(newIdx, dividerIdx);
   }
 
   // 移除 placeholder + ghost
@@ -811,4 +812,43 @@ export function bindOrderButtonsGlobal() {
 export function renderProviderOrderPanels(order: string[]) {
   setCurrentProviderOrder(canonicalizeOrder(order));
   refreshPosLabels();
+}
+
+// ── 纯函数（可被单元测试覆盖）─────────────────────────────────
+
+/**
+ * 给定一组"可见 DOM 元素"的 bounding rect（按 DOM 顺序，**包含 divider**）
+ * 和光标 Y 坐标，返回 placeholder 应插入的位置索引。
+ *
+ * hit-test 规则：光标 Y 落在哪个元素的 midY 之上 → 插到该元素之前；
+ * 都不命中 → 插到末尾。
+ *
+ * 提取为纯函数让 `onDragMouseMove` 单元测试可写 —— 之前版本 bug 的根因
+ * 正是这套索引和 `visibleItems` 的索引错位（不含 divider 的 items 算
+ * insertIdx，用含 divider 的 visibleItems 做 insertBefore）。
+ */
+export function computeInsertIndex(
+  rects: ReadonlyArray<{ readonly top: number; readonly height: number }>,
+  clientY: number,
+): number {
+  for (let i = 0; i < rects.length; i++) {
+    const midY = rects[i].top + rects[i].height / 2;
+    if (clientY < midY) return i;
+  }
+  return rects.length; // append to end
+}
+
+/**
+ * 给定 placeholder 和 divider 在 `listRef.children` 里的索引，判断
+ * placeholder 是否落在 divider 之前（视为"显示段"）还是之后（"隐藏段"）。
+ *
+ * 边界情况：dividerIdx === -1（无 divider 场景，例如 disabledIds 为空
+ * 时 buildOrderItems 仍渲染一条空 divider，但 #951 后改成始终渲染）→ 返回
+ * true（视作整体 enabled，无 hidden 段）。
+ */
+export function isPlaceholderBeforeDivider(
+  placeholderIdx: number,
+  dividerIdx: number,
+): boolean {
+  return dividerIdx < 0 || placeholderIdx < dividerIdx;
 }

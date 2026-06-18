@@ -13,7 +13,7 @@ use ab_glyph::{Font, FontVec, PxScale, ScaleFont};
 use image::Rgba;
 use imageproc::drawing::draw_text_mut;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{
     image::Image,
@@ -21,6 +21,7 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager,
 };
+use tokio::sync::mpsc;
 
 use crate::config::TrayIconStyle;
 use crate::providers::{Provider, ProviderSnapshot, QuotaSnapshot};
@@ -28,6 +29,71 @@ use crate::providers::{Provider, ProviderSnapshot, QuotaSnapshot};
 // 不要在子模块里写 `use rust_i18n::t;` —— 那会找错 macro；必须走 crate::t
 // 才能拿到 i18n!("locales") 生成的那份。
 use crate::t;
+
+// ═══════════════════════════════════════════════════════════════════
+// 跨线程 tray 更新 channel（2026-06-18 闪退根因修复）
+// ═══════════════════════════════════════════════════════════════════
+//
+// 之前：所有调用方（poller / refresh_single / set_tray_icon_style）直接
+// `app.tray_by_id("main-tray")` → 拿 owned `TrayIcon`（Tauri 内部走
+// `Arc::unwrap_or_clone` 拿唯一所有权）→ set_icon / set_tooltip → 函数
+// 返回时 tray 走 `Drop for TrayIcon` → `TrayIcon::remove` → 调
+// `NSStatusBar::removeStatusItem` → **BSServiceMainRunLoopQueue::assertBarrierOnQueue
+// 触发 SIGTRAP 闪退**。
+//
+// 根因：`app.tray_by_id` 返回的 tray 是**唯一所有者**（Tauri 资源表里
+// 只放了一个 Arc handle），函数出 scope 自动 drop，而调用方是 tokio
+// worker 线程（poller 走 `tauri::async_runtime::spawn`），不在 main
+// runloop —— AppKit NSStatusBar 操作跨线程必炸。
+//
+// 修法：所有 tray 写操作通过一个进程内 mpsc channel 派发到 main thread：
+// - 调用方（任何线程）`try_send` 一条 TrayRequest，立即返回，不阻塞
+// - 一个 long-lived tokio task 跑 receiver 循环，每收一条消息就
+//   `app.run_on_main_thread(closure)` 派到 main thread
+// - main thread closure 里拿 `tray_by_id` → set_icon → set_tooltip →
+//   **正常 drop**（在 main thread 上 → 不会 SIGTRAP）
+//
+// 注意：`run_on_main_thread` 是 `FnOnce`，所以不能在 closure 里 loop。
+// 每条消息 → 一次 dispatch（poller 1Hz × N provider → N 次/秒，完全可接受）。
+// 真要 coalesce 时（v2 优化）可以 receiver 内部加"keep last" buffer。
+
+/// Tray 写操作请求（跨线程派发到 main thread）
+#[derive(Debug)]
+enum TrayRequest {
+    /// 更新托盘图标 + tooltip
+    Update { snap: Box<QuotaSnapshot>, style: TrayIconStyle },
+    /// 重建菜单（locale 切换时，menu label 走 t!() 重新拿当前 locale）
+    RebuildMenu,
+}
+
+/// 进程内 tray request sender —— `update_tray_from_snapshot` / `rebuild_tray`
+/// 通过这个 handle 派发到 main thread。
+///
+/// 用 `OnceLock<Mutex<Option<UnboundedSender>>>`：
+/// - `OnceLock` 保证全局只有一个 sender
+/// - `Mutex<Option<...>>` 因为 sender 在 `tray::setup` 里才能初始化（那时
+///   才有 AppHandle 可以 clone 出来 start receiver），之前的调用方
+///   （理论上不会有，但 race-conditions 下极早期 emit 可能先到）走
+///   `try_send` 拿到 `None` 就 log warn skip
+static TRAY_REQUEST_TX: OnceLock<Mutex<Option<mpsc::UnboundedSender<TrayRequest>>>> =
+    OnceLock::new();
+
+fn tray_request_tx() -> Option<mpsc::UnboundedSender<TrayRequest>> {
+    TRAY_REQUEST_TX
+        .get()
+        .and_then(|m| m.lock().ok().and_then(|g| g.clone()))
+}
+
+/// 派发一条 tray 请求到 main thread。失败（receiver 已 drop）→ log warn skip。
+fn dispatch_tray_request(req: TrayRequest) {
+    let Some(tx) = tray_request_tx() else {
+        tracing::warn!("tray request channel 还没初始化（极早期事件），丢弃");
+        return;
+    };
+    if let Err(e) = tx.send(req) {
+        tracing::warn!(error = %e, "tray request 派发失败（receiver 已退出）");
+    }
+}
 
 /// 防御 NSStatusItem 合成事件误触发 toggle：
 ///
@@ -252,6 +318,18 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
         })
         .build(app)?;
 
+    // ── 启动 tray request receiver（2026-06-18 闪退修复）──
+    //
+    // 创建 mpsc channel，把 sender 存到 OnceLock 全局（其他线程 try_send 用），
+    // 然后 spawn 一个 long-lived tokio task 跑 receiver 循环：
+    // 每收一条 TrayRequest → `app.run_on_main_thread(closure)` → main thread
+    // 上做 tray_by_id + set_icon / set_menu。
+    //
+    // 必须在 `.build(app)?` **之后** —— tray 资源已注册，tray_by_id 才有东西。
+    // 必须在 `setup` 返回前启动 —— 早期 emit（如果有）会拿到 None 走 warn skip
+    // 然后下一次再 try_send 就能成功。
+    start_tray_request_receiver(app);
+
     Ok(())
 }
 
@@ -284,30 +362,120 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     )
 }
 
+/// 启动 tray request 派发通道（2026-06-18 闪退修复核心）。
+///
+/// - 创建 `mpsc::unbounded_channel::<TrayRequest>`
+/// - sender 存进 `TRAY_REQUEST_TX`（进程全局，其他模块 try_send 用）
+/// - spawn 一个 long-lived tokio task 跑 receiver：每收一条消息 → 派发到 main thread
+///
+/// 设计取舍：
+/// - **每次 `try_send` 都派发一次 main thread**（不做 coalesce）：poller 1Hz
+///   tick × 几个 provider，每秒 main thread 顶多几次 set_icon，完全可接受。
+///   v2 优化需要时再在 receiver 内部加 "keep last" 模式。
+/// - **tokio task 跑 receiver**（不是 std::thread）：tray 模块已经重度依赖
+///   tokio，复用 `tauri::async_runtime::spawn` 简单且不出新线程。
+/// - **main thread closure 拿 owned tray + set_icon/set_menu + 自然 drop**：
+///   这就是修复的核心 —— drop 在 main thread 跑，AppKit NSStatusBar 操作
+///   不会 SIGTRAP。`tray_by_id` 内部走 `Arc::unwrap_or_clone` 拿唯一所有权，
+///   出 scope 必走 Drop → remove → removeStatusItem。必须 main thread。
+fn start_tray_request_receiver(app: &AppHandle) {
+    let (tx, mut rx) = mpsc::unbounded_channel::<TrayRequest>();
+
+    // 把 sender 存到全局。OnceLock + Mutex<Option<...>>：
+    // - OnceLock 保证唯一
+    // - Mutex<Option> 兼容"还没初始化"状态（理论上 setup 期间不会调用，但保险）
+    TRAY_REQUEST_TX.get_or_init(|| Mutex::new(Some(tx)));
+
+    // 启动 long-lived receiver task
+    let app_for_task = app.clone();
+    tauri::async_runtime::spawn(async move {
+        tracing::debug!("tray request receiver 启动");
+        while let Some(req) = rx.recv().await {
+            // 每条消息派发一次 main thread。
+            // 错误（main thread 退出）→ log + 退出 receiver loop。
+            //
+            // 不能 move 同一个变量同时又借用它：clone 一份给 closure。
+            let app_for_dispatch = app_for_task.clone();
+            let app_for_closure = app_for_task.clone();
+            if let Err(e) = app_for_dispatch.run_on_main_thread(move || {
+                handle_tray_request(&app_for_closure, req);
+            }) {
+                tracing::warn!(error = %e, "派发 tray request 到 main thread 失败，receiver 退出");
+                break;
+            }
+        }
+        tracing::debug!("tray request receiver 退出（channel 关闭）");
+    });
+}
+
+/// main thread 上执行单条 tray request（tray request receiver 用）。
+///
+/// 关键：在这里 `app.tray_by_id` 拿 owned tray + 操作 + 让 tray 出 scope drop，
+/// drop 是在 main thread 跑（`assertBarrierOnQueue` 通过），不会闪退。
+fn handle_tray_request(app: &AppHandle, req: TrayRequest) {
+    match req {
+        TrayRequest::Update { snap, style } => {
+            let Some(tray) = app.tray_by_id("main-tray") else {
+                tracing::warn!("tray 还没建好（tray_by_id 返 None）");
+                return;
+            };
+            if let Err(e) = tray.set_icon(Some(render_icon(&snap, style))) {
+                tracing::warn!(error = %e, "set_icon 失败");
+                return;
+            }
+            if let Err(e) = tray.set_tooltip(Some(tooltip(&snap))) {
+                tracing::warn!(error = %e, "set_tooltip 失败");
+            }
+            // tray 在 main thread 上自然 drop，安全
+        }
+        TrayRequest::RebuildMenu => {
+            let Some(tray) = app.tray_by_id("main-tray") else {
+                return;
+            };
+            let menu = match build_tray_menu(app) {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::warn!(error = %e, "build_tray_menu 失败");
+                    return;
+                }
+            };
+            if let Err(e) = tray.set_menu(Some(menu)) {
+                tracing::warn!(error = %e, "set_menu 失败");
+            }
+        }
+    }
+}
+
 /// P0：locale 切换时重新构造菜单并 `set_menu()` 替换（不是 remove+add，
 /// 避免 tray 短暂消失闪烁）。
 ///
 /// 调用时机：[`crate::lib::run`] setup 里的 `musage://locale-changed` 监听器。
 /// 错误返回：仅 Tauri API 失败时返 Err，调用方记 warn 不阻塞。
-pub fn rebuild_tray(app: &AppHandle) -> tauri::Result<()> {
-    let Some(tray) = app.tray_by_id("main-tray") else {
-        return Ok(());  // tray 还没建好（极早期事件），跳过
-    };
-    let menu = build_tray_menu(app)?;
-    tray.set_menu(Some(menu))?;
+///
+/// 2026-06-18：原本直接 `app.tray_by_id(...)` 拿 owned tray → set_menu →
+/// drop 跨线程 → SIGTRAP。改为派发到 main thread，drop 在 main 跑，安全。
+pub fn rebuild_tray(_app: &AppHandle) -> tauri::Result<()> {
+    dispatch_tray_request(TrayRequest::RebuildMenu);
     Ok(())
 }
 
+/// 派发 tray 图标更新到 main thread（2026-06-18 修复后）。
+///
+/// 旧实现直接 `tray_by_id` 拿 owned tray 然后 set_icon —— 调用方常在 tokio
+/// worker 线程（poller 1Hz tick），tray 出 scope 跨线程 drop 触发
+/// `BSServiceMainRunLoopQueue::assertBarrierOnQueue` SIGTRAP 闪退。
+/// 新实现只 try_send 消息，**毫秒级返回** —— 不会卡 poller。
+///
+/// 调用方签名零变化，行为等价：最终 main thread 上跑 set_icon + set_tooltip。
 pub fn update_tray_from_snapshot(
-    app: &AppHandle,
+    _app: &AppHandle,
     snap: &QuotaSnapshot,
     style: TrayIconStyle,
 ) -> tauri::Result<()> {
-    let Some(tray) = app.tray_by_id("main-tray") else {
-        return Ok(());
-    };
-    tray.set_icon(Some(render_icon(snap, style)))?;
-    tray.set_tooltip(Some(tooltip(snap)))?;
+    dispatch_tray_request(TrayRequest::Update {
+        snap: Box::new(snap.clone()),
+        style,
+    });
     Ok(())
 }
 

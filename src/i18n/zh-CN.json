@@ -73,7 +73,7 @@
     "error": {
       "unknown": "未知错误"
     },
-    "err_btn_relogin_xiaomi": "重新登录小米账号",
+    "err_btn_relogin_xiaomi": "重新登录小米",
     "err_btn_retry": "重试",
     "err_retry_in_minutes": "下次自动重试约 {mins} 分钟后"
   },

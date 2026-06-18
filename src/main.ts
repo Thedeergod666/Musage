@@ -316,24 +316,37 @@ function render(snap: QuotaSnapshot) {
   // "没动"。这里把每张 card 按 snap 顺序依次挪到 anchor 之后即可重排。
   // 注：footer 永远在最后（updateFoot 会 append 到 app 末尾），所以
   // anchor.nextSibling 不会跨过 footer 干扰卡片排布。
-  let reorderAnchor: ChildNode | null = null;
-  for (const p of snap.providers) {
-    const id = p.source_id ?? p.provider;
-    const card = app.querySelector<HTMLElement>(`.card[data-provider="${cssEscape(id)}"]`);
-    if (!card) continue;
-    if (reorderAnchor == null) {
-      // 第一个：挪到 app 的最前
-      if (card !== app.firstChild) {
-        app.insertBefore(card, app.firstChild);
+  //
+  // ── 快速路径（fix-reorder-fast-path-2026-06-18）──
+  // 大多数 render（utilization 刷新、countdown 刷新、新数据到达但顺序不变）
+  // 走的是同 snap.providers 顺序的 render。如果 DOM 顺序跟 snap 期望顺序
+  // 已经一致，整个 reorder loop 就是 no-op。但原实现每张卡都要 querySelector
+  // + 检查 desiredNext → 即使不需要 reorder 也要遍历 N 次，浪费且微 reflow。
+  // 先做一次 string comparison 决定是否要 reorder，99% 的 case 直接跳过。
+  const expectedOrder = snap.providers.map((p) => p.source_id ?? p.provider).join("|");
+  const actualOrder = [...app.querySelectorAll<HTMLElement>(".card[data-provider]")]
+    .map((el) => el.dataset.provider ?? "")
+    .join("|");
+  if (expectedOrder !== actualOrder) {
+    let reorderAnchor: ChildNode | null = null;
+    for (const p of snap.providers) {
+      const id = p.source_id ?? p.provider;
+      const card = app.querySelector<HTMLElement>(`.card[data-provider="${cssEscape(id)}"]`);
+      if (!card) continue;
+      if (reorderAnchor == null) {
+        // 第一个：挪到 app 的最前
+        if (card !== app.firstChild) {
+          app.insertBefore(card, app.firstChild);
+        }
+      } else {
+        // 后续：挪到 anchor 之后
+        const desiredNext: Node | null = reorderAnchor.nextSibling;
+        if (card !== desiredNext) {
+          reorderAnchor.parentNode?.insertBefore(card, desiredNext);
+        }
       }
-    } else {
-      // 后续：挪到 anchor 之后
-      const desiredNext: Node | null = reorderAnchor.nextSibling;
-      if (card !== desiredNext) {
-        reorderAnchor.parentNode?.insertBefore(card, desiredNext);
-      }
+      reorderAnchor = card;
     }
-    reorderAnchor = card;
   }
 
   // 2. 底部 footer（始终只有 1 个）
@@ -1065,8 +1078,19 @@ async function init() {
   }
   setupHoverRaise(pinMode);
 
-  // 配置变化时（设置面板改 Tavily / ZenMux 简洁模式等）→ 重新拉 config + snapshot
-  // 后端 save_config 已经 emit `musage://config-changed`。
+  // 配置变化时（设置面板改 Tavily / ZenMux 简洁模式等）→ 更新 renderPrefs 后
+  // 用 lastRenderedSnap 重渲染。
+  //
+  // 之前这里会 `invoke<QuotaSnapshot>("get_snapshot")` + `render(snap)`，但
+  // 后端每次 IPC 都会 emit `musage://snapshot`（带最新数据），所以这次
+  // get_snapshot 拉到的就是 stale 的"刚 emit 完"的版本，渲染一遍完全冗余。
+  // 更糟的是它触发 render → 浮窗走 reorder loop → 紧跟 snapshot 事件
+  // 触发的 render 又 reorder 一次 → 闪烁（fix-config-double-render-2026-06-18）。
+  //
+  // 改成：用 `lastRenderedSnap`（snapshot 事件 handler 里已经更新过了）
+  // 重渲染。如果 snapshot 事件先到达，lastRenderedSnap 已是最新数据，渲染
+  // 完全幂等；如果 config-changed 先到（极端竞态），用旧数据渲染一遍也
+  // 安全，snapshot 事件到了会再渲染一次。
   listen("musage://config-changed", async () => {
     try {
       const cfg = await invoke<{
@@ -1086,8 +1110,7 @@ async function init() {
         showFooterHint: cfg.show_footer_hint ?? false,
       };
       applyColorOverrides();
-      const snap = await invoke<QuotaSnapshot>("get_snapshot");
-      if (snap.providers.length > 0) render(snap);
+      if (lastRenderedSnap) render(lastRenderedSnap);
     } catch (e) {
       console.error("[floating] 重新读 config 失败", e);
     }

@@ -107,8 +107,43 @@ pub async fn set_provider_enabled(
         drop(cfg2);
         let _ = app.emit("musage://snapshot", &emit);
     } else {
-        // 重新拉一次这个 provider（用户刚开就显示数据）
-        let _ = refresh_single_inner(&app, &id).await;
+        // ── 乐观 emit：先发 placeholder，让浮窗立刻显示新卡片 ─────────
+        // 之前 await refresh_single_inner 才会 emit snapshot，浮窗要等
+        // HTTP fetch（2-5s）才看到新卡片。改成"placeholder 立即显示 →
+        // 后台 fetch → 真数据替换"，体验更跟手（fix-drag-delay-2026-06-18）。
+        //
+        // 实现要点：
+        // 1. placeholder 复用 empty_error(UnconfiguredKey) —— 浮窗对它有
+        //    专用渲染路径（带「打开设置」按钮），无论用户是否配了 key
+        //    都能正确显示。
+        // 2. fetch 用 tokio::spawn 后台跑 —— set_provider_enabled 立即
+        //    返回，让上层 setProviderOrder 能紧跟执行。fetch 失败时
+        //    refresh_single_inner 自己会 emit 错误态 snapshot 覆盖 placeholder。
+        // 3. 必须先 emit 再 spawn：fetch 完成时 in-memory snapshot 已被
+        //    替换为真数据并 emit，浮窗的 snapshot 事件订阅者会再次收到
+        //    一次更新，行为完全等价。
+        {
+            let state_arc = app.state::<AppState>();
+            let mut snap = state_arc.snapshot.write().await;
+            let already_present = snap.providers.iter().any(|p| {
+                p.source_id.as_deref() == Some(&id)
+            });
+            if !already_present {
+                snap.providers.push(ProviderSnapshot::placeholder(&state_arc, &id).await);
+            }
+            let cfg2 = state_arc.config.read().await;
+            apply_provider_order(&mut snap, &cfg2);
+            let emit = snap.clone();
+            drop(snap);
+            drop(cfg2);
+            let _ = app.emit("musage://snapshot", &emit);
+        }
+        // 后台 fetch（不 await）
+        let app_clone = app.clone();
+        let id_owned = id.clone();
+        tokio::spawn(async move {
+            let _ = refresh_single_inner(&app_clone, &id_owned).await;
+        });
     }
     let _ = app.emit("musage://config-changed", ());
     Ok(())
@@ -937,7 +972,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
             Ok(Err(e)) => {
                 // P1 重构：kind 直接从 FetchError 取，不再走 classify_error_message
                 // 子串匹配（旧实现 i18n 一动就破）。
-                let provider = provider_from_id(&id);
+                let provider = Provider::from_id_str(&id);
                 log_provider_error(app, &id, e.kind, &e.message);
                 let mut err_snap = ProviderSnapshot::empty_error(
                     &app.state::<AppState>(),
@@ -951,7 +986,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                 snap.providers.push(err_snap);
             }
             Err(join_err) => {
-                let provider = provider_from_id(&id);
+                let provider = Provider::from_id_str(&id);
                 let msg = t!("error.common.join_task_failed", err = join_err.to_string()).into_owned();
                 log_provider_error(app, &id, ErrorKind::Other, &msg);
                 // join_err 走 Other, next_fetch_at 用默认间隔(无 backoff)
@@ -991,16 +1026,6 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
     }
 
     Ok(snap)
-}
-
-/// 把 provider id 映射到 Provider enum（仅供空错误快照用，UI 仍以 source_id 为准）。
-fn provider_from_id(id: &str) -> Provider {
-    match id {
-        "minimax" => Provider::Minimax,
-        "deepseek" => Provider::Deepseek,
-        "xiaomimimo" => Provider::Xiaomimimo,
-        _ => Provider::Minimax,  // 占位，Phase 2 加 Tavily 变体
-    }
 }
 
 /// 按 AppConfig.provider_order 给 snapshot.providers 排序。
@@ -1051,7 +1076,7 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
         Some(c) => match src.fetch(&c).await {
             Ok(s) => s,
             Err(e) => {
-                let provider = provider_from_id(id);
+                let provider = Provider::from_id_str(id);
                 let kind = e.kind;
                 log_provider_error(app, id, kind, &e.message);
                 ProviderSnapshot::empty_error(
@@ -1064,7 +1089,7 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
             }
         },
         None => {
-            let provider = provider_from_id(id);
+            let provider = Provider::from_id_str(id);
             let kind = ErrorKind::UnconfiguredKey;
             // H12 fix: 之前硬编码中文。其它错误消息都走 tr!()，这个漏了。
             // 用 error.common.no_credential 模板（Provider 行追加 "{provider}" 上下文）。

@@ -79,6 +79,18 @@ impl Provider {
     pub fn all() -> [Provider; 3] {
         [Provider::Minimax, Provider::Deepseek, Provider::Xiaomimimo]
     }
+
+    /// 把 provider id 字符串映射到 `Provider` enum。未知 id 统一 fallback
+    /// 到 `Provider::Minimax`（占位，因为 Tavily 等 Phase 1 起的新 source
+    /// 没有自己的 enum 变体；浮窗用 `source_id` 路由，enum 只用于兼容旧字段）。
+    pub fn from_id_str(id: &str) -> Provider {
+        match id {
+            "minimax" => Provider::Minimax,
+            "deepseek" => Provider::Deepseek,
+            "xiaomimimo" => Provider::Xiaomimimo,
+            _ => Provider::Minimax,
+        }
+    }
 }
 
 // ── 凭据（统一存放 api_key + cookie）────────────────────────────────
@@ -308,6 +320,26 @@ impl ProviderSnapshot {
             source_display_name: Some(display_name),
             plan_name: None,
         }
+    }
+
+    /// 轻量 placeholder：用于 `set_provider_enabled` 乐观 emit（2026-06-18
+    /// fix-drag-delay 加）。
+    ///
+    /// 场景：用户拖拽已隐藏卡片到可见段，set_provider_enabled(true) 要触发
+    /// HTTP fetch 才会有真数据。如果 await fetch，浮窗要等 2-5s 才会看到
+    /// 新卡片。改成"先 emit placeholder → 浮窗立即显示 → 后台 fetch → 真
+    /// 数据替换"，体验更跟手。
+    ///
+    /// placeholder 用 UnconfiguredKey 错误态：
+    /// - 用户已配 key：fetch 完成后（< 2-5s）替换为真数据，中间闪一下"未配
+    ///   key"用户感知不到；
+    /// - 用户没配 key：placeholder 就是终态（fetch 也会返 UnconfiguredKey），
+    ///   行为完全一致。
+    ///
+    /// error message 留空 —— 浮窗对 UnconfiguredKind 走专用 UI 模板（带
+    /// 「打开设置」按钮），无 error 字符串也不影响渲染。
+    pub async fn placeholder(state: &crate::AppState, id: &str) -> Self {
+        Self::empty_error(state, Provider::from_id_str(id), id, ErrorKind::UnconfiguredKey, String::new()).await
     }
 
     /// 计算 health 等级：ok / warn / alert / unknown

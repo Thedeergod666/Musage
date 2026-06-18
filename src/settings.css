@@ -129,10 +129,19 @@ code { background: #2a2d35; padding: 1px 4px; border-radius: 3px; font-size: 11p
 .main {
   grid-area: main;
   overflow-y: auto;
-  padding: var(--sp-4) var(--sp-5);
+  /* padding-top → 0：让 .provider-toolbar 的 sticky top:0 贴 viewport 顶。
+   * 原 padding 16px 会把 toolbar 钉在 padding 边界里，视觉上出现"缝隙"。
+   * 各 tab 的 padding-top 由 .section-view 自行管理（见下方 .section-view）。 */
+  padding: 0 var(--sp-5);
 }
 
-.section-view { max-width: 720px; }
+.section-view {
+  max-width: 720px;
+  /* padding-top 从 .main 下移过来：让 6 个 tab 的内容顶端对齐 = 16px。
+   * .main 改成 padding: 0 var(--sp-5) 后，sticky 元素（.provider-toolbar）能
+   * 紧贴 viewport 顶，不会有 16px "缝隙"。其他 5 个 tab 视觉上也保留 16px 顶端。 */
+  padding: var(--sp-4) 0 var(--sp-4);
+}
 
 /* ────────────────────────────────────────────────────────────
  * 浮窗卡片顺序区块 (Stage 4+) —— 更紧凑

@@ -117,6 +117,10 @@ let dragSrcIdx = -1;
 let dragGhost: HTMLElement | null = null;
 let dragPlaceholder: HTMLElement | null = null;
 let dragOffsetY = 0;
+/// mousedown 时的 clientY —— mouseup 时算 |clientY - dragStartY|，
+/// 小于阈值视为「点击未拖动」，避免抖动误触 reorder / 跨段。
+/// 详见 onDragMouseUp 内的 DRAG_THRESHOLD_PX 注释。
+let dragStartY = 0;
 
 function onDragMouseDown(e: MouseEvent) {
   // 只在左键点击 <li> 时启动
@@ -131,6 +135,7 @@ function onDragMouseDown(e: MouseEvent) {
   dragSrcIdx = currentProviderOrder.indexOf(dragSrcId!);
   const rect = li.getBoundingClientRect();
   dragOffsetY = e.clientY - rect.top;
+  dragStartY = e.clientY;
 
   // 创建 ghost（半透明浮动克隆）
   dragGhost = li.cloneNode(true) as HTMLElement;
@@ -190,7 +195,7 @@ function onDragMouseMove(e: MouseEvent) {
   }
 }
 
-function onDragMouseUp(_e: MouseEvent) {
+function onDragMouseUp(e: MouseEvent) {
   if (!dragging) return;
   document.removeEventListener("mousemove", onDragMouseMove);
   document.removeEventListener("mouseup", onDragMouseUp);
@@ -198,6 +203,31 @@ function onDragMouseUp(_e: MouseEvent) {
   // 恢复源 li
   const srcLi = listRef?.querySelector(`li[data-id="${dragSrcId}"]`) as HTMLElement | null;
   if (srcLi) srcLi.style.display = "";
+
+  // ── 距离阈值：< 5px 视为「点击未拖动」，跳过整个 drag 流程 ──
+  // 修复「点 enabled 段最后一条 + 轻微拖动」误触跨段
+  // (fix-click-vs-drag-2026-06-18)。
+  // OpenRouter 处于 position 6/13（enabled 段最末），divider 紧跟其后，
+  // 鼠标只要滑过 OpenRouter 中线 1-2px 就会命中 divider 的 midY →
+  // crossedDivider=true → OpenRouter 被乐观 disable。重复点击 = 反复
+  // enabled ↔ disabled toggle → 每次都 rebuild + IPC + 浮窗 snapshot +
+  // listener 跑 updateOrderConfig → 整列表频繁刷新 + 位置标签错位 + 浮窗
+  // 卡片跳变（用户感受到「Step/Claude 串上来」）。
+  //
+  // 5px > 人手 click 抖动（实测 1-3px）且 < 真拖最小距离（5+px）。
+  // 阈值局部常量便于以后调。
+  const DRAG_THRESHOLD_PX = 5;
+  if (Math.abs(e.clientY - dragStartY) < DRAG_THRESHOLD_PX) {
+    // 清理 placeholder/ghost（跟正常 mouseup 一样）
+    dragPlaceholder?.remove();
+    dragGhost?.remove();
+    dragPlaceholder = null;
+    dragGhost = null;
+    dragging = false;
+    dragSrcId = null;
+    dragSrcIdx = -1;
+    return;
+  }
 
   // 计算新位置：placeholder 在 list 里的 index
   let newIdx = 0;
@@ -317,6 +347,33 @@ function onDragMouseUp(_e: MouseEvent) {
       }
     })();
   } else {
+    // ── Surgical DOM move：单步 insertBefore，同步刷新 position label ──
+    // 之前完全靠 config-changed 监听器异步 rebuild，体感「拖完没动，要单击
+    // 分隔线才刷新」；buildOrderItems 全量重建又会闪一帧（违反
+    // [musage-ui-design] memory「不闪烁」原则）。改成单步 insertBefore 把
+    // src row 移到目标位置，其他 row 完全不动 → 零闪烁 + 立即可见。
+    // index 映射复用 moveProviderInOrder (↑↓ 按钮) 的规则，提取为
+    // computeSameSectionMove 纯函数并配套 11 个单元测试覆盖所有边界。
+    // (fix-drag-samesection-surgery-2026-06-18)
+    if (listRef) {
+      const { srcDomIdx, refDomIdx, shouldMove } = computeSameSectionMove({
+        dragSrcIdx,
+        orderIdx: adjusted,
+        boundary: boundaryIdx(),
+      });
+      if (shouldMove && refDomIdx !== null) {
+        const srcEl = listRef.children[srcDomIdx] as HTMLElement | undefined;
+        const ref = (listRef.children[refDomIdx] as
+          | HTMLElement
+          | undefined) ?? null;
+        // ref === srcEl 表示 src 已在目标位置（理论上 shouldMove=false
+        // 已经过滤了，但兜底一下避免无谓 reflow）
+        if (srcEl && ref !== srcEl) {
+          listRef.insertBefore(srcEl, ref);
+        }
+      }
+    }
+    refreshPosLabels();
     void commitOrder(adjusted, moved);
   }
 
@@ -851,4 +908,56 @@ export function isPlaceholderBeforeDivider(
   dividerIdx: number,
 ): boolean {
   return dividerIdx < 0 || placeholderIdx < dividerIdx;
+}
+
+/**
+ * 同段拖拽的 DOM surgical move index 映射。
+ *
+ * 复用 moveProviderInOrder (↑↓ 按钮) 的规则：
+ *   - divider 占一格，disabled 段 DOM 索引比 currentProviderOrder 索引大 1
+ *   - srcDomIdx = dragSrcIdx (enabled) | dragSrcIdx + 1 (disabled)
+ *   - dstDomIdxLogical = orderIdx (enabled) | orderIdx + 1 (disabled)
+ *   - src 还在 DOM children 里占 srcDomIdx；splice 后实际目标 ref：
+ *       - srcDomIdx < dstDomIdxLogical：ref = children[dstDomIdxLogical - 1]
+ *         （src 在 dst 之前，splice 后 src 移到 dst 位置会"挤掉"一个 ref）
+ *       - 否则：ref = children[dstDomIdxLogical]
+ *
+ * 返回 srcDomIdx / refDomIdx / shouldMove。caller 拿 srcEl / ref 后
+ * 调 listRef.insertBefore(srcEl, ref) 完成 DOM 移动。
+ * srcDomIdx === refDomIdx 时 shouldMove=false（已在目标位置，no-op）。
+ *
+ * 提取为纯函数方便单元测试覆盖所有边界 case（不依赖 DOM mock 形式）。
+ *
+ * (fix-drag-samesection-surgery-2026-06-18)
+ */
+export function computeSameSectionMove(args: {
+  dragSrcIdx: number;
+  orderIdx: number;
+  boundary: number;
+}): { srcDomIdx: number; refDomIdx: number | null; shouldMove: boolean } {
+  const { dragSrcIdx, orderIdx, boundary } = args;
+  // 同位置 no-op (splice 自身也是 no-op, DOM 不该动)
+  if (dragSrcIdx === orderIdx) {
+    const srcDomIdx = dragSrcIdx >= boundary ? dragSrcIdx + 1 : dragSrcIdx;
+    return { srcDomIdx, refDomIdx: null, shouldMove: false };
+  }
+  // 跨段 (src enabled 段, target disabled 段边界): surgical move 跨不过 divider,
+  // caller 应走 crossedDivider 分支 (buildOrderItems partition 切换) 而不是这里。
+  if (orderIdx >= boundary && dragSrcIdx < boundary) {
+    return { srcDomIdx: dragSrcIdx, refDomIdx: null, shouldMove: false };
+  }
+  const srcDomIdx = dragSrcIdx >= boundary ? dragSrcIdx + 1 : dragSrcIdx;
+  let refIdx: number;
+  if (orderIdx >= boundary) {
+    // src + target 都在 disabled 段: refIdx 恒为 orderIdx + 2
+    // (mousedown-after DOM 中, target 后一位 logical = orderIdx + 1, DOM 映射
+    //  = (orderIdx + 1) + 1 = orderIdx + 2). 拖向上 / 拖向下对称.
+    refIdx = orderIdx + 2;
+  } else {
+    // target 在 enabled 段:
+    //   拖向下 (orderIdx > dragSrcIdx): ref = target 后一位 logical = orderIdx + 1
+    //   拖向上 (orderIdx < dragSrcIdx): ref = orderIdx (target 后一位 = src 之前一位)
+    refIdx = orderIdx > dragSrcIdx ? orderIdx + 1 : orderIdx;
+  }
+  return { srcDomIdx, refDomIdx: refIdx, shouldMove: true };
 }

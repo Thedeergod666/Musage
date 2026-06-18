@@ -6,11 +6,15 @@
 // 预期高 1 格（隐藏段内部、跨段、可见段末尾跨段都受影响）。
 //
 // 修复方案：统一索引 —— 一份 visibleItems（含 divider）既做 midY 检测
-// 也做 insertBefore。`computeInsertIndex` / `isPlaceholderBeforeDivider`
-// 提取为纯函数覆盖核心逻辑。
+// 也做 insertBefore。`computeInsertIndex` / `isPlaceholderBeforeDivider` /
+// `computeSameSectionMove` 提取为纯函数覆盖核心逻辑。
 
 import { describe, expect, it } from "vitest";
-import { computeInsertIndex, isPlaceholderBeforeDivider } from "./order";
+import {
+  computeInsertIndex,
+  computeSameSectionMove,
+  isPlaceholderBeforeDivider,
+} from "./order";
 
 // 模拟 buildOrderItems 的 DOM 布局：
 //   visible [A, B, C]，hidden [D, E, F]
@@ -164,5 +168,96 @@ describe("isPlaceholderBeforeDivider", () => {
 
   it("placeholder 紧贴 divider 之后 → false", () => {
     expect(isPlaceholderBeforeDivider(5, 4)).toBe(false);
+  });
+});
+
+describe("computeSameSectionMove", () => {
+  // 通用场景设置：7 个 provider，6 enabled + 1 disabled，
+  // DOM children = [MM, XiaoMi, DeepSeek, ZenMux, Tavily, OpenRouter, divider, Kimi]
+  //   索引 0-5 是 enabled，6 是 divider，7 是 Kimi（disabled）
+  // currentProviderOrder = [MM(0), Xiaomi(1), DeepSeek(2), ZenMux(3), Tavily(4), OpenRouter(5), Kimi(6)]
+  // boundary = 6
+  // childCount = 8（含 divider = 7 + 1 row）
+
+  it("enabled 段往下拖一格：dragSrcIdx=2, orderIdx=3, boundary=6", () => {
+    // src = DeepSeek, 目标 = ZenMux 位置
+    //   srcDomIdx = 2 (enabled)
+    //   refIdx = orderIdx + 1 = 3 ... 等等实际 trace 是 4 (ZenMux in mousedown-after)
+    //   公式: 拖向下 enabled, refIdx = orderIdx + 1 = 4
+    const r = computeSameSectionMove({ dragSrcIdx: 2, orderIdx: 3, boundary: 6 });
+    expect(r).toEqual({ srcDomIdx: 2, refDomIdx: 4, shouldMove: true });
+  });
+
+  it("enabled 段往上拖一格：dragSrcIdx=3, orderIdx=2, boundary=6", () => {
+    // src = ZenMux, 目标 = DeepSeek 位置
+    //   srcDomIdx = 3
+    //   refIdx = orderIdx (向上) = 2
+    const r = computeSameSectionMove({ dragSrcIdx: 3, orderIdx: 2, boundary: 6 });
+    expect(r).toEqual({ srcDomIdx: 3, refDomIdx: 2, shouldMove: true });
+  });
+
+  it("enabled 段同位置：dragSrcIdx=2, orderIdx=2, boundary=6 → no-op", () => {
+    const r = computeSameSectionMove({ dragSrcIdx: 2, orderIdx: 2, boundary: 6 });
+    expect(r).toEqual({ srcDomIdx: 2, refDomIdx: null, shouldMove: false });
+  });
+
+  it("enabled 段拖到最末：dragSrcIdx=0, orderIdx=5, boundary=6", () => {
+    // src = MM, 目标 = OpenRouter 位置
+    //   srcDomIdx = 0
+    //   refIdx = orderIdx + 1 = 6 (OpenRouter in mousedown-after)
+    const r = computeSameSectionMove({ dragSrcIdx: 0, orderIdx: 5, boundary: 6 });
+    expect(r).toEqual({ srcDomIdx: 0, refDomIdx: 6, shouldMove: true });
+  });
+
+  it("enabled 段首→首：dragSrcIdx=0, orderIdx=0, boundary=6 → no-op", () => {
+    const r = computeSameSectionMove({ dragSrcIdx: 0, orderIdx: 0, boundary: 6 });
+    expect(r).toEqual({ srcDomIdx: 0, refDomIdx: null, shouldMove: false });
+  });
+
+  it("enabled→disabled 跨段：dragSrcIdx=5, orderIdx=6 → shouldMove=false (caller 用 crossedDivider 分支)", () => {
+    const r = computeSameSectionMove({ dragSrcIdx: 5, orderIdx: 6, boundary: 6 });
+    expect(r).toEqual({ srcDomIdx: 5, refDomIdx: null, shouldMove: false });
+  });
+
+  // disabled 段场景：boundary=6
+  //   currentProviderOrder = [...6 enabled..., Kimi(6), Step(7), Novita(8), Qwen(9), Claude(10)]
+  //   DOM children (mousedown-after) = [MM(0), Xiaomi(1), DeepSeek(2), ZenMux(3), Tavily(4),
+  //                   OpenRouter(5), divider(6), Kimi(7), Step(8), Novita(9), Qwen(10), Claude(11)]
+
+  it("disabled 段内往下拖一格：dragSrcIdx=7 (Step), orderIdx=8 (Novita), boundary=6", () => {
+    // src = Step, 目标 = Novita 位置
+    //   srcDomIdx = 7+1 = 8
+    //   refIdx = orderIdx + 2 = 10 (Novita in mousedown-after)
+    const r = computeSameSectionMove({ dragSrcIdx: 7, orderIdx: 8, boundary: 6 });
+    expect(r).toEqual({ srcDomIdx: 8, refDomIdx: 10, shouldMove: true });
+  });
+
+  it("disabled 段内往上拖一格：dragSrcIdx=8 (Novita), orderIdx=7 (Step), boundary=6", () => {
+    // src = Novita, 目标 = Step 位置
+    //   srcDomIdx = 8+1 = 9
+    //   refIdx = orderIdx + 2 = 9 (Step in mousedown-after)
+    const r = computeSameSectionMove({ dragSrcIdx: 8, orderIdx: 7, boundary: 6 });
+    expect(r).toEqual({ srcDomIdx: 9, refDomIdx: 9, shouldMove: true });
+  });
+
+  it("disabled 段同位置：dragSrcIdx=7, orderIdx=7, boundary=6 → no-op", () => {
+    const r = computeSameSectionMove({ dragSrcIdx: 7, orderIdx: 7, boundary: 6 });
+    expect(r).toEqual({ srcDomIdx: 8, refDomIdx: null, shouldMove: false });
+  });
+
+  it("disabled 段拖到最末：dragSrcIdx=6 (Kimi), orderIdx=10 (Claude), boundary=6", () => {
+    // src = Kimi, 目标 = Claude 位置
+    //   srcDomIdx = 6+1 = 7
+    //   refIdx = orderIdx + 2 = 12 (Claude in mousedown-after)
+    const r = computeSameSectionMove({ dragSrcIdx: 6, orderIdx: 10, boundary: 6 });
+    expect(r).toEqual({ srcDomIdx: 7, refDomIdx: 12, shouldMove: true });
+  });
+
+  it("disabled 段拖到最首：dragSrcIdx=10 (Claude), orderIdx=6 (Kimi), boundary=6", () => {
+    // src = Claude, 目标 = Kimi 位置 (disabled 段首位)
+    //   srcDomIdx = 10+1 = 11
+    //   refIdx = orderIdx + 2 = 8 (Kimi in mousedown-after)
+    const r = computeSameSectionMove({ dragSrcIdx: 10, orderIdx: 6, boundary: 6 });
+    expect(r).toEqual({ srcDomIdx: 11, refDomIdx: 8, shouldMove: true });
   });
 });

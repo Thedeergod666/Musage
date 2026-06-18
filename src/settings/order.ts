@@ -317,37 +317,6 @@ function onDragMouseUp(_e: MouseEvent) {
       }
     })();
   } else {
-    // ── Surgical DOM move：单步 insertBefore，不重建整列表 ──
-    // 之前用 buildOrderItems(listRef) → list.innerHTML = "" 全量重建，
-    // 触发一帧空白（「整个列表区闪一下」），违反 [musage-ui-design]
-    // memory「不闪烁」原则。改成只把 src row insertBefore 到目标位置：
-    // 其他 row 完全不动 → 零闪烁。
-    //
-    // index 映射复用 moveProviderInOrder (↑↓ 按钮) 的规则：divider 占
-    // 一格，disabled 段 DOM 索引比 currentProviderOrder 索引大 1。
-    // (fix-drag-samesection-no-rebuild-2026-06-18)
-    if (listRef) {
-      const boundary = boundaryIdx();
-      const srcDomIdx =
-        dragSrcIdx >= boundary ? dragSrcIdx + 1 : dragSrcIdx;
-      const dstDomIdxLogical =
-        adjusted >= boundary ? adjusted + 1 : adjusted;
-      // src 还在 DOM 里占着原位 srcDomIdx。
-      //   - src 在 dst 之前 (srcDomIdx < dstDomIdxLogical)：splice 把 src
-      //     从 logical 数组里移走时，dst 的 children 索引要 -1
-      //   - src 在 dst 之后：dst 索引不变
-      const dstDomIdxEffective =
-        srcDomIdx < dstDomIdxLogical ? dstDomIdxLogical - 1 : dstDomIdxLogical;
-      const srcEl = listRef.children[srcDomIdx] as HTMLElement | undefined;
-      const ref = (listRef.children[dstDomIdxEffective] as
-        | HTMLElement
-        | undefined) ?? null;
-      // ref === srcEl 表示「已在目标位置」（无操作），跳过避免无谓 reflow
-      if (srcEl && ref !== srcEl) {
-        listRef.insertBefore(srcEl, ref);
-      }
-    }
-    refreshPosLabels();
     void commitOrder(adjusted, moved);
   }
 

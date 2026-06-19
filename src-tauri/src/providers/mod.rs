@@ -227,6 +227,12 @@ impl std::error::Error for FetchError {}
 ///
 /// Phase 1 起加入 `used` + `total`（之前只有 `remaining`），用来支持 Tavily
 /// "150/1000 credits" 这种数字展示。
+///
+/// H2 fix: 加 `kind` 字段做"语义分类"——xiaomi 的 apply_display_mode 之前
+/// 用 r.label == \"套餐\" / \"总额度\" 硬编码中文做 filter,en locale 下
+/// label 是 \"Plan\" / \"Monthly total\",filter 全部落空 → 0 rows 但
+/// success=true。改用 kind (RowKind 枚举) 过滤,跟 locale 解耦。
+/// 现有 row 默认 `None` = 旧 backend 兼容,小米 provider 自己填。
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct QuotaRow {
     /// 行标签，如 "5h" / "周" / "余额" / "状态" / "search"
@@ -245,6 +251,26 @@ pub struct QuotaRow {
     pub unit: Option<String>,
     /// provider 特有扩展字段（如 `{is_available, display}`）
     pub extra: Option<serde_json::Value>,
+    /// 行的语义分类（H2 fix: 用于不依赖 locale 的过滤，如小米 display_mode）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<RowKind>,
+}
+
+/// 行的语义分类。H2 fix: 不绑定 label 文案,跨 locale 稳定。
+/// 现有 builtin provider 大多用 None（不影响现有逻辑）;Xiaomi 必须填。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RowKind {
+    /// MiniMax 5h 用量
+    FiveHour,
+    /// MiniMax 周用量
+    Weekly,
+    /// 小米 / New API 套餐余额
+    Plan,
+    /// 小米 / New API 补偿
+    Compensation,
+    /// 小米 / New API 总额度
+    MonthlyTotal,
 }
 
 // ── 单个 source 的 snapshot ──────────────────────────────────────────

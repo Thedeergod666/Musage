@@ -109,22 +109,22 @@ impl QuotaSource for ZenmuxSource {
         cfg: serde_json::Value,
     ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {
-            // mode：先看 `providers.zenmux.mode`（如果其他 CC 加了 ProviderConfig.mode），
-            // 再看顶层 `zenmux_mode`（settings.ts 实际写入的位置）；都没有 = Payg。
-            let mode_str = cfg
-                .pointer("/providers/zenmux/mode")
+            // **L3 fix（2026-06-19）**：之前同时读 `providers.zenmux.mode`
+            // 和顶层 `zenmux_mode`，但前端 settings.ts 只写顶层字段，
+            // `providers/<id>/<field>` 这条路径是死代码。简化成单路径。
+            let mode = cfg
+                .get("zenmux_mode")
                 .and_then(|v| v.as_str())
-                .or_else(|| cfg.get("zenmux_mode").and_then(|v| v.as_str()));
-            let mode = mode_str.and_then(parse_mode).unwrap_or(ZenmuxMode::Payg);
+                .and_then(parse_mode)
+                .unwrap_or(ZenmuxMode::Payg);
             if let Ok(mut g) = self.mode.write() {
                 *g = Some(mode);
             }
 
-            // base_url：同样支持两路径（顶层 = settings.ts 实际写的位置）
+            // base_url 同上：只走顶层（前端实际写入的位置）
             let url = cfg
-                .pointer("/providers/zenmux/base_url")
+                .get("zenmux_base_url")
                 .and_then(|v| v.as_str())
-                .or_else(|| cfg.get("zenmux_base_url").and_then(|v| v.as_str()))
                 .filter(|s| !s.is_empty());
             if let Some(url) = url {
                 if let Ok(mut g) = self.base_url.write() {

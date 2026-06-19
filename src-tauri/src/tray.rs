@@ -267,6 +267,23 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                     // 丢失，level-trigger 也能在 16ms 内 re-assert）
                     let _ = w.set_always_on_top(true);
                 }
+                // **L1 fix（2026-06-19）**：之前只在本会话抢一次前台，下次
+                // 重启 PinBottom hover-tick 又把窗口 demote 回去；用户感觉
+                // "点了没用"。现在显式把 floating_pin_mode 切到 PinTop 并落盘。
+                // 通过 IPC 走现有 set_floating_pin_mode handler（自动 save + emit
+                // musage://pin-mode-changed，让 lib.rs 重新应用 mode 到窗口）。
+                let app2 = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = crate::commands::set_floating_pin_mode(
+                        app2.state::<crate::AppState>(),
+                        app2.clone(),
+                        "pin_top".to_string(),
+                    )
+                    .await
+                    {
+                        tracing::warn!(error = %e, "force_top_floating 持久化 pin_mode 失败");
+                    }
+                });
             }
             "quit" => {
                 app.exit(0);

@@ -118,7 +118,18 @@ impl LogStore {
     /// 只裁内存，不管文件)。1 年用户可能堆出几十 MB log 文件。
     /// 现在 push 达到 cap 时用 ring buffer 内容重写文件（写 tmp + rename，
     /// 原子替换，避免 half-written 坏文件）。
+    ///
+    /// **L2 fix（2026-06-19）**：之前文件 IO 在锁外、ring 操作在锁内，
+    /// 与 `clear()`（锁内清 ring + 锁外删文件）形成一个文件-内存不一致窗口：
+    /// push 写完文件后被抢断 → clear 清 ring 并删文件 → push 继续把 entry
+    /// 推进 ring → 文件没了但内存还有一条 → 下次 push 重建文件，孤儿 entry
+    /// 永远不会被序列化。修法：把整个 push（包括文件 IO + ring 更新 + 可选
+    /// truncate）放进同一个锁段。clear 也同样。
     pub fn push(&self, entry: LogEntry) {
+        let mut g = self.inner.lock().unwrap_or_else(|e| {
+            tracing::warn!("logstore mutex poisoned，自动恢复");
+            e.into_inner()
+        });
         // 1. 写文件（best-effort，IO 失败不阻塞业务流程）
         if let Ok(path) = log_path() {
             if let Some(parent) = path.parent() {
@@ -136,21 +147,15 @@ impl LogStore {
         }
 
         // 2. 更新 ring
-        // H11 fix: 之前 .expect("logstore mutex poisoned") —— 一旦任何持锁路径 panic
-        // （虽然极少见，但理论上 push / clear / recent 都共享同一个 std::sync::Mutex），
-        // 后续所有 log 调用全部 panic，反而让用来 debug 的 log 自己先挂。
-        // 改成 unwrap_or_else(|e| e.into_inner()) 自动恢复 —— std::sync::Mutex 的
-        // PoisonError 设计就是支持这种恢复（拿到 poisoned 的 guard 仍然能用 inner）。
-        let mut g = self.inner.lock().unwrap_or_else(|e| {
-            tracing::warn!("logstore mutex poisoned，自动恢复");
-            e.into_inner()
-        });
         g.push_back(entry);
         if g.len() > MAX_ENTRIES {
             g.pop_front();
             // H6 fix: 磁盘文件也要同步截断，否则 .jsonl 无限增长。
             // 用 ring buffer 当前内容重写整个文件（写 tmp + rename 原子替换）。
-            drop(self.truncate_file(&g));
+            // 锁内调用 truncate_file：失败只 log，不影响内存状态。
+            if let Err(e) = self.truncate_file(&g) {
+                tracing::warn!(error = %e, "logstore truncate_file 失败");
+            }
         }
     }
 
@@ -183,14 +188,15 @@ impl LogStore {
     }
 
     /// 清空内存 + 删文件。
+    ///
+    /// **L2 fix（2026-06-19）**：和 push 一起放进同一个锁段，避免 push 写文件
+    /// 后被抢断 + clear 删文件造成的文件-内存不一致窗口。
     pub fn clear(&self) {
-        {
-            let mut g = self.inner.lock().unwrap_or_else(|e| {
-                tracing::warn!("logstore mutex poisoned，自动恢复");
-                e.into_inner()
-            });
-            g.clear();
-        }
+        let mut g = self.inner.lock().unwrap_or_else(|e| {
+            tracing::warn!("logstore mutex poisoned，自动恢复");
+            e.into_inner()
+        });
+        g.clear();
         if let Ok(path) = log_path() {
             let _ = std::fs::remove_file(&path);
         }

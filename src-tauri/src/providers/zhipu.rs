@@ -129,13 +129,14 @@ impl QuotaSource for ZhipuSource {
         cfg: serde_json::Value,
     ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {
-            // region：先看 `providers.zhipu.region`（如果其他 CC 加了 ProviderConfig.region），
-            // 再看顶层 `zhipu_region`（settings.ts 实际写入的位置）；都没有 = Cn。
-            let region_str = cfg
-                .pointer("/providers/zhipu/region")
+            // **L3 fix（2026-06-19）**：之前同时读 `providers.zhipu.region`
+            // 和顶层 `zhipu_region`，但前端 settings.ts 只写顶层字段，
+            // `providers/<id>/<field>` 这条路径是死代码。简化成单路径。
+            let region = cfg
+                .get("zhipu_region")
                 .and_then(|v| v.as_str())
-                .or_else(|| cfg.get("zhipu_region").and_then(|v| v.as_str()));
-            let region = region_str.and_then(parse_region).unwrap_or(ZhipuRegion::Cn);
+                .and_then(parse_region)
+                .unwrap_or(ZhipuRegion::Cn);
             if let Ok(mut g) = self.region.write() {
                 *g = Some(region);
             } else {

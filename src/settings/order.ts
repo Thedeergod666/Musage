@@ -89,10 +89,23 @@ let listRef: HTMLOListElement | null = null;
 /// 否则每次 setProviderEnabled 都会触发 getConfig + buildOrderItems，把
 /// 我们乐观更新的 orderCfg 覆盖回部分后端状态，导致 UI 在「全隐藏」和
 /// 「新位置」之间闪烁。详见 onDividerMouseUp 注释。
-let suppressConfigRebuild = false;
+///
+/// **reentrance-safe（2026-06-19 audit fix）**：用 `suppressDepth` 计数器
+/// 而不是单纯 boolean —— 连续点 3+ 个 checkbox 时，第一次 withSuppress 的
+/// finally 不能在第二/第三次仍在等的时候关掉 suppress 标志，否则后续
+/// config-changed 事件会 rebuild 把第二/三次的乐观更新覆盖回第一次的状态。
+let suppressDepth = 0;
+
+/** 手动 bump 抑制深度（批量操作 in-flight 期间用）。配对 `unsuppressRebuild()`。 */
+export function suppressRebuild(): void {
+  suppressDepth++;
+}
+export function unsuppressRebuild(): void {
+  suppressDepth = Math.max(0, suppressDepth - 1);
+}
 
 export function isSuppressingConfigRebuild(): boolean {
-  return suppressConfigRebuild;
+  return suppressDepth > 0;
 }
 
 /** **L14 fix（2026-06-19）**：单次 enabled checkbox 点击同样需要抑制
@@ -104,27 +117,31 @@ export function isSuppressingConfigRebuild(): boolean {
  *  用法：把 setProviderEnabled 调包成 withSuppress(...)
  *    await withSuppress(() => setProviderEnabled(id, true));
  *
- *  实现：set suppress=true → await 业务 fn → 短暂延时等 config-changed 事件落地
- *  → 强制 resync 一次（防止乐观更新与后端状态有微小偏差）→ reset suppress=false。
+ *  实现：inc suppressDepth → await 业务 fn → 短暂延时等 config-changed 事件落地
+ *  → 强制 resync 一次（防止乐观更新与后端状态有微小偏差）→ dec suppressDepth
+ *  （仅当归零时清标志，避免 reentrance 误关）。
  *  短暂延时是关键 —— config-changed 是后端 cfg.save() 后 emit 的，需要等事件
  *  到达 main.ts listener 才会被 suppress 挡掉。 */
 export async function withSuppress<T>(fn: () => Promise<T>): Promise<T> {
-  suppressConfigRebuild = true;
+  suppressDepth++;
   try {
     return await fn();
   } finally {
     // 给 config-changed 一个落地窗口（~30ms 足够 emit/listener 一来一回）
     await new Promise((r) => setTimeout(r, 30));
-    suppressConfigRebuild = false;
-    // 强制 resync：以防乐观更新与后端状态有微小偏差
-    try {
-      const { getConfig } = await import("./api");
-      const cfg = await getConfig();
-      orderCfg = cfg;
-      if (listRef) buildOrderItems(listRef);
-    } catch (e) {
-      console.warn("[settings] withSuppress resync 失败", e);
+    suppressDepth--;
+    if (suppressDepth === 0) {
+      // 强制 resync：以防乐观更新与后端状态有微小偏差
+      try {
+        const { getConfig } = await import("./api");
+        const cfg = await getConfig();
+        orderCfg = cfg;
+        if (listRef) buildOrderItems(listRef);
+      } catch (e) {
+        console.warn("[settings] withSuppress resync 失败", e);
+      }
     }
+    // 仍有更外层的 withSuppress 在等 → 不动标志,等最外层退出时 resync
   }
 }
 
@@ -344,9 +361,9 @@ function onDragMouseUp(e: MouseEvent) {
     if (listRef) buildOrderItems(listRef);
     refreshPosLabels();
 
-    // suppressConfigRebuild：防止 main.ts 的 config-changed 监听器用后端旧
+    // suppressRebuild：防止 main.ts 的 config-changed 监听器用后端旧
     // config 覆盖我们的乐观更新（bug #3 的卡片拖拽侧）。
-    suppressConfigRebuild = true;
+    suppressRebuild();
     void (async () => {
       try {
         await setProviderEnabled(dragSrcId!, willBeEnabled);
@@ -372,7 +389,7 @@ function onDragMouseUp(e: MouseEvent) {
         refreshPosLabels();
         flash(t("settings.order.flash_move_failed", { err: String(e) }), true);
       } finally {
-        suppressConfigRebuild = false;
+        unsuppressRebuild();
         // 最终 resync：确保与后端一致
         const cfg = await import("./api").then((m) => m.getConfig());
         orderCfg = cfg;
@@ -552,7 +569,7 @@ function onDividerMouseUp(_e: MouseEvent) {
   // ── 批量 IPC：先禁止 main.ts 的 config-changed 监听器 rebuild（否则每次
   // setProviderEnabled 都会触发 getConfig 覆盖我们的 orderCfg，导致 UI 闪烁
   // 在「全隐藏」与「新位置」之间穿梭）。所有 IPC 跑完再 force resync 一次。──
-  suppressConfigRebuild = true;
+  suppressRebuild();
   void (async () => {
     try {
       for (const id of toEnable) {
@@ -573,7 +590,7 @@ function onDividerMouseUp(_e: MouseEvent) {
     } catch (e) {
       flash(t("settings.order.flash_move_failed", { err: String(e) }), true);
     } finally {
-      suppressConfigRebuild = false;
+      unsuppressRebuild();
       // 最终 resync：以防乐观更新与后端状态有微小偏差（不可能，但兜底）
       const cfg = await import("./api").then((m) => m.getConfig());
       orderCfg = cfg;
@@ -798,9 +815,9 @@ export async function moveProviderInOrder(id: string, dir: "up" | "down") {
     if (listRef) buildOrderItems(listRef);
     refreshPosLabels();
 
-    // suppressConfigRebuild：防止 main.ts 的 config-changed 监听器用后端旧
+    // suppressRebuild：防止 main.ts 的 config-changed 监听器用后端旧
     // config 覆盖我们的乐观更新（bug #3）。
-    suppressConfigRebuild = true;
+    suppressRebuild();
     void (async () => {
       try {
         await setProviderEnabled(id, newEnabled);
@@ -822,7 +839,7 @@ export async function moveProviderInOrder(id: string, dir: "up" | "down") {
         refreshPosLabels();
         flash(t("settings.order.flash_move_failed", { err: String(e) }), true);
       } finally {
-        suppressConfigRebuild = false;
+        unsuppressRebuild();
         // 最终 resync：确保与后端一致
         const cfg = await import("./api").then((m) => m.getConfig());
         orderCfg = cfg;

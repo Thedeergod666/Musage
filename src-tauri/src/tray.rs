@@ -81,7 +81,19 @@ static TRAY_REQUEST_TX: OnceLock<Mutex<Option<mpsc::UnboundedSender<TrayRequest>
 fn tray_request_tx() -> Option<mpsc::UnboundedSender<TrayRequest>> {
     TRAY_REQUEST_TX
         .get()
-        .and_then(|m| m.lock().ok().and_then(|g| g.clone()))
+        .and_then(|m| {
+            // **B-NEW-7（2026-06-19 audit）**：mutex poison 自动恢复。
+            // 之前 .lock().ok() 在 poisoned 时返 Err → 整个闭包返 None →
+            // 所有 tray 更新静默丢弃。改成 log warn + into_inner() 继续用，
+            // 与 logstore / 其他模块的 poison 恢复策略保持一致。
+            match m.lock() {
+                Ok(g) => g.clone(),
+                Err(p) => {
+                    tracing::warn!("tray_request_tx mutex poisoned，自动恢复");
+                    p.into_inner().clone()
+                }
+            }
+        })
 }
 
 /// 派发一条 tray 请求到 main thread。失败（receiver 已 drop）→ log warn skip。

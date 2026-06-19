@@ -212,8 +212,15 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
                 NSWindow::windowNumberAtPoint_belowWindowWithWindowNumber(point, 0, mtm);
             Some(topmost == our_id)
         })();
+        // **B-NEW-1 / Fix #5（2026-06-19 audit）**：mutex poison 自动恢复而不是 .expect()。
+        // 之前用 .expect("topmost slot mutex poisoned") —— 一旦主线程持锁路径 panic
+        // （理论极少见但一旦发生），hover emitter 后续每次 20Hz 调 is_floating_topmost_at
+        // 都会跟着 panic，tray 整体停摆。改成 unwrap_or_else(|e| e.into_inner())。
         {
-            let mut g = slot2.slot.lock().expect("topmost slot mutex poisoned");
+            let mut g = slot2
+                .slot
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             *g = Some(result.unwrap_or(false));
         }
         slot2.cvar.notify_all();
@@ -222,16 +229,21 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
     // 50ms 超时兜底：main thread 卡住时 hover 轮询不至于一起卡住
     let started = std::time::Instant::now();
     let deadline = Duration::from_millis(50);
-    let mut guard = slot.slot.lock().expect("topmost slot mutex poisoned");
+    // 同样：poison 恢复（mutex 共享，跟上面 write 路径同源）
+    let mut guard = slot
+        .slot
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     while guard.is_none() && started.elapsed() < deadline {
-        let (g, wait_timeout) = slot
-            .cvar
-            .wait_timeout(guard, deadline)
-            .expect("topmost slot cvar poisoned");
-        guard = g;
-        if wait_timeout.timed_out() && started.elapsed() >= deadline {
+        let remaining = deadline.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
             break;
         }
+        let (g, _wait_timeout) = slot
+            .cvar
+            .wait_timeout(guard, remaining)
+            .unwrap_or_else(|e| e.into_inner());
+        guard = g;
     }
     guard.unwrap_or(false)
 }

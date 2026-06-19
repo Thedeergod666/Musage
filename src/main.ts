@@ -144,6 +144,15 @@ interface QuotaRow {
   total?: number | null;
   resets_at: number | null;
   unit: string | null;
+  /** 行的语义分类（与 locale 解耦，**L7 fix 2026-06-19**）。
+   *  rowKey 优先用这个做 DOM 稳定 key，避免切 locale 后 key 变化导致全量重建。 */
+  kind?:
+    | "five_hour"
+    | "weekly"
+    | "plan"
+    | "compensation"
+    | "monthly_total"
+    | null;
 }
 
 interface ProviderSnapshot {
@@ -177,6 +186,10 @@ interface ProviderSnapshot {
   next_fetch_at?: number | null;
   raw?: unknown;
   is_healthy: boolean;
+  /** **L8 fix（2026-06-19）**：true = 这个 snapshot 是 placeholder（乐观 emit
+   *  给浮窗的临时态），不是真实 fetch 结果。浮窗应跳过"打开设置"按钮渲染，
+   *  避免 2-5s 真实 fetch 完成前的闪烁。None / false = 真实快照，正常渲染。 */
+  transient?: boolean | null;
 }
 
 interface QuotaSnapshot {
@@ -234,7 +247,7 @@ function contentFingerprint(snap: QuotaSnapshot): string {
     const id = eff.source_id ?? eff.provider;
     const state = eff.success ? "ok" : `err:${eff.error_kind ?? "other"}`;
     const rows = rowsForRender(eff);
-    return `${id}|${state}|${rows.length}|${rows.map((r) => rowKey(r)).join(",")}`;
+    return `${id}|${state}|${rows.length}|${rows.map((r, i) => rowKey(id, i, r)).join(",")}`;
   }).join(";");
   // footer 显隐也影响内容高度，加入 fingerprint 确保切换时触发 fit
   return `fh:${renderPrefs.showFooterHint ? 1 : 0};${providers}`;
@@ -568,7 +581,12 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
     let actionBtn = "";
     let retryInfo = "";
     if (kind === "unconfigured_key" || kind === "auth_failed") {
-      if (kind === "auth_failed" && id === "xiaomimimo") {
+      // **L8 fix（2026-06-19）**：transient=true 时（这是 placeholder 而非
+      // 真实错误态）跳过"打开设置"按钮渲染。placeholder 只会持续 2-5s，
+      // 紧接着真实 fetch 结果会替换它；现在不闪"打开设置"了，体验跟手。
+      if (p.transient === true) {
+        // no action button
+      } else if (kind === "auth_failed" && id === "xiaomimimo") {
         actionBtn = `<button class="err-btn err-btn-relogin" data-action="relogin-xiaomi">${escapeHtml(t("floating.err_btn_relogin_xiaomi"))}</button>`;
       } else {
         actionBtn = `<button class="err-btn open-settings">${escapeHtml(t("floating.open_settings"))}</button>`;
@@ -635,8 +653,9 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
   const rows = rowsForRender(p);
 
   let rowAnchor: ChildNode | null = null;
-  for (const r of rows) {
-    const key = rowKey(r);
+  const providerId = p.source_id ?? p.provider;
+  rows.forEach((r, i) => {
+    const key = rowKey(providerId, i, r);
     let rowEl = existing.get(key);
     if (rowEl) {
       existing.delete(key);
@@ -651,19 +670,35 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
     }
     updateRow(rowEl, r);
     rowAnchor = rowEl;
-  }
+  });
   for (const orphan of existing.values()) orphan.remove();
 }
 
 // ── 行 ──
 
-function rowKey(r: QuotaRow): string {
+function rowKey(providerId: string, index: number, r: QuotaRow): string {
+  // **L7 fix（2026-06-19）**：之前用 `r.label`（"周" / "Weekly"）做 key，
+  // 切 locale 后 label 变 → 整个 rowsBox 的 DOM diff 失败 → 所有行
+  // 重建 + 短暂闪烁。改用三层 fallback：
+  //   1. r.kind（RowKind 枚举，与 locale 解耦）— 最稳定
+  //   2. r.label（已 deprecated，仅 kind 缺失时用）— 仍会跨 locale 失效
+  //   3. index（位置 fallback）— 保证任何 r 都有稳定 key
+  // prefix 用 providerId 让不同 provider 的 rowsBox key 互不撞。
+  let stable: string;
+  if (r.kind) {
+    stable = `kind:${r.kind}`;
+  } else if (r.label) {
+    stable = `label:${r.label}`;
+  } else {
+    stable = `idx:${index}`;
+  }
   // Phase 1: Tavily 走"used/total"组合（"150/1000 credits"），优先于 remaining/utilization
-  if (r.used != null && r.total != null) return `credits:${r.label}`;
-  if (r.used != null) return `used:${r.label}`;
-  if (r.utilization != null) return `pct:${r.label}`;
-  if (r.remaining != null) return `amt:${r.label}`;
-  return "unknown";
+  let kind = "unknown";
+  if (r.used != null && r.total != null) kind = "credits";
+  else if (r.used != null) kind = "used";
+  else if (r.utilization != null) kind = "pct";
+  else if (r.remaining != null) kind = "amt";
+  return `${providerId}:${kind}:${stable}`;
 }
 
 function buildRowSkeleton(r: QuotaRow): HTMLElement {

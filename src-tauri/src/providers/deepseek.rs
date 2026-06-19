@@ -203,6 +203,7 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
         source_id: Some(Provider::Deepseek.id_str().to_string()),
         source_display_name: Some(Provider::Deepseek.display_name().to_string()),
         plan_name: None,
+        transient: None,
     })
 }
 

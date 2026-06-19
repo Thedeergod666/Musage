@@ -279,6 +279,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         source_id: Some("tavily".to_string()),
         source_display_name: Some("Tavily".to_string()),
         plan_name,
+        transient: None,
     })
 }
 

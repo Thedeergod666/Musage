@@ -254,6 +254,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         source_id: Some("claude_official".to_string()),
         source_display_name: Some(t!("provider_name.claude_official").into_owned()),
         plan_name: Some("Pro/Max".to_string()),
+        transient: None,
     })
 }
 

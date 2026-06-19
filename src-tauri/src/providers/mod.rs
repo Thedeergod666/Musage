@@ -306,6 +306,11 @@ pub struct ProviderSnapshot {
     /// Phase 1 新增：套餐名（如 "Standard" / "Free tier"）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_name: Option<String>,
+    /// **L8 fix（2026-06-19）**：true = 这个 snapshot 是 placeholder（乐观 emit
+    /// 给浮窗的临时态），不是真实 fetch 结果。浮窗应跳过"打开设置"按钮渲染，
+    /// 避免 2-5s 真实 fetch 完成前的闪烁。None / false = 真实快照，正常渲染。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transient: Option<bool>,
 }
 
 impl ProviderSnapshot {
@@ -319,12 +324,16 @@ impl ProviderSnapshot {
     /// 现在从 builtin_sources 里查真正的 display_name，没有就 fallback 到 enum。
     ///
     /// PR 3 起 `async` —— [`find_source`] 改成 async（customs 在 `AppState` 里）。
+    ///
+    /// `transient` 参数（**L8 fix 2026-06-19**）：true = 这个 snapshot 是 placeholder
+    /// 而非真实错误，浮窗跳过错误 UI 渲染。默认 false = 真实错误。
     pub async fn empty_error(
         state: &crate::AppState,
         provider: Provider,
         id: &str,
         kind: ErrorKind,
         error: String,
+        transient: bool,
     ) -> Self {
         let display_name = find_source(state, id)
             .await
@@ -345,6 +354,7 @@ impl ProviderSnapshot {
             source_id: Some(id.to_string()),
             source_display_name: Some(display_name),
             plan_name: None,
+            transient: if transient { Some(true) } else { None },
         }
     }
 
@@ -356,16 +366,23 @@ impl ProviderSnapshot {
     /// 新卡片。改成"先 emit placeholder → 浮窗立即显示 → 后台 fetch → 真
     /// 数据替换"，体验更跟手。
     ///
-    /// placeholder 用 UnconfiguredKey 错误态：
-    /// - 用户已配 key：fetch 完成后（< 2-5s）替换为真数据，中间闪一下"未配
-    ///   key"用户感知不到；
-    /// - 用户没配 key：placeholder 就是终态（fetch 也会返 UnconfiguredKey），
-    ///   行为完全一致。
-    ///
-    /// error message 留空 —— 浮窗对 UnconfiguredKind 走专用 UI 模板（带
-    /// 「打开设置」按钮），无 error 字符串也不影响渲染。
+    /// placeholder 用 UnconfiguredKey 错误态 + **transient=true**（**L8 fix
+    /// 2026-06-19**）：
+    /// - 用户已配 key：fetch 完成后（< 2-5s）替换为真数据，中间窗口 frontend
+    ///   看到 transient=true 跳过"打开设置"按钮渲染，无闪烁；
+    /// - 用户没配 key：placeholder 就是终态，fetch 也返 UnconfiguredKey；
+    ///   但 transient 仍然是 true（fetch 完成后真正的 UnconfiguredKey 替换它
+    ///   —— transient 由真实 fetch emit 设为 None / false）。
     pub async fn placeholder(state: &crate::AppState, id: &str) -> Self {
-        Self::empty_error(state, Provider::from_id_str(id), id, ErrorKind::UnconfiguredKey, String::new()).await
+        Self::empty_error(
+            state,
+            Provider::from_id_str(id),
+            id,
+            ErrorKind::UnconfiguredKey,
+            String::new(),
+            true, // L8: transient flag
+        )
+        .await
     }
 
     /// 计算 health 等级：ok / warn / alert / unknown
@@ -378,9 +395,21 @@ impl ProviderSnapshot {
     /// 时(API 直接告诉钱包健康状态),如果 remaining 也 < 阈值,balance_low 更
     /// 重要,优先翻红。Minimax / Xiaomimimo 没 remaining,这条短路无效,继续
     /// 走 utilization 判断。
+    ///
+    /// **L9 fix（2026-06-19）**：之前 `success=true && rows=[]`（例如 schema
+    /// 漂移 / 新行类型 backend 还没识别 / Tavily 等返回空数据但 success=true）
+    /// 走 "rows.filter_map(utilization).next().unwrap_or(0.0)" → u=0.0 → "ok"，
+    /// 托盘显示绿色 dot + 空内容，UX 死锁。改为直接返 "unknown"（中间色）。
     pub fn health_label(&self, wallet_alert_threshold: Option<f64>) -> &'static str {
         if !self.success {
             return "alert";
+        }
+        // L9: rows 为空时不要假装健康（即使 success=true）。这种情况多是 schema
+        // 漂移或新行类型 backend 暂未支持，UI 应用 unknown（中间色 ⚪）提示
+        // 用户"数据未识别"而非"数据正常"。DeepSeek 走 is_healthy 分支时即便
+        // rows 为空也可能有意义（API 自身告诉健康状态），下面 match 会再覆盖。
+        if self.rows.is_empty() {
+            return "unknown";
         }
         if let Some(threshold) = wallet_alert_threshold {
             if self.rows.iter().any(|r| {

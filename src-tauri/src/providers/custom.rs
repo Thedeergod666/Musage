@@ -276,6 +276,7 @@ async fn do_fetch(api_key: &str, spec: &CustomSourceSpec) -> Result<ProviderSnap
         source_id: Some(spec.id.clone()),
         source_display_name: Some(spec.display_name.clone()),
         plan_name,
+        transient: None,
     })
 }
 

@@ -292,6 +292,7 @@ fn parse(rate_raw: Value, plan_name: Option<String>) -> Result<ProviderSnapshot,
         source_id: Some("stepfun".to_string()),
         source_display_name: Some("StepFun".to_string()),
         plan_name,
+        transient: None,
     })
 }
 

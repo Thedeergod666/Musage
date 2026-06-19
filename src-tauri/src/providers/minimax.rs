@@ -265,6 +265,7 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
                 source_id: Some(Provider::Minimax.id_str().to_string()),
                 source_display_name: Some(Provider::Minimax.display_name().to_string()),
                 plan_name: None,
+                transient: None,
             };
         }
     }
@@ -299,6 +300,7 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
             source_id: Some(Provider::Minimax.id_str().to_string()),
             source_display_name: Some(Provider::Minimax.display_name().to_string()),
             plan_name: None,
+            transient: None,
         };
     };
 
@@ -371,6 +373,7 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
         source_id: Some(Provider::Minimax.id_str().to_string()),
         source_display_name: Some(Provider::Minimax.display_name().to_string()),
         plan_name: None,
+        transient: None,
     }
 }
 

@@ -645,6 +645,7 @@ fn parse(
         source_id: Some(Provider::Xiaomimimo.id_str().to_string()),
         source_display_name: Some(Provider::Xiaomimimo.display_name().to_string()),
         plan_name,
+        transient: None,
     }
 }
 
@@ -1116,6 +1117,7 @@ mod tests {
             source_id: Some("xiaomimimo".to_string()),
             source_display_name: Some("Xiaomi MiMo".to_string()),
             plan_name: None,
+            transient: None,
         }
     }
 

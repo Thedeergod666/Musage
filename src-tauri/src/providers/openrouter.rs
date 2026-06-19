@@ -278,6 +278,7 @@ fn parse_credits(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         source_id: Some("openrouter".to_string()),
         source_display_name: Some("OpenRouter".to_string()),
         plan_name: Some("OpenRouter".to_string()),
+        transient: None,
     })
 }
 
@@ -335,6 +336,7 @@ fn parse_key(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         source_id: Some("openrouter".to_string()),
         source_display_name: Some("OpenRouter".to_string()),
         plan_name,
+        transient: None,
     })
 }
 

@@ -1139,6 +1139,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                     &id,
                     e.kind,
                     e.message,
+                    false, // L8: 真实错误,非 transient
                 ).await;
                 // 写 backoff：失败（如果 kind 属于可退避类）→ 翻倍
                 fill_next_fetch_at(app, &id, default_interval_secs, &mut err_snap).await;
@@ -1155,6 +1156,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                     &id,
                     ErrorKind::Other,
                     msg,
+                    false, // L8: 真实错误
                 ).await;
                 err_snap.next_fetch_at = Some(
                     chrono::Utc::now().timestamp_millis() + (default_interval_secs as i64) * 1000
@@ -1244,6 +1246,7 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
                     id,
                     kind,
                     e.message,
+                    false, // L8: 真实错误
                 ).await
             }
         },
@@ -1260,6 +1263,7 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
                 id,
                 kind,
                 msg,
+                false, // L8: 真实错误(无 credential,持久)
             ).await
         }
     };

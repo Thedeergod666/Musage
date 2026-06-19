@@ -293,6 +293,7 @@ fn parse(raw: &Value, region: ZhipuRegion) -> Result<ProviderSnapshot, FetchErro
         source_id: Some("zhipu".to_string()),
         source_display_name: Some(region.display_label()),
         plan_name,
+        transient: None,
     })
 }
 

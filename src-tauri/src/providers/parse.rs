@@ -22,6 +22,12 @@ use serde_json::Value;
 /// - 中间节点不是 array（无法继续 `[idx]`）
 /// - 最终节点不存在
 ///
+/// **容错**：前导 `.`（如 `.data`）被静默忽略，等价于 `data`。这是
+/// **L5 fix（2026-06-19）** 后明确的行为：custom source 用户手填 path 时
+/// 经常不自觉加前导点（JSON path 业界用法差异），silent accept 比
+/// silent reject 友好。已有测试 [`tests::read_path_leading_dot_tolerated`]
+/// 锁定此行为。
+///
 /// ## Examples
 ///
 /// ```
@@ -31,6 +37,8 @@ use serde_json::Value;
 /// assert_eq!(crate::providers::parse::read_path(&v, "data.tags[1]"), Some(&json!("b")));
 /// assert_eq!(crate::providers::parse::read_path(&v, "missing"), None);
 /// assert_eq!(crate::providers::parse::read_path(&v, "data.tags[5]"), None);
+/// // 前导 `.` 被静默跳过（容错）
+/// assert_eq!(crate::providers::parse::read_path(&v, ".data.quota"), Some(&json!(100)));
 /// ```
 pub fn read_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
     let path = path.trim();
@@ -180,6 +188,23 @@ mod tests {
         // 宽容：接受 [ 0 ] 这种带空格的写法（JSON path 业界不标准但无害）
         let v = json!({"arr": [10, 20]});
         assert_eq!(read_path(&v, "arr[ 1 ]"), Some(&json!(20)));
+    }
+
+    #[test]
+    fn read_path_leading_dot_tolerated() {
+        // **L5 fix（2026-06-19）**：之前 read_path 对前导 `.` 静默容错
+        // （`.data` 跟 `data` 等价），但 API 文档没承诺这个行为。改为：
+        //   - 文档明确记录："前导 `.` 被静默跳过"
+        //   - 测试锁定现有行为，避免后续无意改动破坏用户手填的 path
+        //
+        // 不改成 strict（拒绝前导 `.`）的原因：custom source 用户手填 path
+        // 时经常不自觉加 `.`（JSON path 业界用法差异），silent accept 比
+        // silent reject 友好。
+        let v = json!({"data": {"quota": 100}});
+        assert_eq!(read_path(&v, ".data.quota"), Some(&json!(100)));
+        assert_eq!(read_path(&v, ".data"), Some(&json!({"quota": 100})));
+        // 多个前导 `.` 也容忍（实测无实际意义，但保持宽松）
+        assert_eq!(read_path(&v, "..data.quota"), Some(&json!(100)));
     }
 
     // ── num_f64 ──

@@ -321,6 +321,7 @@ fn parse_payg(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         source_id: Some("zenmux".to_string()),
         source_display_name: Some("ZenMux".to_string()),
         plan_name: Some("PAYG".to_string()),
+        transient: None,
     })
 }
 
@@ -389,6 +390,7 @@ fn parse_subscription(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         source_id: Some("zenmux".to_string()),
         source_display_name: Some("ZenMux".to_string()),
         plan_name,
+        transient: None,
     })
 }
 

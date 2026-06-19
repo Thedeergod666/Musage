@@ -38,7 +38,12 @@ const CURRENT_SCHEMA_VERSION: u32 = 2;
 
 /// 进程级 save lock —— 串行化所有 cfg.save() / write_keys_atomic() 调用，
 /// 避免 geom debouncer (500ms) 与 settings save 同时 fire 时 last-writer-wins 覆盖。
-fn save_lock() -> &'static Mutex<()> {
+///
+/// H1/M11 fix: 之前只 AppConfig::save() 用，导致 keys.json 写路径
+/// （save_api_key_for / save_cookie_for / save_credential_for_id + 各自 delete）
+/// 与 custom_sources.json 写（save_custom_sources）互相竞争 → 丢字段。
+/// 现在所有文件写都过这个锁，单进程内全原子。
+pub(crate) fn save_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
 }
@@ -718,7 +723,14 @@ fn keys_path() -> Result<PathBuf, String> {
 
 /// 原子写：先写 .tmp 文件 + 设 0600 权限，再 rename 覆盖。
 /// 避免半写状态把 key 写坏 / 漏权限。
+///
+/// H1 fix: 整个函数体在 save_lock() 保护下 —— keys.json 写路径
+/// 必须在进程内串行化，否则 read_keys() → modify → write_keys_atomic 的
+/// 非原子序列会丢 key（用户同时改两个 source 的 key，或 xiaomi_login 异步
+/// 触发 save_credential_for_id 与 settings 编辑并发）。
 fn write_keys_atomic(map: &KeysMap) -> Result<(), String> {
+    // 注意：先拿锁，再做 fs 操作。锁的 guard 跨整个函数体持有直到 `?` 返错。
+    let _g = save_lock().lock().unwrap_or_else(|e| e.into_inner());
     let path = keys_path()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
@@ -770,12 +782,23 @@ pub fn load_api_key_for(provider: Provider) -> Result<Option<String>, String> {
 }
 
 pub fn save_api_key_for(provider: Provider, key: &str) -> Result<(), String> {
+    // H1 fix: 入口加 save_lock —— read_keys → modify → write_keys_atomic
+    // 必须整个序列在锁内,否则两个并发 save 会让其中一个的 key 丢失
+    // (last-writer-wins)。Mutex 中毒走 into_inner() 恢复 + warn。
+    let _g = save_lock().lock().unwrap_or_else(|e| {
+        tracing::warn!("save_api_key_for save_lock poisoned, recovering");
+        e.into_inner()
+    });
     let mut map = read_keys()?;  // F3 fix: 传播错误，不要 unwrap_or_default（会删光其他 key）
     map.insert(provider.id_str().to_string(), key.to_string());
     write_keys_atomic(&map)
 }
 
 pub fn delete_api_key_for(provider: Provider) -> Result<(), String> {
+    let _g = save_lock().lock().unwrap_or_else(|e| {
+        tracing::warn!("delete_api_key_for save_lock poisoned, recovering");
+        e.into_inner()
+    });
     let mut map = read_keys()?;  // 同上
     map.remove(provider.id_str());
     if map.is_empty() {
@@ -802,12 +825,20 @@ pub fn load_cookie_for(provider: Provider) -> Result<Option<String>, String> {
 }
 
 pub fn save_cookie_for(provider: Provider, cookie: &str) -> Result<(), String> {
+    let _g = save_lock().lock().unwrap_or_else(|e| {
+        tracing::warn!("save_cookie_for save_lock poisoned, recovering");
+        e.into_inner()
+    });
     let mut map = read_keys()?;  // F3 fix
     map.insert(cookie_key(provider), cookie.to_string());
     write_keys_atomic(&map)
 }
 
 pub fn delete_cookie_for(provider: Provider) -> Result<(), String> {
+    let _g = save_lock().lock().unwrap_or_else(|e| {
+        tracing::warn!("delete_cookie_for save_lock poisoned, recovering");
+        e.into_inner()
+    });
     let mut map = read_keys()?;  // F3 fix
     map.remove(&cookie_key(provider));
     if map.is_empty() {
@@ -837,6 +868,10 @@ pub fn load_credential_for_id(id: &str) -> Result<Option<Credentials>, String> {
 }
 
 pub fn save_credential_for_id(id: &str, cred: &Credentials) -> Result<(), String> {
+    let _g = save_lock().lock().unwrap_or_else(|e| {
+        tracing::warn!("save_credential_for_id save_lock poisoned, recovering");
+        e.into_inner()
+    });
     let mut map = read_keys()?;  // F3 fix
     // 防御性写法:分别处理 api_key / cookie 两个字段。
     // 旧实现的 match 在 (Some, Some) 时只插 api_key,cookie 被静默丢弃——
@@ -860,6 +895,10 @@ pub fn save_credential_for_id(id: &str, cred: &Credentials) -> Result<(), String
 }
 
 pub fn delete_credential_for_id(id: &str) -> Result<(), String> {
+    let _g = save_lock().lock().unwrap_or_else(|e| {
+        tracing::warn!("delete_credential_for_id save_lock poisoned, recovering");
+        e.into_inner()
+    });
     let mut map = read_keys()?;  // F3 fix
     map.remove(id);
     map.remove(&format!("{id}:cookie"));

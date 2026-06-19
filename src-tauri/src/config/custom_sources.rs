@@ -61,8 +61,15 @@ pub fn load_custom_sources() -> Result<Vec<CustomSourceSpec>, String> {
 }
 
 /// 原子写：先写 .tmp + 0600，再 rename 覆盖（跟 [`super::write_keys_atomic`] 同款）。
+/// M11 fix: 整个函数体在 save_lock() 保护下 —— 与 keys.json 写串行化，
+/// 避免用户同时改 custom source + 改 key 时 cfg.save / keys 写 / customs 写
+/// 三条路径互相竞争丢字段。
 #[allow(dead_code)]  // Phase E add/update/delete_custom_source IPC 会用
 pub fn save_custom_sources(specs: &[CustomSourceSpec]) -> Result<(), String> {
+    let _g = super::save_lock().lock().unwrap_or_else(|e| {
+        tracing::warn!("save_custom_sources save_lock poisoned, recovering");
+        e.into_inner()
+    });
     let path = custom_sources_path()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;

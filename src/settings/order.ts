@@ -95,6 +95,39 @@ export function isSuppressingConfigRebuild(): boolean {
   return suppressConfigRebuild;
 }
 
+/** **L14 fix（2026-06-19）**：单次 enabled checkbox 点击同样需要抑制
+ *  config-changed 监听器。原先只有批量操作（onDividerMouseUp / 拖拽 mousedown→up）
+ *  会置 suppressConfigRebuild=true；单点 checkbox 不会，所以连续点多个
+ *  checkbox 时第二次的 config-changed 会用后端旧 cfg 覆盖乐观更新，
+ *  浮窗在「全隐藏」与「新位置」之间闪烁。
+ *
+ *  用法：把 setProviderEnabled 调包成 withSuppress(...)
+ *    await withSuppress(() => setProviderEnabled(id, true));
+ *
+ *  实现：set suppress=true → await 业务 fn → 短暂延时等 config-changed 事件落地
+ *  → 强制 resync 一次（防止乐观更新与后端状态有微小偏差）→ reset suppress=false。
+ *  短暂延时是关键 —— config-changed 是后端 cfg.save() 后 emit 的，需要等事件
+ *  到达 main.ts listener 才会被 suppress 挡掉。 */
+export async function withSuppress<T>(fn: () => Promise<T>): Promise<T> {
+  suppressConfigRebuild = true;
+  try {
+    return await fn();
+  } finally {
+    // 给 config-changed 一个落地窗口（~30ms 足够 emit/listener 一来一回）
+    await new Promise((r) => setTimeout(r, 30));
+    suppressConfigRebuild = false;
+    // 强制 resync：以防乐观更新与后端状态有微小偏差
+    try {
+      const { getConfig } = await import("./api");
+      const cfg = await getConfig();
+      orderCfg = cfg;
+      if (listRef) buildOrderItems(listRef);
+    } catch (e) {
+      console.warn("[settings] withSuppress resync 失败", e);
+    }
+  }
+}
+
 function isEnabledId(id: string): boolean {
   if (!orderCfg) return true;
   return orderCfg.providers?.[id]?.enabled ?? true;

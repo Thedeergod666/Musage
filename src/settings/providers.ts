@@ -24,7 +24,7 @@ import {
 } from "./api";
 import { el, setCurrentKnownIds, flash, currentProviderOrder } from "./utils";
 import { getProviderExtras } from "./source-extras";
-import { renderOrderSection } from "./order";
+import { renderOrderSection, withSuppress } from "./order";
 import { renderCredentialBlock, loadCredentialStatus } from "./credentials";
 import { getProviderMeta } from "./logos";
 import { getGroupDef, groupKeyFor } from "./groups";
@@ -182,10 +182,17 @@ export function createProviderPanel(meta: SourceMeta, cfg: AppConfig): HTMLEleme
   }) as HTMLInputElement;
   enabledCheckbox.checked = cfg.providers?.[meta.id]?.enabled ?? true;
   // 即时生效
+  // **L14 fix（2026-06-19）**：单点 checkbox 包进 withSuppress()，让 main.ts
+  // 的 config-changed 监听器在 IPC 落地窗口内跳过 rebuild。否则连续点多个
+  // checkbox 时第二次的 config-changed 事件会用后端"刚才"的状态覆盖我们
+  // 乐观更新的 orderCfg，浮窗在「全隐藏」与「新位置」之间闪烁。批量操作
+  // （onDividerMouseUp）原本就抑制；现在单点也走同一机制。
   enabledCheckbox.addEventListener("change", () => {
-    setProviderEnabled(meta.id, enabledCheckbox.checked).catch((e) => {
-      flash(t("settings.providers.flash_toggle_failed", { err: String(e) }), true);
-    });
+    const target = enabledCheckbox.checked;
+    withSuppress(() => setProviderEnabled(meta.id, target))
+      .catch((e) => {
+        flash(t("settings.providers.flash_toggle_failed", { err: String(e) }), true);
+      });
   });
 
   section.appendChild(

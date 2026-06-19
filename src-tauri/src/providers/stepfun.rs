@@ -178,7 +178,11 @@ async fn fetch_rate_limit(token: &str) -> Result<Value, FetchError> {
     Ok(raw)
 }
 
-/// POST Step Plan status endpoint。失败不报错，调用方决定怎么处理。
+/// POST Step Plan status endpoint。
+/// L8 fix: 之前 HTTP 非 200 时返 Ok(None) 静默吞掉错误，
+/// do_fetch 里 .ok().flatten() 也吞。plan_name 显示为 None 时
+/// 用户/开发者查不到原因，日志也没有任何记录。
+/// 改为非 200 时 log warn 后返 Ok(None)（plan_name 是可选字段，不阻塞主 fetch）。
 async fn fetch_plan_status(token: &str) -> Result<Option<String>, FetchError> {
     let client = shared_client();
 
@@ -193,6 +197,11 @@ async fn fetch_plan_status(token: &str) -> Result<Option<String>, FetchError> {
         .map_err(|e| FetchError::network(format!("StepFun plan status 网络错误: {e}")))?;
 
     if !resp.status().is_success() {
+        // L8 fix: log warn 而不是静默返 Ok(None)
+        tracing::warn!(
+            status = %resp.status(),
+            "StepFun plan status endpoint 非 200，plan_name 将为 None"
+        );
         return Ok(None);
     }
 

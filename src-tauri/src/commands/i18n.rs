@@ -42,6 +42,12 @@ pub async fn set_app_locale(
     if let Err(e) = app.emit("musage://locale-changed", &locale) {
         tracing::warn!(error = %e, "emit musage://locale-changed 失败，前端可能未刷新");
     }
+    // L6 fix: 也 emit config-changed。之前只 emit locale-changed，但 settings/main.ts
+    // 的 config-changed listener 负责重建 provider 面板。如果用户从设置面板切 locale，
+    // 面板里的 i18n 字符串不会跟着切（除非手动关+开设置窗口）。
+    if let Err(e) = app.emit("musage://config-changed", ()) {
+        tracing::warn!(error = %e, "emit config-changed 失败");
+    }
     Ok(())
 }
 

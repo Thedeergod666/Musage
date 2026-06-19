@@ -47,7 +47,15 @@ async function initI18n() {
   await initLocale();
   applyDataI18n();
   // 监听前端 setLocale → 重新跑 data-i18n 翻译 + 通知 listeners
-  onLocaleChange(() => applyDataI18n());
+  // L1 fix: region-wizard.ts 的 renderRegionSection 在 init 时调一次 t() 把标题
+  // 烘到 DOM textContent，切 locale 后不跟着换。这里加 region section 重渲。
+  onLocaleChange(() => {
+    applyDataI18n();
+    // region section 的 radio title / section title / apply 按钮全走 t() 烘焙，
+    // 不是 data-i18n 静态元素，必须整个 section 重渲。
+    const regionContainer = document.getElementById("section-region");
+    if (regionContainer) void renderRegionSection(regionContainer);
+  });
 }
 
 void initI18n();

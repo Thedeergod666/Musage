@@ -178,6 +178,16 @@ impl QuotaSource for CustomSource {
 // ── 内部：HTTP 请求 + 解析 ──────────────────────────────────────────
 
 async fn do_fetch(api_key: &str, spec: &CustomSourceSpec) -> Result<ProviderSnapshot, FetchError> {
+    // L10 fix: path 必须以 / 开头，否则 base_url+path 拼出的 URL 会串 host。
+    // 例: base_url="https://api.legit.com" + path="@evil.com/foo" →
+    // https://api.legit.com@evil.com/foo (host 变成 evil.com，api key 走 reqwest
+    // 不在 URL 里所以不直接泄露，但请求被重定向到 attacker 域)。
+    // spec parse 时已经校验 path.starts_with('/')，这里再防御一次（防篡改 config）。
+    if !spec.path.starts_with('/') {
+        return Err(FetchError::auth(
+            t!("error.custom.path_must_start_with_slash").into_owned()
+        ));
+    }
     let url = format!(
         "{}{}",
         spec.base_url.trim_end_matches('/'),

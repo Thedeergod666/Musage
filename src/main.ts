@@ -206,8 +206,16 @@ function isTransientError(kind: string | null | undefined): boolean {
 /// **契约**：必须跟 `updateCard` 的瞬态错误分支（`isTransientError(kind) && good`
 /// 那块）保持严格一致 —— 任一处改了另一处要同步改，否则 contentFingerprint
 /// 算出来的"可见结构"就跟实际 DOM 脱节 → 要么漏 fit 要么白 fit。
+/// H7 fix: lastGoodSnap key 从 p.provider 改为 (p.source_id ?? p.provider)，
+/// 与 render 主路径的 id 路由(line 290/483/552)保持一致。
+/// 之前 p.provider 对 CustomSource 全是 Provider::Minimax 占位值，
+/// 多个 CustomSource 共享同一 key → set() 互相覆盖，get() 拿到错的 snapshot。
+function snapKey(p: ProviderSnapshot): string {
+  return (p.source_id ?? p.provider) as string;
+}
+
 function effectiveSnap(p: ProviderSnapshot): ProviderSnapshot {
-  const entry = lastGoodSnap.get(p.provider);
+  const entry = lastGoodSnap.get(snapKey(p));
   if (isTransientError(p.error_kind) && entry && (Date.now() - entry.at < LAST_GOOD_TTL_MS)) {
     return entry.snap;
   }
@@ -512,7 +520,7 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
 
   // 成功 → 记录到 lastGood 备用（瞬态错误时复用这份数据继续渲染）
   if (p.success) {
-    lastGoodSnap.set(p.provider, { snap: p, at: Date.now() });
+    lastGoodSnap.set(snapKey(p), { snap: p, at: Date.now() });
     card.dataset.stale = ""; // 清 stale 标记（即使之前是 stale）
   }
 
@@ -528,7 +536,7 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
 
   if (!p.success) {
     const kind = p.error_kind ?? "other";
-    const entry = lastGoodSnap.get(p.provider);
+    const entry = lastGoodSnap.get(snapKey(p));
     const good = entry && (Date.now() - entry.at < LAST_GOOD_TTL_MS) ? entry.snap : null;
 
     // ── 瞬态错误（网络抖动 / 限流 / 服务端错误）+ 之前有过成功数据（且未过期） ──

@@ -190,6 +190,7 @@ fn parse(raw: &serde_json::Value) -> Result<ProviderSnapshot, FetchError> {
         resets_at: None,
         unit: Some("CNY".to_string()),
         extra: None,
+            kind: None,
     }];
 
     Ok(ProviderSnapshot {

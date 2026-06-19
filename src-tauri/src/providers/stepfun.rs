@@ -238,6 +238,7 @@ fn parse(rate_raw: Value, plan_name: Option<String>) -> Result<ProviderSnapshot,
                 resets_at: reset,
                 unit: Some("%".to_string()),
                 extra: None,
+            kind: None,
             });
         }
     }
@@ -258,6 +259,7 @@ fn parse(rate_raw: Value, plan_name: Option<String>) -> Result<ProviderSnapshot,
                 resets_at: reset,
                 unit: Some("%".to_string()),
                 extra: None,
+            kind: None,
             });
         }
     }

@@ -482,7 +482,19 @@ pub fn update_tray_from_snapshot(
 fn make_placeholder_icon() -> Image<'static> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("icons/tray-base.png");
     if let Ok(img) = image::open(&path) {
-        let rgba = img.to_rgba8();
+        let mut rgba = img.to_rgba8();
+        let (w, h) = rgba.dimensions();
+        // H5 fix: 注释(line 197-201)明确说 Win 64x64 是为了高 DPI 防糊，
+        // 但之前直接用 PNG 原生尺寸(32x32)。Win11 200% DPI 下 GDI
+        // COLORONCOLOR 拉伸 → 模糊。不足 ICON_SIZE 时 Lanczos 上采样。
+        if w < ICON_SIZE || h < ICON_SIZE {
+            rgba = image::imageops::resize(
+                &rgba,
+                ICON_SIZE,
+                ICON_SIZE,
+                image::imageops::FilterType::Lanczos3,
+            );
+        }
         let (w, h) = rgba.dimensions();
         return Image::new_owned(rgba.into_raw(), w, h);
     }

@@ -249,6 +249,7 @@ fn parse(raw: &Value, region: ZhipuRegion) -> Result<ProviderSnapshot, FetchErro
             resets_at,
             unit: Some("%".to_string()),
             extra: None,
+            kind: None,
         });
     }
     if let Some((pct, resets_at)) = weekly {
@@ -261,6 +262,7 @@ fn parse(raw: &Value, region: ZhipuRegion) -> Result<ProviderSnapshot, FetchErro
             resets_at,
             unit: Some("%".to_string()),
             extra: None,
+            kind: None,
         });
     }
 

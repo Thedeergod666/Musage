@@ -276,6 +276,7 @@ fn parse_payg(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         resets_at: None,
         unit: Some(currency.clone()),
         extra: None,
+            kind: None,
     });
 
     // 细分：充值（Tavily 风格，only-used）
@@ -289,6 +290,7 @@ fn parse_payg(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
             resets_at: None,
             unit: Some(currency.clone()),
             extra: None,
+            kind: None,
         });
     }
     // 细分：奖励
@@ -302,6 +304,7 @@ fn parse_payg(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
             resets_at: None,
             unit: Some(currency.clone()),
             extra: None,
+            kind: None,
         });
     }
 
@@ -406,6 +409,7 @@ fn parse_subscription_window(q: &Value, label: &str) -> Option<QuotaRow> {
         resets_at,
         unit: Some("%".to_string()),
         extra: None,
+            kind: None,
     })
 }
 

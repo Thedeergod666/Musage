@@ -175,6 +175,7 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
                 resets_at: None,
                 unit: Some(currency),
                 extra: None,
+            kind: None,
             });
         }
     }

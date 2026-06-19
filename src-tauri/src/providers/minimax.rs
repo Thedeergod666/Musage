@@ -334,6 +334,7 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
             resets_at: t.resets_at,
             unit: Some("%".to_string()),
             extra: None,
+            kind: None,
         });
     }
     if let Some(t) = weekly {
@@ -346,6 +347,7 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
             resets_at: t.resets_at,
             unit: Some("%".to_string()),
             extra: None,
+            kind: None,
         });
     }
 

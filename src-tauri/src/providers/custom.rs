@@ -315,6 +315,7 @@ fn parse_with_extract(
                 resets_at: None,
                 unit: Some("USD".to_string()),
                 extra: None,
+            kind: None,
             }
         }
         ExtractSpec::Balance {
@@ -349,6 +350,7 @@ fn parse_with_extract(
                 resets_at: None,
                 unit,
                 extra: None,
+            kind: None,
             }
         }
         ExtractSpec::Custom {
@@ -393,6 +395,7 @@ fn parse_with_extract(
                 resets_at: None,
                 unit: unit.clone(),
                 extra: None,
+            kind: None,
             }
         }
     };

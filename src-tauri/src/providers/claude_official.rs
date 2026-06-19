@@ -276,6 +276,7 @@ fn build_tier_row(label: &str, tier: &Value) -> Option<QuotaRow> {
         resets_at,
         unit: Some("%".to_string()),
         extra: None,
+            kind: None,
     })
 }
 

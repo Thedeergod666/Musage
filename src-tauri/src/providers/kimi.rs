@@ -163,6 +163,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
                         resets_at,
                         unit: Some("%".to_string()),
                         extra: None,
+            kind: None,
                     });
                     break; // 只取第一条 5h 限额
                 }
@@ -189,6 +190,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
                     resets_at,
                     unit: Some("%".to_string()),
                     extra: None,
+            kind: None,
                 });
             }
         }

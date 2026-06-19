@@ -249,6 +249,7 @@ fn parse_credits(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         resets_at: None,
         unit: Some("USD".to_string()),
         extra: None,
+            kind: None,
     }];
 
     Ok(ProviderSnapshot {
@@ -298,6 +299,7 @@ fn parse_key(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
             resets_at: None,
             unit: Some("USD".to_string()),
             extra: None,
+            kind: None,
         });
     }
 

@@ -202,6 +202,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
                 resets_at,
                 unit: Some(t!("row.credits").to_string()),
                 extra: None,
+            kind: None,
             });
         } else {
             // limit = 0 → 理论上不该出现，但保险起见也列
@@ -214,6 +215,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
                 resets_at,
                 unit: Some(t!("row.credits").to_string()),
                 extra: None,
+            kind: None,
             });
         }
     } else if let Some(u) = used {
@@ -227,6 +229,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
             resets_at,
             unit: Some(t!("row.credits").to_string()),
             extra: None,
+            kind: None,
         });
     }
 
@@ -249,6 +252,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
                 resets_at: None,
                 unit: Some(t!("row.calls").to_string()),
                 extra: None,
+            kind: None,
             });
         }
     }

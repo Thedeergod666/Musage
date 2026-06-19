@@ -112,6 +112,12 @@ impl LogStore {
     }
 
     /// Append 一条。内部处理 ring buffer cap + 文件追加。
+    ///
+    /// H6 fix: 之前只裁内存 VecDeque，磁盘文件永远 append 不截断。
+    /// 注释说"下次启动会被 cap 重新截断"——与代码不符(load_from_disk
+    /// 只裁内存，不管文件)。1 年用户可能堆出几十 MB log 文件。
+    /// 现在 push 达到 cap 时用 ring buffer 内容重写文件（写 tmp + rename，
+    /// 原子替换，避免 half-written 坏文件）。
     pub fn push(&self, entry: LogEntry) {
         // 1. 写文件（best-effort，IO 失败不阻塞业务流程）
         if let Ok(path) = log_path() {
@@ -142,7 +148,26 @@ impl LogStore {
         g.push_back(entry);
         if g.len() > MAX_ENTRIES {
             g.pop_front();
+            // H6 fix: 磁盘文件也要同步截断，否则 .jsonl 无限增长。
+            // 用 ring buffer 当前内容重写整个文件（写 tmp + rename 原子替换）。
+            drop(self.truncate_file(&g));
         }
+    }
+
+    /// 把 ring buffer 内容重写到磁盘（覆盖整个 .jsonl 文件）。
+    /// push 里超过 MAX_ENTRIES 时调用，用 tmp + rename 保证原子。
+    fn truncate_file(&self, ring: &VecDeque<LogEntry>) -> Result<(), String> {
+        let path = log_path()?;
+        let tmp = path.with_extension("jsonl.tmp");
+        let mut f = std::fs::File::create(&tmp)
+            .map_err(|e| format!("logstore truncate tmp: {e}"))?;
+        for entry in ring {
+            if let Ok(s) = serde_json::to_string(entry) {
+                let _ = writeln!(f, "{}", s);
+            }
+        }
+        std::fs::rename(&tmp, &path)
+            .map_err(|e| format!("logstore truncate rename: {e}"))
     }
 
     /// 快照：返回最近 n 条（按时间正序）。n == None → 全部。

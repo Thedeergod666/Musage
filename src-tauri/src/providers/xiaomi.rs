@@ -569,6 +569,7 @@ fn parse(
             resets_at,
             unit: Some("%".to_string()),
             extra: None,
+            kind: Some(RowKind::Plan),
         });
     }
 
@@ -583,6 +584,7 @@ fn parse(
             resets_at: None,
             unit: Some("%".to_string()),
             extra: None,
+            kind: Some(RowKind::Compensation),
         });
     }
 
@@ -606,6 +608,7 @@ fn parse(
                 resets_at: None,
                 unit: Some("%".to_string()),
                 extra: None,
+                kind: Some(RowKind::MonthlyTotal),
             });
         }
     }

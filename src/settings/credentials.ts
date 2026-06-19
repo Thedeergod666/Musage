@@ -530,14 +530,16 @@ export async function saveCredentialAction(id: string, action: "key" | "cookie",
     // 单鉴权 source（auth_kind=api_key / cookie）忽略 field 走默认也安全。
     await setSourceCredential(id, value, action === "key" ? "api_key" : "cookie");
     input.value = "";
-    // 立即更新对应字段的"已保存"状态（不等 loadCredentialStatus 兜底），
-    // 多鉴权时 loadCredentialStatus 只能更新第一个找到的 status 元素，
-    // 这里精确到字段。
-    const statusId = action === "key" ? `api-key-status-${id}` : `cookie-status-${id}`;
-    const status = document.getElementById(statusId);
-    if (status) {
-      status.textContent = t("credentials.cookie_status_saved");
-      status.className = "status ok";
+    // H4 fix: 高级 tab 的 status 元素 id 拼了 `-adv` 后缀，主面板没有；
+    // 这里必须两个后缀都更新，否则高级 tab 保存后状态元素停留在 "未保存"。
+    // (与 line 508-515 的 loadCredentialStatus 同样的双后缀循环)
+    const statusKey = action === "key" ? "api-key-status" : "cookie-status";
+    for (const suffix of ["", "-adv"]) {
+      const status = document.getElementById(`${statusKey}-${id}${suffix}`);
+      if (status) {
+        status.textContent = t("credentials.cookie_status_saved");
+        status.className = "status ok";
+      }
     }
     flash(t("credentials.flash_saved_generic", { name: t(`provider.${id as ProviderId}.name`) }));
     await refreshNow();
@@ -626,14 +628,22 @@ export function bindXiaomiLoginEvents() {
 
 /// document-level 委托：处理动态 panel 里的 save-key / del-key / copy-key / save-cookie / del-cookie / xiaomi-login
 /// 在 main.ts init() 末尾调一次就行。
+// C1 fix: 用 closest('[data-action]') 而不是直接 e.target.dataset，
+// 否则点 button 内部的 text node 会抛 "Cannot read properties of undefined (reading 'action')"。
+// 与 src/main.ts:1010 / order.ts:128 等其它委托风格一致。
+// M10 fix: 加 _credListenerBound 守卫，init 重试 / Vite HMR 不会累积 listener。
+let _credListenerBound = false;
 export function bindCredentialButtonsGlobal() {
+  if (_credListenerBound) return;
+  _credListenerBound = true;
   document.addEventListener("click", (e) => {
-    const t = e.target as HTMLElement;
-    const action = t.dataset.action;
-    const id = t.dataset.id;
+    const btn = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-action]");
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const id = btn.dataset.id;
     if (!action || !id) return;
     // 高级 tab 按钮带 data-advanced="true"，用不同 ID 的 input
-    const isAdv = t.dataset.advanced === "true";
+    const isAdv = btn.dataset.advanced === "true";
     const advInputId = isAdv
       ? (action === "save-key" || action === "del-key" ? `api-key-${id}-adv` : `cookie-${id}-adv`)
       : undefined;
@@ -665,8 +675,8 @@ export function bindCredentialButtonsGlobal() {
 
   // select 用 'change' 事件：用户切了 option 就即时落盘。
   document.addEventListener("change", (e) => {
-    const t = e.target as HTMLElement;
-    if (t.dataset.action !== "xiaomi-display-mode") return;
+    const t = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-action='xiaomi-display-mode']");
+    if (!t) return;
     const value = (t as HTMLSelectElement).value;
     if (value !== "all" && value !== "plan_only" && value !== "total_only") return;
     void xiaomiDisplayModeAction(value);

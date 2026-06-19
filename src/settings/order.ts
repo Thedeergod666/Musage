@@ -569,7 +569,8 @@ export function renderOrderSection(
 
   // 绑定 mousedown（统一路由：分隔线 → onDividerMouseDown，卡片 → onDragMouseDown）
   list.addEventListener("mousedown", (e) => {
-    const target = e.target as HTMLElement;
+    const target = (e.target as HTMLElement | null);
+    if (!target) return;
     if (target.closest("li.order-divider") && !target.closest("li.order-row")) {
       onDividerMouseDown(e);
     } else if (target.closest("li.order-row") && !target.closest("button")) {
@@ -698,8 +699,22 @@ function refreshRowButtons(li: HTMLElement, idx: number, total: number) {
   }
 }
 
+// L3 fix: 之前 posLabel 用 currentProviderOrder.length 作分母，
+// 但 buildOrderItems 会从 getCurrentKnownIds() 追加"不在 currentProviderOrder 里"的 row
+// （PR 3 加 CustomSource 之后常见）—— 末位 row 会显示 "8/7"。
+// 改为按 buildOrderItems 的真实分母（enabledIds + disabledIds）来算。
+function currentTotalRows(): number {
+  const known = getCurrentKnownIds();
+  const orderSet = new Set(currentProviderOrder);
+  let extra = 0;
+  for (const id of known) {
+    if (!orderSet.has(id as ProviderId)) extra++;
+  }
+  return currentProviderOrder.length + extra;
+}
+
 function posLabel(i: number): string {
-  return `${i + 1}/${currentProviderOrder.length}`;
+  return `${i + 1}/${currentTotalRows()}`;
 }
 
 // ── ↑↓ 按钮 ─────────────────────────────────────────────────
@@ -823,9 +838,27 @@ async function commitOrder(finalIdx: number, id: string) {
   }
 }
 
+// L4 fix: 之前只遍历 currentProviderOrder，跳过 buildOrderItems 追加的 extra row。
+// 现在按 buildOrderItems 的真实分两段路径走（enabledIds + disabledIds），
+// 这样新增的 CustomSource 也能正确刷新 pos / up / down 状态。
 function refreshPosLabels() {
-  for (let i = 0; i < currentProviderOrder.length; i++) {
-    const id = currentProviderOrder[i];
+  // 与 buildOrderItems 保持完全相同的分段 + 追加逻辑
+  const enabledIds: string[] = [];
+  const disabledIds: string[] = [];
+  for (const id of currentProviderOrder) {
+    if (isEnabledId(id)) enabledIds.push(id);
+    else disabledIds.push(id);
+  }
+  const orderSet = new Set(currentProviderOrder);
+  for (const id of getCurrentKnownIds()) {
+    if (orderSet.has(id as ProviderId)) continue;
+    if (isEnabledId(id)) enabledIds.push(id);
+    else disabledIds.push(id);
+  }
+  const displayed = [...enabledIds, ...disabledIds];
+  const total = displayed.length;
+  for (let i = 0; i < displayed.length; i++) {
+    const id = displayed[i];
     const posEl = document.querySelector<HTMLElement>(`.order-pos[data-id="${id}"]`);
     if (posEl) posEl.textContent = posLabel(i);
     const upBtn = document.querySelector<HTMLButtonElement>(`.order-up[data-id="${id}"]`);
@@ -840,7 +873,7 @@ function refreshPosLabels() {
       const row = downBtn?.closest("li.order-row");
       const isLastDisabled =
         !!row?.classList.contains("order-row-disabled") &&
-        i === currentProviderOrder.length - 1;
+        i === total - 1;
       downBtn.disabled = isLastDisabled;
     }
   }
@@ -850,18 +883,21 @@ function refreshPosLabels() {
 
 // M23 fix: 之前 document.addEventListener 无幂等保护，重复调会累积 N 个 listener。
 // 改成 module-scope flag，第一次调才绑，后续 return。
+// C2 fix: 用 closest('.order-up, .order-down') 而不是直接 e.target.classList，
+// 否则点 button 内部的 text node（"↑"/"↓"）会抛 "Cannot read properties of undefined (reading 'contains')"。
 let _orderListenerBound = false;
 export function bindOrderButtonsGlobal() {
   if (_orderListenerBound) return;
   _orderListenerBound = true;
   document.addEventListener("click", (e) => {
-    const target = e.target as HTMLElement;
-    if (target.classList.contains("order-up")) {
-      const id = target.dataset.id;
-      if (id) void moveProviderInOrder(id, "up");
-    } else if (target.classList.contains("order-down")) {
-      const id = target.dataset.id;
-      if (id) void moveProviderInOrder(id, "down");
+    const btn = (e.target as HTMLElement | null)?.closest<HTMLElement>(".order-up, .order-down");
+    if (!btn) return;
+    const id = btn.dataset.id;
+    if (!id) return;
+    if (btn.classList.contains("order-up")) {
+      void moveProviderInOrder(id, "up");
+    } else if (btn.classList.contains("order-down")) {
+      void moveProviderInOrder(id, "down");
     }
   });
 }

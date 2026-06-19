@@ -426,6 +426,11 @@ impl AppConfig {
     /// 从磁盘加载；不存在或损坏则返回默认
     /// 损坏时：**先备份**原文件到 `config.json.bak.<ts>` 再返回 Ok(default)，
     /// 同时 log error（不再像 v0.1 那样静默吞掉，让用户配置被清零）。
+    ///
+    /// **B-NEW-8（2026-06-19 audit）**：之前 read_to_string 失败（权限不足 /
+    /// 磁盘错误）也走"返 Self::default()"+ 不备份的路径。下次 save() 会用默认
+    /// 覆盖原始 config.json，用户配置彻底丢失（除非 OS 层有 snapshot）。修法：
+    /// 跟"损坏"路径一样先备份到 .bak.<ts>，至少留一份 forensic 副本。
     pub fn load_from_disk() -> Result<Self, String> {
         let path = config_path()?;
         if !path.exists() {
@@ -435,6 +440,24 @@ impl AppConfig {
             Ok(s) => s,
             Err(e) => {
                 tracing::error!(error = %e, path = %path.display(), "config.json 读失败，回退默认");
+                // 备份原文件后再返 default —— 防止下次 save() 用默认值覆盖
+                // 用户的真实 config（虽然现在读不出来，但留着 forensic）。
+                let ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let backup = path.with_extension(format!("json.bak.{ts}"));
+                if let Err(be) = std::fs::copy(&path, &backup) {
+                    tracing::error!(
+                        error = %be, path = %path.display(),
+                        "config.json 读失败且备份失败，用户配置可能在下一次 save 时丢失"
+                    );
+                } else {
+                    tracing::error!(
+                        backup = %backup.display(),
+                        "config.json 读失败，已备份到 .bak.<ts>，使用默认值启动"
+                    );
+                }
                 return Ok(Self::default());
             }
         };

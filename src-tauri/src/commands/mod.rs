@@ -129,7 +129,15 @@ pub async fn set_provider_enabled(
                 p.source_id.as_deref() == Some(&id)
             });
             if !already_present {
-                snap.providers.push(ProviderSnapshot::placeholder(&state_arc, &id).await);
+                let mut placeholder = ProviderSnapshot::placeholder(&state_arc, &id).await;
+                // **B-NEW-10（2026-06-19 audit）**：placeholder 默认 next_fetch_at=None，
+                // 浮窗错误卡片显示"未知"倒计时。填上 ~5s 默认值（典型 HTTP fetch
+                // 耗时），让用户看到"~5s 后取数"的进度。fetch 完成后 refresh_single_inner
+                // 自己会 emit 真 snapshot 替换 placeholder。
+                placeholder.next_fetch_at = Some(
+                    chrono::Utc::now().timestamp_millis() + 5_000
+                );
+                snap.providers.push(placeholder);
             }
             let cfg2 = state_arc.config.read().await;
             apply_provider_order(&mut snap, &cfg2);

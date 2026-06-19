@@ -256,6 +256,41 @@ export async function testCustomSource(
   return invoke<ProviderSnapshot>("test_custom_source", { spec, apiKey });
 }
 
+// ── C3 fix: source-extras 6 个交互控件的 per-field setter ────────
+//
+// 之前 source-extras.ts 里的 region select / concise checkbox / base_url input /
+// zenmux mode / zhipu region 全部没有 change handler，配置改完静默丢失。
+// 每个 setter 后端做: 改 cfg 对应字段 → 落盘 → emit config-changed → refresh_single。
+//（浮窗/托盘立即看到新值，不等 poller。）
+
+export async function setMinimaxRegion(region: "cn" | "en"): Promise<void> {
+  await invoke("set_minimax_region", { region });
+}
+
+export async function setXiaomiRegion(region: "cn" | "sgp" | "ams"): Promise<void> {
+  await invoke("set_xiaomi_region", { region });
+}
+
+export async function setTavilyConciseMode(enabled: boolean): Promise<void> {
+  await invoke("set_tavily_concise_mode", { enabled });
+}
+
+export async function setZenmuxBaseUrl(url: string): Promise<void> {
+  await invoke("set_zenmux_base_url", { url });
+}
+
+export async function setZenmuxMode(mode: "payg" | "subscription"): Promise<void> {
+  await invoke("set_zenmux_mode", { mode });
+}
+
+export async function setZenmuxPaygConcise(enabled: boolean): Promise<void> {
+  await invoke("set_zenmux_payg_concise", { enabled });
+}
+
+export async function setZhipuRegion(region: "cn" | "en"): Promise<void> {
+  await invoke("set_zhipu_region", { region });
+}
+
 // ── P2 区域向导 ──
 
 /** P2 区域：用户选定后 apply 默认 provider 顺序 + endpoint */

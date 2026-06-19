@@ -49,7 +49,7 @@
 
 use std::borrow::Cow;
 use std::pin::Pin;
-use std::sync::OnceLock;
+use std::sync::RwLock;
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -84,10 +84,12 @@ impl ZhipuRegion {
     }
 
     /// 短显示名（用于 source_display_name），区分国区/国际。
-    fn display_label(&self) -> &'static str {
+    // M8 fix: 之前硬编码中文 "智谱 GLM" / "Z.ai" 破坏 en locale 的 i18n 链路。
+    // 改走 t!()，让 Rust → frontend 的 display_name 走正常 i18n 路径。
+    fn display_label(&self) -> String {
         match self {
-            ZhipuRegion::Cn => "智谱 GLM",
-            ZhipuRegion::En => "Z.ai",
+            ZhipuRegion::Cn => t!("provider_name.zhipu_cn").into_owned(),
+            ZhipuRegion::En => t!("provider_name.zhipu_en").into_owned(),
         }
     }
 }
@@ -104,13 +106,15 @@ fn parse_region(s: &str) -> Option<ZhipuRegion> {
 
 pub struct ZhipuSource {
     /// 用户在设置面板里选的区域（默认 Cn）
-    region: OnceLock<ZhipuRegion>,
+    // OnceLock → RwLock<Option<...>>：原 OnceLock 是"一次性 set"，set_state 第二次调
+    // 会静默丢弃用户的更改，必须重启 app 才生效。改 RwLock 让 set_state 总能覆盖。
+    region: RwLock<Option<ZhipuRegion>>,
 }
 
 impl Default for ZhipuSource {
     fn default() -> Self {
         Self {
-            region: OnceLock::new(),
+            region: RwLock::new(None),
         }
     }
 }
@@ -132,7 +136,11 @@ impl QuotaSource for ZhipuSource {
                 .and_then(|v| v.as_str())
                 .or_else(|| cfg.get("zhipu_region").and_then(|v| v.as_str()));
             let region = region_str.and_then(parse_region).unwrap_or(ZhipuRegion::Cn);
-            let _ = self.region.set(region);
+            if let Ok(mut g) = self.region.write() {
+                *g = Some(region);
+            } else {
+                tracing::warn!(target: "zhipu", "region RwLock poisoned, falling back to default");
+            }
         })
     }
 
@@ -147,7 +155,12 @@ impl QuotaSource for ZhipuSource {
                     t!("error.provider.unconfigured_key", provider = "智谱 GLM").into_owned()
                 ));
             }
-            let region = self.region.get().copied().unwrap_or_default();
+            let region = self
+                .region
+                .read()
+                .ok()
+                .and_then(|g| *g)
+                .unwrap_or_default();
             do_fetch(api_key, region).await
         })
     }
@@ -275,7 +288,7 @@ fn parse(raw: &Value, region: ZhipuRegion) -> Result<ProviderSnapshot, FetchErro
         raw: Some(raw.clone()),
         is_healthy: true,
         source_id: Some("zhipu".to_string()),
-        source_display_name: Some(region.display_label().to_string()),
+        source_display_name: Some(region.display_label()),
         plan_name,
     })
 }

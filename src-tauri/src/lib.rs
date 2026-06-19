@@ -301,6 +301,14 @@ pub fn run() {
             commands::custom_sources::update_custom_source,
             commands::custom_sources::delete_custom_source,
             commands::custom_sources::test_custom_source,
+            // C3 fix: source-extras 6 个 per-field setter (region / mode / concise / base_url)
+            commands::set_minimax_region,
+            commands::set_xiaomi_region_field,
+            commands::set_tavily_concise_mode,
+            commands::set_zenmux_base_url,
+            commands::set_zenmux_mode,
+            commands::set_zenmux_payg_concise,
+            commands::set_zhipu_region,
             xiaomi_login::open_xiaomi_login_window,
         ])
         .on_window_event(|window, event| {

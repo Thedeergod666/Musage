@@ -284,7 +284,9 @@ fn parse_with_extract(
     let row = match extract {
         ExtractSpec::NewApi { divide } => {
             let div = divide.unwrap_or(500_000.0);
-            if div == 0.0 {
+            // NaN/Infinity/非正值都拒绝（负数 / NaN 会让 remaining 翻负，
+            // 浮窗 health_label 误判为 alert；Infinity 直接污染 JSON）。
+            if !div.is_finite() || div <= 0.0 {
                 return Err(FetchError::parse(
                     t!("error.custom.newapi_divide_zero").into_owned()
                 ));
@@ -321,7 +323,7 @@ fn parse_with_extract(
             divide,
         } => {
             let div = divide.unwrap_or(1.0);
-            if div == 0.0 {
+            if !div.is_finite() || div <= 0.0 {
                 return Err(FetchError::parse(
                     t!("error.custom.balance_divide_zero").into_owned()
                 ));
@@ -357,7 +359,7 @@ fn parse_with_extract(
             divide,
         } => {
             let div = divide.unwrap_or(1.0);
-            if div == 0.0 {
+            if !div.is_finite() || div <= 0.0 {
                 return Err(FetchError::parse(
                     t!("error.custom.custom_divide_zero").into_owned()
                 ));

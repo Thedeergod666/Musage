@@ -46,7 +46,7 @@
 
 use std::borrow::Cow;
 use std::pin::Pin;
-use std::sync::OnceLock;
+use std::sync::RwLock;
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -83,16 +83,18 @@ impl ZenmuxMode {
 
 pub struct ZenmuxSource {
     /// 用户在设置面板里选的 mode（默认 Payg）
-    mode: OnceLock<ZenmuxMode>,
     /// 用户可选填的自定义 endpoint（覆盖 mode 默认 URL）
-    base_url: OnceLock<String>,
+    // OnceLock → RwLock<Option<...>>：原 OnceLock 只能 set 一次，set_state
+    // 第二次调（用户切换 region/mode）会静默丢弃，必须重启 app 才生效。
+    mode: RwLock<Option<ZenmuxMode>>,
+    base_url: RwLock<Option<String>>,
 }
 
 impl Default for ZenmuxSource {
     fn default() -> Self {
         Self {
-            mode: OnceLock::new(),
-            base_url: OnceLock::new(),
+            mode: RwLock::new(None),
+            base_url: RwLock::new(None),
         }
     }
 }
@@ -114,7 +116,9 @@ impl QuotaSource for ZenmuxSource {
                 .and_then(|v| v.as_str())
                 .or_else(|| cfg.get("zenmux_mode").and_then(|v| v.as_str()));
             let mode = mode_str.and_then(parse_mode).unwrap_or(ZenmuxMode::Payg);
-            let _ = self.mode.set(mode);
+            if let Ok(mut g) = self.mode.write() {
+                *g = Some(mode);
+            }
 
             // base_url：同样支持两路径（顶层 = settings.ts 实际写的位置）
             let url = cfg
@@ -123,7 +127,9 @@ impl QuotaSource for ZenmuxSource {
                 .or_else(|| cfg.get("zenmux_base_url").and_then(|v| v.as_str()))
                 .filter(|s| !s.is_empty());
             if let Some(url) = url {
-                let _ = self.base_url.set(url.to_string());
+                if let Ok(mut g) = self.base_url.write() {
+                    *g = Some(url.to_string());
+                }
             }
         })
     }
@@ -139,9 +145,9 @@ impl QuotaSource for ZenmuxSource {
                     t!("error.provider.unconfigured_key", provider = "ZenMux").into_owned()
                 ));
             }
-            let mode = self.mode.get().copied().unwrap_or_default();
-            let custom_url = self.base_url.get().map(|s| s.as_str());
-            do_fetch(api_key, mode, custom_url).await
+            let mode = self.mode.read().ok().and_then(|g| *g).unwrap_or_default();
+            let custom_url = self.base_url.read().ok().and_then(|g| g.clone());
+            do_fetch(api_key, mode, custom_url.as_deref()).await
         })
     }
 }

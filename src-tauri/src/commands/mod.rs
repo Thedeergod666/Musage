@@ -202,6 +202,151 @@ pub async fn get_xiaomi_display_mode(state: State<'_, AppState>) -> Result<Strin
     })
 }
 
+// ── C3 fix: source-extras 6 个 per-field setter ────────────────
+//
+// 之前 source-extras.ts 里的 6 个控件（MiniMax region / Xiaomi region / Tavily
+// concise / ZenMux base_url+mode+payg_concise / Zhipu region）只有 UI 没有
+// change handler，改了静默丢失。现在每个 setter 后端做：改 cfg 顶层字段 →
+// 落盘 → emit config-changed → 立即 refresh_single 让浮窗/托盘立刻反映。
+
+#[tauri::command]
+pub async fn set_minimax_region(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    region: String,
+) -> Result<(), String> {
+    let parsed = match region.as_str() {
+        "cn" => MinimaxRegion::Cn,
+        "en" => MinimaxRegion::En,
+        other => return Err(t!("commands.region_unknown", other = other).into_owned()),
+    };
+    {
+        let mut cfg = state.config.write().await;
+        let entry = cfg.providers.entry("minimax".to_string())
+            .or_insert(ProviderConfig::default());
+        entry.region = Some(parsed);
+        cfg.save()?;
+    }
+    let _ = refresh_single_inner(&app, "minimax").await;
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_xiaomi_region_field(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    region: String,
+) -> Result<(), String> {
+    use crate::providers::xiaomi::XiaomiRegion as Xr;
+    let parsed = match region.as_str() {
+        "cn" => Xr::Cn,
+        "sgp" => Xr::Sgp,
+        "ams" => Xr::Ams,
+        other => return Err(t!("commands.xiaomi_region_unknown", other = other).into_owned()),
+    };
+    {
+        let mut cfg = state.config.write().await;
+        let entry = cfg.providers.entry("xiaomimimo".to_string())
+            .or_insert(ProviderConfig::default());
+        entry.xiaomi_region = Some(parsed);
+        cfg.save()?;
+    }
+    let _ = refresh_single_inner(&app, "xiaomimimo").await;
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_tavily_concise_mode(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    {
+        let mut cfg = state.config.write().await;
+        cfg.tavily_concise_mode = enabled;
+        cfg.save()?;
+    }
+    let _ = refresh_single_inner(&app, "tavily").await;
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_zenmux_base_url(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    url: String,
+) -> Result<(), String> {
+    let trimmed = url.trim();
+    if !trimmed.is_empty() && !trimmed.starts_with("https://") {
+        return Err(t!("error.common.url_scheme_invalid", url = trimmed).into_owned());
+    }
+    {
+        let mut cfg = state.config.write().await;
+        cfg.zenmux_base_url = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) };
+        cfg.save()?;
+    }
+    let _ = refresh_single_inner(&app, "zenmux").await;
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_zenmux_mode(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    mode: String,
+) -> Result<(), String> {
+    if mode != "payg" && mode != "subscription" {
+        return Err(t!("commands.zenmux_mode_unknown", other = mode.as_str()).into_owned());
+    }
+    {
+        let mut cfg = state.config.write().await;
+        cfg.zenmux_mode = Some(mode.clone());
+        cfg.save()?;
+    }
+    let _ = refresh_single_inner(&app, "zenmux").await;
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_zenmux_payg_concise(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    {
+        let mut cfg = state.config.write().await;
+        cfg.zenmux_payg_concise_mode = Some(enabled);
+        cfg.save()?;
+    }
+    let _ = refresh_single_inner(&app, "zenmux").await;
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_zhipu_region(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    region: String,
+) -> Result<(), String> {
+    if region != "cn" && region != "en" {
+        return Err(t!("commands.zhipu_region_unknown", other = region.as_str()).into_owned());
+    }
+    {
+        let mut cfg = state.config.write().await;
+        cfg.zhipu_region = Some(region);
+        cfg.save()?;
+    }
+    let _ = refresh_single_inner(&app, "zhipu").await;
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn get_snapshot(state: State<'_, AppState>) -> Result<QuotaSnapshot, String> {
     let snap = state.snapshot.read().await.clone();

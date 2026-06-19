@@ -6,9 +6,24 @@
 //
 // **加新 provider 改这里 + builtin_sources() 即可**，不用动 providers.ts
 // 主流程。
+//
+// C3 fix: 6 个交互控件（region select / concise checkbox / base_url / mode /
+// zhipu region）全部加 change listener + 调对应 per-field setter
+// （src/settings/api.ts:7 个 setXxx）。之前用户改了值，set_state 不会
+// 触发 → 配置改完静默丢失，必须重启 app 才生效。Stage 4 删了"保存"
+// 按钮但 Stage 6 的即时生效改造没做，已在这里补齐。
 
-import { el } from "./utils";
+import { el, flash } from "./utils";
 import { t } from "../i18n";
+import {
+  setMinimaxRegion,
+  setXiaomiRegion,
+  setTavilyConciseMode,
+  setZenmuxBaseUrl,
+  setZenmuxMode,
+  setZenmuxPaygConcise,
+  setZhipuRegion,
+} from "./api";
 import type { AppConfig, SourceMeta } from "./types";
 
 export type ExtraBlock = (meta: SourceMeta, cfg: AppConfig) => HTMLElement;
@@ -42,8 +57,14 @@ function renderRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
     el("option", { value: "en" }, t("extras.minimax_region_en")),
   );
   select.value = current;
-  // 即时生效：change → save_config（最简版 v1 仍走总保存，但 select 是 Stage 5 才换即时）
-  // 这里暂不绑 change，避免 Stage 4 引入新行为
+  // C3 fix: 即时生效 —— change → set_minimax_region（后端落盘 + emit + refresh）
+  select.addEventListener("change", () => {
+    const v = select.value as "cn" | "en";
+    if (v !== "cn" && v !== "en") return;
+    void setMinimaxRegion(v).catch((e) => {
+      flash(t("settings.app.switch_failed", { err: String(e) }), true);
+    });
+  });
 
   return el(
     "div",
@@ -61,6 +82,13 @@ function renderXiaomiRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElemen
   select.appendChild(el("option", { value: "sgp" }, t("extras.xiaomi_region_sgp")));
   select.appendChild(el("option", { value: "ams" }, t("extras.xiaomi_region_ams")));
   select.value = current;
+  select.addEventListener("change", () => {
+    const v = select.value as "cn" | "sgp" | "ams";
+    if (v !== "cn" && v !== "sgp" && v !== "ams") return;
+    void setXiaomiRegion(v).catch((e) => {
+      flash(t("settings.app.switch_failed", { err: String(e) }), true);
+    });
+  });
   return el(
     "div",
     { class: "field" },
@@ -79,6 +107,11 @@ function renderConciseModeCheckbox(_meta: SourceMeta, cfg: AppConfig): HTMLEleme
     "data-id": "tavily-concise-mode",
   }) as HTMLInputElement;
   cb.checked = checked;
+  cb.addEventListener("change", () => {
+    void setTavilyConciseMode(cb.checked).catch((e) => {
+      flash(t("settings.app.switch_failed", { err: String(e) }), true);
+    });
+  });
 
   return el(
     "div",
@@ -117,6 +150,12 @@ function renderBaseUrlInput(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
     autocomplete: "off",
   }) as HTMLInputElement;
   input.value = value;
+  // C3 fix: input 失焦后落盘 + refresh（避免每个按键就 IPC）
+  input.addEventListener("change", () => {
+    void setZenmuxBaseUrl(input.value.trim()).catch((e) => {
+      flash(t("settings.app.switch_failed", { err: String(e) }), true);
+    });
+  });
   return el(
     "div",
     { class: "field" },
@@ -131,20 +170,32 @@ function renderBaseUrlInput(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
 }
 
 /// ZenMux 查看模式（payg / subscription）+ payg 简洁 checkbox
-function renderZenmuxMode(_meta: SourceMeta, _cfg: AppConfig): HTMLElement {
-  // Stage 4 暂保留硬编码的初始值（注意：动态读 cfg 还需要 zhipu 端加对应字段）
-  // TODO Stage 5 接 cfg.zenmux_mode
-  const select = el("select", { id: "zenmux-mode" });
+function renderZenmuxMode(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
+  // 修 hardcoded: 之前写死 "payg" 永远不反映用户改的值（注释自己写了 TODO Stage 5）
+  const currentMode = cfg.zenmux_mode ?? "payg";
+  const select = el("select", { id: "zenmux-mode", "data-id": "zenmux-mode" });
   select.appendChild(el("option", { value: "payg" }, t("extras.zenmux_mode_payg")));
   select.appendChild(el("option", { value: "subscription" }, t("extras.zenmux_mode_subscription")));
-  select.value = "payg";
+  select.value = currentMode;
+  select.addEventListener("change", () => {
+    const v = select.value as "payg" | "subscription";
+    if (v !== "payg" && v !== "subscription") return;
+    void setZenmuxMode(v).catch((e) => {
+      flash(t("settings.app.switch_failed", { err: String(e) }), true);
+    });
+  });
 
   const cb = el("input", {
     type: "checkbox",
     id: "zenmux-payg-concise-mode",
-    checked: "checked",
+    "data-id": "zenmux-payg-concise",
   }) as HTMLInputElement;
-  cb.checked = true;
+  cb.checked = cfg.zenmux_payg_concise ?? true;
+  cb.addEventListener("change", () => {
+    void setZenmuxPaygConcise(cb.checked).catch((e) => {
+      flash(t("settings.app.switch_failed", { err: String(e) }), true);
+    });
+  });
 
   return el(
     "div",
@@ -184,7 +235,10 @@ function renderOpenrouterHelp(_meta: SourceMeta, _cfg: AppConfig): HTMLElement {
       { class: "help" },
       baseText,
       link,
-      t("common.punctuation_period"),
+      // M9 fix: 之前用 t("common.punctuation_period") 但该 key 在
+      // en.json/zh-CN.json 里只存在于 settings.common.punctuation_period，
+      // 找不到的 key 走 fallback 会原样回退成 raw key 字符串。
+      t("settings.common.punctuation_period"),
     ),
   );
 }
@@ -197,6 +251,13 @@ function renderZhipuRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElement
   select.appendChild(el("option", { value: "cn" }, t("extras.zhipu_region_cn")));
   select.appendChild(el("option", { value: "en" }, t("extras.zhipu_region_en")));
   select.value = current;
+  select.addEventListener("change", () => {
+    const v = select.value as "cn" | "en";
+    if (v !== "cn" && v !== "en") return;
+    void setZhipuRegion(v).catch((e) => {
+      flash(t("settings.app.switch_failed", { err: String(e) }), true);
+    });
+  });
 
   const helpDiv = document.createElement("div");
   helpDiv.className = "help";

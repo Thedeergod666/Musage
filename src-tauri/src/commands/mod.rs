@@ -180,8 +180,15 @@ pub async fn set_xiaomi_display_mode(
         entry.xiaomi_display_mode = Some(parsed);
         cfg.save()?;
     }
-    // 立即刷新（让浮窗按新模式显示）
-    let _ = refresh_single_inner(&app, "xiaomimimo").await;
+    // 立即刷新（让浮窗按新模式显示）。**B-NEW-3（2026-06-19 audit）**：
+    // 之前 await refresh_single_inner 让 IPC 调用方阻塞 2-5s（HTTP fetch），
+    // 与 sibling set_provider_enabled 不一致（后者走 tokio::spawn 后台
+    // fetch + 立即 emit placeholder）。改成 spawn 后立即返回 —— 用户切换
+    // 模式时浮窗在 ~100ms 内就有响应。
+    let app_clone = app.clone();
+    tokio::spawn(async move {
+        let _ = refresh_single_inner(&app_clone, "xiaomimimo").await;
+    });
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -1198,13 +1205,33 @@ fn apply_provider_order(snap: &mut QuotaSnapshot, cfg: &AppConfig) {
     if cfg.provider_order.is_empty() {
         return;
     }
-    snap.providers.sort_by_key(|p| {
-        let source_id = p.source_id.as_deref().unwrap_or(p.provider.id_str());
-        cfg.provider_order
+    // **B-NEW-4（2026-06-19 audit）**：之前 sort_by_key + usize::MAX fallback
+    // 让所有"未在 cfg.provider_order 里列出"的 provider 拿到同样的 sort key，
+    // 而 sort_by_key 不是 stable 的 → 这些 provider 的相对顺序每次刷新都可能
+    // 重排（视觉上看就是浮窗卡片随机闪烁）。
+    //
+    // 修法：把 enumerate 索引和 sort key 绑在一起 —— `sort_by` 是 stable 的，
+    // 复合 key `(pos, orig_idx)` 在 pos 相同时回退到 orig_idx，保持原 Vec
+    // 相对顺序。
+    let mut indexed: Vec<(usize, crate::providers::ProviderSnapshot)> = snap
+        .providers
+        .drain(..)
+        .enumerate()
+        .collect();
+    indexed.sort_by(|(ai, a), (bi, b)| {
+        let apos = cfg
+            .provider_order
             .iter()
-            .position(|o| o == source_id)
-            .unwrap_or(usize::MAX)
+            .position(|o| o == a.source_id.as_deref().unwrap_or(a.provider.id_str()))
+            .unwrap_or(usize::MAX);
+        let bpos = cfg
+            .provider_order
+            .iter()
+            .position(|o| o == b.source_id.as_deref().unwrap_or(b.provider.id_str()))
+            .unwrap_or(usize::MAX);
+        apos.cmp(&bpos).then(ai.cmp(bi))
     });
+    snap.providers = indexed.into_iter().map(|(_, p)| p).collect();
 }
 
 /// 拉取单个 provider —— 供 poller 的 per-provider 调度使用（H9）。

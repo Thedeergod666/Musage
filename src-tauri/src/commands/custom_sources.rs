@@ -184,11 +184,12 @@ pub async fn delete_custom_source(
     delete_credential_for_id(&id).ok();
 
     let _ = app.emit("musage://config-changed", ());
-    // 触发 snapshot 刷新（poller 下一次也会 fire，这里让浮窗立即不显示被删卡片）
-    if let Err(e) = crate::commands::refresh_single_inner(&app, &id).await {
-        // 删了之后 refresh 必然 404，这是预期的；只 trace 不 warn
-        tracing::debug!(error = %e, provider = %id, "delete_custom_source 后 refresh_single (预期失败)");
-    }
+    // **B-NEW-6（2026-06-19 audit）**：删 source 后不要 refresh_single_inner。
+    // 之前会触发 1 次对已删除 source 的 fetch（必然 404），并经过错误
+    // 路径 emit 一个"已删除卡片"的 snapshot 事件，浮窗短暂闪烁错误态。
+    // 实际行为：set_provider_enabled(false) 已经在删除流程里 emit 过
+    // 一次 snapshot 移除该卡片，poller 下一分钟也会自然发现 source 不
+    // 存在而跳过。refresh_single_inner 在这里只是浪费 + 噪声。
     Ok(())
 }
 

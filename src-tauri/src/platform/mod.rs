@@ -48,6 +48,20 @@ pub fn set_window_pin_top<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         let _ = win.set_always_on_top(true);
     }
 }
+
+/// **L11 fix（2026-06-19）**：跨平台 PinTop 语义差异（已知限制，不打算消除）：
+///
+/// - **macOS** （[`macos::set_window_pin_top`]）：走 `kCGFloatingWindowLevel = 3`。
+///   高于所有普通 app 窗口（`kCGNormalWindowLevel = 0`），**但**低于状态菜单栏
+///   （`kCGStatusWindowLevel = 25`）。这是 macOS 平台限制 —— 用更高 level 会
+///   把系统状态栏（Wi-Fi/电池/时间）盖住，不被允许。
+/// - **Linux** （上方 stub）：走 EWMH `_NET_WM_STATE_ABOVE`，行为依赖 WM；
+///   大多数桌面环境会把窗口放在所有 normal 层之上，**包括**任务栏/状态栏。
+/// - **Windows** （[`windows::set_window_pin_top`]）：走 `HWND_TOPMOST`，高于
+///   所有 normal 窗口 + 任务栏（OS 行为）。
+///
+/// **结论**：macOS 用户看到的状态菜单栏仍会盖在浮窗上；Linux/Windows 不会。
+/// 设计层面接受这个差异 —— 主动选择 macOS UX 妥协，避免状态栏被覆盖。
 #[cfg(target_os = "linux")]
 pub fn set_window_normal<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if let Some(win) = app.get_webview_window("floating") {

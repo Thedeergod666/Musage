@@ -161,7 +161,13 @@ unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
 
 /// PinBottom 模式启动时调：把窗口塞到 `HWND_BOTTOM`，并开启 hover 切 z-order。
 /// tracker 已由 `start_hover_emitter` 在 app 启动时拉起，这里只翻开关。
+///
+/// **L10 fix（2026-06-19）**：先把 `LEVEL_SWITCHING_ACTIVE` 置 true 再 dispatch
+/// 闭包。原顺序（先 dispatch 再 store）在极罕见时序下，hover emitter thread 20Hz
+/// 轮询可能读到"还在切"的中间态；新顺序保证 observer 看到的 store 永远先于或
+/// 与 z-order 切换同时生效。
 pub fn set_window_pin_bottom<R: Runtime>(app: &AppHandle<R>) {
+    LEVEL_SWITCHING_ACTIVE.store(true, Ordering::SeqCst);
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
         if let Some(win) = app2.get_webview_window("floating") {
@@ -170,7 +176,6 @@ pub fn set_window_pin_bottom<R: Runtime>(app: &AppHandle<R>) {
             }
         }
     });
-    LEVEL_SWITCHING_ACTIVE.store(true, Ordering::SeqCst);
     start_hover_emitter(app.clone());
 }
 

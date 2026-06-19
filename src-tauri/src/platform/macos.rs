@@ -28,6 +28,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
+use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
 
@@ -168,9 +169,28 @@ pub fn set_window_level<R: Runtime>(app: &AppHandle<R>, level: CGWindowLevel, is
 ///
 /// dispatch 到 main thread（NSWindow API 强制要求）。channel 同步等待。
 /// 拿不到 / 超时 / 浮窗未上屏 → 保守返回 false。
+///
+/// **L12 fix（2026-06-19）**：旧实现每调用一次就新建一对 `mpsc::channel::<bool>()`。
+/// hover emitter 20Hz × 86,400s ≈ 1.7M 次/24h，allocator churn 严重。改用
+/// 全局复用的 `std::sync::Mutex<Option<bool>>` + `Condvar` 单槽位（外层包
+/// `OnceLock<Arc<...>>` 复用）。hover emitter 串行调用，单槽位足够。
 fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> bool {
-    let (tx, rx) = mpsc::channel::<bool>();
+    use std::sync::{Arc, Condvar, Mutex};
+
+    struct OneSlot {
+        slot: Mutex<Option<bool>>,
+        cvar: Condvar,
+    }
+    static SLOT: OnceLock<Arc<OneSlot>> = OnceLock::new();
+    let slot = SLOT.get_or_init(|| {
+        Arc::new(OneSlot {
+            slot: Mutex::new(None),
+            cvar: Condvar::new(),
+        })
+    });
+
     let app2 = app.clone();
+    let slot2 = slot.clone();
     let _ = app.run_on_main_thread(move || {
         let result = (|| -> Option<bool> {
             let win = app2.get_webview_window("floating")?;
@@ -192,10 +212,28 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
                 NSWindow::windowNumberAtPoint_belowWindowWithWindowNumber(point, 0, mtm);
             Some(topmost == our_id)
         })();
-        let _ = tx.send(result.unwrap_or(false));
+        {
+            let mut g = slot2.slot.lock().expect("topmost slot mutex poisoned");
+            *g = Some(result.unwrap_or(false));
+        }
+        slot2.cvar.notify_all();
     });
+
     // 50ms 超时兜底：main thread 卡住时 hover 轮询不至于一起卡住
-    rx.recv_timeout(Duration::from_millis(50)).unwrap_or(false)
+    let started = std::time::Instant::now();
+    let deadline = Duration::from_millis(50);
+    let mut guard = slot.slot.lock().expect("topmost slot mutex poisoned");
+    while guard.is_none() && started.elapsed() < deadline {
+        let (g, wait_timeout) = slot
+            .cvar
+            .wait_timeout(guard, deadline)
+            .expect("topmost slot cvar poisoned");
+        guard = g;
+        if wait_timeout.timed_out() && started.elapsed() >= deadline {
+            break;
+        }
+    }
+    guard.unwrap_or(false)
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -450,12 +450,22 @@ pub async fn save_config(
         *guard = cfg.clone();
     }
 
+    // M2 fix: 先 save disk，再做 OS 副作用。
+    // 之前 autostart toggle 在 save 之前执行，cfg.save() 失败时 OS autostart
+    // 已经切换但 disk 没更新 → 下次启动读到旧值，OS 状态与 disk 不一致。
+    // 改为先 save 成功再做副作用（与 set_auto_hide_in_fullscreen:1286-1301 风格一致）。
+    cfg.save()?;
+
     // 同步 autostart
     let mgr = app.autolaunch();
     if cfg.autostart {
-        mgr.enable().map_err(|e| t!("commands.autostart_enable", err = e.to_string()).into_owned())?;
+        if let Err(e) = mgr.enable() {
+            tracing::warn!(error = %e, "autostart enable 失败 (disk 已保存)");
+        }
     } else {
-        mgr.disable().map_err(|e| t!("commands.autostart_disable", err = e.to_string()).into_owned())?;
+        if let Err(e) = mgr.disable() {
+            tracing::warn!(error = %e, "autostart disable 失败 (disk 已保存)");
+        }
     }
 
     // 同步「全屏自动隐藏」开关到平台层（watcher 始终运行，这里翻原子开关）
@@ -468,9 +478,6 @@ pub async fn save_config(
     if let Err(e) = app.emit("musage://low-power-mode-changed", cfg.low_power_mode) {
         tracing::warn!(error = %e, "emit low-power-mode-changed 失败");
     }
-
-    // 最后 save —— 此时副作用已经成功，save 是 commit 动作
-    cfg.save()?;
 
     // 广播「配置变了」给浮窗，让浮窗按需 re-fetch（比如 Tavily 简洁模式开关）
     if let Err(e) = app.emit("musage://config-changed", ()) {
@@ -1071,9 +1078,16 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                 //
                 // H1: 必须用 find_source(state, id) 而不是 builtin_sources().find(),
                 // 否则 custom_<uuid> 在这里 expect("source still registered") 会 panic。
-                let src_box: Box<dyn QuotaSource> = find_source(&state, &id)
-                    .await
-                    .expect("source still registered");
+                // M1 fix: expect 改 ok_or_else —— concurrent delete_custom_source
+                // 可能在 all_sources() 和 find_source() 之间把 source 删掉,
+                // expect 会 panic 但 ok_or_else 只跳过这个 source。
+                let src_box: Box<dyn QuotaSource> = match find_source(&state, &id).await {
+                    Some(src) => src,
+                    None => {
+                        tracing::warn!(provider = %id, "source 在 all_sources() 后被并发删除,跳过");
+                        continue;
+                    }
+                };
                 update_source_state(&src_box, cfg).await;
                 // P1 重构：返回 FetchError 而不是 String，kind 在 closure 内就
                 // 保留住，collect 时直接 e.kind 拿（不再走 classify_error_message）。

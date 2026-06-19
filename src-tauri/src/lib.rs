@@ -86,6 +86,21 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // M6 fix: .manage() 移到 .setup() 之前。之前 .setup() 里
+        // app.state::<AppState>() 在 .manage() 之前调用，Tauri 2 部分版本
+        // 会 panic（state 未注册）。更安全的做法:先 manage 注册 state，
+        // 再 setup 里读写。
+        .manage(AppState {
+            snapshot: Arc::new(RwLock::new(QuotaSnapshot::default())),
+            config: Arc::new(RwLock::new(AppConfig::default())),
+            // 从磁盘 reload 最近 200 条 —— 启动时一次性 IO，不在热路径
+            log: Arc::new(LogStore::load_from_disk()),
+            backoff: Arc::new(RwLock::new(BackoffState::new())),
+            // PR 3：custom_sources 启动 load。load 失败时返空 Vec（不阻塞启动）。
+            custom_sources: Arc::new(RwLock::new(
+                config::custom_sources::load_custom_sources().unwrap_or_default(),
+            )),
+        })
         .setup(|app| {
             // 启动时清理上次崩溃留下的孤儿 .tmp 文件（F2/M10 修复连带）
             config::cleanup_orphan_tmp_files();
@@ -238,17 +253,6 @@ pub fn run() {
             }
 
             Ok(())
-        })
-        .manage(AppState {
-            snapshot: Arc::new(RwLock::new(QuotaSnapshot::default())),
-            config: Arc::new(RwLock::new(AppConfig::default())),
-            // 从磁盘 reload 最近 200 条 —— 启动时一次性 IO，不在热路径
-            log: Arc::new(LogStore::load_from_disk()),
-            backoff: Arc::new(RwLock::new(BackoffState::new())),
-            // PR 3：custom_sources 启动 load。load 失败时返空 Vec（不阻塞启动）。
-            custom_sources: Arc::new(RwLock::new(
-                config::custom_sources::load_custom_sources().unwrap_or_default(),
-            )),
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_snapshot,

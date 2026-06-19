@@ -58,6 +58,14 @@ fn remember_endpoint(ep: Endpoint) {
     }
 }
 
+/// M12 fix: AuthFailed 时清缓存 —— 用户可能换了 key 类型（普通 → Management），
+/// 下次 fetch 需要重新探测 /credits 和 /key，不能继续用 5 分钟前的成功记录。
+fn clear_endpoint_cache() {
+    if let Ok(mut g) = last_successful().lock() {
+        *g = None;
+    }
+}
+
 fn should_skip_endpoint(ep: Endpoint) -> bool {
     // 如果最近 5 分钟内有别的 endpoint 成功，跳过这个
     let Ok(g) = last_successful().lock() else { return false };
@@ -112,6 +120,11 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
                 return Ok(snap);
             }
             Err(e) if matches!(e.kind, ErrorKind::AuthFailed | ErrorKind::ServerError) => {
+                // M12 fix: AuthFailed 时清缓存，下次重新探测两个端点
+                // (用户可能换了 key 类型：普通 → Management，/credits 应重试)
+                if e.kind == ErrorKind::AuthFailed {
+                    clear_endpoint_cache();
+                }
                 // Management key 被拒 / 5xx → fallback 到 /api/v1/key
                 tracing::debug!(error = %e, "openrouter /credits 失败，fallback 到 /key");
             }

@@ -49,12 +49,15 @@ pub fn start(app: AppHandle) {
         loop {
             tokio::time::sleep(Duration::from_secs(1)).await;
             let cfg = app.state::<AppState>().config.read().await.clone();
-            // 拿 backoff state 的 read guard（在下面循环结束前不释放），
-            // `next_interval_secs` 是 &self 方法，guard deref 即可。
-            // 注意：先 let-bind state，避开"app.state() 是临时值"的借用问题
-            // (State<'_> 在 .await 之后被 drop，guard 借用会失效)
+            // M5 fix: 之前 backoff read guard 持有整个 for 循环（for 循环里 spawn 的
+            // refresh_single_inner 要拿 backoff.write → tokio RwLock read-prefer-write
+            // 公平锁 → write 全排队 1s+ → 用户保存 key 后 refresh_single_inner 卡 1s+）。
+            // 改为：先 clone 一份 interval map，立刻 drop guard，循环里查 clone。
             let state = app.state::<AppState>();
-            let backoff_guard = state.backoff.read().await;
+            let backoff_snapshot = {
+                let guard = state.backoff.read().await;
+                guard.clone_interval_map()
+            };
             let now = Instant::now();
 
             // H1: 同上,改用 all_sources(&state)——custom source 必须能被轮询
@@ -77,7 +80,11 @@ pub fn start(app: AppHandle) {
                     .unwrap_or(cfg.refresh_interval_secs)
                     .max(10);
                 // 退避后的实际间隔：优先用 backoff 的，没退避用 cfg 默认
-                let interval_secs = backoff_guard.next_interval_secs(id_str, cfg_interval_secs);
+                let interval_secs = backoff_snapshot
+                    .get(id_str)
+                    .copied()
+                    .unwrap_or(cfg_interval_secs)
+                    .max(10);
 
                 let entry = next_fetch.entry(id.to_string()).or_insert(now);
                 if now < *entry {

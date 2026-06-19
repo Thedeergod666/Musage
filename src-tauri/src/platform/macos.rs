@@ -59,7 +59,7 @@ static LEVEL_SWITCHING_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// PinBottom 模式启动时调：把 level 切到 below-normal，并开启 hover 切 level。
 /// tracker 已由 [`start_hover_emitter`] 在 app 启动时拉起，这里只翻开关。
 pub fn set_window_pin_bottom<R: Runtime>(app: &AppHandle<R>) {
-    set_window_level(app, LEVEL_BELOW_NORMAL);
+    set_window_level(app, LEVEL_BELOW_NORMAL, true);  // M3 fix: true = is_pin_bottom
     LEVEL_SWITCHING_ACTIVE.store(true, Ordering::SeqCst);
     // 防御：如果 lib.rs setup 之外的路径走到这（理论上不会），保底拉起 tracker
     start_hover_emitter(app.clone());
@@ -69,13 +69,13 @@ pub fn set_window_pin_bottom<R: Runtime>(app: &AppHandle<R>) {
 /// hover 事件 emit 不变，前端的玻璃效果继续受惠。
 pub fn set_window_pin_top<R: Runtime>(app: &AppHandle<R>) {
     LEVEL_SWITCHING_ACTIVE.store(false, Ordering::SeqCst);
-    set_window_level(app, LEVEL_FLOATING);
+    set_window_level(app, LEVEL_FLOATING, false);  // M3 fix: false = 非 PinBottom
 }
 
 /// Normal 模式：level 切回 0，关闭 hover 切 level。
 pub fn set_window_normal<R: Runtime>(app: &AppHandle<R>) {
     LEVEL_SWITCHING_ACTIVE.store(false, Ordering::SeqCst);
-    set_window_level(app, kCGNormalWindowLevel);
+    set_window_level(app, kCGNormalWindowLevel, false);  // M3 fix: false = 非 PinBottom
 }
 
 /// hover 切 level 的"前端兜底信号"：macOS 上 tracker 已自行处理，此处 no-op。
@@ -123,7 +123,7 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
                     if LEVEL_SWITCHING_ACTIVE.load(Ordering::SeqCst) {
                         let level = if inside { LEVEL_FLOATING } else { LEVEL_BELOW_NORMAL };
                         tracing::trace!(?level, inside, "PinBottom hover 切 level");
-                        set_window_level(&app, level);
+                        set_window_level(&app, level, true);  // M3 fix: true = PinBottom 模式内
                     }
                 }
             }
@@ -134,7 +134,10 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
 // ── 内部 ──
 
 /// 把浮窗的 NSWindow level 切到 `level`。dispatch 到 main thread（AppKit 强制要求）。
-pub fn set_window_level<R: Runtime>(app: &AppHandle<R>, level: CGWindowLevel) {
+/// M3 fix: 加 `is_pin_bottom` 参数。PinBottom 模式设 hidesOnDeactivate(false)
+/// (否则鼠标一离开焦点窗口就消失)；PinTop / Normal 走默认值(true)，
+/// Normal 模式失焦时窗口应被隐藏(跟普通窗口一致)。
+pub fn set_window_level<R: Runtime>(app: &AppHandle<R>, level: CGWindowLevel, is_pin_bottom: bool) {
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
         if let Some(win) = app2.get_webview_window("floating") {
@@ -143,9 +146,10 @@ pub fn set_window_level<R: Runtime>(app: &AppHandle<R>, level: CGWindowLevel) {
                     // SAFETY: `ptr` 来自 webview_window 的 NSWindow，整个 app 生命周期有效。
                     let window: &NSWindow = unsafe { &*ptr.cast::<NSWindow>() };
                     window.setLevel(level as _);
-                    // 关键：默认 `hidesOnDeactivate=true` 会在 app 失焦时把窗口一起藏起来，
-                    // PinBottom 模式下必须设为 false，否则鼠标一离开焦点窗口就消失。
-                    window.setHidesOnDeactivate(false);
+                    // M3 fix: 只 PinBottom 模式设 false，PinTop/Normal 走默认(true)。
+                    // 之前无条件 false 导致 Normal 模式失焦后窗口仍保持可见，
+                    // 行为跟 PinBottom 一致，违反 "Normal = 跟普通窗口一样" 语义。
+                    window.setHidesOnDeactivate(!is_pin_bottom);
                 }
             }
         }

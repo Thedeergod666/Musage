@@ -40,6 +40,16 @@ impl BackoffState {
         Self::default()
     }
 
+    /// M5 fix: 克隆一份 per_source interval map，供 poller 循环前快照。
+    /// poller 拿到 snapshot 后立即释放 RwLock read guard，
+    /// spawn 的 refresh_single_inner 能立即拿到 write → 不再排队 1s+。
+    pub fn clone_interval_map(&self) -> HashMap<String, u64> {
+        self.per_source
+            .iter()
+            .filter_map(|(id, b)| b.current_interval_secs.map(|secs| (id.clone(), secs)))
+            .collect()
+    }
+
     /// 计算该 source 下次 fetch 该等多久（秒）。
     /// 没退避时返 `default_secs`。
     pub fn next_interval_secs(&self, id: &str, default_secs: u64) -> u64 {

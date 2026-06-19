@@ -134,12 +134,15 @@ unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
             let new_style: i32 = ex_style | (WS_EX_TOPMOST as i32);
             SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
         }
-        ZOrder::Bottom => {
+        ZOrder::Bottom | ZOrder::NotTopMost => {
+            // M4 fix: NotTopMost 之前不清 style bit (注释说 "SetWindowPos 按 Win32 文档
+            // 自身会清 bit")。但 WebView2 会在自己的 message handler 里 re-assert
+            // WS_EX_TOPMOST，导致 Normal 模式在 Win10/11 上不可靠。
+            // 改为 Bottom 和 NotTopMost 都显式 AND-out WS_EX_TOPMOST。
             let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
             let new_style: i32 = ex_style & !(WS_EX_TOPMOST as i32);
             SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
         }
-        ZOrder::NotTopMost => {}
     }
 
     // 路 A：z-order API + flush 路 B 的 cache

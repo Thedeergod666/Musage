@@ -747,13 +747,17 @@ fn keys_path() -> Result<PathBuf, String> {
 /// 原子写：先写 .tmp 文件 + 设 0600 权限，再 rename 覆盖。
 /// 避免半写状态把 key 写坏 / 漏权限。
 ///
-/// H1 fix: 整个函数体在 save_lock() 保护下 —— keys.json 写路径
-/// 必须在进程内串行化，否则 read_keys() → modify → write_keys_atomic 的
-/// 非原子序列会丢 key（用户同时改两个 source 的 key，或 xiaomi_login 异步
-/// 触发 save_credential_for_id 与 settings 编辑并发）。
+/// ## 锁契约（重要！不要在这里加 save_lock()）
+///
+/// 调用方（save_api_key_for / save_cookie_for / save_credential_for_id 等 6 处）
+/// **已经**在外层持有 save_lock()，把 read_keys → modify → write_keys_atomic
+/// 的整个非原子序列包成一个临界区。
+///
+/// 本函数**不要**再 `save_lock().lock()` —— `std::sync::Mutex` 不可重入，
+/// 同线程第二次 lock 会永久阻塞（commit 320c4fb 加的"双层防御"恰好
+/// 就是这个 bug，曾导致每次设置面板保存 Key / 删 Key / 改 Cookie 都
+/// 永久挂住 IPC handler，2026-06-20 audit 修复）。
 fn write_keys_atomic(map: &KeysMap) -> Result<(), String> {
-    // 注意：先拿锁，再做 fs 操作。锁的 guard 跨整个函数体持有直到 `?` 返错。
-    let _g = save_lock().lock().unwrap_or_else(|e| e.into_inner());
     let path = keys_path()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
@@ -769,7 +773,11 @@ fn write_keys_atomic(map: &KeysMap) -> Result<(), String> {
             .map_err(|e| t!("commands.keys_io", op = "chmod 0600").into_owned())?;
     }
 
-    std::fs::rename(&tmp, &path).map_err(|e| t!("commands.keys_io", op = "rename").into_owned())?;
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        // rename 失败时清理 tmp，避免下次启动看到孤儿（跟 AppConfig::save 同款）
+        let _ = std::fs::remove_file(&tmp);
+        return Err(t!("commands.keys_io", op = "rename", err = e.to_string()).into_owned());
+    }
     Ok(())
 }
 

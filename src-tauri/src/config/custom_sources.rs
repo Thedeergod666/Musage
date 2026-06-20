@@ -47,14 +47,26 @@ pub fn load_custom_sources() -> Result<Vec<CustomSourceSpec>, String> {
         Ok(v) => Ok(v),
         Err(e) => {
             // parse 失败：备份到 .bak.<ts> + 返空。避免一次坏写入把全部 spec 删了。
+            // **2026-06-20 audit**：之前 backup 失败用 `let _ = std::fs::copy(...)`
+            // 吞错，read-only 目录 / 满盘 → backup 失败 → 下次 save 用空 Vec
+            // 覆盖 → 用户全部 custom source 静默丢失。改 error 级日志。
             let ts = chrono::Utc::now().timestamp();
             let backup = path.with_extension(format!("json.bak.{ts}"));
-            let _ = std::fs::copy(&path, &backup);
-            tracing::warn!(
-                error = %e,
-                backup = %backup.display(),
-                "custom_sources.json parse 失败，已备份到 .bak",
-            );
+            if let Err(copy_err) = std::fs::copy(&path, &backup) {
+                tracing::error!(
+                    source = %path.display(),
+                    backup = %backup.display(),
+                    copy_error = %copy_err,
+                    parse_error = %e,
+                    "custom_sources.json 解析失败且备份失败 — 下次 save 会用空 Vec 覆盖",
+                );
+            } else {
+                tracing::warn!(
+                    error = %e,
+                    backup = %backup.display(),
+                    "custom_sources.json parse 失败，已备份到 .bak",
+                );
+            }
             Ok(Vec::new())
         }
     }
@@ -86,8 +98,11 @@ pub fn save_custom_sources(specs: &[CustomSourceSpec]) -> Result<(), String> {
             .map_err(|e| format!("chmod 0600: {e}"))?;
     }
 
-    std::fs::rename(&tmp, &path)
-        .map_err(|e| format!("rename custom_sources: {e}"))?;
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        // 跟 AppConfig::save 同款：rename 失败清理 tmp，避免下次启动看到孤儿
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("rename custom_sources: {e}"));
+    }
     Ok(())
 }
 

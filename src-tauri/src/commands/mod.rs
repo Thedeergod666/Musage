@@ -39,9 +39,15 @@ pub async fn set_provider_order(
     app: AppHandle,
     order: Vec<String>,
 ) -> Result<(), String> {
-    // 先保存 config（释放 write lock），再读 + 重排 snapshot。
-    // 如果先持有 config.write 再拿 snapshot.write，会和
-    // refresh_single_inner（先拿 snapshot.write 再拿 config.read）死锁。
+    // 锁顺序契约（**2026-06-20 audit fix**：之前注释描述的顺序跟实际代码
+    // 不一致，误导未来维护者）：
+    //
+    //   本函数:  config.write → save → drop cfg  →  cfg.read + snapshot.write
+    //   refresh_single_inner:  snapshot.write → drop snap → cfg.read
+    //
+    // 两者都是「持有 snapshot 时不持有 config.write」的对称结构，不会
+    // 死锁。如果本函数改用「先 config.write → snapshot.write → drop」就会跟
+    // refresh_single_inner 形成 config.write + snapshot.write 的循环等待。
     {
         let mut cfg = state.config.write().await;
         cfg.provider_order = order;

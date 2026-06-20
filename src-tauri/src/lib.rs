@@ -345,14 +345,24 @@ fn spawn_debounced_geom_persister(
     let latest_for_cb = latest.clone();
 
     // 回调线程：只更新 latest，不做 I/O
+    // **2026-06-20 audit**：之前 `.lock().unwrap()` 在 persister task panic 后
+    // 会 poison mutex → 后续 .unwrap() 直接 panic（窗口事件回调拿不到锁），
+    // 整个 geometry 持久化静默坏掉。改用项目统一的 `.unwrap_or_else(|e| ...)`
+    // poison 恢复模式。
     win.on_window_event(move |event| match event {
         tauri::WindowEvent::Moved(pos) => {
-            let mut g = latest_for_cb.lock().unwrap();
+            let mut g = latest_for_cb.lock().unwrap_or_else(|e| {
+                tracing::warn!("geom_persister latest_for_cb poisoned (Moved), recovering");
+                e.into_inner()
+            });
             let cur = g.unwrap_or((pos.x, pos.y, 0, 0));
             *g = Some((pos.x, pos.y, cur.2, cur.3));
         }
         tauri::WindowEvent::Resized(size) => {
-            let mut g = latest_for_cb.lock().unwrap();
+            let mut g = latest_for_cb.lock().unwrap_or_else(|e| {
+                tracing::warn!("geom_persister latest_for_cb poisoned (Resized), recovering");
+                e.into_inner()
+            });
             let cur = g.unwrap_or((0, 0, size.width as i32, size.height as i32));
             *g = Some((cur.0, cur.1, size.width as i32, size.height as i32));
         }
@@ -364,7 +374,10 @@ fn spawn_debounced_geom_persister(
         loop {
             tokio::time::sleep(Duration::from_millis(500)).await;
             let pending = {
-                let mut g = latest.lock().unwrap();
+                let mut g = latest.lock().unwrap_or_else(|e| {
+                    tracing::warn!("geom_persister latest poisoned (tick), recovering");
+                    e.into_inner()
+                });
                 g.take()
             };
             if let Some((x, y, w, h)) = pending {

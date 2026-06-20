@@ -707,16 +707,21 @@ impl AppConfig {
     }
 }
 
-/// 启动时清理上次崩溃留下的孤儿 .tmp 文件（在 cfg_dir 下扫 `*.json.tmp`）。
-/// 不阻塞启动；最佳努力。
+/// 启动时清理上次崩溃留下的孤儿 .tmp 文件（在 cfg_dir 下扫 `*.tmp`）。
+/// 不阻塞启动；最佳努力。覆盖 keys.json / custom_sources.json / app_log.jsonl
+/// 三种 atomic-write 副产物。**2026-06-20 audit**：之前只匹配 `*.json.tmp`，
+/// logstore 的 `app_log.jsonl.tmp` 孤儿永远不被清理。
 pub fn cleanup_orphan_tmp_files() {
     let Ok(dir) = config_dir() else { return };
     let Ok(entries) = std::fs::read_dir(&dir) else { return };
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("tmp")
-            && path.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(".json.tmp"))
-        {
+        let is_tmp = path.extension().and_then(|e| e.to_str()) == Some("tmp");
+        let is_known_orphan = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.ends_with(".json.tmp") || n.ends_with(".jsonl.tmp"));
+        if is_tmp && is_known_orphan {
             tracing::info!(path = %path.display(), "清理孤儿 .tmp");
             let _ = std::fs::remove_file(&path);
         }

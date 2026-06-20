@@ -51,6 +51,22 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 ```
 > ⚠ **从 MSYS bash / Claude Code shell 调 cmd 时**：`%PATH%` 会被 MSYS 翻译成 `C;D:\...` 这种坏值传给 cmd，cmd 找不到 `where`/`pnpm` 任何命令。**绕开**：`MSYS_NO_PATHCONV=1 cmd /c "..."` + 在 bat 里**硬编码**所有路径，**完全不碰 `%PATH%`**（参考 [musage-build-quirks](memory/musage-build-quirks.md) 第 6/7 条）
 
+## 2026-06-20 全量代码审查修复 (10 个 commit)
+
+[musage-known-bugs.md](memory/musage-known-bugs.md) 记录的 **1 critical + 6 high + 19 medium + 31 low = 60 个 bug 全部修复**。最关键的几条:
+
+- **CRITICAL 死锁** (`write_keys_atomic` 内部 `save_lock()` + 6 个调用方外层 `save_lock()` = std::sync::Mutex 不可重入 → 所有 save_key / delete_key / save_cookie IPC 永久阻塞) — 删内部锁
+- **HIGH schema_overrides 保存失效** (`loadConfig` / `saveConfig` 全死代码) — 加新 `set_schema_overrides` IPC + advanced.ts 3 个 textarea 接 debounce
+- **HIGH 升级面板不渲染** (`updater.ts` 找 `#save`,settings.html 没这元素) — 改挂到 `about.ts` 建的 `#updater-section`
+- **HIGH CSP 挡 data: URI** (浮窗 fallback logo 裂开) — 加 `img-src 'self' data:` + `connect-src 'self' ipc:`
+- **HIGH `bundle.targets "all"` 含 MSI** (WiX 镜像 timeout) — 改 `["nsis"]`
+- **HIGH capabilities 一锅炖** (process:default 给所有 webview) — 拆 default + settings,process:default 全部移走
+- **MEDIUM poller 用 JoinSet<()>** 替代 fire-and-forget,防 panic storm
+- **LOW release.yml action 全部钉 SHA** 跟 ci.yml 一致
+- **LOW t() regex 扩 `[\w.-]+`**,允许 `{user-id}` / `{err.code}` placeholder
+
+完整 commit 列表走 `git log --oneline | head -20`。
+
 ## 关键 API（来自 ccswitch 源码逆向）
 
 **端点**：

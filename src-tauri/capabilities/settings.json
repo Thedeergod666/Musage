@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "settings-extra",
+  "description": "settings window — updater only. process:default is intentionally omitted so floating + xiaomi-login webviews cannot spawn OS processes (2026-06-20 audit).",
+  "windows": ["settings"],
+  "permissions": [
+    "updater:default"
+  ]
+}

@@ -7,7 +7,6 @@
 //   - 有可用更新时的"立即下载" / "下载并重启" 按钮
 
 import { getAppVersion } from "./api";
-import { $ } from "./utils";
 import { flash } from "./utils";
 import { t } from "../i18n";
 import {
@@ -19,13 +18,20 @@ import {
 } from "../updater";
 
 export function setupUpdaterSection() {
-  // 找到 "保存配置" 按钮所在 row，插一个新区块在它前面
-  const saveRow = $("#save")?.closest(".row");
-  if (!saveRow) return;
+  // 找到「关于」section 里的 <div id=\"updater-section\"> 占位（about.ts 创建），
+  // 把 updater UI 注入到这里。v0.5 之前是塞到「#save」按钮前面，但 v0.6 起
+  // settings.html 没有 #save 按钮了（config.ts 走单字段 IPC 路径），这段
+  // 找 #save 的代码是死代码（2026-06-20 audit），导致整个升级面板从未渲染。
+  const hook = document.getElementById("updater-section");
+  if (!hook) {
+    // 极端兜底：about section 还没渲染（main.ts 的 init 顺序保证不会发生，
+    // 但加一道防御避免安静失败）
+    console.warn("[updater] #updater-section 不存在，跳过渲染");
+    return;
+  }
 
   const block = document.createElement("div");
-  block.className = "row updater-section";
-  block.id = "updater-section";
+  block.className = "updater-block";
   block.innerHTML = `
     <h3>${t("settings.updater.section_title")}</h3>
     <div class="updater-meta">
@@ -39,7 +45,7 @@ export function setupUpdaterSection() {
     </div>
     <div id="updater-notes" class="updater-notes"></div>
   `;
-  saveRow.parentElement?.insertBefore(block, saveRow);
+  hook.appendChild(block);
 
   // 读当前版本
   getAppVersion()
@@ -86,7 +92,12 @@ async function doInstall() {
   try {
     const result = await downloadAndInstall();
     if (result.status === "ready") {
-      // 显示"立即重启"按钮
+      // 显示"立即重启"按钮（renderUpdaterState 在 "ready" 分支会 unhide
+      // #updater-relaunch，但显式触发一次以防 listener 还没订阅）
+      const relaunchBtn = document.getElementById(
+        "updater-relaunch",
+      ) as HTMLButtonElement | null;
+      if (relaunchBtn) relaunchBtn.hidden = false;
     }
   } finally {
     if (installBtn) installBtn.disabled = false;

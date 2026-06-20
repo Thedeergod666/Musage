@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "default permissions",
+  "description": "default permissions for all windows — read-only / window controls only",
   "windows": ["floating", "settings", "xiaomi-login"],
   "permissions": [
     "core:default",
@@ -18,8 +18,6 @@
     "core:menu:default",
     "core:app:default",
     "autostart:default",
-    "os:default",
-    "updater:default",
-    "process:default"
+    "os:default"
   ]
 }

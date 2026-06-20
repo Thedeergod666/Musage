@@ -22,7 +22,7 @@ import {
   listCustomSources,
   deleteCustomSource,
 } from "./api";
-import { el, setCurrentKnownIds, flash, currentProviderOrder } from "./utils";
+import { el, escapeHtml, setCurrentKnownIds, flash, currentProviderOrder } from "./utils";
 import { getProviderExtras } from "./source-extras";
 import { renderOrderSection, withSuppress } from "./order";
 import { renderCredentialBlock, loadCredentialStatus } from "./credentials";
@@ -49,7 +49,11 @@ export async function renderProvidersSection(container: HTMLElement) {
       getConfig(),
     ]);
   } catch (e) {
-    container.innerHTML = `<div class="section-empty error">${t("settings.providers.load_failed", { err: String(e) })}</div>`;
+    // 防御性 escape：t() 不做 HTML 转义，CSP `script-src 'self'` 挡 inline
+    // script 执行是当前唯一防线；未来放松 CSP 时这条 escape 是兜底。
+    // （2026-06-20 audit XSS 降级 — 内层 markup 真实，但 Tauri app-level CSP
+    // 在执行层中和了。）
+    container.innerHTML = `<div class="section-empty error">${escapeHtml(t("settings.providers.load_failed", { err: String(e) }))}</div>`;
     return;
   }
 

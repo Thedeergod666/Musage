@@ -190,7 +190,7 @@ function renderZenmuxMode(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
     id: "zenmux-payg-concise-mode",
     "data-id": "zenmux-payg-concise",
   }) as HTMLInputElement;
-  cb.checked = cfg.zenmux_payg_concise ?? true;
+  cb.checked = cfg.zenmux_payg_concise_mode ?? true;
   cb.addEventListener("change", () => {
     void setZenmuxPaygConcise(cb.checked).catch((e) => {
       flash(t("settings.app.switch_failed", { err: String(e) }), true);

@@ -156,6 +156,23 @@ export function formatLogTime(ms: number): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+/** Debounce wrapper —— 连续调用只触发最后一次，delay ms 后执行。
+ *  用法: `const flush = debounce(async () => {...}, 300); input.oninput = flush;`
+ */
+export function debounce<T extends (...args: never[]) => unknown>(
+  fn: T,
+  delay: number,
+): (...args: Parameters<T>) => void {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  return (...args: Parameters<T>) => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timer = null;
+      void fn(...args);
+    }, delay);
+  };
+}
+
 export function escapeHtml(s: string): string {
   return s.replace(
     /[&<>"']/g,

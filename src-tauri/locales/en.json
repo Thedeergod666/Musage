@@ -140,6 +140,7 @@
     "read_keys": "read keys: {err}",
     "parse_keys": "parse keys.json: {err}",
     "keys_io": "{op} keys: {err}",
+    "schema_override_empty_field": "{id}.{tier}[{idx}]: total/remaining must be non-empty strings",
     "custom_name_empty": "display_name cannot be empty",
     "custom_url_invalid": "base_url must start with http:// or https://",
     "custom_path_invalid": "path must start with /",

@@ -22,7 +22,7 @@ pub mod i18n;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
-use crate::config::{self, AppConfig, FloatingPinMode, ProviderConfig, TrayIconStyle, UserRegion};
+use crate::config::{self, AppConfig, FieldTriple, FloatingPinMode, ProviderConfig, TrayIconStyle, UserRegion};
 use crate::providers::{
     all_sources, builtin_sources, find_source, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderSnapshot, QuotaSnapshot, QuotaSource,
 };
@@ -196,6 +196,72 @@ pub async fn set_xiaomi_display_mode(
     let app_clone = app.clone();
     tokio::spawn(async move {
         let _ = refresh_single_inner(&app_clone, "xiaomimimo").await;
+    });
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
+}
+
+/// 即时更新 schema_overrides（MiniMax 5h / 周 + Xiaomi 月 字段名候选）。
+///
+/// 走单字段 command 路径（参考 `set_provider_enabled` / `set_tray_icon_style`），
+/// 不走 `save_config` 全量保存。**2026-06-20 audit fix**：之前
+/// `advanced.ts` 3 个 textarea 改完根本存不下来 —— 注释里说"blur 触发
+/// saveConfig()"，但 `src/settings/config.ts:saveConfig` 没有任何调用方
+/// （grep 全 src 0 hit），且 `settings.html` 里没有 `#save` 按钮，schema
+/// 改名时用户改的候选字段名永远不会被持久化。
+///
+/// 现在：advanced.ts 3 个 textarea blur → 立即调本命令（debounce 300ms，
+/// 避免连续键入的 N 次 IPC）→ 落盘 + emit config-changed → 下次 poller
+/// tick 用新 overrides 重新解析（自动 trigger refresh）。
+///
+/// 校验：每个 tier 必须是 `count_candidates: []` 或完整对象；
+/// `FieldTriple.total` / `.remaining` 必须非空字符串。空数组视为
+/// "清空本 tier 的 overrides"，等价于恢复默认字段名。
+#[tauri::command]
+pub async fn set_schema_overrides(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    // key = provider id ("minimax" / "xiaomimimo"), value = 该 provider 的 overrides
+    overrides: std::collections::BTreeMap<String, config::ProviderOverrides>,
+) -> Result<(), String> {
+    // 1. 校验（避免 N+1 个 3-tuple 静默通过，最后 parse 时才报错 —— 早 fail 早定位）
+    for (id, prov) in &overrides {
+        for (tier_name, tier) in [
+            ("five_hour", &prov.five_hour),
+            ("weekly", &prov.weekly),
+            ("monthly", &prov.monthly),
+        ] {
+            for (i, ft) in tier.count_candidates.iter().enumerate() {
+                if ft.total.trim().is_empty() || ft.remaining.trim().is_empty() {
+                    return Err(t!(
+                        "commands.schema_override_empty_field",
+                        id = id,
+                        tier = tier_name,
+                        idx = i
+                    ).into_owned());
+                }
+            }
+        }
+    }
+    // 2. 写 cfg + 落盘
+    {
+        let mut cfg = state.config.write().await;
+        cfg.schema_overrides = overrides;
+        cfg.save()?;
+    }
+    // 3. 立即 refresh 那些受影响的 provider（让新 overrides 立刻生效，
+    //    poller 下个 tick 等不及）。后台 spawn，不阻塞 IPC。
+    let app_clone = app.clone();
+    let ids: Vec<String> = {
+        let cfg = state.config.read().await;
+        cfg.providers.keys().cloned().collect()
+    };
+    tokio::spawn(async move {
+        for id in ids {
+            if matches!(id.as_str(), "minimax" | "xiaomimimo") {
+                let _ = refresh_single_inner(&app_clone, &id).await;
+            }
+        }
     });
     let _ = app.emit("musage://config-changed", ());
     Ok(())

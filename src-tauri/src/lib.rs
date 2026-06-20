@@ -284,6 +284,7 @@ pub fn run() {
             commands::set_provider_enabled,
             commands::set_xiaomi_display_mode,
             commands::get_xiaomi_display_mode,
+            commands::set_schema_overrides,
             commands::set_low_power_mode,
             commands::set_auto_hide_in_fullscreen,
             commands::set_show_footer_hint,

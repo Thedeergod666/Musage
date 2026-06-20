@@ -140,6 +140,7 @@
     "read_keys": "read keys: {err}",
     "parse_keys": "parse keys.json: {err}",
     "keys_io": "{op} keys: {err}",
+    "schema_override_empty_field": "{id}.{tier}[{idx}]: total / remaining 不能为空字符串",
     "custom_name_empty": "display_name 不能为空",
     "custom_url_invalid": "base_url 必须以 http:// 或 https:// 开头",
     "custom_path_invalid": "path 必须以 / 开头",

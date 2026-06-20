@@ -9,6 +9,7 @@ import type {
   CustomSourceSpec,
   LogEntry,
   ProviderId,
+  ProviderOverrides,
   ProviderSnapshot,
   QuotaSnapshot,
   SourceMeta,
@@ -18,6 +19,17 @@ import type {
 
 export async function getConfig(): Promise<AppConfig> {
   return invoke<AppConfig>("get_config");
+}
+
+/** 即时更新 schema_overrides（MiniMax 5h / 周 + Xiaomi 月 字段名候选）。
+ *  走单字段 command 路径，落盘 + 自动 trigger refresh 受影响的 provider。
+ *  2026-06-20 audit fix：之前 src/settings/config.ts:saveConfig 是死代码，
+ *  用户改 advanced.ts 3 个 textarea 后保存不下来。
+ */
+export async function setSchemaOverrides(
+  overrides: Record<string, ProviderOverrides>,
+): Promise<void> {
+  await invoke("set_schema_overrides", { overrides });
 }
 
 export async function saveConfig(cfg: AppConfig): Promise<void> {

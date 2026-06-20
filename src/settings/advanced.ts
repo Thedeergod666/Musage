@@ -1,12 +1,14 @@
 // "高级" section —— Schema overrides（MiniMax / Xiaomi 改字段名后用）
 //
 // 只在解析失败 / 显示 "Schema 未知" 时用。每行一个 JSON 对象，total + remaining
-// 同时存在才算命中，end 可选。改完 blur 触发 saveConfig()。
+// 同时存在才算命中，end 可选。改完 blur 触发 setSchemaOverrides() 即时落盘。
 //
 // Xiaomi 的 API key + 手动 Cookie 也放这里（主面板只留快捷登录按钮）。
 
-import { el } from "./utils";
-import type { AppConfig } from "./types";
+import { debounce } from "./utils";
+import { setSchemaOverrides } from "./api";
+import { el, flash } from "./utils";
+import type { AppConfig, FieldTriple, ProviderOverrides } from "./types";
 import { apiKeyPlaceholder, loadCredentialStatus } from "./credentials";
 import { t } from "../i18n";
 
@@ -16,11 +18,11 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
     five_hour: { count_candidates: [] },
     weekly: { count_candidates: [] },
   };
-  const xm = (ov as Record<string, any>).xiaomimimo ?? {
+  const xm = (ov as Record<string, ProviderOverrides>).xiaomimimo ?? {
     monthly: { count_candidates: [] },
   };
 
-  // 3 个 textarea —— #id 跟 config.ts 里的 loadConfig / saveConfig 对齐
+  // 3 个 textarea —— #id 跟 config.ts 里的 saveConfig 对齐
   const ta5h = el("textarea", {
     id: "overrides-5h-minimax",
     rows: "3",
@@ -41,6 +43,45 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
     placeholder: t("settings.advanced.schema_placeholder"),
   }) as HTMLTextAreaElement;
   taXmMonth.value = JSON.stringify(xm.monthly?.count_candidates ?? [], null, 2);
+
+  // ── 即时生效：blur → 解析 + 调 setSchemaOverrides IPC → 后端落盘 ──
+  // 2026-06-20 audit fix：之前 advanced.ts 注释说 "改完 blur 触发 saveConfig()"，
+  // 但 src/settings/config.ts:saveConfig 全 src 零调用方（grep 验证），
+  // 用户改的 schema 候选字段名永远不会被持久化。现在接上真正的 IPC。
+  //
+  // debounce 300ms：连续键入时只在停止输入 300ms 后才触发一次 IPC，
+  // 避免 N+1 次 IPC 同时跑（后端 cfg.save() 会串行化，但 IPC handler
+  // 也得排队）。
+  const flush = debounce(async () => {
+    const parseField = (raw: string): FieldTriple[] | null => {
+      const trimmed = raw.trim() || "[]";
+      const parsed = JSON.parse(trimmed);
+      if (!Array.isArray(parsed)) throw new Error("must be a JSON array");
+      return parsed as FieldTriple[];
+    };
+    let fiveHour: FieldTriple[], weekly: FieldTriple[], monthly: FieldTriple[];
+    try {
+      fiveHour = parseField(ta5h.value) ?? [];
+      weekly = parseField(taWeek.value) ?? [];
+      monthly = parseField(taXmMonth.value) ?? [];
+    } catch (e) {
+      flash(t("settings.config.schema_parse_failed", { err: String(e) }), true);
+      return;
+    }
+    const overrides: Record<string, ProviderOverrides> = {
+      minimax: { five_hour: { count_candidates: fiveHour }, weekly: { count_candidates: weekly } },
+      xiaomimimo: { five_hour: { count_candidates: [] }, weekly: { count_candidates: [] }, monthly: { count_candidates: monthly } },
+    };
+    try {
+      await setSchemaOverrides(overrides);
+      flash(t("settings.app.config_saved"));
+    } catch (e) {
+      flash(t("settings.app.config_save_failed", { err: String(e) }), true);
+    }
+  }, 300);
+  for (const ta of [ta5h, taWeek, taXmMonth]) {
+    ta.addEventListener("input", flush);
+  }
 
   // ── Schema Overrides ──
   container.appendChild(

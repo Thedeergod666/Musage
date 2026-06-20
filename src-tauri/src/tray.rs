@@ -421,7 +421,11 @@ fn start_tray_request_receiver(app: &AppHandle) {
         tracing::debug!("tray request receiver 启动");
         while let Some(req) = rx.recv().await {
             // 每条消息派发一次 main thread。
-            // 错误（main thread 退出）→ log + 退出 receiver loop。
+            //
+            // **2026-06-20 audit**：之前 dispatch 失败 → break 退出 receiver loop →
+            // 后续 tray request 全被 tx.send 返 Err 默默 log + 丢弃 → UI 状态
+            // （icon / tooltip / menu）永久冻结。改成 log + continue，下一条
+            // 请求还有重试机会（main thread 临时 dispatch 失败 ≠ 永久失败）。
             //
             // 不能 move 同一个变量同时又借用它：clone 一份给 closure。
             let app_for_dispatch = app_for_task.clone();
@@ -429,8 +433,8 @@ fn start_tray_request_receiver(app: &AppHandle) {
             if let Err(e) = app_for_dispatch.run_on_main_thread(move || {
                 handle_tray_request(&app_for_closure, req);
             }) {
-                tracing::warn!(error = %e, "派发 tray request 到 main thread 失败，receiver 退出");
-                break;
+                tracing::warn!(error = %e, "派发 tray request 到 main thread 失败，本条丢弃，继续接收");
+                continue;
             }
         }
         tracing::debug!("tray request receiver 退出（channel 关闭）");

@@ -24,7 +24,7 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
 imageproc = { version = "0.25", default-features = false }

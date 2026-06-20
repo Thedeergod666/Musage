@@ -94,7 +94,7 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
     if TRACKER_RUNNING.swap(true, Ordering::SeqCst) {
         return; // 已在跑
     }
-    thread::Builder::new()
+    let builder = thread::Builder::new()
         .name("musage-hover-emitter".into())
         .spawn(move || {
             tracing::debug!("hover emitter 启动");
@@ -128,8 +128,13 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
                     }
                 }
             }
-        })
-        .expect("spawn hover emitter thread");
+        });
+    // **2026-06-20 audit**：之前 .expect()，线程数耗尽 / ulimit 触底时整 app
+    // 启动 panic。降级：log + 关闭 TRACKER_RUNNING 让下次重启能重试。
+    if let Err(e) = builder {
+        tracing::error!(error = %e, "spawn hover emitter thread 失败，hover raise / glass 效果将失效");
+        TRACKER_RUNNING.store(false, Ordering::SeqCst);
+    }
 }
 
 // ── 内部 ──
@@ -206,8 +211,12 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
                 return Some(false);
             }
             // 传 0 = 不排除任何窗口，返回整个屏幕在该点 topmost window 的 number
-            // MainThreadMarker 在 run_on_main_thread 回调里必然能拿到（我们就在主线程）
-            let mtm = MainThreadMarker::new().expect("inside run_on_main_thread callback");
+            // **2026-06-20 audit**：MainThreadMarker 拿不到时改返 false 兜底，
+            // 避免拿不到 → panic → hover emitter 永久停掉。
+            let Some(mtm) = MainThreadMarker::new() else {
+                tracing::warn!("is_floating_topmost_at: MainThreadMarker 不可用，跳过本 tick");
+                return Some(false);
+            };
             let topmost =
                 NSWindow::windowNumberAtPoint_belowWindowWithWindowNumber(point, 0, mtm);
             Some(topmost == our_id)
@@ -329,8 +338,11 @@ pub fn start_fullscreen_watcher<R: Runtime>(app: AppHandle<R>) {
                     }
                 }
             }
-        })
-        .expect("spawn fullscreen watcher thread");
+        // **2026-06-20 audit**：之前 .expect()，线程数耗尽时整 app panic。降级 log + 翻转 RUNNING 让下次重启能重试。
+    if let Err(e) = builder {
+        tracing::error!(error = %e, "spawn fullscreen watcher thread 失败，auto-hide-in-fullscreen 将失效");
+        FULLSCREEN_WATCHER_RUNNING.store(false, Ordering::SeqCst);
+    }
 }
 
 /// 探测 macOS 菜单栏是否被隐藏。隐藏 → 大概率正在全屏。
@@ -338,7 +350,17 @@ pub fn start_fullscreen_watcher<R: Runtime>(app: AppHandle<R>) {
 fn is_menubar_hidden<R: Runtime>(app: &AppHandle<R>) -> bool {
     let (tx, rx) = mpsc::channel::<bool>();
     let _ = app.run_on_main_thread(move || {
-        let mtm = MainThreadMarker::new().expect("inside run_on_main_thread callback");
+        // **2026-06-20 audit**：MainThreadMarker 拿不到时（理论进程 teardown 时），
+        // 之前 .expect() 直接 panic（hover emitter / watcher 都永久跑，这个 panic
+        // 等于停掉整个 tray）。改 match —— 拿不到就 send false 兜底，下一 tick 重试。
+        let mtm = match MainThreadMarker::new() {
+            Some(m) => m,
+            None => {
+                tracing::warn!("MainThreadMarker 不可用，is_menubar_hidden 跳过本 tick");
+                let _ = tx.send(false);
+                return;
+            }
+        };
         let visible = NSMenu::menuBarVisible(mtm);
         let _ = tx.send(!visible);
     });

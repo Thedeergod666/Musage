@@ -8,10 +8,22 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
+use tokio::task::JoinSet;
 
 use crate::commands::{refresh_inner, refresh_single};
 use crate::providers::all_sources;
 use crate::AppState;
+
+/// per-provider 拉取 task 集合。poller 每秒检查时把过期的 provider spawn 进来，
+/// task 完成或 panic 后自动从 set 里清理（JoinSet::join_next 移除）。当前
+/// 不在 quit_app 时主动 abort —— 浮窗最常见关闭是"窗口关闭"拦截（tray 隐藏），
+/// poller 跟 app 同生同死。后续如要 abort-on-quit，给 AppState 加 abort flag。
+static IN_FLIGHT: std::sync::OnceLock<std::sync::Mutex<JoinSet<()>>> =
+    std::sync::OnceLock::new();
+
+fn in_flight() -> &'static std::sync::Mutex<JoinSet<()>> {
+    IN_FLIGHT.get_or_init(|| std::sync::Mutex::new(JoinSet::new()))
+}
 
 pub fn start(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
@@ -58,6 +70,24 @@ pub fn start(app: AppHandle) {
                 let guard = state.backoff.read().await;
                 guard.clone_interval_map()
             };
+            // 清理已完成/panic 的 task —— JoinSet 拿掉 finished task，panic 也
+            // 算 finished（await JoinHandle 会返 Err）。2026-06-20 audit：
+            // 之前完全 fire-and-forget 累积 panic task。
+            {
+                let mut set = in_flight()
+                    .lock()
+                    .unwrap_or_else(|e| {
+                        tracing::warn!("poller IN_FLIGHT mutex poisoned, recovering");
+                        e.into_inner()
+                    });
+                while let Some(res) = set.try_join_next() {
+                    if let Err(e) = res {
+                        if e.is_panic() {
+                            tracing::error!(panic = ?e.into_panic(), "poller spawned task panic（已清理）");
+                        }
+                    }
+                }
+            }
             let now = Instant::now();
 
             // H1: 同上,改用 all_sources(&state)——custom source 必须能被轮询
@@ -93,11 +123,18 @@ pub fn start(app: AppHandle) {
                 // 到点 → 拉这个 provider（独立 task，并发）
                 let app_clone = app.clone();
                 let id_owned = id.to_string();
-                tauri::async_runtime::spawn(async move {
-                    if let Err(e) = crate::commands::refresh_single_inner(&app_clone, &id_owned).await {
-                        tracing::warn!(error = %e, provider = %id_owned, "per-provider 拉取失败");
-                    }
-                });
+                in_flight()
+                    .lock()
+                    .unwrap_or_else(|e| {
+                        tracing::warn!("poller IN_FLIGHT mutex poisoned (spawn), recovering");
+                        e.into_inner()
+                    })
+                    .spawn(async move {
+                        match crate::commands::refresh_single_inner(&app_clone, &id_owned).await {
+                            Ok(()) => {}
+                            Err(e) => tracing::warn!(error = %e, provider = %id_owned, "per-provider 拉取失败"),
+                        }
+                    });
                 *entry = now + Duration::from_secs(interval_secs);
             }
         }

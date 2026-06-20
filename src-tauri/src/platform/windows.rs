@@ -224,11 +224,14 @@ pub fn set_auto_hide_in_fullscreen<R: Runtime>(
 
 /// 启动 hover emitter 线程。idempotent —— 第二次调用立即返回。
 /// 由 lib.rs setup() 调一次即可。启动后整个 app 生命周期不停。
+///
+/// **2026-06-20 audit**：之前 spawn().expect()，线程数耗尽时整 app 启动 panic。
+/// 降级 log + 翻转 TRACKER_RUNNING 让下次启动能重试。
 pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
     if TRACKER_RUNNING.swap(true, Ordering::SeqCst) {
         return;
     }
-    thread::Builder::new()
+    let builder = thread::Builder::new()
         .name("musage-hover-emitter".into())
         .spawn(move || {
             let mut last_inside = false;
@@ -265,8 +268,11 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
 
                 last_inside = inside;
             }
-        })
-        .expect("spawn hover emitter thread");
+        });
+    if let Err(e) = builder {
+        tracing::error!(error = %e, "spawn hover emitter thread 失败，hover raise / glass 效果将失效");
+        TRACKER_RUNNING.store(false, Ordering::SeqCst);
+    }
 }
 
 // ── 内部 ──

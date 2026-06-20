@@ -324,8 +324,9 @@ function onDragMouseUp(e: MouseEvent) {
   }
 
   if (orderIdx === dragSrcIdx && !crossedDivider) {
-    // 没移动也没跨分隔线，恢复原状
-    if (listRef) buildOrderItems(listRef);
+    // 没移动也没跨分隔线 → 纯 no-op。**2026-06-20 audit**：之前还调
+    // buildOrderItems 全量 rebuild DOM，触发跟"实际拖拽完成"一样的视觉闪烁
+    // 但其实啥都没变。改为早返，避免不必要的 DOM 操作。
     dragging = false;
     dragSrcId = null;
     dragSrcIdx = -1;
@@ -347,7 +348,9 @@ function onDragMouseUp(e: MouseEvent) {
     // ── 乐观更新：先翻 enabled flag + sync checkbox，再 rebuild DOM，再 IPC ──
     // 顺序必须是 orderCfg → buildOrderItems，否则 buildOrderItems 读旧
     // enabled flag 把卡片画回原分区（bug #2）。
-    const wasEnabled = !willBeEnabled; // 翻转前的状态，用于 catch 回滚
+    // **2026-06-20 audit**：之前有 `const wasEnabled = !willBeEnabled;` 内层 shadow，
+    // 设了但从未读；catch 用的是外层 wasEnabled（正确）。删 inner shadow 消除
+    // 维护期混淆（未来改代码容易踩雷）。
     if (orderCfg && dragSrcId) {
       if (!orderCfg.providers) orderCfg.providers = {};
       const entry = orderCfg.providers[dragSrcId] ?? { enabled: willBeEnabled };

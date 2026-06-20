@@ -20,12 +20,22 @@ export interface ModalOptions {
   cancelLabel?: string;
 }
 
-/** 弹出 modal。多次调用可以嵌套多个（每个独立一个 `<dialog>`）。 */
+/** 弹出 modal。多次调用可以嵌套多个（每个独立一个 `<dialog>`）。
+ *
+ * **2026-06-20 audit**：之前 dialog 没 aria-labelledby / aria-describedby，
+ * 屏幕阅读器朗读 dialog 内容时缺上下文。给 title h2 / body wrapper 分配 id，
+ * 在 dialog 上 aria-labelledby 指向 title。
+ */
 export function showModal(opts: ModalOptions): void {
   const dlg = el("dialog", { class: "modal" });
+  const titleId = `modal-title-${Math.random().toString(36).slice(2, 9)}`;
+  const descId = `modal-desc-${Math.random().toString(36).slice(2, 9)}`;
   const form = el("form", { method: "dialog" });
-  form.appendChild(el("h2", {}, opts.title));
-  form.appendChild(opts.body);
+  const titleEl = el("h2", { id: titleId }, opts.title);
+  const bodyWrapper = el("div", { id: descId });
+  bodyWrapper.appendChild(opts.body);
+  form.appendChild(titleEl);
+  form.appendChild(bodyWrapper);
   form.appendChild(
     el(
       "div",
@@ -42,6 +52,8 @@ export function showModal(opts: ModalOptions): void {
       ),
     ),
   );
+  dlg.setAttribute("aria-labelledby", titleId);
+  dlg.setAttribute("aria-describedby", descId);
   dlg.appendChild(form);
   document.body.appendChild(dlg);
 

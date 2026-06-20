@@ -297,6 +297,13 @@ function render(snap: QuotaSnapshot) {
   const errPlaceholder = app.querySelector<HTMLElement>(".err");
   if (errPlaceholder) errPlaceholder.remove();
 
+  // **2026-06-20 audit**：lastGoodSnap 之前只 set() 不 delete()，用户禁掉
+  // source 后 key 永久泄漏。趁每轮 render 把"已不在 snap 里"的 stale entry 清掉。
+  const presentKeys = new Set(snap.providers.map((p) => snapKey(p)));
+  for (const k of [...lastGoodSnap.keys()]) {
+    if (!presentKeys.has(k)) lastGoodSnap.delete(k);
+  }
+
   // 1. 增量更新每张 provider 卡片
   const existingCards = new Map<string, HTMLElement>();
   app.querySelectorAll<HTMLElement>(".card[data-provider]").forEach((el) => {
@@ -973,19 +980,32 @@ async function init() {
 
   const w = getCurrentWindow();
   // 拖动：左键按住任意非按钮区域 → start_dragging
+  // **2026-06-20 audit**：之前不检查 e.button，右键 / 中键也触发拖动 →
+  // 跟系统右键菜单（特别是 macOS 上的 NSWindow 右键）冲突。显式仅响应左键。
   app.addEventListener("mousedown", (e) => {
+    if (e.button !== 0) return;
     const target = e.target as HTMLElement;
     if (target.closest("button, input, select, a")) return;
     e.preventDefault();
-    w.startDragging();
+    // w.startDragging 返 Promise，不 await（同步阻止默认行为已足够），
+    // 但加 catch 防止 IPC 拒绝变成 unhandled rejection。
+    w.startDragging().catch((err) => console.debug("[floating] startDragging 失败", err));
   });
   // 双击 → 立即刷新
+  // **2026-06-20 audit**：之前 catch 只 console.error，用户看到"啥反应都没有"。
+  // 改为 flash dot 变红（用 settings 用的 flash helper 不可取 —— main.ts 没引
+  // 入。最简：用 status dot 临时翻红 + 100ms 后恢复）。
   app.addEventListener("dblclick", async () => {
     try {
       const snap = await invoke<QuotaSnapshot>("refresh_now");
       render(snap);
     } catch (e) {
       console.error(e);
+      const dot = document.querySelector<HTMLElement>(".card-dot");
+      if (dot) {
+        dot.classList.add("card-dot-error");
+        setTimeout(() => dot.classList.remove("card-dot-error"), 1500);
+      }
     }
   });
 
@@ -993,9 +1013,13 @@ async function init() {
   let unlisten: UnlistenFn | null = null;
   let unlistenHover: UnlistenFn | null = null;
   let unlistenCfg: UnlistenFn | null = null;
+  // **2026-06-20 audit**：5 处 listen().then() 之前都没 .catch()，
+  // IPC bridge 启动挂掉时 promise reject → unhandled rejection。补 catch + log。
   listen<QuotaSnapshot>("musage://snapshot", (e) => {
     render(e.payload);
-  }).then((fn) => (unlisten = fn));
+  })
+    .then((fn) => (unlisten = fn))
+    .catch((e) => console.error("[floating] listen musage://snapshot 失败", e));
 
   // ── Hover 状态同步：驱动 body[data-hover] 让 iOS 26 玻璃效果生效 ──
   //
@@ -1007,15 +1031,22 @@ async function init() {
   //
   // 跟原有 PinBottom mode 的 setupHoverRaise(level 切换 IPC) 并行存在，
   // 关注点不同：这里只管 CSS attribute，不动 always-on-top。
+  //
+  // **2026-06-20 audit**：body mouseenter/mouseleave 之前是匿名 arrow，
+  // beforeunload 没办法 remove。改成 named fn 配对 remove。
   const setHoverAttr = (on: boolean) => {
     if (on) document.body.dataset.hover = "1";
     else delete document.body.dataset.hover;
   };
-  document.body.addEventListener("mouseenter", () => setHoverAttr(true));
-  document.body.addEventListener("mouseleave", () => setHoverAttr(false));
+  const onBodyMouseEnter = () => setHoverAttr(true);
+  const onBodyMouseLeave = () => setHoverAttr(false);
+  document.body.addEventListener("mouseenter", onBodyMouseEnter);
+  document.body.addEventListener("mouseleave", onBodyMouseLeave);
   listen<boolean>("musage://floating-hover", (e) => {
     setHoverAttr(e.payload);
-  }).then((fn) => (unlistenHover = fn));
+  })
+    .then((fn) => (unlistenHover = fn))
+    .catch((e) => console.error("[floating] listen musage://floating-hover 失败", e));
 
   // ── 省电模式同步：body[data-low-power] 让 CSS 关掉 backdrop-filter + transition ──
   let unlistenLowPower: UnlistenFn | null = null;
@@ -1025,7 +1056,9 @@ async function init() {
   };
   listen<boolean>("musage://low-power-mode-changed", (e) => {
     setLowPowerAttr(e.payload);
-  }).then((fn) => (unlistenLowPower = fn));
+  })
+    .then((fn) => (unlistenLowPower = fn))
+    .catch((e) => console.error("[floating] listen musage://low-power-mode-changed 失败", e));
 
   // 启动时立即调 render —— render() 内部检测"所有 provider 都未配 key"会
   // 走 renderEmptyState(),不再显示"⏳ Loading..."这个假占位 (2026-06-17 commit
@@ -1157,24 +1190,34 @@ async function init() {
     } catch (e) {
       console.error("[floating] 重新读 config 失败", e);
     }
-  }).then((fn) => (unlistenCfg = fn));
+  }).then((fn) => (unlistenCfg = fn))
+    .catch((e) => console.error("[floating] listen musage://config-changed 失败", e));
 
   // 设置面板改了模式时，重新挂/摘 hover 监听。
   // （设置面板那边调 set_floating_pin_mode 会 emit 这个事件）
+  // **2026-06-20 audit**：之前 listen() 没 .catch() + UnlistenFn 没存，dev hot-reload
+  // / 极端情况累积 stale handler。补 catch + 存 unlisten，beforeunload 时 remove。
+  let unlistenPinMode: UnlistenFn | null = null;
   listen<FloatingPinMode>("musage://pin-mode-changed", (e) => {
     // 清掉旧的监听再装新的（幂等）
     document.body.removeEventListener("mouseenter", hoverEnterHandler);
     document.body.removeEventListener("mouseleave", hoverLeaveHandler);
     setupHoverRaise(e.payload);
-  });
+  })
+    .then((fn) => (unlistenPinMode = fn))
+    .catch((e) => console.error("[floating] listen musage://pin-mode-changed 失败", e));
 
   window.addEventListener("beforeunload", () => {
     if (unlisten) unlisten();
     if (unlistenHover) unlistenHover();
     if (unlistenLowPower) unlistenLowPower();
     if (unlistenCfg) unlistenCfg();
+    if (unlistenPinMode) unlistenPinMode();
     if (countdownTimer !== null) clearInterval(countdownTimer);
     window.clearTimeout(updateTimer);  // M6 fix
+    // 2026-06-20 audit: 配对 remove body mouseenter/mouseleave
+    document.body.removeEventListener("mouseenter", onBodyMouseEnter);
+    document.body.removeEventListener("mouseleave", onBodyMouseLeave);
   });
 }
 

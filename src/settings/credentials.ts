@@ -70,9 +70,15 @@ export async function saveKey(provider: ProviderId) {
 
 export async function deleteKey(provider: ProviderId) {
   if (!confirm(t("credentials.confirm_delete_key", { name: t(`provider.${provider}.name`) }))) return;
-  await deleteApiKeyFor(provider);
-  await loadKeyStatus(provider);
-  flash(t("credentials.flash_deleted"));
+  // **2026-06-20 audit**：之前 await deleteApiKeyFor 没 try/catch，IPC 拒绝时
+  // loadKeyStatus 仍跑（显示 stale「已保存」），用户无反馈。补 catch + flash。
+  try {
+    await deleteApiKeyFor(provider);
+    await loadKeyStatus(provider);
+    flash(t("credentials.flash_deleted"));
+  } catch (e) {
+    flash(t("settings.providers.delete_failed", { err: String(e) }), true);
+  }
 }
 
 // 从 keys.json 读明文 → 写剪贴板。用完即弃，不在 JS 侧长期保存。
@@ -125,9 +131,14 @@ export async function saveCookie(provider: ProviderId) {
 
 export async function deleteCookie(provider: ProviderId) {
   if (!confirm(t("credentials.confirm_delete_cookie", { name: t(`provider.${provider}.name`) }))) return;
-  await deleteCookieFor(provider);
-  await loadCookieStatus(provider);
-  flash(t("credentials.flash_deleted_cookie"));
+  // 同 deleteKey：补 try/catch + flash（2026-06-20 audit）
+  try {
+    await deleteCookieFor(provider);
+    await loadCookieStatus(provider);
+    flash(t("credentials.flash_deleted_cookie"));
+  } catch (e) {
+    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
+  }
 }
 
 // ── 新 id-based API（tavily / zenmux） ────────────────────────
@@ -601,9 +612,14 @@ export async function xiaomiLoginAction(id: string) {
 export async function xiaomiClearCookieAction(id: string) {
   if (id !== "xiaomimimo") return;
   if (!confirm(t("credentials.confirm_clear_xiaomi"))) return;
-  await deleteSourceCredential(id);
-  flash(t("credentials.xiaomi_clear_done"));
-  await loadCredentialStatus(id);
+  // 同 deleteKey：补 try/catch + flash（2026-06-20 audit）
+  try {
+    await deleteSourceCredential(id);
+    flash(t("credentials.xiaomi_clear_done"));
+    await loadCredentialStatus(id);
+  } catch (e) {
+    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
+  }
 }
 
 /// 绑一次后端登录事件 → UI 反馈。
@@ -674,9 +690,12 @@ export function bindCredentialButtonsGlobal() {
   });
 
   // select 用 'change' 事件：用户切了 option 就即时落盘。
+  // **2026-06-20 audit**：之前 closest("[data-action='xiaomi-display-mode']")
+  // 把 selector 拼字符串里 — 如果未来 data-action 值带引号会断。改用通用
+  // closest("[data-action]") + 检查 dataset.action（参考 click delegate 同款）。
   document.addEventListener("change", (e) => {
-    const t = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-action='xiaomi-display-mode']");
-    if (!t) return;
+    const t = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-action]");
+    if (!t || t.dataset.action !== "xiaomi-display-mode") return;
     const value = (t as HTMLSelectElement).value;
     if (value !== "all" && value !== "plan_only" && value !== "total_only") return;
     void xiaomiDisplayModeAction(value);

@@ -52,29 +52,29 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
 
       # ── Node / pnpm ──
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         with:
           version: 9.15.4
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: "20"
           cache: "pnpm"
 
       # ── Rust 工具链 ──
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           targets: ${{ matrix.target }}
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          workspaces: src-tauri -> target
+          workspaces: src-tauri
           shared-key: ${{ matrix.target }}
 
       # ── macOS objc2 需要明确最低部署版本 ──
@@ -124,7 +124,7 @@ jobs:
       #
       # 没配对应 secret 就跳过对应平台签名，bundle 仍能出来
       - name: Tauri build & release
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0 (latest v0.X)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # ── Tauri updater 签名（生成 latest.json 的 signature 字段）──
@@ -164,7 +164,7 @@ jobs:
     runs-on: ubuntu-latest
     if: success()
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: Wait a moment for release
         run: sleep 15
       - name: Verify latest.json

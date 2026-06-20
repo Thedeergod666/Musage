@@ -693,7 +693,7 @@ function buildDivider(): HTMLElement {
       "aria-hidden": "true",
       title: t("settings.order.divider_title"),
     },
-    el("span", { class: "order-divider-grip", "aria-hidden": "true" }, "⋮⋮"),
+    el("span", { class: "order-divider-grip", "aria-hidden": "true" }, t("settings.order.divider_grip")),
     el("span", { class: "order-divider-line" }),
     el("span", { class: "order-divider-label" }, t("settings.order.divider_label")),
     el("span", { class: "order-divider-line" }),

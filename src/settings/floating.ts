@@ -19,7 +19,19 @@ import type { AppConfig, FloatingPinMode } from "./types";
 
 export function renderFloatingSection(container: HTMLElement, cfg: AppConfig) {
   // ── 置顶/置底/普通 单选 ──
-  const currentMode: FloatingPinMode = cfg.floating_pin_mode ?? "pin_top";
+  // **2026-06-20 audit**：之前 cfg.floating_pin_mode ?? "pin_top"，空字符串
+  // 也会触发 silent fallback（?? 只查 null/undefined）。显式校验 union 后
+  // 再默认，避免外部写脏 cfg 时被静默重置。
+  const VALID_PIN_MODES: ReadonlySet<FloatingPinMode> = new Set([
+    "pin_top",
+    "pin_bottom",
+    "normal",
+  ]);
+  const currentMode: FloatingPinMode = VALID_PIN_MODES.has(
+    cfg.floating_pin_mode as FloatingPinMode,
+  )
+    ? (cfg.floating_pin_mode as FloatingPinMode)
+    : "pin_top";
   const pinMode = el("div", { class: "pin-mode" });
   const options: Array<{ value: FloatingPinMode; title: string; desc: string }> = [
     { value: "pin_top", title: t("settings.floating.pin_modes.top.title"), desc: t("settings.floating.pin_modes.top.desc") },

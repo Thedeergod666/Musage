@@ -48,7 +48,6 @@
     }
   },
   "floating": {
-    "loading": "⏳ Loading...",
     "loading_error_title": "Error",
     "open_settings": "Open Settings",
     "tray_right_to_settings": "Tray right-click → Settings also works",
@@ -64,7 +63,6 @@
     "countdown": {
       "reset_suffix": "reset",
       "monthly_prefix": "Monthly reset",
-      "placeholder": "—",
       "reset_done": "(reset)",
       "days_left": "({days}d)",
       "minutes_left": "(in {minutes} min)",
@@ -143,6 +141,7 @@
       "flash_toggle_failed": "Toggle display failed: {err}"
     },
     "app": {
+      "section_title": "Application",
       "refresh_interval": "Refresh interval (seconds)",
       "refresh_interval_help": "Min 10 seconds, default 60. Applies to all providers.",
       "autostart": "Auto-start on boot",
@@ -275,6 +274,7 @@
     },
     "about": {
       "section_title": "About",
+      "section_prefix": "ℹ ",
       "description": "Multi-provider real-time usage monitoring floating window.",
       "current_version": "Current version:",
       "links": "Links",
@@ -306,6 +306,7 @@
       "panels_follow_hint": "Provider panels below follow this order",
       "move_up_title": "Move up",
       "move_down_title": "Move down",
+      "divider_grip": "⋮⋮",
       "divider_label": "Hidden",
       "divider_title": "Hold and drag to adjust floating display count",
       "divider_label_full": "Hidden (drag above to show in floating)",

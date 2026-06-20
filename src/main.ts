@@ -1072,6 +1072,9 @@ async function init() {
       render(fresh);
     }
   } catch (e) {
+    // 2026-06-20 audit：t() 不做 HTML 转义。这里已用 escapeHtml 包每段
+    // 值（t() 返回 + String(e)），CSP script-src 'self' 也挡 inline
+    // script 执行。两层防御。
     app.innerHTML = `<div class="err"><div class="err-title">${escapeHtml(t("floating.loading_error_title"))}</div><div class="err-msg">${escapeHtml(String(e))}</div><button class="err-btn open-settings">${escapeHtml(t("floating.open_settings"))}</button><div class="hint">${escapeHtml(t("floating.tray_right_to_settings"))}</div></div>`;
   }
 

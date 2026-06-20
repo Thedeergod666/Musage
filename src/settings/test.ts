@@ -63,7 +63,9 @@ export async function testConn() {
             : t("settings.test.kimi_ok");
         } else if (id === "zhipu") {
           // CN = "智谱 GLM"，EN = "Z.ai"（后端 source_display_name 决定）
-          const label = p.source_display_name === "Z.ai" ? "Z.ai" : t("provider.zhipu_cn.name");
+          // 2026-06-20 audit：之前硬编码 "Z.ai" 字符串（漏 t()）。改用现有
+// provider.zhipu_en.name i18n key 跟其它 provider 路径一致。
+const label = p.source_display_name === "Z.ai" ? t("provider.zhipu_en.name") : t("provider.zhipu_cn.name");
           const fiveHour = p.rows.find((r) => r.label === "5h");
           return fiveHour
             ? t("settings.test.zhipu_5h", {

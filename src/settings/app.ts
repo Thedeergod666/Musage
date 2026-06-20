@@ -74,7 +74,7 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
 
   container.appendChild(
     el("section", { class: "section-card" },
-      el("h2", {}, t("settings.nav.app")),
+      el("h2", {}, t("settings.app.section_title")),
       // 轮询间隔
       el("div", { class: "field" },
         el("label", { for: "interval" }, t("settings.app.refresh_interval")),

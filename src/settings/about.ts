@@ -17,7 +17,7 @@ export async function renderAboutSection(container: HTMLElement) {
 
   container.appendChild(
     el("section", { class: "section-card", id: "about-section" },
-      el("h2", {}, `ℹ ${t("settings.about.section_title")}`),
+      el("h2", {}, `${t("settings.about.section_prefix")}${t("settings.about.section_title")}`),
       el("div", { class: "field" },
         el("label", {}, "Musage"),
         el("div", { class: "help" },

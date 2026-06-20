@@ -57,7 +57,9 @@ export const t = (key: string, params?: Record<string, string | number>): string
     return key;
   }
   if (!params) return s;
-  return s.replace(/\{(\w+)\}/g, (_, k) => {
+  // 2026-06-20 audit：之前 /\\{(\w+)\\}/g 只匹配 [A-Za-z0-9_]+，{user-id} /
+  // {err.code} 这种 placeholder 名 silent fallback。扩展为 [\w.-]+ 兼容。
+  return s.replace(/\{([\w.-]+)\}/g, (_, k) => {
     const v = params[k];
     return v == null ? `{${k}}` : String(v);
   });

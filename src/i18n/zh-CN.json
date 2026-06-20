@@ -48,7 +48,6 @@
     }
   },
   "floating": {
-    "loading": "⏳ 加载中…",
     "loading_error_title": "错误",
     "open_settings": "打开设置",
     "tray_right_to_settings": "托盘右键 → 设置 亦可",
@@ -64,7 +63,6 @@
     "countdown": {
       "reset_suffix": "重置",
       "monthly_prefix": "月重置",
-      "placeholder": "—",
       "reset_done": "（已重置）",
       "days_left": "（{days}天）",
       "minutes_left": "（{minutes} 分钟后）",
@@ -143,6 +141,7 @@
       "flash_toggle_failed": "切换显示失败: {err}"
     },
     "app": {
+      "section_title": "应用",
       "refresh_interval": "刷新间隔（秒）",
       "refresh_interval_help": "最少 10 秒，默认 60。对所有 provider 同时生效。",
       "autostart": "开机自启",
@@ -275,6 +274,7 @@
     },
     "about": {
       "section_title": "关于",
+      "section_prefix": "ℹ ",
       "description": "多 Provider 实时用量监控悬浮窗。",
       "current_version": "当前版本：",
       "links": "链接",
@@ -306,6 +306,7 @@
       "panels_follow_hint": "下方套餐区按此顺序排列",
       "move_up_title": "上移",
       "move_down_title": "下移",
+      "divider_grip": "⋮⋮",
       "divider_label": "已隐藏",
       "divider_title": "按住拖动可调整浮窗显示数量",
       "divider_label_full": "已隐藏（拖到上方即可在浮窗显示）",

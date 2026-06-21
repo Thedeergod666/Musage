@@ -22,7 +22,7 @@ pub mod i18n;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
-use crate::config::{self, AppConfig, FieldTriple, FloatingPinMode, ProviderConfig, TrayIconStyle, UserRegion};
+use crate::config::{self, AppConfig, FloatingPinMode, ProviderConfig, TrayIconStyle, UserRegion};
 use crate::providers::{
     all_sources, builtin_sources, find_source, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderSnapshot, QuotaSnapshot, QuotaSource,
 };

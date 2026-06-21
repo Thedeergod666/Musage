@@ -98,6 +98,7 @@ impl Default for XiaomimimoSource {
 }
 
 impl XiaomimimoSource {
+    #[allow(dead_code)] // 预留 v2 状态推送 API，Phase 1 重构后 commands 改走 trait 方法（impl QuotaSource 那个 set_state）。这里保留旧的 helper 给后续 unit test / 调试路径用。
     pub async fn set_state(
         &self,
         region: XiaomiRegion,
@@ -264,6 +265,7 @@ pub(crate) fn decide_auth_strategy(creds: &Credentials) -> AuthStrategy {
 
 #[derive(Debug, Default)]
 pub struct Xiaomimimo {
+    #[allow(dead_code)] // 旧 ProviderImpl 兼容层（dump CLI 还在用），保留字段给 v2 切回时的兼容性垫底
     pub region: XiaomiRegion,
 }
 

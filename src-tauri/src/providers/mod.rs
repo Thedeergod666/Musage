@@ -32,8 +32,12 @@ pub mod zenmux;
 pub mod zhipu;
 
 // PR 3 重新导出：让 settings 面板 / 浮窗等 crate 外部消费者只 `use
-// crate::providers::{CustomSource, CustomSourceSpec, ExtractSpec}` 即可。
-pub use custom::{CustomSource, CustomSourceSpec, ExtractSpec};
+// crate::providers::{CustomSource, CustomSourceSpec}` 即可。
+//
+// ExtractSpec 不再 re-export —— 公开 API 没用过它；测试代码用完整路径
+// `crate::providers::custom::ExtractSpec`(见 `commands/custom_sources.rs`
+// 单元测试 + `config/custom_sources.rs` 单元测试),省一个 unused re-export warning。
+pub use custom::{CustomSource, CustomSourceSpec};
 
 use std::borrow::Cow;
 use std::pin::Pin;
@@ -105,6 +109,7 @@ pub struct Credentials {
 }
 
 impl Credentials {
+    #[allow(dead_code)] // 预留 v2 凭据校验 helper（前端 settings 面板 v2 要做"未设置任何凭据"的提示时启用）
     pub fn has_any(&self) -> bool {
         self.api_key.as_deref().map(str::trim).map(str::is_empty) == Some(false)
             || self.cookie.as_deref().map(str::trim).map(str::is_empty) == Some(false)
@@ -203,6 +208,7 @@ impl FetchError {
     pub fn parse(message: impl Into<String>) -> Self {
         Self::new(ErrorKind::Parse, message)
     }
+    #[allow(dead_code)] // 预留 v2 helper（v2 schema 推断路径要按 ErrorKind::SchemaUnknown 分类时启用）
     pub fn schema_unknown(message: impl Into<String>) -> Self {
         Self::new(ErrorKind::SchemaUnknown, message)
     }

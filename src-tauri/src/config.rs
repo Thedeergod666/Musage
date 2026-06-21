@@ -769,7 +769,7 @@ fn write_keys_atomic(map: &KeysMap) -> Result<(), String> {
     }
     let tmp = path.with_extension("json.tmp");
     let s = serde_json::to_string_pretty(map).map_err(|e| t!("commands.config_serialize", err = e.to_string()).into_owned())?;
-    std::fs::write(&tmp, &s).map_err(|e| t!("commands.keys_io", op = "write tmp").into_owned())?;
+    std::fs::write(&tmp, &s).map_err(|_| t!("commands.keys_io", op = "write tmp").into_owned())?;
 
     #[cfg(unix)]
     {
@@ -841,7 +841,7 @@ pub fn delete_api_key_for(provider: Provider) -> Result<(), String> {
         // 全部删完就连文件一起删，避免空文件 + 0 字节文件混在目录里
         let path = keys_path()?;
         if path.exists() {
-            std::fs::remove_file(&path).map_err(|e| t!("commands.keys_io", op = "remove empty").into_owned())?;
+            std::fs::remove_file(&path).map_err(|_| t!("commands.keys_io", op = "remove empty").into_owned())?;
         }
     } else {
         write_keys_atomic(&map)?;
@@ -880,7 +880,7 @@ pub fn delete_cookie_for(provider: Provider) -> Result<(), String> {
     if map.is_empty() {
         let path = keys_path()?;
         if path.exists() {
-            std::fs::remove_file(&path).map_err(|e| t!("commands.keys_io", op = "remove empty").into_owned())?;
+            std::fs::remove_file(&path).map_err(|_| t!("commands.keys_io", op = "remove empty").into_owned())?;
         }
     } else {
         write_keys_atomic(&map)?;

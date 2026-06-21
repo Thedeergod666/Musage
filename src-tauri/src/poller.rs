@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::task::JoinSet;
 
-use crate::commands::{refresh_inner, refresh_single};
+use crate::commands::refresh_inner;
 use crate::providers::all_sources;
 use crate::AppState;
 

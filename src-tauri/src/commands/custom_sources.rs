@@ -22,9 +22,7 @@
 //!
 //! 最多 50 个 custom source。超过返错，避免极端用户填爆内存。
 
-use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
-use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use crate::config::{custom_sources as custom_persist, delete_credential_for_id};
@@ -129,6 +127,13 @@ pub async fn update_custom_source(
         return Err(t!("commands.custom_method_invalid", method = spec.method.as_str()).into_owned());
     }
 
+    let existing_created_at = {
+        let customs = state.custom_sources.read().await;
+        let existing = customs.iter().find(|s| s.id == spec.id)
+            .ok_or_else(|| t!("commands.custom_not_found", id = spec.id.as_str()).into_owned())?;
+        existing.created_at
+    };
+
     let cleaned = CustomSourceSpec {
         id: spec.id.clone(),
         display_name: spec.display_name.trim().to_string(),
@@ -142,7 +147,7 @@ pub async fn update_custom_source(
         }),
         accent: spec.accent,
         // created_at 保留原值（不从客户端接收）
-        created_at: spec.created_at,
+        created_at: existing_created_at,
     };
 
     {
@@ -217,7 +222,9 @@ pub async fn test_custom_source(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::ExtractSpec;
+    // 不走 re-export:用完整路径(custom 子模块),providers/mod.rs 不再
+    // 公开 re-export `ExtractSpec` 以避免 unused warning。
+    use crate::providers::custom::ExtractSpec;
 
     fn spec_with(method: &str, base: &str, path: &str, name: &str) -> CustomSourceSpec {
         CustomSourceSpec {

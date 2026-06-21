@@ -300,7 +300,7 @@ pub fn start_fullscreen_watcher<R: Runtime>(app: AppHandle<R>) {
     if FULLSCREEN_WATCHER_RUNNING.swap(true, Ordering::SeqCst) {
         return; // 已在跑
     }
-    thread::Builder::new()
+    let builder = thread::Builder::new()
         .name("musage-fullscreen-watcher".into())
         .spawn(move || {
             tracing::debug!("fullscreen watcher 启动");
@@ -338,7 +338,8 @@ pub fn start_fullscreen_watcher<R: Runtime>(app: AppHandle<R>) {
                     }
                 }
             }
-        // **2026-06-20 audit**：之前 .expect()，线程数耗尽时整 app panic。降级 log + 翻转 RUNNING 让下次重启能重试。
+        });
+    // **2026-06-20 audit**：之前 .expect()，线程数耗尽时整 app panic。降级 log + 翻转 RUNNING 让下次重启能重试。
     if let Err(e) = builder {
         tracing::error!(error = %e, "spawn fullscreen watcher thread 失败，auto-hide-in-fullscreen 将失效");
         FULLSCREEN_WATCHER_RUNNING.store(false, Ordering::SeqCst);

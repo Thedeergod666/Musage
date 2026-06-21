@@ -186,7 +186,7 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
 /// `on_page_load` 触发时 cookie 还没落定），所以需要多次尝试。
 async fn extract_with_retry(
     window: &tauri::WebviewWindow,
-    app: &AppHandle,
+    _app: &AppHandle,
 ) -> Result<usize, String> {
     // 重试策略：1s, 2s, 2s, 3s, 3s（共 11s 覆盖大部分场景）
     let retry_delays = [1u64, 2, 2, 3, 3];

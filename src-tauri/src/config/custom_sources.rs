@@ -19,7 +19,6 @@
 //! 复用 [`super::save_credential_for_id`] / [`super::delete_credential_for_id`]，
 //! key 名 = `custom_<uuid>`（UUID 由 `add_custom_source` 命令生成）。
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::providers::CustomSourceSpec;
@@ -116,8 +115,12 @@ fn custom_sources_path() -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::ExtractSpec;
+    // 完整路径(不走 re-export),同 `commands/custom_sources.rs` 测试模块
+    use crate::providers::custom::ExtractSpec;
     use serde_json::json;
+    // 本文件顶层 use 删了 `std::collections::BTreeMap`（非测试代码用不到）,
+    // 但 `keys_map_contains_uuid` 测试还在用,这里局部 import。
+    use std::collections::BTreeMap;
 
     fn sample_spec(id: &str) -> CustomSourceSpec {
         CustomSourceSpec {

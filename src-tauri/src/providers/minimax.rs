@@ -88,6 +88,7 @@ impl Default for MinimaxSource {
 
 impl MinimaxSource {
     /// 每次 refresh tick 前由 commands.rs 调用，更新 region / overrides。
+    #[allow(dead_code)] // 预留 v2 状态推送 API，Phase 1 重构后 commands 改走 trait 方法（impl QuotaSource 那个 set_state）。这里保留旧的 helper 给后续 unit test / 调试路径用。
     pub async fn set_state(&self, region: Region, overrides: ProviderOverrides) {
         let mut s = self.state.write().await;
         s.region = region;
@@ -378,7 +379,7 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
 }
 
 #[derive(Debug, Clone)]
-struct TierInternal {
+pub(crate) struct TierInternal {
     utilization: f64,
     resets_at: Option<i64>,
 }
@@ -393,6 +394,7 @@ struct TierInternal {
 /// - `k_reset`：距离重置的**秒数**（不是 epoch ms）
 ///
 /// 返回已用百分比 = 100 - remain%。
+#[allow(dead_code)] // 预留 v2 公共 API（被同模块内未链接的 tier 解析路径使用，crate 内可见）
 pub fn parse_tier_percent(
     item: &serde_json::Value,
     k_percent: &str,
@@ -426,6 +428,7 @@ pub fn parse_tier_percent(
 ///
 /// `user_overrides` 先于内置 `candidates` 尝试，方便用户在设置面板加新字段名
 /// （MiniMax 改 schema 后不用等发版）。
+#[allow(dead_code)] // 预留 v2 公共 API（同 parse_tier_percent，crate 内可见）
 pub fn parse_tier_count(
     item: &serde_json::Value,
     candidates: &[(&str, &str, &str)],

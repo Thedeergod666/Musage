@@ -1,6 +1,6 @@
 [package]
 name = "musage"
-version = "0.1.0"
+version = "0.2.0"
 description = "MiniMax Token Plan 实时用量监控"
 authors = ["you"]
 edition = "2021"

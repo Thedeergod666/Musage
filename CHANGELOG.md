@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [0.2.0] - 2026-06-22
+
+v0.1.0 (2026-06-13) 之后的 9 天累计 7+ PR, 加上 2026-06-22 一天集中清理 (PR 1-6)。
+
+### Pre-cleanup 累积 (PR 2-3, commits `0ae07d0`-`f800c8e`)
+
+#### Added
 - **Kimi (Moonshot Coding)** 套餐源 (commit `0ae07d0`)
 - **智谱 GLM** 套餐源,支持国内/国际 endpoint 切换 (commit `0ae07d0` + `4aedaef`)
 - **Xiaomi MiMo 一键登录**:应用内 WebView 自动提取 Cookie (commit `c561c2e`)
@@ -16,10 +22,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Xiaomi 浮窗显示模式 3 档选择器**:完整 / 只套餐 / 只总额度 (commit `2c6d2d7`)
 - **首字母 fallback logo**:新 provider 不写 SVG 也能跑 (commit `6d3d822`)
 - **顺序区按 enabled/disabled 分区**:浮窗卡片顺序更清晰 (commit `8c8b749`)
-- **5 个新 built-in 套餐源**:StepFun / SiliconFlow / Novita / Qwen / Claude 官方 (commit `aabe823`)+ 官方 logo 资源 (commit `a073186`)
-- **CustomSource (New API 中转站)**:用户可加任意 New API 系中转,3 选 1 extract 模板,JSONPath 解析,UUID 持久化,覆盖 10+ 国内中转站 (commit `68b5dff` + `b234e45` + `bb5151c`)
-- **设置面板重构**:6 组分组 (token_plan/balance/official/xiaomi/custom/misc) + 顶部搜索 + 原生 `<dialog>` modal + ↑/↓ 跨段排序 (commits `bb5151c` / `78e10bb` / `174b5de`)
-- **浮窗卡片顺序交互**:↑/↓ 跨段 + 分隔线可拖 + 全隐藏时保留分隔线 (commits `78e10bb` / `271d9c2` / `0b661e6` / `2a5faca`)
+- **CustomSource (New API 中转站)**:用户可加任意 New API 系中转,3 选 1 extract 模板,JSONPath 解析,UUID 持久化 (commits `68b5dff` / `b234e45` / `bb5151c`)
+- **设置面板重构**:6 组分组 + 顶部搜索 + 原生 `<dialog>` modal + ↑/↓ 跨段排序
+- **i18n P0-P2**: 后端 rust-i18n + 前端自写 helper + `set_app_locale` IPC + 13 provider 错误 + settings 5 section + tooltip 全 i18n 化
+- **5 个新 built-in provider** (临时): StepFun / SiliconFlow / Novita / Qwen / Claude 官方 — **Novita + Qwen 在 v0.2.0 cleanup 阶段已砍 (见下方 Removed)**
+
+### 2026-06-22 集中清理 (PR 1-6, commits `b253720`-`54a5554`)
+
+### BREAKING
+
+- **Config schema**: `Provider` enum removed. All source id is now a string (e.g. `"minimax"`, `"tavily"`, `"custom_<uuid>"`). Old config.json files still load (`ProviderSnapshot.provider` field defaults to `""` via `#[serde(default)]`).
+- **IPC API**: 7 enum-based commands removed (`has_api_key_for` / `set_api_key_for` / `delete_api_key_for` / `get_api_key_for` / `has_cookie_for` / `set_cookie_for` / `delete_cookie_for`). Use the string-based `set_source_credential` / `get_source_credential` / `has_source_credential` / `delete_source_credential` instead.
+- **Config keys API**: 7 enum-based helpers removed in `config.rs` (`load_api_key_for` / `save_api_key_for` / `delete_api_key_for` / `load_cookie_for` / `save_cookie_for` / `delete_cookie_for` / `cookie_key`). Use `load_credential_for_id` / `save_credential_for_id` / `delete_credential_for_id`.
+
+### Removed
+
+- `Provider` enum (35 placeholder sites consolidated to string ids; `tavily-enum-placeholder-footgun` warning fully resolved).
+- `ProviderImpl` trait (replaced by `QuotaSource` trait).
+- **Novita + Qwen STUB providers** (公开 API 无 quota endpoint，永久返回「未支持」错)。用户看到「未支持」比看不到更沮丧 (F1 反模式)，直接砍更干净。
+- 2 个 STUB logo 资产 (`novita-logo.svg` / `qwen-logo.svg`)。
+
+### Fixed
+
+- **Tray tooltip 永久只看 MiniMax** (`tray.rs`): 之前 `Provider::Minimax` enum filter 导致 Tavily / ZenMux / Kimi / Zhipu / StepFun / SiliconFlow / Claude 官方 / 用户自定义 New API 中转站 **全部不进 tray tooltip**。改成 `source_id == "minimax"` 字符串路由，所有 provider 都进 tray tooltip。
+- **Xiaomi `apply_display_mode` i18n bug**: 之前 hardcode `"套餐"` / `"总额度"` 字符串 filter，en locale 下永远 filter 0 行 → 浮窗空白。改成 `t!("row.plan")` / `t!("row.monthly_total")`，跟 locale 解耦。
+- **生产代码 10 个 broken test** (lib test 编不过) — 9× `RwLock::get()` 弃用 (rust 1.78+) 改 `read().unwrap()`，1× `Cow<'_, str>` vs `&str` 类型 mismatch 加 `.as_ref()`。
+- **23 个 i18n assertion** (test 写死中文 label, en locale 下不匹配) — 改 `t!("row.xxx")` 形式。
+- **2 个 epoch range 太严** (timezone drift ±1 天) — 放宽到 ±6 天。
+
+### Changed
+
+- **CI now runs `cargo test`** (was just `--no-run`); added `cargo clippy` + `cargo fmt --check` + `pnpm exec tsc --noEmit` gate.
+- **Docs-only PR check**: `docs:` PR titles fail if non-.md files modified (force separation of docs-only PR from mixed PR).
+- **`ProviderSnapshot.provider` field**: `Provider` enum → `String`. `#[serde(default)]` 让老 JSON 反向兼容。
+- **`ProviderSnapshot::health_label()`**: `match self.provider` 改 `match self.source_id`（deepseek 走 `is_healthy` 分支, 其它 utilization 分支）。
+- **`ProviderSnapshot::empty_error()`**: 删 `provider: Provider` 参数（`Provider` enum 已删）。
+- **Frontend**: `settings/order.ts` 删 9 处冗余 `as ProviderId` cast。
+- **Backend**: `lock_recover()` helper 抽出（mutex poison recover 模板统一 3 处使用）。
+- **`cargo fmt --all`** 跑过一次：28 文件重新格式化（纯格式变化，无逻辑）。
+
+### Tech debt cleared
+
+- `commands/mod.rs`: 1732 → ~1590 行 (-142 from 7 IPC + Provider 清理)
+- `providers/mod.rs`: 删 60 行 enum 定义 + ProviderImpl trait
+- `poller_backoff.rs` test fixtures: 改用 string ids
+- `apply_display_mode` production bug: hardcode `套餐`/`总额度` 改 `t!()` (i18n 解耦)
+- 13 个 provider 文件: `Provider::Xxx` 占位改 `"xxx"` string (消除 [memory/tavily-enum-placeholder-footgun](memory/tavily-enum-placeholder-footgun.md) 警示)
+
+### Upgrade notes
+
+- 老 v0.1.x 用户升级 v0.2.0:
+  1. 应用启动不会崩 — `keys.json` / `config.json` / `custom_sources.json` 通过 `#[serde(default)]` 自动迁移
+  2. 设置面板老凭据仍能读 — 因为 keys.json 文件格式没变 (只是 key 是字符串不是 enum 序号)
+  3. **第三方插件/脚本如果之前调 `set_api_key_for(minimax)` / `set_cookie_for(xiaomimimo)` 等老 IPC 命令会失败** — 改用 `set_source_credential("minimax", key)` / `set_source_credential("xiaomimimo", cookie, field="cookie")`
+
+[0.2.0]: https://github.com/Thedeergod666/Musage/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/Thedeergod666/Musage/releases/tag/v0.1.0
 - **i18n 架构 P0**:后端 rust-i18n + 前端自写 helper + `set_app_locale` IPC + `musage://locale-changed` 事件,设置面板加语言切换 UI (commits `14f9890` / `2f3a06d`)
 - **i18n 字符串 P1-P2**:`t!()` / `t()` 覆盖 tray/tooltip/CLI/13 provider 错误/settings.html 主面板/5 个 section render/PROVIDER_META 三处合一 + 6 个分组标题 + credentials/groups/order/test/modal/custom-source-form/source-extras/providers/advanced/floating/logs/updater/region-wizard 全部硬编码中文 (commits `36eaa2b`–`c693de1` + `34b4181` + `73ad719` + `5d372c8`–`72e86cc`)
 - **i18n 收尾**:`src/i18n/{en,zh-CN}.json` 补齐 settings 面板所有缺失的 i18n keys (commit `4bc9f56`)

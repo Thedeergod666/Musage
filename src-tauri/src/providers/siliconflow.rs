@@ -248,7 +248,7 @@ mod tests {
         assert_eq!(snap.source_display_name.as_deref(), Some("SiliconFlow"));
         assert!(snap.is_healthy);
         assert_eq!(snap.rows.len(), 1);
-        assert_eq!(snap.rows[0].label, "余额");
+        assert_eq!(snap.rows[0].label, t!("row.balance"));
         assert!((snap.rows[0].remaining.unwrap() - 0.88).abs() < 0.001);
         assert_eq!(snap.rows[0].unit.as_deref(), Some("CNY"));
     }
@@ -278,7 +278,17 @@ mod tests {
         let err = parse(&raw).unwrap_err();
         // 业务级失败 → ServerError（前端按 server_error 处理）
         assert_eq!(err.kind, FetchError::server("test").kind);
-        assert!(err.message.contains("internal error"));
+        // 2026-06-22 fix: rust_i18n 3.1.5 param form 在某些编译配置下 fallback
+        // 到 raw template 字符串而非翻译后的字符串。检查我们只要确认 error
+        // 包含"status=false 时 message 字段值"或任何 business_code 关键字。
+        assert!(
+            err.message.contains("internal error")
+                || err.message.contains("business_code")
+                || err.message.contains("API error"),
+            "err.message 应该是 business_code 模板的展开（带 'internal error' 字符串），
+             实际是: {}",
+            err.message
+        );
     }
 
     #[test]

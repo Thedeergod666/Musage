@@ -366,7 +366,7 @@ mod tests {
         assert!(snap.success);
         assert_eq!(snap.rows.len(), 1);
         let row = &snap.rows[0];
-        assert_eq!(row.label, "余额");
+        assert_eq!(row.label, t!("row.balance"));
         assert!((row.remaining.unwrap() - 74.75).abs() < 0.01);
         assert_eq!(row.unit.as_deref(), Some("USD"));
     }

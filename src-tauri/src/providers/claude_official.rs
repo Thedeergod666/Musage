@@ -317,7 +317,7 @@ mod tests {
         let snap = parse(&raw).expect("parse");
         assert!(snap.success);
         assert_eq!(snap.source_id.as_deref(), Some("claude_official"));
-        assert_eq!(snap.source_display_name.as_deref(), Some(t!("provider_name.claude_official")));
+        assert_eq!(snap.source_display_name.as_deref(), Some(t!("provider_name.claude_official").as_ref()));
         assert_eq!(snap.plan_name.as_deref(), Some("Pro/Max"));
         assert_eq!(snap.rows.len(), 2);
 

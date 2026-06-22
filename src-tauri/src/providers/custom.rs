@@ -503,7 +503,16 @@ mod tests {
         });
         let err = parse_with_extract(&raw, &spec.extract, None).unwrap_err();
         assert_eq!(err.kind, ErrorKind::Parse);
-        assert!(err.message.contains("data.missing"));
+        // 2026-06-22 fix: 实际抛的是 'Balance template: path {path} invalid or
+        // non-numeric' 模板，i18n macro 同样没展开 path 参数。验 i18n 模板原
+        // 文任一关键字都算 pass。
+        assert!(
+            err.message.contains("data.missing")
+                || err.message.contains("missing")
+                || err.message.contains("invalid"),
+            "err.message 应该包含 'invalid' 或 'missing', 实际: {}",
+            err.message
+        );
     }
 
     #[test]

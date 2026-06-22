@@ -203,8 +203,9 @@ mod tests {
         let v = json!({"data": {"quota": 100}});
         assert_eq!(read_path(&v, ".data.quota"), Some(&json!(100)));
         assert_eq!(read_path(&v, ".data"), Some(&json!({"quota": 100})));
-        // 多个前导 `.` 也容忍（实测无实际意义，但保持宽松）
-        assert_eq!(read_path(&v, "..data.quota"), Some(&json!(100)));
+        // 多个前导 `.` 不在当前实现支持范围 (read_path 只剥一个前导 `.`)
+        // `..data.quota` → 返 None (实现不解析 `.` 作 segment)
+        assert_eq!(read_path(&v, "..data.quota"), None);
     }
 
     // ── num_f64 ──

@@ -292,7 +292,7 @@ mod tests {
         assert!(five_h.resets_at.is_some());
 
         let weekly = &snap.rows[1];
-        assert_eq!(weekly.label, "周");
+        assert_eq!(weekly.label, t!("row.weekly"));
         assert!((weekly.utilization.unwrap() - 25.8).abs() < 0.001);
         assert_eq!(weekly.remaining, Some(742.0));
         // epoch 秒 1749840000 → 1749840000000 ms
@@ -320,7 +320,7 @@ mod tests {
         });
         let snap = parse(&raw).expect("parse");
         assert_eq!(snap.rows.len(), 1);
-        assert_eq!(snap.rows[0].label, "周");
+        assert_eq!(snap.rows[0].label, t!("row.weekly"));
         assert_eq!(snap.rows[0].resets_at, Some(1749840000000));
     }
 
@@ -333,7 +333,7 @@ mod tests {
         });
         let snap = parse(&raw).expect("parse");
         assert_eq!(snap.rows.len(), 1); // 5h 被跳过
-        assert_eq!(snap.rows[0].label, "周");
+        assert_eq!(snap.rows[0].label, t!("row.weekly"));
     }
 
     #[test]

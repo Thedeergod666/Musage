@@ -342,7 +342,7 @@ mod tests {
         assert!(five_h.resets_at.is_some());
 
         let weekly = &snap.rows[1];
-        assert_eq!(weekly.label, "周");
+        assert_eq!(weekly.label, t!("row.weekly"));
         // 1.0 - 0.55 = 0.45 → 45%
         assert!((weekly.utilization.unwrap() - 45.0).abs() < 0.001);
     }
@@ -405,7 +405,7 @@ mod tests {
         let snap = parse(raw, None).expect("parse");
         // 5h 跳过，只剩 weekly
         assert_eq!(snap.rows.len(), 1);
-        assert_eq!(snap.rows[0].label, "周");
+        assert_eq!(snap.rows[0].label, t!("row.weekly"));
     }
 
     #[test]

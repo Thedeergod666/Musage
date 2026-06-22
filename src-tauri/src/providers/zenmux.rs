@@ -460,13 +460,13 @@ mod tests {
         // 3 rows: 余额 + 充值 + 奖励
         assert_eq!(snap.rows.len(), 3);
         let main = &snap.rows[0];
-        assert_eq!(main.label, "余额");
+        assert_eq!(main.label, t!("row.balance"));
         assert_eq!(main.remaining, Some(482.74));
         assert_eq!(main.unit.as_deref(), Some("USD"));
         // 充值 + 奖励 走 Tavily only-used 分支
-        assert_eq!(snap.rows[1].label, "充值");
+        assert_eq!(snap.rows[1].label, t!("row.topup"));
         assert_eq!(snap.rows[1].used, Some(35.0));
-        assert_eq!(snap.rows[2].label, "奖励");
+        assert_eq!(snap.rows[2].label, t!("row.bonus"));
         assert_eq!(snap.rows[2].used, Some(447.74));
     }
 
@@ -481,7 +481,7 @@ mod tests {
         });
         let snap = parse_payg(&raw).expect("parse_payg");
         assert_eq!(snap.rows.len(), 1);
-        assert_eq!(snap.rows[0].label, "余额");
+        assert_eq!(snap.rows[0].label, t!("row.balance"));
         assert_eq!(snap.rows[0].remaining, Some(10.5));
     }
 
@@ -537,7 +537,7 @@ mod tests {
         assert!((five_h.utilization.unwrap() - 7.15).abs() < 0.001);
         assert!(five_h.resets_at.is_some());
         let week = &snap.rows[1];
-        assert_eq!(week.label, "周");
+        assert_eq!(week.label, t!("row.weekly"));
         assert!((week.utilization.unwrap() - 6.73).abs() < 0.001);
     }
 
@@ -646,7 +646,7 @@ mod tests {
         let src = ZenmuxSource::default();
         let cfg = json!({ "zenmux_mode": "subscription" });
         src.set_state(cfg).await;
-        assert_eq!(src.mode.get().copied(), Some(ZenmuxMode::Subscription));
+        assert_eq!(*src.mode.read().unwrap(), Some(ZenmuxMode::Subscription));
     }
 
     #[tokio::test]
@@ -654,7 +654,7 @@ mod tests {
         let src = ZenmuxSource::default();
         let cfg = json!({ "zenmux_base_url": "https://custom.example/v1/x" });
         src.set_state(cfg).await;
-        assert_eq!(src.base_url.get().map(|s| s.as_str()), Some("https://custom.example/v1/x"));
+        assert_eq!(src.base_url.read().unwrap().as_deref(), Some("https://custom.example/v1/x"));
     }
 
     #[tokio::test]
@@ -662,8 +662,8 @@ mod tests {
         let src = ZenmuxSource::default();
         let cfg = json!({}); // 完全没有 zenmux_mode
         src.set_state(cfg).await;
-        assert_eq!(src.mode.get().copied(), Some(ZenmuxMode::Payg));
-        assert!(src.base_url.get().is_none());
+        assert_eq!(*src.mode.read().unwrap(), Some(ZenmuxMode::Payg));
+        assert!(src.base_url.read().unwrap().is_none());
     }
 
     #[tokio::test]
@@ -672,6 +672,6 @@ mod tests {
         let cfg = json!({ "zenmux_mode": "BOGUS" });
         src.set_state(cfg).await;
         // 非法 mode → fallback 到 Payg（不 panic）
-        assert_eq!(src.mode.get().copied(), Some(ZenmuxMode::Payg));
+        assert_eq!(*src.mode.read().unwrap(), Some(ZenmuxMode::Payg));
     }
 }

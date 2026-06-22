@@ -639,7 +639,7 @@ mod tests {
         assert!(snap.success, "snap.error = {:?}", snap.error);
         assert_eq!(snap.rows.len(), 2);
         assert_eq!(snap.rows[0].label, "5h");
-        assert_eq!(snap.rows[1].label, "周");
+        assert_eq!(snap.rows[1].label, t!("row.weekly"));
         // 5h: 100-72=28%; week: 100-86=14%
         assert!((snap.rows[0].utilization.unwrap() - 28.0).abs() < 0.001);
         assert!((snap.rows[1].utilization.unwrap() - 14.0).abs() < 0.001);

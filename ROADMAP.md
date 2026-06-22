@@ -23,11 +23,11 @@
 
 | 优先级 | PR | 内容 | 估时 | 摩擦等级 |
 |---|---|---|---|---|
-| **P0** | 立即修 | 文档同步(本 commit)+ Novita/Qwen STUB default disabled + 31/193 cargo test 修绿 | 1.5 天 | F1 |
+| **P0** | 立即修 | 文档同步(本 commit)+ 31/193 cargo test 修绿 | 1 天 | F1 |
 | **P1** | 近期做 | 浮窗位置跨屏感知 + 首启空态 + 错误态一键恢复按钮 + 关键 i18n 收尾 | 2.25 天 | F1 |
 | **P2-A** | 摩擦优化第一波 | 批量粘贴 key 自动匹配 + New API preset 显眼化 + 错误恢复完整版 | 3.5 天 | F1·必修 |
 | **P2-B** | Xiaomi/Claude 8h 失效 | 系统通知 + 一键重登(4 跳 → 1 跳)+ import/export(无 keys) | 3.5 天 | F1.5 |
-| **P2-C** | Tech debt 集中清理 | 错误分类统一 helper + set_state 改 `&AppConfig` 共享 + UI 层 vitest + 死代码清理 | 4 天 | F2 |
+| **P2-C** | **Will not do in v0.2** | (原 P2-C tech debt 整合到 v0.2 release commit 里, 不再作为独立 PR 跟踪) | — | — |
 
 **详细 actionable 报告** → `/private/tmp/claude-501/-Users-wyh-Project-Musage/adb174f0-c3b5-4953-94d0-ded60423c8da/tasks/whbtppp70.output`(~120KB,7 维度 review + 合成)
 
@@ -47,29 +47,27 @@
 
 ### Critical(已记,等 P0 PR 修)
 - `cargo check` 20 warnings(dead code: `set_state` 11× / `region` field 1× / 其它)
-- Novita / Qwen STUB 永远返 `ServerError` → 退避 30 min cap → 浮窗假死(用户配 key 不知道是 STUB)
 - 31/193 cargo test 失败(i18n 切换后中文 hard-code 断言破裂)
 
-### High(等 P2-C PR 修)
+### High(等 v0.2 整合清理, 不单独 P2-C)
 - 13 provider 错误分类不统一(401/403/429 各自映射不同),缺 `http_status_to_error_kind` helper
-- `Provider::Minimax` 占位散落 7+ 处([memory/tavily-enum-placeholder-footgun] 警示踩坑已发生)
+- ~~`Provider::Minimax` 占位散落 7+ 处~~ — v0.2 删 enum 解决
 - `refresh_inner` 每次 `Box::new` 13 个 source([memory/source-instance-rebuild-footgun] 已知未修)
 - Backoff 状态不持久化到 disk,重启后 30min 退避归零
 - Per-provider poller task 无 shutdown signal,App 退出时可能泄漏
 - `refresh_single_inner` miss 时返硬编码中文(regression of `8e2a19b` 修法)
 - Frontend 0 单元测试(contentFingerprint / render / updateCard / autoResizeWindow)
 
-### Medium(等 P2-C 顺手修)
+### Medium(v0.2 顺手修的留 v0.3)
 - `src-tauri/src/commands/mod.rs:984-988` 硬编码中文 "未知的 source id"
-- `src-tauri/src/api.rs` 描述里的"核心:拉取 + 宽容解析"已不存在(doc 描述需同步)
 - `src/settings/source-extras.ts` 7 个 `renderXxx` 函数未完全数据驱动
 - `error.provider.minimax_403` 孤例 i18n key
 - `Uuid::new_v4().simple()` UUID 路径散落,提到顶层 `format_id()`
 
-### Low(永不做 — 重复产品边界)
-- ~~"Provider enum 已被 QuotaSource trait 替代,dump CLI 还在走 enum 路径"~~ — **已过期**:`lib.rs::run_dump_subcommand` 已走 `builtin_sources()` + 字符串 id
+### Low(永不做 — 重复产品边界 / 已修)
+- ~~"Provider enum 已被 QuotaSource trait 替代,dump CLI 还在走 enum 路径"~~ — **v0.2 已删 enum**
 - ~~"src/settings.html 还在按 provider id hardcode"~~ — **已过期**:PR 3 完成后已动态化
-- ~~"api.rs 描述里的'核心:拉取 + 宽容解析'已不存在"~~ — **已过期**:api.rs 已删除并入 providers/
+- ~~"Novita / Qwen STUB 永久返 ServerError"~~ — **v0.2 已删**
 
 ## 文档分层(给新会话的 agent)
 

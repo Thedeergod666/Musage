@@ -6,11 +6,9 @@
 
 **Musage** = **My** + **Usage**（"我的用量"），MiniMax Token Plan 实时用量监控的桌面应用。
 
-- 起源：ccswitch 3.16 的 MiniMax Token Plan 模板在 **2026-06-01 MiniMax 改 schema 后失效**（测试时报"未返回结果"），本项目自起炉灶
 - 形态：**小悬浮窗 + 系统托盘**（始终置顶、可拖动、双行数据：5h 限额 / 周限额 + 重置时间）
 - 鉴权：仅需 API Key（Bearer Token），不依赖浏览器 session
-- 用户原始问题：[platform.minimaxi.com](https://platform.minimaxi.com/console/usage) 上的"套餐用量"页有数据，但 ccswitch 挂了
-- **2026-06-10**：参考 ccswitch [PR #3518](https://github.com/farion1231/cc-switch/pull/3518) 实现了 percent-based 新 schema 解析
+- 关键 schema 见下方"关键 API"章节（2026-06-01 MiniMax 改 schema，PR 已实现兼容）
 
 ## 技术栈（已拍板）
 
@@ -26,7 +24,7 @@
 | 日志 | tracing + tracing-subscriber |
 | 自动启动 | tauri-plugin-autostart |
 | 前端类型 | `@types/node` 20.x（vite.config.ts 用 `node:url`） |
-| Providers | minimax / deepseek / xiaomimimo / tavily / zenmux / openrouter / kimi / zhipu / stepfun / siliconflow / novita / qwen / claude_official + **用户自定义 New API 中转站 (custom_<uuid>)**（13 内置 + N 动态；v0.1.0 = 6 个，2026-06-14 加 kimi/zhipu，2026-06-15 加 stepfun/siliconflow/novita/qwen/claude_official，**2026-06-15 PR 3 加 CustomSource 动态注册**） |
+| Providers | minimax / deepseek / xiaomimimo / tavily / zenmux / openrouter / kimi / zhipu / stepfun / siliconflow / claude_official + **用户自定义 New API 中转站 (custom_<uuid>)**（11 内置 + N 动态） |
 
 ## 环境与工具链（2026-06-13 实测，跑 `pnpm tauri build` 必看）
 
@@ -313,17 +311,15 @@ D:\Project\Musage\
     └── src/
         ├── main.rs           ← Windows 入口
         ├── lib.rs            ← Tauri Builder + CLI 分流
-        ├── api.rs            ← ★ 核心：拉取 + 宽容解析
         ├── poller.rs         ← tokio interval
         ├── tray.rs           ← 托盘菜单 + 动态图标（合并了原 icon.rs）
         ├── config.rs         ← AppConfig + keys.json 文件存储
-        ├── commands.rs       ← tauri::command 暴露给前端
-        ├── providers/        ← 13 个 provider 实现（v0.1.0 = 6，2026-06-14 +kimi/zhipu，2026-06-16 +5）
+        ├── commands/         ← tauri::command 暴露给前端（子模块 mod.rs + custom_sources.rs + i18n.rs）
+        ├── providers/        ← 11 个 provider 实现
         │   ├── mod.rs / minimax.rs / deepseek.rs / xiaomi.rs
         │   ├── tavily.rs / zenmux.rs / openrouter.rs
         │   ├── kimi.rs / zhipu.rs
         │   ├── stepfun.rs / siliconflow.rs / claude_official.rs
-        │   ├── novita.rs / qwen.rs    ← STUB: 公开 API 无 quota endpoint
         │   ├── parse.rs             ← PR 3: JSON path + num_f64 helpers (14 单测)
         │   └── custom.rs            ← PR 3: CustomSourceSpec + ExtractSpec + CustomSource impl (14 单测)
         ├── config/                  ← PR 3: 拆出子模块
@@ -407,8 +403,8 @@ D:\Project\Musage\
 
 ## 关键文件链接（按重要性）
 
-- **核心 API 解析**：`src-tauri/src/api.rs` ← 改 schema 主要改这里
-- **Provider 实现**：`src-tauri/src/providers/{minimax,deepseek,xiaomi,tavily,zenmux,openrouter,kimi,zhipu,stepfun,siliconflow,claude_official,novita,qwen}.rs`（v0.1.0 = 6，2026-06-14 +kimi/zhipu，2026-06-16 +5 个；novita/qwen 是 STUB）
+- **核心 schema 解析**：`src-tauri/src/providers/minimax.rs`（兼容 2026-06-01 前后的两种 schema）
+- **Provider 实现**：`src-tauri/src/providers/{minimax,deepseek,xiaomi,tavily,zenmux,openrouter,kimi,zhipu,stepfun,siliconflow,claude_official}.rs`
 - **托盘 UI**：`src-tauri/src/tray.rs`（合并了原 icon.rs：动态图标 + 文字绘制 + 菜单 + tooltip）
 - **悬浮窗 UI**：`src/main.ts` + `src/styles.css`
 - **设置面板**：`src/settings/main.ts` + `settings.html`（子模块见 `src/settings/` 21 个文件）

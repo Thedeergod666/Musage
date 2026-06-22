@@ -124,11 +124,10 @@ D:\Codes\Musage\
 │   └── src/
 │       ├── main.rs          # 入口
 │       ├── lib.rs           # Tauri Builder + CLI 分流
-│       ├── api.rs           # ★ 核心：用量拉取 + 宽容 schema 解析
 │       ├── poller.rs        # tokio 后台轮询
 │       ├── tray.rs          # 托盘菜单 + 动态图标（合并了原 icon.rs）
 │       ├── config.rs        # 配置 + keys.json 文件存储
-│       └── commands.rs      # tauri::command 暴露给前端
+│       └── providers/       # 13 quota source 实现（QuotaSource trait）
 └── scripts/
     └── generate_icons.py    # 占位图标生成器（Pillow）
 ```

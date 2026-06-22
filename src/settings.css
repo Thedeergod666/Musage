@@ -346,9 +346,10 @@ code { background: #2a2d35; padding: 1px 4px; border-radius: 3px; font-size: 11p
 .provider-enabled label { margin: 0; color: var(--fg-2); cursor: pointer; }
 
 /* STUB provider (2026-06-17 commit): 公开 API 无 quota endpoint 的
- * provider (novita / qwen) 灰显 + 🚧 STUB 角标,避免用户配 key 后
+ * provider 灰显 + 🚧 STUB 角标,避免用户配 key 后
  * 看到 30 min 退避风暴以为 key 失效。`data-stub="true"` 由后端 is_stub()
- * 决定,前端不写死 source id 列表。 */
+ * 决定,前端不写死 source id 列表。
+ * v0.2 (2026-06-22) 后, novita/qwen 已删, 但 class 仍保留给未来 STUB 复用。 */
 .provider-section--stub {
   opacity: 0.55;
 }

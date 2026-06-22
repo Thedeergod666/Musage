@@ -1133,7 +1133,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
             continue;
         }
         // STUB 默认 disabled: 公开 API 无 quota endpoint 的 provider
-        // (novita / qwen) 用户没显式启用 → 跳过,避免 30 min 退避风暴。
+        // 用户没显式启用 → 跳过,避免 30 min 退避风暴。
         // 用户可在设置面板手动勾选启用,显式覆盖默认值。
         if !src.default_enabled() && !cfg.providers.contains_key(id_str) {
             continue;

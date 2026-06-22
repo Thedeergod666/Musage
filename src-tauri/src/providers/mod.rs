@@ -20,10 +20,8 @@ pub mod custom;
 pub mod deepseek;
 pub mod kimi;
 pub mod minimax;
-pub mod novita;
 pub mod openrouter;
 pub mod parse;
-pub mod qwen;
 pub mod siliconflow;
 pub mod stepfun;
 pub mod tavily;
@@ -532,12 +530,13 @@ pub trait QuotaSource: Send + Sync {
 /// ## 顺序 = 浮窗卡片默认顺序（cfg.provider_order 为空时）
 ///
 /// 历史顺序：minimax / deepseek / xiaomi / tavily / zenmux / openrouter / kimi / zhipu
-/// 2026-06-16 新增 5 个：
+/// 2026-06-16 新增 3 个：
 /// - **stepfun**：Oasis-Token（手动粘贴），Step Plan 套餐用量
 /// - **siliconflow**：Bearer，硅基流动钱包余额
-/// - **novita** / **qwen**：STUB，公开 API 无 quota endpoint，fetch 永久返回
-///   "未支持"错（前端可见，UI 不报错）
 /// - **claude_official**：Cookie，Claude Pro/Max 官方 OAuth 用量
+///
+/// v0.2 (2026-06-22) 砍 2 个：novita / qwen 公开 API 无 quota endpoint，删
+/// STUB（用户看到「未支持」比看不到更沮丧，F1 反模式）。
 pub fn builtin_sources() -> Vec<Box<dyn QuotaSource>> {
     vec![
         Box::new(minimax::MinimaxSource::default()),
@@ -551,8 +550,6 @@ pub fn builtin_sources() -> Vec<Box<dyn QuotaSource>> {
         // 2026-06-16 新增（PR 2）
         Box::new(stepfun::StepfunSource::default()),
         Box::new(siliconflow::SiliconflowSource::default()),
-        Box::new(novita::NovitaSource::default()),
-        Box::new(qwen::QwenSource::default()),
         Box::new(claude_official::ClaudeOfficialSource::default()),
     ]
 }

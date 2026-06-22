@@ -484,8 +484,6 @@ export function apiKeyPlaceholder(id: string): string {
     // 2026-06-16 新增（PR 2）
     case "stepfun":    return "Oasis-Token...";
     case "siliconflow":return "sk-...";
-    case "novita":     return "sk-...";
-    case "qwen":       return "sk-sp-...";
     case "claude_official": return "sessionKey=...（或纯 value）";
     default:           return "...";
   }

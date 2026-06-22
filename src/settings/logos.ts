@@ -21,8 +21,6 @@ import zhipuLogo from "../assets/zhipu-logo.svg";
 import zhipuEnLogo from "../assets/zhipu-en-logo.svg";
 import stepfunLogo from "../assets/stepfun-logo.svg";
 import siliconflowLogo from "../assets/siliconflow-logo.svg";
-import novitaLogo from "../assets/novita-logo.svg";
-import qwenLogo from "../assets/qwen-logo.svg";
 import claudeLogo from "../assets/claude-logo.svg";
 
 export interface ProviderMeta {
@@ -69,8 +67,6 @@ export function buildProviderMeta(): Record<string, ProviderMeta> {
     zhipu_en: { name: t("provider.zhipu_en.name"), logo: zhipuEnLogo, accent: "var(--id-zhipu)" },
     stepfun: { name: t("provider.stepfun.name"), logo: stepfunLogo, accent: "#6366f1" },
     siliconflow: { name: t("provider.siliconflow.name"), logo: siliconflowLogo, accent: "#ff6b35" },
-    novita: { name: t("provider.novita.name"), logo: novitaLogo, accent: "#9333ea" },
-    qwen: { name: t("provider.qwen.name"), logo: qwenLogo, accent: "#615ced" },
     claude_official: { name: t("provider.claude_official.name"), logo: claudeLogo, accent: "#d97706" },
   };
 }

@@ -37,12 +37,6 @@
     "siliconflow": {
       "name": "SiliconFlow"
     },
-    "novita": {
-      "name": "Novita AI"
-    },
-    "qwen": {
-      "name": "Qwen"
-    },
     "claude_official": {
       "name": "Claude 官方"
     }
@@ -537,8 +531,6 @@
     "zhipu": "智谱 GLM Coding Plan 套餐，5h + 周双窗口。<br><br><strong>鉴权特殊</strong>：<code>Authorization</code> 头<strong>不加</strong> <code>Bearer</code> 前缀 —— 直接用裸 key（<code>id.secret</code> 格式）。<br><br>在「区域」下拉里选 CN（<a href=\"https://bigmodel.cn/user-center/projection-meter\" target=\"_blank\" class=\"link-ext\">bigmodel.cn</a>）或 EN（<a href=\"https://z.ai/manage-apikey/subscription\" target=\"_blank\" class=\"link-ext\">z.ai</a>）。两个平台的 key 不通用。",
     "stepfun": "StepFun（阶跃星辰）Step Plan 订阅套餐，5h + 周双窗口。<br><br><strong>鉴权特殊</strong>：用 Oasis-Token（<code>Cookie: Oasis-Token=&lt;value&gt;</code>），不是普通 Bearer。<br><br>获取方法：Chrome 登录 <a href=\"https://platform.stepfun.com\" target=\"_blank\" class=\"link-ext\">platform.stepfun.com</a> → F12 → Network → 任意请求 → 找 <code>Oasis-Token</code> Cookie value 整段复制。<br><br><strong>已知限制</strong>：Oasis-Token 一般 7-30 天过期，过期时（HTTP 401）需重新登录提取。<br><br><strong>暂不支持</strong> 3 步 OAuth 自动登录流（Phase X 补）。",
     "siliconflow": "SiliconFlow（硅基流动）钱包余额，按 CNY 显示。<br><br>从 <a href=\"https://cloud.siliconflow.cn/account/ak\" target=\"_blank\" class=\"link-ext\">cloud.siliconflow.cn</a> 获取 API key。",
-    "novita": "<strong>️ Novita AI 暂未支持</strong> —— 公开 API ref 没有 balance/quota endpoint（2026-06-16 确认）。<br><br>设置面板可启用，但 fetch 永远返回「未支持」错。等官方公开后可参考 SiliconFlow 模式补 do_fetch。",
-    "qwen": "<strong>️ Qwen / DashScope 暂未支持</strong> —— 公开 API 无 quota endpoint（<a href=\"https://github.com/steipete/CodexBar/issues/612\" target=\"_blank\" class=\"link-ext\">CodexBar issue #612</a> 实测确认）。<br><br>设置面板可启用，但 fetch 永远返回「未支持」错。Phase X 走 Coding Plan OAuth flow 补。",
     "claude_official": "Claude Pro / Max 官方 OAuth 用量监控。<br><br><strong>鉴权特殊</strong>：用 Cookie <code>sessionKey=&lt;value&gt;</code>（不是 Bearer API key）。<br><br>获取方法：Chrome 登录 <a href=\"https://claude.ai\" target=\"_blank\" class=\"link-ext\">claude.ai</a> → F12 → Application → Cookies → <code>sessionKey</code> 整段 value 复制（或只粘纯 value 也行，程序自动补 <code>sessionKey=</code> 前缀）。<br><br><strong>已知限制</strong>：<ul style=\"margin: 4px 0; padding-left: 20px;\"><li>sessionKey 约 8h 过期（claude.ai 登录 session 失效）</li><li>OAuth usage API 偶发 429（<a href=\"https://github.com/anthropics/claude-code/issues/31021\" target=\"_blank\" class=\"link-ext\">claude-code#31021</a>），属 Anthropic 端问题，Musage 不重试</li></ul>",
     "xiaomi_cookie": "️ Xiaomi 用量走 dashboard admin API，需要浏览器登录态。<br><br><strong>获取方法</strong>：Chrome 登录 <a href=\"https://platform.xiaomimimo.com/console/plan-manage\" target=\"_blank\" class=\"link-ext\">platform.xiaomimimo.com</a> → F12 → Network → 任意 <code>/api/v1/tokenPlan/*</code> 请求 → 右键 → Copy → Copy request headers → 找 <code>cookie:</code> 这一行整段粘贴到上面。<br><br>Cookie 登出后失效，过期时 (HTTP 401) 错误信息会引导重粘。",
     "default": "API key 存到本机 keys.json。"

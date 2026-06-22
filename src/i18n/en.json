@@ -37,12 +37,6 @@
     "siliconflow": {
       "name": "SiliconFlow"
     },
-    "novita": {
-      "name": "Novita AI"
-    },
-    "qwen": {
-      "name": "Qwen"
-    },
     "claude_official": {
       "name": "Claude"
     }
@@ -537,8 +531,6 @@
     "zhipu": "Zhipu GLM Coding Plan with 5h + weekly windows.<br><br><strong>Auth special</strong>: <code>Authorization</code> header <strong>without</strong> <code>Bearer</code> prefix — use raw key (<code>id.secret</code> format).<br><br>Pick CN (<a href=\"https://bigmodel.cn/user-center/projection-meter\" target=\"_blank\" class=\"link-ext\">bigmodel.cn</a>) or EN (<a href=\"https://z.ai/manage-apikey/subscription\" target=\"_blank\" class=\"link-ext\">z.ai</a>) in the Region dropdown. The two platforms' keys are not interchangeable.",
     "stepfun": "StepFun (阶跃星辰) Step Plan subscription with 5h + weekly windows.<br><br><strong>Auth special</strong>: use Oasis-Token (<code>Cookie: Oasis-Token=&lt;value&gt;</code>), not regular Bearer.<br><br>How to get it: Chrome login <a href=\"https://platform.stepfun.com\" target=\"_blank\" class=\"link-ext\">platform.stepfun.com</a> → F12 → Network → any request → find <code>Oasis-Token</code> cookie value and paste the whole thing.<br><br><strong>Known limit</strong>: Oasis-Token typically expires in 7-30 days; on expiry (HTTP 401) you need to re-login and re-extract.<br><br><strong>Not yet supported</strong>: 3-step OAuth auto-login flow (Phase X).",
     "siliconflow": "SiliconFlow (硅基流动) wallet balance, displayed in CNY.<br><br>Get the API key from <a href=\"https://cloud.siliconflow.cn/account/ak\" target=\"_blank\" class=\"link-ext\">cloud.siliconflow.cn</a>.",
-    "novita": "<strong>️ Novita AI not yet supported</strong> — public API ref has no balance/quota endpoint (confirmed 2026-06-16).<br><br>Can be enabled in settings panel, but fetch will always return \"not supported\". When the public endpoint is available, follow SiliconFlow's pattern to add do_fetch.",
-    "qwen": "<strong>️ Qwen / DashScope not yet supported</strong> — public API has no quota endpoint (confirmed via <a href=\"https://github.com/steipete/CodexBar/issues/612\" target=\"_blank\" class=\"link-ext\">CodexBar issue #612</a>).<br><br>Can be enabled in settings panel, but fetch will always return \"not supported\". Phase X will add Coding Plan OAuth flow.",
     "claude_official": "Claude Pro / Max official OAuth usage monitor.<br><br><strong>Auth special</strong>: use Cookie <code>sessionKey=&lt;value&gt;</code> (not Bearer API key).<br><br>How to get it: Chrome login <a href=\"https://claude.ai\" target=\"_blank\" class=\"link-ext\">claude.ai</a> → F12 → Application → Cookies → <code>sessionKey</code> full value (you can paste just the value, app auto-adds <code>sessionKey=</code> prefix).<br><br><strong>Known limits</strong>: <ul style=\"margin: 4px 0; padding-left: 20px;\"><li>sessionKey expires in ~8h (when claude.ai login session ends)</li><li>OAuth usage API occasionally 429 (<a href=\"https://github.com/anthropics/claude-code/issues/31021\" target=\"_blank\" class=\"link-ext\">claude-code#31021</a>), this is on Anthropic's side, Musage doesn't retry</li></ul>",
     "xiaomi_cookie": "️ Xiaomi usage goes through dashboard admin API, requires browser login state.<br><br><strong>How to get it</strong>: Chrome login <a href=\"https://platform.xiaomimimo.com/console/plan-manage\" target=\"_blank\" class=\"link-ext\">platform.xiaomimimo.com</a> → F12 → Network → any <code>/api/v1/tokenPlan/*</code> request → right-click → Copy → Copy request headers → find <code>cookie:</code> row and paste the whole line above.<br><br>Cookie expires when logged out; on expiry (HTTP 401) error message will guide you to re-paste.",
     "default": "API key saved to local keys.json."

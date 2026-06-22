@@ -42,8 +42,6 @@ export const PROVIDER_IDS = [
   // 2026-06-16 新增（PR 2）
   "stepfun",
   "siliconflow",
-  "novita",
-  "qwen",
   "claude_official",
 ] as const;
 

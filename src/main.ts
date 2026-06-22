@@ -23,8 +23,6 @@ import zhipuLogo from "./assets/zhipu-logo.svg?url";
 import zhipuEnLogo from "./assets/zhipu-en-logo.svg?url";
 import stepfunLogo from "./assets/stepfun-logo.svg?url";
 import siliconflowLogo from "./assets/siliconflow-logo.svg?url";
-import novitaLogo from "./assets/novita-logo.svg?url";
-import qwenLogo from "./assets/qwen-logo.svg?url";
 import claudeLogo from "./assets/claude-logo.svg?url";
 import "./styles.css";
 
@@ -57,8 +55,6 @@ function buildProviderMeta(): Record<string, { name: string; logo: string; accen
     "Z.ai": { name: t("provider.zhipu_en.name"), logo: zhipuEnLogo, accent: "#2D2D2D" },
     stepfun: { name: t("provider.stepfun.name"), logo: stepfunLogo, accent: "#6366f1" },
     siliconflow: { name: t("provider.siliconflow.name"), logo: siliconflowLogo, accent: "#ff6b35" },
-    novita: { name: t("provider.novita.name"), logo: novitaLogo, accent: "#9333ea" },
-    qwen: { name: t("provider.qwen.name"), logo: qwenLogo, accent: "#615ced" },
     claude_official: { name: t("provider.claude_official.name"), logo: claudeLogo, accent: "#d97706" },
   };
 }

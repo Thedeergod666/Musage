@@ -98,7 +98,7 @@ pub fn start(app: AppHandle) {
                     continue;  // 用户关了，不拉
                 }
                 // STUB 默认 disabled: 公开 API 无 quota endpoint 的 provider
-                // (如 novita / qwen) 拉一次就是 30 min 退避。用户没显式
+                // 拉一次就是 30 min 退避。用户没显式
                 // 启用 = 跳过,避免浮窗假死。
                 if !src.default_enabled() && !cfg.providers.contains_key(id_str) {
                     continue;

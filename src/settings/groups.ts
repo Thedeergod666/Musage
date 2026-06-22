@@ -1,12 +1,12 @@
 // 设置面板 provider 分组
 //
-// PR 3 起把 13+ 个 provider 按用途分组显示 + 可折叠 + 顶部搜索。
+// PR 3 起把 11+ 个 provider 按用途分组显示 + 可折叠 + 顶部搜索。
 // 复用 `el()` 工具（utils.ts），不引入新依赖。
 //
 // ## 分组定义
 //
-// - `token_plan`：Token Plan 套餐（5h/周百分比窗口）—— minimax / kimi / zhipu / qwen
-// - `balance`：余额查询（钱包数字）—— deepseek / siliconflow / novita / stepfun / openrouter
+// - `token_plan`：Token Plan 套餐（5h/周百分比窗口）—— minimax / kimi / zhipu
+// - `balance`：余额查询（钱包数字）—— deepseek / siliconflow / stepfun / openrouter
 // - `official`：官方/特殊（Cookie 鉴权 or 第三方）—— tavily / zenmux / claude_official
 // - `xiaomi`：Xiaomi MiMo 单独一组（cookie 登录流程特殊）
 // - `custom`：用户自定义 New API（id 以 `custom_` 开头）
@@ -38,13 +38,13 @@ export function buildGroupDefinitions(): Record<GroupKey, GroupDef> {
     token_plan: {
       title: t("groups.token_plan_title"),
       icon: "wallet",
-      predicate: (m) => ["minimax", "kimi", "zhipu", "qwen"].includes(m.id),
+      predicate: (m) => ["minimax", "kimi", "zhipu"].includes(m.id),
     },
     balance: {
       title: t("groups.balance_title"),
       icon: "piggy-bank",
       predicate: (m) =>
-        ["deepseek", "siliconflow", "novita", "stepfun", "openrouter"].includes(m.id),
+        ["deepseek", "siliconflow", "stepfun", "openrouter"].includes(m.id),
     },
     official: {
       title: t("groups.official_title"),

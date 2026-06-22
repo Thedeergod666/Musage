@@ -265,19 +265,19 @@ impl UserRegion {
         match self {
             UserRegion::Cn => &[
                 "minimax", "deepseek", "xiaomimimo", "kimi", "zhipu",
-                "qwen", "openrouter", "tavily", "zenmux",
-                "stepfun", "siliconflow", "novita", "claude_official",
+                "openrouter", "tavily", "zenmux",
+                "stepfun", "siliconflow", "claude_official",
             ],
             UserRegion::Global => &[
                 "openrouter", "claude_official", "tavily", "deepseek",
                 "zenmux", "kimi", "siliconflow", "minimax",
-                "zhipu", "stepfun", "novita", "qwen", "xiaomimimo",
+                "zhipu", "stepfun", "xiaomimimo",
             ],
             // Custom：理论上不该被调用（set_region 守卫），但兜底走 Cn
             UserRegion::Custom => &[
                 "minimax", "deepseek", "xiaomimimo", "kimi", "zhipu",
-                "qwen", "openrouter", "tavily", "zenmux",
-                "stepfun", "siliconflow", "novita", "claude_official",
+                "openrouter", "tavily", "zenmux",
+                "stepfun", "siliconflow", "claude_official",
             ],
         }
     }

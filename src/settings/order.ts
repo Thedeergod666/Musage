@@ -60,20 +60,20 @@ export function canonicalizeOrder(order: string[]): ProviderId[] {
     for (const id of order) {
       if (!seen.has(id)) { seen.add(id); dedup.push(id); }
     }
-    return dedup as ProviderId[];
+    return dedup;
   }
   const seen = new Set<string>();
   const ordered: ProviderId[] = [];
   for (const id of order) {
     if (knownSet.has(id) && !seen.has(id)) {
       seen.add(id);
-      ordered.push(id as ProviderId);
+      ordered.push(id);
     }
   }
   for (const id of known) {
     if (!seen.has(id)) {
       seen.add(id);
-      ordered.push(id as ProviderId);
+      ordered.push(id);
     }
   }
   return ordered;
@@ -664,7 +664,7 @@ function buildOrderItems(list: HTMLOListElement) {
   // 按 enabled 状态加进对应段（首次启动时 order 为空、但每个 provider 都有 enabled）。
   // PR 3 加 CustomSource 后这个循环自动接住（known list 在 renderOrderSection 时更新）。
   for (const id of getCurrentKnownIds()) {
-    if (currentProviderOrder.includes(id as ProviderId)) continue;
+    if (currentProviderOrder.includes(id)) continue;
     if (isEnabledId(id)) enabledIds.push(id);
     else disabledIds.push(id);
   }
@@ -761,7 +761,7 @@ function currentTotalRows(): number {
   const orderSet = new Set(currentProviderOrder);
   let extra = 0;
   for (const id of known) {
-    if (!orderSet.has(id as ProviderId)) extra++;
+    if (!orderSet.has(id)) extra++;
   }
   return currentProviderOrder.length + extra;
 }
@@ -904,7 +904,7 @@ function refreshPosLabels() {
   }
   const orderSet = new Set(currentProviderOrder);
   for (const id of getCurrentKnownIds()) {
-    if (orderSet.has(id as ProviderId)) continue;
+    if (orderSet.has(id)) continue;
     if (isEnabledId(id)) enabledIds.push(id);
     else disabledIds.push(id);
   }

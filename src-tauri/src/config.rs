@@ -47,6 +47,23 @@ pub(crate) fn save_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+/// mutex poison recover helper —— 替换散落 12+ 处的
+/// `.lock().unwrap_or_else(|e| { tracing::warn!(...); e.into_inner() })` 模板。
+///
+/// v0.2 (2026-06-22) 抽出: mutex 中毒在 async runtime 上下文 panic 会永久
+/// 阻止后续 lock 调用 (Mutex 中毒后所有 .lock() 都返 Err), 用 into_inner()
+/// 恢复 + warn log 是项目里 12 处一致的做法。抽 helper 后, 改 log 格式 /
+/// 改恢复策略只动一处。
+///
+/// # 用法
+/// ```ignore
+/// let _g = save_lock().lock().unwrap_or_else(lock_recover);
+/// ```
+pub(crate) fn lock_recover<T>(poisoned: std::sync::PoisonError<T>) -> T {
+    tracing::warn!("mutex poisoned, recovering");
+    poisoned.into_inner()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderConfig {
     pub enabled: bool,
@@ -710,7 +727,7 @@ impl AppConfig {
     pub fn save(&self) -> Result<(), String> {
         // save_lock 串行化并发 save：geom debouncer (500ms tick) + 用户改设置同时触发
         // 时，read-modify-write race 会让 last writer 覆盖另一方的内容。Mutex<()> 极小。
-        let _g = save_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _g = save_lock().lock().unwrap_or_else(lock_recover);
         let path = config_path()?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -874,10 +891,7 @@ pub fn load_credential_for_id(id: &str) -> Result<Option<Credentials>, String> {
 }
 
 pub fn save_credential_for_id(id: &str, cred: &Credentials) -> Result<(), String> {
-    let _g = save_lock().lock().unwrap_or_else(|e| {
-        tracing::warn!("save_credential_for_id save_lock poisoned, recovering");
-        e.into_inner()
-    });
+    let _g = save_lock().lock().unwrap_or_else(lock_recover);
     let mut map = read_keys()?; // F3 fix
                                 // 防御性写法:分别处理 api_key / cookie 两个字段。
                                 // 旧实现的 match 在 (Some, Some) 时只插 api_key,cookie 被静默丢弃——
@@ -901,10 +915,7 @@ pub fn save_credential_for_id(id: &str, cred: &Credentials) -> Result<(), String
 }
 
 pub fn delete_credential_for_id(id: &str) -> Result<(), String> {
-    let _g = save_lock().lock().unwrap_or_else(|e| {
-        tracing::warn!("delete_credential_for_id save_lock poisoned, recovering");
-        e.into_inner()
-    });
+    let _g = save_lock().lock().unwrap_or_else(lock_recover);
     let mut map = read_keys()?; // F3 fix
     map.remove(id);
     map.remove(&format!("{id}:cookie"));

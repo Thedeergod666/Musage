@@ -8,7 +8,6 @@ import type {
   AppConfig,
   CustomSourceSpec,
   LogEntry,
-  ProviderId,
   ProviderOverrides,
   ProviderSnapshot,
   QuotaSnapshot,
@@ -90,43 +89,11 @@ export async function getSourceCredential(
   return invoke<string | null>("get_source_credential", { id });
 }
 
-// ── 凭据（旧 Provider enum-based API，保留给老的 3 个 provider）────
-
-export async function hasApiKeyFor(provider: ProviderId): Promise<boolean> {
-  return invoke<boolean>("has_api_key_for", { provider });
-}
-
-export async function setApiKeyFor(
-  provider: ProviderId,
-  key: string,
-): Promise<void> {
-  await invoke("set_api_key_for", { provider, key });
-}
-
-export async function deleteApiKeyFor(provider: ProviderId): Promise<void> {
-  await invoke("delete_api_key_for", { provider });
-}
-
-export async function getApiKeyFor(
-  provider: ProviderId,
-): Promise<string | null> {
-  return invoke<string | null>("get_api_key_for", { provider });
-}
-
-export async function hasCookieFor(provider: ProviderId): Promise<boolean> {
-  return invoke<boolean>("has_cookie_for", { provider });
-}
-
-export async function setCookieFor(
-  provider: ProviderId,
-  cookie: string,
-): Promise<void> {
-  await invoke("set_cookie_for", { provider, cookie });
-}
-
-export async function deleteCookieFor(provider: ProviderId): Promise<void> {
-  await invoke("delete_cookie_for", { provider });
-}
+// v0.2 (2026-06-22) 删除 7 个旧 enum-based IPC wrapper:
+// hasApiKeyFor / setApiKeyFor / deleteApiKeyFor / getApiKeyFor /
+// hasCookieFor / setCookieFor / deleteCookieFor
+// 后端 IPC 已删 (PR 5 合并到 PR 4), 前端必须改用 setSourceCredential /
+// hasSourceCredential / deleteSourceCredential / getSourceCredential
 
 // ── 浮窗 / 窗口控制 ─────────────────────────────────────────
 

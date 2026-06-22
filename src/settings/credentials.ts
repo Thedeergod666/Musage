@@ -7,22 +7,15 @@
 //    当前保留两套是因为 enum 路径还要支持 cookie 模式
 
 import {
-  deleteApiKeyFor,
-  deleteCookieFor,
   deleteSourceCredential,
-  getApiKeyFor,
   getSourceCredential,
   getXiaomiDisplayMode,
-  hasApiKeyFor,
-  hasCookieFor,
   hasSourceCredential,
-  setApiKeyFor,
-  setCookieFor,
   setSourceCredential,
   setXiaomiDisplayMode,
   refreshNow,
 } from "./api";
-import { $, el, flash } from "./utils";
+import { el, flash } from "./utils";
 import { t } from "../i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -37,111 +30,16 @@ function renderHelp(html: string): HTMLElement {
   return div;
 }
 
-// ── 旧 enum-based API（minimax / deepseek / xiaomimimo api_key）──
+// v0.2 (2026-06-22) 删除 8 个旧 enum-based helper (loadKeyStatus / saveKey /
+// deleteKey / copyKey / loadCookieStatus / saveCookie / deleteCookie):
+//   - Rust 端 has_api_key_for / set_api_key_for / delete_api_key_for / get_api_key_for /
+//     has_cookie_for / set_cookie_for / delete_cookie_for 已删 (PR 5 合并到 PR 4)
+//   - 前端必须改用 setSourceCredential(id, value) / hasSourceCredential(id) /
+//     deleteSourceCredential(id) / getSourceCredential(id)
+//   - 新路径逻辑: saveCredentialAction / deleteCredentialAction / copyCredentialAction
+//     (文件下方) 走统一按钮事件委托, 不再按 provider id 写死
 
-export async function loadKeyStatus(provider: ProviderId) {
-  const has = await hasApiKeyFor(provider);
-  const el = $(`#api-key-status-${provider}`);
-  el.textContent = has
-    ? t("credentials.cookie_status_saved")
-    : t("credentials.cookie_status_unset");
-  el.className = `status ${has ? "ok" : ""}`;
-}
-
-export async function saveKey(provider: ProviderId) {
-  const input = $(`#api-key-${provider}`) as HTMLInputElement;
-  const key = input.value.trim();
-  if (!key) {
-    flash(t("credentials.flash_paste_key"), true);
-    return;
-  }
-  try {
-    await setApiKeyFor(provider, key);
-    input.value = "";
-    await loadKeyStatus(provider);
-    flash(t("credentials.flash_saved_key", { name: t(`provider.${provider}.name`) }));
-    // 立即拉一次
-    const { refreshNow } = await import("./api");
-    await refreshNow();
-  } catch (e) {
-    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
-  }
-}
-
-export async function deleteKey(provider: ProviderId) {
-  if (!confirm(t("credentials.confirm_delete_key", { name: t(`provider.${provider}.name`) }))) return;
-  // **2026-06-20 audit**：之前 await deleteApiKeyFor 没 try/catch，IPC 拒绝时
-  // loadKeyStatus 仍跑（显示 stale「已保存」），用户无反馈。补 catch + flash。
-  try {
-    await deleteApiKeyFor(provider);
-    await loadKeyStatus(provider);
-    flash(t("credentials.flash_deleted"));
-  } catch (e) {
-    flash(t("settings.providers.delete_failed", { err: String(e) }), true);
-  }
-}
-
-// 从 keys.json 读明文 → 写剪贴板。用完即弃，不在 JS 侧长期保存。
-export async function copyKey(provider: ProviderId) {
-  try {
-    const key = await getApiKeyFor(provider);
-    if (!key) {
-      flash(t("credentials.flash_unset_key", { name: t(`provider.${provider}.name`) }), true);
-      return;
-    }
-    await navigator.clipboard.writeText(key);
-    flash(t("credentials.flash_copy_ok", { name: t(`provider.${provider}.name`) }));
-  } catch (e) {
-    flash(t("credentials.flash_copy_failed", { err: String(e) }), true);
-  }
-}
-
-// ── Cookie（xiaomimimo 单独） ─────────────────────────────────
-
-export async function loadCookieStatus(provider: ProviderId) {
-  const has = await hasCookieFor(provider);
-  const el = document.getElementById(`cookie-status-${provider}`);
-  if (el) {
-    el.textContent = has
-      ? t("credentials.cookie_status_saved")
-      : t("credentials.cookie_status_unset");
-    el.className = `status ${has ? "ok" : ""}`;
-  }
-}
-
-export async function saveCookie(provider: ProviderId) {
-  const input = document.getElementById(
-    `cookie-${provider}`,
-  ) as HTMLTextAreaElement | null;
-  if (!input) return;
-  const cookie = input.value.trim();
-  if (!cookie) {
-    flash(t("credentials.flash_paste_cookie"), true);
-    return;
-  }
-  try {
-    await setCookieFor(provider, cookie);
-    input.value = "";
-    await loadCookieStatus(provider);
-    flash(t("credentials.flash_saved_cookie", { name: t(`provider.${provider}.name`) }));
-  } catch (e) {
-    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
-  }
-}
-
-export async function deleteCookie(provider: ProviderId) {
-  if (!confirm(t("credentials.confirm_delete_cookie", { name: t(`provider.${provider}.name`) }))) return;
-  // 同 deleteKey：补 try/catch + flash（2026-06-20 audit）
-  try {
-    await deleteCookieFor(provider);
-    await loadCookieStatus(provider);
-    flash(t("credentials.flash_deleted_cookie"));
-  } catch (e) {
-    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
-  }
-}
-
-// ── 新 id-based API（tavily / zenmux） ────────────────────────
+// ── 统一 id-based 凭据操作（动态 panel 按钮事件委托走这里）──
 
 async function loadIdKeyStatus(id: string) {
   const has = await hasSourceCredential(id);

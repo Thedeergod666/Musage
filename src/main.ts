@@ -217,8 +217,9 @@ function isTransientError(kind: string | null | undefined): boolean {
 /// 算出来的"可见结构"就跟实际 DOM 脱节 → 要么漏 fit 要么白 fit。
 /// H7 fix: lastGoodSnap key 从 p.provider 改为 (p.source_id ?? p.provider)，
 /// 与 render 主路径的 id 路由(line 290/483/552)保持一致。
-/// 之前 p.provider 对 CustomSource 全是 Provider::Minimax 占位值，
-/// 多个 CustomSource 共享同一 key → set() 互相覆盖，get() 拿到错的 snapshot。
+/// v0.2 前 CustomSource 的 p.provider 全是 "minimax" 占位, 多个 CustomSource
+/// 共享同一 key → set() 互相覆盖, get() 拿到错的 snapshot。
+/// v0.2 删 enum 后 p.provider = "minimax" (历史残留), p.source_id 才是真 id。
 function snapKey(p: ProviderSnapshot): string {
   return (p.source_id ?? p.provider) as string;
 }

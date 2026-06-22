@@ -297,8 +297,8 @@ fn parse(raw: &Value, region: ZhipuRegion) -> Result<ProviderSnapshot, FetchErro
         .map(|s| s.to_string());
 
     Ok(ProviderSnapshot {
-        // 沿用 Provider::Minimax 是 Zhipu 还没有自己的 enum 变体；
-        // source_id 才是前端应该用的字段。
+        // provider 字段写 "minimax" 是 v0.2 前的 enum 占位残留 —— 现在前端
+        // 走 source_id ("zhipu") 路由, 这个字段只是老 JSON 反序列化兜底
         provider: "minimax".to_string(),
         success: true,
         rows,

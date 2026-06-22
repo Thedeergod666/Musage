@@ -285,8 +285,8 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
 
     let success = !rows.is_empty();
     Ok(ProviderSnapshot {
-        // 复用 Provider::Minimax 是因为 Tavily 还没单独的 enum 变体；
-        // source_id 才是前端应该用的字段。Phase 2 改成自有变体。
+        // provider 字段写 "minimax" 是 v0.2 前的 enum 占位残留 —— 现在前端
+        // 走 source_id ("tavily") 路由, 这个字段只是老 JSON 反序列化兜底
         provider: "minimax".to_string(),
         success,
         rows,

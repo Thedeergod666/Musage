@@ -217,8 +217,10 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     }
 
     Ok(ProviderSnapshot {
-        // 沿用 "minimax" 占位（v0.2 前是 Provider::Minimax enum 变体）。
-        // 前端走 source_id 路由，provider 字段保留仅给老 JSON 反序列化兼容。
+        // provider 字段: v0.2 删 enum 后从 Provider::Minimax 改成
+        // "minimax" string 占位。前端走 source_id ("kimi") 路由,
+        // 这个字段仅给老 JSON 反序列化兜底 (#[serde(default)] 让空 / 缺失
+        // 字段不报错)
         provider: "minimax".to_string(),
         success: true,
         rows,

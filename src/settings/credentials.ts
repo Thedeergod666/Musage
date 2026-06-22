@@ -1,10 +1,12 @@
 // 凭据 load / save / delete / copy
 //
-// 3 条路径：
-// 1. 旧 API（按 Provider enum）：minimax / deepseek 走 API key；xiaomimimo 走 cookie
-// 2. 新 API（按 string id）：tavily / zenmux 走 API key
-// 3. 同样的字符串 id 路径理论上也覆盖 minimax / deepseek（Phase 2+ 会切），
-//    当前保留两套是因为 enum 路径还要支持 cookie 模式
+// v0.2 (2026-06-22): 所有 provider 走统一 string-based API:
+//   hasSourceCredential(id) / setSourceCredential(id, value, field?) /
+//   deleteSourceCredential(id) / getSourceCredential(id)
+//
+// 旧 enum-based IPC (hasApiKeyFor / setApiKeyFor 等) 和 8 个旧 helper
+// (loadKeyStatus / saveKey / deleteKey / copyKey / loadCookieStatus / saveCookie
+//  / deleteCookie) 已在 v0.2 删除 —— 见 PR 5 + PR 4 (合并到 v0.2.0 commit)。
 
 import {
   deleteSourceCredential,

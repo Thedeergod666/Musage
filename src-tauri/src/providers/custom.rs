@@ -10,13 +10,13 @@
 //! - [`ExtractSpec`] 是 3 选 1 的提取模板（New API / 余额 / 自定义 JSON path）
 //! - [`CustomSource`] 是 `QuotaSource` trait 的运行时实现，包一个 spec
 //!
-//! ## Provider 字段占位（重要）
+//! ## Provider 字段（v0.2）
 //!
-//! `ProviderSnapshot.provider` 字段类型是 [`super::Provider`] enum（只有 3 个
-//! 变体：Minimax / Deepseek / Xiaomimimo），CustomSource 没有自己的变体。
-//! 为了让序列化层编译，我们写 `Provider::Minimax` 占位 —— **前端一律用
-//! `source_id` 路由**，不读 `provider` 字段（main.ts:411-445 走 `id = source_id ??
-//! provider` 逻辑，source_id 存在时优先）。
+//! v0.1 时 CustomSource 在 `ProviderSnapshot.provider` 写 `Provider::Minimax`
+//! 占位（Provider enum 只有 3 变体）。v0.2 (2026-06-22) 删 enum 后, 这个字段
+//! 改成 `String` 默认 `""`。CustomSource 写 `"minimax"` 是**历史残留** ——
+//! 前端走 `source_id` 路由, 不读 `provider` 字段, 所以无功能影响。
+//! 见 [memory/tavily-enum-placeholder-footgun](file:///Users/wyh/.claude/projects/-Users-wyh-Project-Musage/memory/tavily-enum-placeholder-footgun.md)
 //!
 //! ## 持久化
 //!

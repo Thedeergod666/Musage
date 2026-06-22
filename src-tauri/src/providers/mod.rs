@@ -275,14 +275,9 @@ pub struct ProviderSnapshot {
 impl ProviderSnapshot {
     /// 构造一个空的成功/失败快照（错误态用）
     ///
-    /// `id` 是 source 的真实字符串 id（"minimax" / "tavily"），不是 `Provider` enum
-    /// 变体名。原因：Tavily 等 Phase 1 起的新 source 没有自己的 enum 变体，
-    /// `provider_from_id` 拿到 Tavily 会 fallback 到 `Provider::Minimax` —— 旧实现
-    /// 直接用 `provider.id_str()` 写 `source_id` 会把 Tavily 错标成 "minimax"，
-    /// 前端 PROVIDER_META 查表时 logo + 名字都串了。
-    /// 现在从 builtin_sources 里查真正的 display_name，没有就 fallback 到 enum。
-    ///
-    /// PR 3 起 `async` —— [`find_source`] 改成 async（customs 在 `AppState` 里）。
+    /// `id` 是 source 的真实字符串 id（"minimax" / "tavily" / `custom_<uuid>`）。
+    /// display_name 通过 [`find_source`] 异步查 builtin_sources + custom_sources 拿到,
+    /// 查不到就 None (前端会 fallback 到首字母 + accent 色 logo)。
     ///
     /// `transient` 参数（**L8 fix 2026-06-19**）：true = 这个 snapshot 是 placeholder
     /// 而非真实错误，浮窗跳过错误 UI 渲染。默认 false = 真实错误。

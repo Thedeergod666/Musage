@@ -219,8 +219,8 @@ fn parse(raw: &serde_json::Value) -> Result<ProviderSnapshot, FetchError> {
     }];
 
     Ok(ProviderSnapshot {
-        // 沿用 Provider::Minimax 占位 —— SiliconFlow 没有自己的 enum 变体。
-        // 前端应该用 source_id 字段查 PROVIDER_META。
+        // provider 字段写 "minimax" 是 v0.2 前的 enum 占位残留 —— 前端
+        // 走 source_id ("siliconflow") 路由, 这个字段只是老 JSON 反序列化兜底
         provider: "minimax".to_string(),
         success: true,
         rows,

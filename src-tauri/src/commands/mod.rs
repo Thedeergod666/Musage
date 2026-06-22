@@ -1,10 +1,12 @@
 //! 暴露给前端的 tauri commands
 //!
-//! ## 双轨制（Phase 1 迁移期）
+//! ## 架构 (v0.2)
 //!
-//! 旧 API（`set_api_key_for(provider: Provider, ...)`）继续存在，给老的 3 个
-//! provider（MiniMax / DeepSeek / Xiaomi）用。新 API（`set_source_credential(id: String, ...)`）
-//! 走字符串 id，给新的 / 未来的 source（含 Tavily）用。前端优先用新 API。
+//! 所有 IPC 走字符串 source id（[`set_source_credential`] / [`get_source_credential`] /
+//! [`has_source_credential`] / [`delete_source_credential`] / [`list_sources`]）。
+//! v0.1 时代有 7 个 enum-based IPC (set_api_key_for / set_cookie_for 等),
+//! 已在 v0.2 (2026-06-22) 硬删除 —— 这是 BREAKING 变更, 升级用户
+//! 必须把第三方脚本/插件切到新 API。
 //!
 //! ## 关键路径
 //!
@@ -1322,10 +1324,12 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
         .source_id
         .clone()
         .unwrap_or_else(|| id.to_string());
-    // H10 修复：只按 source_id 匹配 —— 旧实现 fallback 到 provider.id_str()
-    // 会跟 Tavily 这类「复用 Provider::Minimax 占位」的 source 撞：per-provider
-    // poller 跟全量 refresh_inner 并发时，Tavily 的 fetch 找到 minimax 位置并
-    // 替换，全量后又加一个新 Tavily → 浮窗两个 Tavily 卡片。
+    // H10 修复：只按 source_id 匹配 —— v0.2 删 enum 前, 旧实现 fallback
+    // 到 provider.id_str() 会跟 Tavily / ZenMux / Kimi 等「provider 字段
+    // 全是 Provider::Minimax 占位」的 source 撞：per-provider poller 跟
+    // 全量 refresh_inner 并发时，Tavily 的 fetch 找到 minimax 位置替换，
+    // 全量后又加一个新 Tavily → 浮窗两个 Tavily 卡片。v0.2 删 enum 后
+    // provider 字段保留但内容是 source id 本身, 仍按 source_id 匹配最安全。
     if let Some(idx) = snap
         .providers
         .iter()

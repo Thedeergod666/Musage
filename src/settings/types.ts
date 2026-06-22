@@ -1,13 +1,10 @@
 // 设置面板共享类型
 //
-// 历史包袱：`ProviderId` 联合保留了 5 个 provider（minimax/deepseek/
-// xiaomimimo/tavily/zenmux）。Phase 2 起新 source 走 registry id（string），
-// 旧 enum 路径只在 has_/set_/delete_/get_api_key_for 等命令里继续用。
-//
-// **PR 3 起** `ProviderId` 改成 `string`：用户自定义 source 的 id 是动态的
-//（`custom_<uuid>`），没法塞进固定 literal union。旧 `ProviderId` 联合里
-// 那种"as ProviderId" cast 在 26+ 处需要清理，TypeScript 编译错会指向
-// 它们。新 source id 走 `SourceMeta.id: string`（一直是 string）。
+// v0.2 (2026-06-22) 后, `ProviderId` = `string` (是类型别名, 不是 enum)。
+// 所有 source id 都走字符串, 包括内置 provider ("minimax" / "tavily" /...)
+// 和用户自定义 source ("custom_<uuid>")。旧 enum IPC 已全部删除,
+// 前端走 setSourceCredential / hasSourceCredential / deleteSourceCredential
+// 统一 API。
 
 export type ProviderId = string;
 

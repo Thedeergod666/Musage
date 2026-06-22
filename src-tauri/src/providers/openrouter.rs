@@ -301,7 +301,7 @@ fn parse_credits(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     }];
 
     Ok(ProviderSnapshot {
-        provider: super::Provider::Minimax,
+        provider: "minimax".to_string(),
         success: true,
         rows,
         error: None,
@@ -366,7 +366,7 @@ fn parse_key(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     }
 
     Ok(ProviderSnapshot {
-        provider: super::Provider::Minimax,
+        provider: "minimax".to_string(),
         success: true,
         rows,
         error: None,

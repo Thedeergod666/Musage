@@ -336,7 +336,7 @@ fn parse_payg(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     }
 
     Ok(ProviderSnapshot {
-        provider: super::Provider::Minimax, // 沿用 Tavily 模式：复用 Minimax 占位
+        provider: "minimax".to_string(), // v0.2: 沿用历史 "minimax" 占位（前端走 source_id）
         success: true,
         rows,
         error: None,
@@ -412,7 +412,7 @@ fn parse_subscription(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     };
 
     Ok(ProviderSnapshot {
-        provider: super::Provider::Minimax,
+        provider: "minimax".to_string(),
         success: true,
         rows,
         error: None,

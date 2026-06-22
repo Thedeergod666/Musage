@@ -1,6 +1,6 @@
 //! Provider 多源抽象
 //!
-//! ## 架构（ROADMAP Phase 1 起）
+//! ## 架构（ROADMAP Phase 1 起，v0.2 完成 enum 清理）
 //!
 //! 每个用量源是 [`QuotaSource`] trait 的一个实现，由 [`builtin_sources`] 注册表
 //! 集中管理。新增一个 source 不再需要改 commands.rs 的 `match` 块：
@@ -9,11 +9,11 @@
 //! 2. 在 [`builtin_sources`] 里 `Box::new(XxxSource::default())`
 //! 3. 在 `config.json` 的 `providers` 字段下加默认配置
 //!
-//! ## 向后兼容
+//! ## v0.2 状态（2026-06-22）
 //!
-//! 旧的 [`Provider`] enum（minimax / deepseek / xiaomimimo）继续存在，
-//! 旧 [`ProviderSnapshot`] / [`ProviderImpl`] 也保留别名，commands.rs 走
-//! [`builtin_sources`] 路径，但 `dump` CLI 和 `set_api_key_for` 仍按 enum 走。
+//! - `Provider` enum 已删（之前 35 处占位 + 双轨 IPC 已全部走 `source_id` 字符串路由）
+//! - `ProviderImpl` trait 已删（v0.1 老 trait，新代码统一用 `QuotaSource`）
+//! - `ProviderSnapshot.provider` 字段保留（默认 `""`），仅给老 JSON 反向兼容用
 
 pub mod claude_official;
 pub mod custom;
@@ -42,58 +42,6 @@ use std::pin::Pin;
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
-
-/// 厂商标识。序列化成稳定字符串（不依赖 enum 顺序）。
-///
-/// **新代码请优先用 `&str` id**（如 `"minimax"` / `"tavily"`），让 source 注册表
-/// 成为唯一真相源。本 enum 留着是因为 `config.rs` / `dump` CLI / 已有的 IPC 命令
-/// 还在用，加新 source 不需要改这一层。
-///
-/// Tavily / ZenMux 等 Phase 1 起新增的 source **不进 enum**，走
-/// [`QuotaSource`] trait + [`builtin_sources`] 注册表。
-#[derive(Debug, Default, Clone, Copy, Hash, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Provider {
-    #[default]
-    Minimax,
-    Deepseek,
-    Xiaomimimo,
-}
-
-impl Provider {
-    pub fn id_str(&self) -> &'static str {
-        match self {
-            Provider::Minimax => "minimax",
-            Provider::Deepseek => "deepseek",
-            Provider::Xiaomimimo => "xiaomimimo",
-        }
-    }
-
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            Provider::Minimax => "MiniMax",
-            Provider::Deepseek => "DeepSeek",
-            Provider::Xiaomimimo => "Xiaomi MiMo",
-        }
-    }
-
-    /// 已知 provider 列表（按固定顺序）
-    pub fn all() -> [Provider; 3] {
-        [Provider::Minimax, Provider::Deepseek, Provider::Xiaomimimo]
-    }
-
-    /// 把 provider id 字符串映射到 `Provider` enum。未知 id 统一 fallback
-    /// 到 `Provider::Minimax`（占位，因为 Tavily 等 Phase 1 起的新 source
-    /// 没有自己的 enum 变体；浮窗用 `source_id` 路由，enum 只用于兼容旧字段）。
-    pub fn from_id_str(id: &str) -> Provider {
-        match id {
-            "minimax" => Provider::Minimax,
-            "deepseek" => Provider::Deepseek,
-            "xiaomimimo" => Provider::Xiaomimimo,
-            _ => Provider::Minimax,
-        }
-    }
-}
 
 // ── 凭据（统一存放 api_key + cookie）────────────────────────────────
 
@@ -284,8 +232,12 @@ pub enum RowKind {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderSnapshot {
-    /// 兼容字段：序列化成 `"minimax"` 等。新代码可以忽略。
-    pub provider: Provider,
+    /// 兼容字段（v0.2 BREAKING）：之前是 `Provider` enum，序列化为
+    /// `"minimax"` 等字符串。enum 已删, 改为 `String` (默认空串)。
+    /// 旧 v0.1.x snapshot JSON 仍能反序列化（`#[serde(default)]` 让缺失字段
+    /// 不报错），新代码一律读 `source_id`，不要用这个字段。
+    #[serde(default)]
+    pub provider: String,
     /// 兼容字段：true = 成功拉到至少一行 row
     pub success: bool,
     pub rows: Vec<QuotaRow>,
@@ -334,9 +286,11 @@ impl ProviderSnapshot {
     ///
     /// `transient` 参数（**L8 fix 2026-06-19**）：true = 这个 snapshot 是 placeholder
     /// 而非真实错误，浮窗跳过错误 UI 渲染。默认 false = 真实错误。
+    ///
+    /// v0.2 (2026-06-22): 删 `provider: Provider` 参数, 直接用 `id` 字符串。
+    /// 之前 enum 占位是给 source_id 路由做 fallback, 删 enum 后无意义。
     pub async fn empty_error(
         state: &crate::AppState,
-        provider: Provider,
         id: &str,
         kind: ErrorKind,
         error: String,
@@ -344,10 +298,11 @@ impl ProviderSnapshot {
     ) -> Self {
         let display_name = find_source(state, id)
             .await
-            .map(|s| s.display_name().to_string())
-            .unwrap_or_else(|| provider.display_name().to_string());
+            .map(|s| s.display_name().to_string());
         Self {
-            provider,
+            // 兼容字段：v0.2 前序列化的是 enum 变体名 ("minimax" 等),
+            // 现在直接写 source id (同样 "minimax" 等, 对前端行为零变化)。
+            provider: id.to_string(),
             success: false,
             rows: vec![],
             error: Some(error),
@@ -359,7 +314,7 @@ impl ProviderSnapshot {
             raw: None,
             is_healthy: false,
             source_id: Some(id.to_string()),
-            source_display_name: Some(display_name),
+            source_display_name: display_name,
             plan_name: None,
             transient: if transient { Some(true) } else { None },
         }
@@ -383,7 +338,6 @@ impl ProviderSnapshot {
     pub async fn placeholder(state: &crate::AppState, id: &str) -> Self {
         Self::empty_error(
             state,
-            Provider::from_id_str(id),
             id,
             ErrorKind::UnconfiguredKey,
             String::new(),
@@ -427,15 +381,20 @@ impl ProviderSnapshot {
                 return "alert";
             }
         }
-        match self.provider {
-            Provider::Deepseek => {
+        // v0.2: 删 enum 后, match 改走 source_id 字符串。
+        // deepseek 走 is_healthy 分支 (API 告诉健康状态);
+        // 其它 source 走 utilization 分支 (包括 minimax / xiaomimimo /
+        // tavily / zenmux / kimi / zhipu / stepfun / siliconflow / claude_official /
+        // 用户自定义 New API 中转站 — 全部视为 "有 utilization 数据")。
+        match self.source_id.as_deref() {
+            Some("deepseek") => {
                 if self.is_healthy {
                     "ok"
                 } else {
                     "alert"
                 }
             }
-            Provider::Minimax | Provider::Xiaomimimo => {
+            _ => {
                 // 取第一个有 utilization 的 row
                 let u = self
                     .rows
@@ -623,24 +582,6 @@ pub fn shared_client() -> &'static reqwest::Client {
             .build()
             .expect("build shared reqwest client")
     })
-}
-
-// ── 兼容旧代码：ProviderImpl trait 保留为 dead-code ────────────────────
-
-/// 旧的 trait。新代码请用 [`QuotaSource`]。
-///
-/// 留着是因为 [`crate::commands`] 旧路径和 `dump` CLI 还引用；
-/// Phase 2 删。
-#[allow(dead_code)]
-pub trait ProviderImpl: Send + Sync {
-    fn id(&self) -> Provider;
-    fn display_name(&self) -> &'static str;
-    fn fetch<'a>(
-        &'a self,
-        api_key: &'a str,
-    ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<ProviderSnapshot, String>> + Send + 'a>,
-    >;
 }
 
 // ── 单元测试 fixture（共享 JSON） ───────────────────────────────────

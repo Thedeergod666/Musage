@@ -255,7 +255,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     }
 
     Ok(ProviderSnapshot {
-        provider: super::Provider::Minimax,
+        provider: "minimax".to_string(),
         success: true,
         rows,
         error: None,

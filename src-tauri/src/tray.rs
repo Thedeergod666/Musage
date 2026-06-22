@@ -24,7 +24,7 @@ use tauri::{
 use tokio::sync::mpsc;
 
 use crate::config::TrayIconStyle;
-use crate::providers::{Provider, ProviderSnapshot, QuotaSnapshot};
+use crate::providers::{ProviderSnapshot, QuotaSnapshot};
 // rust-i18n t! macro 在 crate 根（lib.rs）定义，子模块需显式 use 才能用。
 // 不要在子模块里写 `use rust_i18n::t;` —— 那会找错 macro；必须走 crate::t
 // 才能拿到 i18n!("locales") 生成的那份。
@@ -604,7 +604,7 @@ fn pick_minimax_rows(snap: &QuotaSnapshot) -> Option<(f64, f64)> {
     let m = snap
         .providers
         .iter()
-        .find(|p| p.provider == Provider::Minimax && p.success)?;
+        .find(|p| p.source_id.as_deref() == Some("minimax") && p.success)?;
     let five_h = m
         .rows
         .iter()
@@ -844,89 +844,68 @@ fn tooltip(snap: &QuotaSnapshot) -> String {
 }
 
 fn provider_short_body(p: &ProviderSnapshot) -> String {
+    // v0.2: provider 字段改 String, display_name() 不存在; 改读 source_display_name
+    // 字段 (ProviderSnapshot 构造时已经 fill_source_display_name 填好)。
+    let display = || p.source_display_name.clone().unwrap_or_else(|| p.provider.clone());
     if !p.success {
         let err = p.error.as_deref().unwrap_or("?");
         // 截短避免 tooltip 太长
         return t!(
             "tray.tooltip.provider_error",
-            provider = p.provider.display_name(),
+            provider = display(),
             error = truncate(err, 30)
         )
         .to_string();
     }
-    match p.provider {
-        Provider::Minimax => {
-            // "5h 45% / 周 72%"  —— P1 i18n: row labels 来自 t!("row.*")
-            // 跟 provider 端 parse() 用的 key 一致，保证 pick_minimax_rows
-            // 还能用 r.label == t!(...) 找对行。
-            let mut parts = Vec::new();
-            for r in &p.rows {
-                if let Some(u) = r.utilization {
-                    parts.push(
-                        t!(
-                            "tray.tooltip.row_pct",
-                            label = r.label.as_str(),
-                            pct = u.round() as i64
-                        )
-                        .to_string(),
-                    );
-                }
-            }
-            if parts.is_empty() {
-                p.provider.display_name().to_string()
-            } else {
-                t!(
-                    "tray.tooltip.provider_rows",
-                    provider = p.provider.display_name(),
-                    rows = parts.join(" / ")
-                )
-                .to_string()
+    // 按 source_id 字符串路由:
+    // - "deepseek" → 余额系 (balance 渲染)
+    // - "minimax" / "xiaomimimo" → 百分比系 (utilization 渲染)
+    // - 其它 (tavily / zenmux / kimi / zhipu / stepfun / siliconflow / claude_official / custom_*)
+    //   → 通用 percent 渲染 (rows 第一条 utilization)
+    let id = p.source_id.as_deref().unwrap_or(&p.provider);
+    if id == "deepseek" {
+        // "DeepSeek ¥128.50"
+        if let Some(r) = p.rows.iter().find(|r| r.remaining.is_some()) {
+            let amount = r
+                .remaining
+                .map(format_amount_short)
+                .unwrap_or_else(|| "?".to_string());
+            let unit = r.unit.as_deref().unwrap_or("");
+            t!(
+                "tray.tooltip.provider_balance",
+                provider = display(),
+                amount = amount,
+                unit = unit
+            )
+            .to_string()
+        } else {
+            display()
+        }
+    } else {
+        // percent 渲染: "5h 45% / 周 72%" (Minimax / Xiaomimimo) 或
+        // "Kimi 0% / ..." (其他 source, 任何有 utilization 的 row 都拼)
+        let mut parts = Vec::new();
+        for r in &p.rows {
+            if let Some(u) = r.utilization {
+                parts.push(
+                    t!(
+                        "tray.tooltip.row_pct",
+                        label = r.label.as_str(),
+                        pct = u.round() as i64
+                    )
+                    .to_string(),
+                );
             }
         }
-        Provider::Deepseek => {
-            // "DeepSeek ¥128.50"
-            if let Some(r) = p.rows.iter().find(|r| r.remaining.is_some()) {
-                let amount = r
-                    .remaining
-                    .map(format_amount_short)
-                    .unwrap_or_else(|| "?".to_string());
-                let unit = r.unit.as_deref().unwrap_or("");
-                t!(
-                    "tray.tooltip.provider_balance",
-                    provider = p.provider.display_name(),
-                    amount = amount,
-                    unit = unit
-                )
-                .to_string()
-            } else {
-                p.provider.display_name().to_string()
-            }
-        }
-        Provider::Xiaomimimo => {
-            // 跟 MiniMax 一样："Xiaomi MiMo 月度 5% / 补偿 100%"
-            let mut parts = Vec::new();
-            for r in &p.rows {
-                if let Some(u) = r.utilization {
-                    parts.push(
-                        t!(
-                            "tray.tooltip.row_pct",
-                            label = r.label.as_str(),
-                            pct = u.round() as i64
-                        )
-                        .to_string(),
-                    );
-                }
-            }
-            if parts.is_empty() {
-                p.provider.display_name().to_string()
-            } else {
-                t!(
-                    "tray.tooltip.provider_rows",
-                    provider = p.provider.display_name(),
-                    rows = parts.join(" / ")
-                )
-                .to_string()
-            }
+        if parts.is_empty() {
+            display()
+        } else {
+            t!(
+                "tray.tooltip.provider_rows",
+                provider = display(),
+                rows = parts.join(" / ")
+            )
+            .to_string()
         }
     }
 }

@@ -28,7 +28,7 @@ use std::borrow::Cow;
 use std::pin::Pin;
 
 use super::{
-    shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderImpl,
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError,
     ProviderSnapshot, QuotaRow, QuotaSource,
 };
 
@@ -79,28 +79,6 @@ impl QuotaSource for DeepseekSource {
             }
             do_fetch(api_key).await
         })
-    }
-}
-
-// ── 旧 ProviderImpl 兼容（dump CLI 还在用）────────────────────────
-
-#[derive(Debug, Default)]
-pub struct Deepseek;
-
-impl ProviderImpl for Deepseek {
-    fn id(&self) -> Provider {
-        Provider::Deepseek
-    }
-    fn display_name(&self) -> &'static str {
-        "DeepSeek"
-    }
-
-    fn fetch<'a>(
-        &'a self,
-        api_key: &'a str,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, String>> + Send + 'a>>
-    {
-        Box::pin(async move { do_fetch(api_key).await.map_err(|e| e.message) })
     }
 }
 
@@ -215,7 +193,7 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
     // 跟 dot 完全重复（dot 变红 + 状态"余额不足" 是同一个信息）。
 
     Ok(ProviderSnapshot {
-        provider: Provider::Deepseek,
+        provider: "deepseek".to_string(),
         success: true,
         rows,
         error: None,
@@ -224,8 +202,8 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
         next_fetch_at: None,
         raw: Some(raw),
         is_healthy: is_available,
-        source_id: Some(Provider::Deepseek.id_str().to_string()),
-        source_display_name: Some(Provider::Deepseek.display_name().to_string()),
+        source_id: Some("deepseek".to_string()),
+        source_display_name: Some("DeepSeek".to_string()),
         plan_name: None,
         transient: None,
     })

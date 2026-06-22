@@ -26,7 +26,6 @@ use tauri::AppHandle;
 
 use crate::providers::minimax::Region;
 use crate::providers::xiaomi::{XiaomiDisplayMode, XiaomiRegion};
-use crate::providers::Provider;
 use crate::t;
 
 const CONFIG_FILE: &str = "config.json";
@@ -370,7 +369,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         let mut providers = BTreeMap::new();
         providers.insert(
-            Provider::Minimax.id_str().to_string(),
+            "minimax".to_string(),
             ProviderConfig {
                 enabled: true,
                 region: Some(Region::Cn),
@@ -380,7 +379,7 @@ impl Default for AppConfig {
             },
         );
         providers.insert(
-            Provider::Deepseek.id_str().to_string(),
+            "deepseek".to_string(),
             ProviderConfig {
                 enabled: true,
                 region: None,
@@ -390,7 +389,7 @@ impl Default for AppConfig {
             },
         );
         providers.insert(
-            Provider::Xiaomimimo.id_str().to_string(),
+            "xiaomimimo".to_string(),
             ProviderConfig {
                 enabled: true,
                 region: None,
@@ -507,7 +506,7 @@ impl AppConfig {
             tracing::info!("检测到旧版 config.json，自动迁移到多 provider 格式");
             let mut cfg = AppConfig::default();
             cfg.providers.insert(
-                Provider::Minimax.id_str().to_string(),
+                "minimax".to_string(),
                 ProviderConfig {
                     enabled: true,
                     region: legacy.region.or(Some(Region::Cn)),
@@ -571,40 +570,41 @@ impl AppConfig {
             }
             self.schema_version = next;
         }
-        for p in Provider::all() {
+        for p in ["minimax", "deepseek", "xiaomimimo"] {
             self.providers
-                .entry(p.id_str().to_string())
+                .entry(p.to_string())
                 .or_insert_with(|| match p {
-                    Provider::Minimax => ProviderConfig {
+                    "minimax" => ProviderConfig {
                         enabled: true,
                         region: Some(Region::Cn),
                         xiaomi_region: None,
                         refresh_interval_secs: None,
                         xiaomi_display_mode: None,
                     },
-                    Provider::Deepseek => ProviderConfig {
+                    "deepseek" => ProviderConfig {
                         enabled: true,
                         region: None,
                         xiaomi_region: None,
                         refresh_interval_secs: None,
                         xiaomi_display_mode: None,
                     },
-                    Provider::Xiaomimimo => ProviderConfig {
+                    "xiaomimimo" => ProviderConfig {
                         enabled: true,
                         region: None,
                         xiaomi_region: Some(XiaomiRegion::Cn),
                         refresh_interval_secs: None,
                         xiaomi_display_mode: None,
                     },
+                    _ => unreachable!(),
                 });
         }
         self
     }
 
     /// 取某个 provider 的 enabled 状态（缺省视为 true）
-    pub fn is_enabled(&self, provider: Provider) -> bool {
+    pub fn is_enabled(&self, id: &str) -> bool {
         self.providers
-            .get(provider.id_str())
+            .get(id)
             .map(|c| c.enabled)
             .unwrap_or(true)
     }
@@ -612,7 +612,7 @@ impl AppConfig {
     /// 取 MiniMax 的 region（其他 provider 返回默认 CN）
     pub fn region(&self) -> Region {
         self.providers
-            .get(Provider::Minimax.id_str())
+            .get("minimax")
             .and_then(|c| c.region)
             .unwrap_or(Region::Cn)
     }
@@ -620,35 +620,42 @@ impl AppConfig {
     /// 取 Xiaomi MiMo 的 region（默认 CN）
     pub fn xiaomi_region(&self) -> XiaomiRegion {
         self.providers
-            .get(Provider::Xiaomimimo.id_str())
+            .get("xiaomimimo")
             .and_then(|c| c.xiaomi_region)
             .unwrap_or(XiaomiRegion::Cn)
     }
 
     /// 启用/禁用某个 provider
-    pub fn set_enabled(&mut self, provider: Provider, enabled: bool) {
+    pub fn set_enabled(&mut self, id: &str, enabled: bool) {
         let entry = self
             .providers
-            .entry(provider.id_str().to_string())
-            .or_insert_with(|| match provider {
-                Provider::Minimax => ProviderConfig {
+            .entry(id.to_string())
+            .or_insert_with(|| match id {
+                "minimax" => ProviderConfig {
                     enabled,
                     region: Some(Region::Cn),
                     xiaomi_region: None,
                     refresh_interval_secs: None,
                     xiaomi_display_mode: None,
                 },
-                Provider::Deepseek => ProviderConfig {
+                "deepseek" => ProviderConfig {
                     enabled,
                     region: None,
                     xiaomi_region: None,
                     refresh_interval_secs: None,
                     xiaomi_display_mode: None,
                 },
-                Provider::Xiaomimimo => ProviderConfig {
+                "xiaomimimo" => ProviderConfig {
                     enabled,
                     region: None,
                     xiaomi_region: Some(XiaomiRegion::Cn),
+                    refresh_interval_secs: None,
+                    xiaomi_display_mode: None,
+                },
+                _ => ProviderConfig {
+                    enabled,
+                    region: None,
+                    xiaomi_region: None,
                     refresh_interval_secs: None,
                     xiaomi_display_mode: None,
                 },
@@ -660,7 +667,7 @@ impl AppConfig {
     pub fn set_region(&mut self, region: Region) {
         let entry = self
             .providers
-            .entry(Provider::Minimax.id_str().to_string())
+            .entry("minimax".to_string())
             .or_insert(ProviderConfig {
                 enabled: true,
                 region: Some(region),
@@ -675,7 +682,7 @@ impl AppConfig {
     pub fn set_xiaomi_region(&mut self, region: XiaomiRegion) {
         let entry = self
             .providers
-            .entry(Provider::Xiaomimimo.id_str().to_string())
+            .entry("xiaomimimo".to_string())
             .or_insert(ProviderConfig {
                 enabled: true,
                 region: None,
@@ -686,11 +693,11 @@ impl AppConfig {
         entry.xiaomi_region = Some(region);
     }
 
-    /// 启用的 provider 列表（按 [`Provider::all`] 顺序）
-    pub fn enabled_providers(&self) -> Vec<Provider> {
-        Provider::all()
+    /// 启用的 provider id 列表（按 builtin 顺序）
+    pub fn enabled_providers(&self) -> Vec<&'static str> {
+        ["minimax", "deepseek", "xiaomimimo"]
             .into_iter()
-            .filter(|p| self.is_enabled(*p))
+            .filter(|id| self.is_enabled_id(id))
             .collect()
     }
 
@@ -844,83 +851,12 @@ fn read_keys() -> Result<KeysMap, String> {
     }
 }
 
-pub fn load_api_key_for(provider: Provider) -> Result<Option<String>, String> {
-    let map = read_keys()?;
-    Ok(map.get(provider.id_str()).cloned())
-}
-
-pub fn save_api_key_for(provider: Provider, key: &str) -> Result<(), String> {
-    // H1 fix: 入口加 save_lock —— read_keys → modify → write_keys_atomic
-    // 必须整个序列在锁内,否则两个并发 save 会让其中一个的 key 丢失
-    // (last-writer-wins)。Mutex 中毒走 into_inner() 恢复 + warn。
-    let _g = save_lock().lock().unwrap_or_else(|e| {
-        tracing::warn!("save_api_key_for save_lock poisoned, recovering");
-        e.into_inner()
-    });
-    let mut map = read_keys()?; // F3 fix: 传播错误，不要 unwrap_or_default（会删光其他 key）
-    map.insert(provider.id_str().to_string(), key.to_string());
-    write_keys_atomic(&map)
-}
-
-pub fn delete_api_key_for(provider: Provider) -> Result<(), String> {
-    let _g = save_lock().lock().unwrap_or_else(|e| {
-        tracing::warn!("delete_api_key_for save_lock poisoned, recovering");
-        e.into_inner()
-    });
-    let mut map = read_keys()?; // 同上
-    map.remove(provider.id_str());
-    if map.is_empty() {
-        // 全部删完就连文件一起删，避免空文件 + 0 字节文件混在目录里
-        let path = keys_path()?;
-        if path.exists() {
-            std::fs::remove_file(&path)
-                .map_err(|_| t!("commands.keys_io", op = "remove empty").into_owned())?;
-        }
-    } else {
-        write_keys_atomic(&map)?;
-    }
-    Ok(())
-}
-
-// ── 通用 secret 存取（用于 cookie / 其它 token） ─────────────
-
-fn cookie_key(provider: Provider) -> String {
-    format!("{}:cookie", provider.id_str())
-}
-
-pub fn load_cookie_for(provider: Provider) -> Result<Option<String>, String> {
-    let map = read_keys()?;
-    Ok(map.get(&cookie_key(provider)).cloned())
-}
-
-pub fn save_cookie_for(provider: Provider, cookie: &str) -> Result<(), String> {
-    let _g = save_lock().lock().unwrap_or_else(|e| {
-        tracing::warn!("save_cookie_for save_lock poisoned, recovering");
-        e.into_inner()
-    });
-    let mut map = read_keys()?; // F3 fix
-    map.insert(cookie_key(provider), cookie.to_string());
-    write_keys_atomic(&map)
-}
-
-pub fn delete_cookie_for(provider: Provider) -> Result<(), String> {
-    let _g = save_lock().lock().unwrap_or_else(|e| {
-        tracing::warn!("delete_cookie_for save_lock poisoned, recovering");
-        e.into_inner()
-    });
-    let mut map = read_keys()?; // F3 fix
-    map.remove(&cookie_key(provider));
-    if map.is_empty() {
-        let path = keys_path()?;
-        if path.exists() {
-            std::fs::remove_file(&path)
-                .map_err(|_| t!("commands.keys_io", op = "remove empty").into_owned())?;
-        }
-    } else {
-        write_keys_atomic(&map)?;
-    }
-    Ok(())
-}
+// v0.2 (2026-06-22) 删除 7 个 enum-based helper:
+// load_api_key_for / save_api_key_for / delete_api_key_for /
+// load_cookie_for / save_cookie_for / delete_cookie_for / cookie_key
+// 全部被 load_credential_for_id / save_credential_for_id /
+// delete_credential_for_id 替代（按字符串 id）。前端的 set_api_key_for 等
+// 旧 IPC 命令也同步删除（PR 5）。
 
 // ── 按 source id 操作的凭据（Phase 1 新 API，registry-driven） ───────
 

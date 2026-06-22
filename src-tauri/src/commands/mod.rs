@@ -27,7 +27,7 @@ use crate::providers::minimax::Region as MinimaxRegion;
 use crate::providers::xiaomi::XiaomiDisplayMode;
 use crate::providers::{
     all_sources, builtin_sources, find_source, AuthKind, Credentials, ErrorKind, FetchError,
-    Provider, ProviderSnapshot, QuotaSnapshot, QuotaSource,
+    ProviderSnapshot, QuotaSnapshot, QuotaSource,
 };
 use crate::t;
 use crate::AppState;
@@ -103,7 +103,7 @@ pub async fn set_provider_enabled(
         let state_arc = app.state::<AppState>();
         let mut snap = state_arc.snapshot.write().await;
         snap.providers
-            .retain(|p| p.source_id.as_deref().unwrap_or(p.provider.id_str()) != id);
+            .retain(|p| p.source_id.as_deref().unwrap_or(&p.provider) != id);
         let emit_snap = snap.clone();
         drop(snap);
         // 排序 + emit
@@ -451,7 +451,7 @@ pub async fn get_snapshot(state: State<'_, AppState>) -> Result<QuotaSnapshot, S
     // 数据还留在 vecdeque 里，所以需要在这里也过滤一次。
     let mut filtered = snap;
     filtered.providers.retain(|p| {
-        let id = p.source_id.as_deref().unwrap_or(p.provider.id_str());
+        let id = p.source_id.as_deref().unwrap_or(&p.provider);
         cfg.is_enabled_id(id)
     });
     // 按用户配置的 provider_order 排序（空 = 用 builtin_sources() 顺序）
@@ -475,7 +475,7 @@ pub async fn refresh_now(
             let new_id = new_p
                 .source_id
                 .as_deref()
-                .unwrap_or(new_p.provider.id_str());
+                .unwrap_or(&new_p.provider);
             if let Some(idx) = guard
                 .providers
                 .iter()
@@ -748,107 +748,10 @@ pub async fn get_source_credential(
     Ok(cred.and_then(|c| c.api_key.or(c.cookie)))
 }
 
-// ── 旧 API：按 Provider enum 操作（保留给现有 UI） ──────────────────
-
-#[tauri::command]
-pub async fn has_api_key_for(provider: Provider) -> Result<bool, String> {
-    Ok(config::load_api_key_for(provider)?.is_some())
-}
-
-#[tauri::command]
-pub async fn set_api_key_for(
-    state: State<'_, AppState>,
-    app: AppHandle,
-    provider: Provider,
-    key: String,
-) -> Result<(), String> {
-    let trimmed = key.trim();
-    if trimmed.is_empty() {
-        return Err(t!("commands.api_key_empty").into_owned());
-    }
-    config::save_api_key_for(provider, trimmed)?;
-    // 跟 set_source_credential 一致：保存后立即拉一次，浮窗即时看到
-    let id = provider.id_str();
-    let enabled = state.config.read().await.is_enabled_id(id);
-    if enabled {
-        if let Err(e) = refresh_single_inner(&app, id).await {
-            tracing::warn!(error = %e, provider = %id, "set_api_key_for 后立即拉取失败");
-        }
-    }
-    let _ = app.emit("musage://config-changed", ());
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn delete_api_key_for(
-    state: State<'_, AppState>,
-    app: AppHandle,
-    provider: Provider,
-) -> Result<(), String> {
-    config::delete_api_key_for(provider)?;
-    let id = provider.id_str();
-    let enabled = state.config.read().await.is_enabled_id(id);
-    if enabled {
-        if let Err(e) = refresh_single_inner(&app, id).await {
-            tracing::warn!(error = %e, provider = %id, "delete_api_key_for 后立即拉取失败");
-        }
-    }
-    let _ = app.emit("musage://config-changed", ());
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn has_cookie_for(provider: Provider) -> Result<bool, String> {
-    Ok(config::load_cookie_for(provider)?.is_some())
-}
-
-#[tauri::command]
-pub async fn set_cookie_for(
-    state: State<'_, AppState>,
-    app: AppHandle,
-    provider: Provider,
-    cookie: String,
-) -> Result<(), String> {
-    let trimmed = cookie.trim();
-    if trimmed.is_empty() {
-        return Err(t!("commands.cookie_empty").into_owned());
-    }
-    config::save_cookie_for(provider, trimmed)?;
-    let id = provider.id_str();
-    let enabled = state.config.read().await.is_enabled_id(id);
-    if enabled {
-        if let Err(e) = refresh_single_inner(&app, id).await {
-            tracing::warn!(error = %e, provider = %id, "set_cookie_for 后立即拉取失败");
-        }
-    }
-    let _ = app.emit("musage://config-changed", ());
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn delete_cookie_for(
-    state: State<'_, AppState>,
-    app: AppHandle,
-    provider: Provider,
-) -> Result<(), String> {
-    config::delete_cookie_for(provider)?;
-    let id = provider.id_str();
-    let enabled = state.config.read().await.is_enabled_id(id);
-    if enabled {
-        if let Err(e) = refresh_single_inner(&app, id).await {
-            tracing::warn!(error = %e, provider = %id, "delete_cookie_for 后立即拉取失败");
-        }
-    }
-    let _ = app.emit("musage://config-changed", ());
-    Ok(())
-}
-
-/// 从 keys.json 读出明文 key（用于"复制到剪贴板"功能）。
-/// 前端不会保存返回值，只用一次写剪贴板后丢弃。
-#[tauri::command]
-pub async fn get_api_key_for(provider: Provider) -> Result<Option<String>, String> {
-    config::load_api_key_for(provider)
-}
+// 旧 enum-based IPC (has_api_key_for / set_api_key_for / delete_api_key_for /
+// get_api_key_for / has_cookie_for / set_cookie_for / delete_cookie_for) 已在
+// v0.2 (2026-06-22) 删除。前端必须用 set_source_credential / get_source_credential /
+// has_source_credential / delete_source_credential (按 string id)。
 
 /// 设置窗 builder —— commands.rs 的 open_settings_window + lib.rs 的首启引导
 /// 都走这里，防止两处 builder 配置漂移（之前是 byte-for-byte 复制两份）。
@@ -1245,11 +1148,9 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
             Ok(Err(e)) => {
                 // P1 重构：kind 直接从 FetchError 取，不再走 classify_error_message
                 // 子串匹配（旧实现 i18n 一动就破）。
-                let provider = Provider::from_id_str(&id);
                 log_provider_error(app, &id, e.kind, &e.message);
                 let mut err_snap = ProviderSnapshot::empty_error(
                     &app.state::<AppState>(),
-                    provider,
                     &id,
                     e.kind,
                     e.message,
@@ -1261,14 +1162,12 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                 snap.providers.push(err_snap);
             }
             Err(join_err) => {
-                let provider = Provider::from_id_str(&id);
                 let msg =
                     t!("error.common.join_task_failed", err = join_err.to_string()).into_owned();
                 log_provider_error(app, &id, ErrorKind::Other, &msg);
                 // join_err 走 Other, next_fetch_at 用默认间隔(无 backoff)
                 let mut err_snap = ProviderSnapshot::empty_error(
                     &app.state::<AppState>(),
-                    provider,
                     &id,
                     ErrorKind::Other,
                     msg,
@@ -1289,7 +1188,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
     let state = app.state::<AppState>();
     let cfg_read = state.config.read().await;
     snap.providers.retain(|p| {
-        let id = p.source_id.as_deref().unwrap_or(p.provider.id_str());
+        let id = p.source_id.as_deref().unwrap_or(&p.provider);
         cfg_read.is_enabled_id(id)
     });
     apply_provider_order(&mut snap, &cfg_read);
@@ -1329,12 +1228,12 @@ fn apply_provider_order(snap: &mut QuotaSnapshot, cfg: &AppConfig) {
         let apos = cfg
             .provider_order
             .iter()
-            .position(|o| o == a.source_id.as_deref().unwrap_or(a.provider.id_str()))
+            .position(|o| o == a.source_id.as_deref().unwrap_or(&a.provider))
             .unwrap_or(usize::MAX);
         let bpos = cfg
             .provider_order
             .iter()
-            .position(|o| o == b.source_id.as_deref().unwrap_or(b.provider.id_str()))
+            .position(|o| o == b.source_id.as_deref().unwrap_or(&b.provider))
             .unwrap_or(usize::MAX);
         apos.cmp(&bpos).then(ai.cmp(bi))
     });
@@ -1371,12 +1270,10 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
         Some(c) => match src.fetch(&c).await {
             Ok(s) => s,
             Err(e) => {
-                let provider = Provider::from_id_str(id);
                 let kind = e.kind;
                 log_provider_error(app, id, kind, &e.message);
                 ProviderSnapshot::empty_error(
                     &app.state::<AppState>(),
-                    provider,
                     id,
                     kind,
                     e.message,
@@ -1386,7 +1283,6 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
             }
         },
         None => {
-            let provider = Provider::from_id_str(id);
             let kind = ErrorKind::UnconfiguredKey;
             // H12 fix: 之前硬编码中文。其它错误消息都走 tr!()，这个漏了。
             // 用 error.common.no_credential 模板（Provider 行追加 "{provider}" 上下文）。
@@ -1394,7 +1290,6 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
             log_provider_error(app, id, kind, &msg);
             ProviderSnapshot::empty_error(
                 &app.state::<AppState>(),
-                provider,
                 id,
                 kind,
                 msg,
@@ -1451,7 +1346,7 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
     drop(cfg2);
     let mut snap = state.snapshot.write().await;
     snap.providers.retain(|p| {
-        let id = p.source_id.as_deref().unwrap_or(p.provider.id_str());
+        let id = p.source_id.as_deref().unwrap_or(&p.provider);
         cfg2_snapshot.is_enabled_id(id)
     });
     apply_provider_order(&mut snap, &cfg2_snapshot);

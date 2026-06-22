@@ -109,11 +109,11 @@ impl BackoffState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::{Provider, ProviderSnapshot};
+    use crate::providers::ProviderSnapshot;
 
     fn snap_success() -> ProviderSnapshot {
         ProviderSnapshot {
-            provider: Provider::Minimax,
+            provider: "minimax".to_string(),
             success: true,
             rows: vec![],
             error: None,
@@ -131,7 +131,7 @@ mod tests {
 
     fn snap_fail(kind: ErrorKind) -> ProviderSnapshot {
         ProviderSnapshot {
-            provider: Provider::Minimax,
+            provider: "minimax".to_string(),
             success: false,
             rows: vec![],
             error: Some("err".to_string()),

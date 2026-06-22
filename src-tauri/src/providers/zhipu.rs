@@ -299,7 +299,7 @@ fn parse(raw: &Value, region: ZhipuRegion) -> Result<ProviderSnapshot, FetchErro
     Ok(ProviderSnapshot {
         // 沿用 Provider::Minimax 是 Zhipu 还没有自己的 enum 变体；
         // source_id 才是前端应该用的字段。
-        provider: super::Provider::Minimax,
+        provider: "minimax".to_string(),
         success: true,
         rows,
         error: None,

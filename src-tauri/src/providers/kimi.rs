@@ -217,9 +217,9 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     }
 
     Ok(ProviderSnapshot {
-        // 沿用 Provider::Minimax 是 Kimi 还没有自己的 enum 变体；
-        // source_id 才是前端应该用的字段。Phase 2 改成自有变体。
-        provider: super::Provider::Minimax,
+        // 沿用 "minimax" 占位（v0.2 前是 Provider::Minimax enum 变体）。
+        // 前端走 source_id 路由，provider 字段保留仅给老 JSON 反序列化兼容。
+        provider: "minimax".to_string(),
         success: true,
         rows,
         error: None,

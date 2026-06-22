@@ -43,7 +43,7 @@ use serde_json::Value;
 
 use super::parse::{num_f64, read_path};
 use super::{
-    shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderSnapshot,
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot,
     QuotaRow, QuotaSource,
 };
 use crate::t;
@@ -256,9 +256,8 @@ async fn do_fetch(api_key: &str, spec: &CustomSourceSpec) -> Result<ProviderSnap
         parse_with_extract(&raw, &spec.extract, spec.plan_name_path.as_deref())?;
 
     Ok(ProviderSnapshot {
-        // ⚠ Provider::Minimax 是历史占位（plan §13 review #4）。
-        // 前端 main.ts 走 `id = source_id ?? provider`，source_id 存在时优先。
-        provider: Provider::Minimax,
+        // v0.2: provider 字段是 String, 写 "minimax" 占位（前端走 source_id）
+        provider: "minimax".to_string(),
         success: true,
         rows,
         error: None,

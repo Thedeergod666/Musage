@@ -167,7 +167,7 @@ pub async fn tick(app: &AppHandle) -> Result<(), String> {
             let new_id = new_p
                 .source_id
                 .as_deref()
-                .unwrap_or(new_p.provider.id_str());
+                .unwrap_or(&new_p.provider);
             if let Some(idx) = guard
                 .providers
                 .iter()

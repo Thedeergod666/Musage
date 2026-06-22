@@ -287,7 +287,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     Ok(ProviderSnapshot {
         // 复用 Provider::Minimax 是因为 Tavily 还没单独的 enum 变体；
         // source_id 才是前端应该用的字段。Phase 2 改成自有变体。
-        provider: super::Provider::Minimax,
+        provider: "minimax".to_string(),
         success,
         rows,
         error: None,

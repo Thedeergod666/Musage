@@ -36,7 +36,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use super::{
-    shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderImpl,
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError,
     ProviderSnapshot, QuotaRow, QuotaSource,
 };
 
@@ -242,29 +242,6 @@ impl Minimax {
     }
 }
 
-impl ProviderImpl for Minimax {
-    fn id(&self) -> Provider {
-        Provider::Minimax
-    }
-    fn display_name(&self) -> &'static str {
-        "MiniMax"
-    }
-
-    fn fetch<'a>(
-        &'a self,
-        api_key: &'a str,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, String>> + Send + 'a>>
-    {
-        let region = self.region;
-        Box::pin(async move {
-            Minimax::do_fetch(api_key, region, &ProviderOverrides::default())
-                .await
-                .map(|(_, snap)| snap)
-                .map_err(|e| e.message)
-        })
-    }
-}
-
 // ── 解析逻辑（不变）────────────────────────────────────────────────
 
 /// 灵活解析：兼容 6/1 前后的 schema
@@ -287,7 +264,7 @@ fn parse(
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             return ProviderSnapshot {
-                provider: Provider::Minimax,
+                provider: "minimax".to_string(),
                 success: false,
                 rows: vec![],
                 error: Some(
@@ -304,8 +281,8 @@ fn parse(
                 next_fetch_at: None,
                 raw: Some(raw.clone()),
                 is_healthy: false,
-                source_id: Some(Provider::Minimax.id_str().to_string()),
-                source_display_name: Some(Provider::Minimax.display_name().to_string()),
+                source_id: Some("minimax".to_string()),
+                source_display_name: Some("MiniMax".to_string()),
                 plan_name: None,
                 transient: None,
             };
@@ -330,7 +307,7 @@ fn parse(
 
     let Some(item) = item else {
         return ProviderSnapshot {
-            provider: Provider::Minimax,
+            provider: "minimax".to_string(),
             success: false,
             rows: vec![],
             error: Some(
@@ -346,8 +323,8 @@ fn parse(
             next_fetch_at: None,
             raw: Some(raw.clone()),
             is_healthy: false,
-            source_id: Some(Provider::Minimax.id_str().to_string()),
-            source_display_name: Some(Provider::Minimax.display_name().to_string()),
+            source_id: Some("minimax".to_string()),
+            source_display_name: Some("MiniMax".to_string()),
             plan_name: None,
             transient: None,
         };
@@ -434,7 +411,7 @@ fn parse(
     let is_healthy = success; // MiniMax 拉到数据就认为可用
 
     ProviderSnapshot {
-        provider: Provider::Minimax,
+        provider: "minimax".to_string(),
         success,
         rows,
         error: if success {
@@ -451,8 +428,8 @@ fn parse(
         next_fetch_at: None,
         raw: Some(raw.clone()),
         is_healthy,
-        source_id: Some(Provider::Minimax.id_str().to_string()),
-        source_display_name: Some(Provider::Minimax.display_name().to_string()),
+        source_id: Some("minimax".to_string()),
+        source_display_name: Some("MiniMax".to_string()),
         plan_name: None,
         transient: None,
     }

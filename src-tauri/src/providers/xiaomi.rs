@@ -27,7 +27,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use super::{
-    shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderImpl,
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError,
     ProviderSnapshot, QuotaRow, QuotaSource, RowKind,
 };
 
@@ -497,28 +497,6 @@ impl Xiaomimimo {
     }
 }
 
-impl ProviderImpl for Xiaomimimo {
-    fn id(&self) -> Provider {
-        Provider::Xiaomimimo
-    }
-    fn display_name(&self) -> &'static str {
-        "Xiaomi MiMo"
-    }
-
-    fn fetch<'a>(
-        &'a self,
-        _api_key: &'a str,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, String>> + Send + 'a>>
-    {
-        Box::pin(async move {
-            Err(
-                "Xiaomi MiMo 走 do_fetch（需要 dashboard cookie），ProviderImpl::fetch 未实现"
-                    .to_string(),
-            )
-        })
-    }
-}
-
 // ── 解析逻辑（不变）────────────────────────────────────────────────
 
 /// 解析 usage + detail 的 response
@@ -653,7 +631,7 @@ fn parse(
 
     let success = !rows.is_empty();
     ProviderSnapshot {
-        provider: Provider::Xiaomimimo,
+        provider: "xiaomimimo".to_string(),
         success,
         rows,
         error: if success {
@@ -680,8 +658,8 @@ fn parse(
         next_fetch_at: None,
         raw: Some(raw_usage.clone()),
         is_healthy: success,
-        source_id: Some(Provider::Xiaomimimo.id_str().to_string()),
-        source_display_name: Some(Provider::Xiaomimimo.display_name().to_string()),
+        source_id: Some("xiaomimimo".to_string()),
+        source_display_name: Some("Xiaomi MiMo".to_string()),
         plan_name,
         transient: None,
     }
@@ -1152,7 +1130,7 @@ mod tests {
     /// 构造一个测试用的 3 行 snapshot（套餐 + 补偿 + 总额度，套餐带 resets_at）
     fn snap_with_3_rows() -> ProviderSnapshot {
         ProviderSnapshot {
-            provider: Provider::Xiaomimimo,
+            provider: "xiaomimimo".to_string(),
             success: true,
             rows: vec![
                 QuotaRow {
@@ -1236,7 +1214,7 @@ mod tests {
         // 过滤不能改 snap 的其他字段（provider / source_id / plan_name / error 等）
         let snap = snap_with_3_rows();
         let out = apply_display_mode(snap, XiaomiDisplayMode::PlanOnly);
-        assert_eq!(out.provider, Provider::Xiaomimimo);
+        assert_eq!(out.provider, "xiaomimimo");
         assert_eq!(out.source_id.as_deref(), Some("xiaomimimo"));
         assert!(out.is_healthy);
     }

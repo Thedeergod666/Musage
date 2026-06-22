@@ -26,10 +26,13 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderImpl, ProviderSnapshot, QuotaRow, QuotaSource, RowKind};
+use super::{
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderImpl,
+    ProviderSnapshot, QuotaRow, QuotaSource, RowKind,
+};
 
-use crate::t;
 use crate::config::ProviderOverrides;
+use crate::t;
 
 /// 公开 endpoint（dashboard admin API，不是 token-plan 子域）
 const USAGE_URL: &str = "https://platform.xiaomimimo.com/api/v1/tokenPlan/usage";
@@ -93,7 +96,9 @@ pub struct XiaomimimoSource {
 
 impl Default for XiaomimimoSource {
     fn default() -> Self {
-        Self { state: Arc::new(RwLock::new(XiaomimimoState::default())) }
+        Self {
+            state: Arc::new(RwLock::new(XiaomimimoState::default())),
+        }
     }
 }
 
@@ -113,18 +118,25 @@ impl XiaomimimoSource {
 }
 
 impl QuotaSource for XiaomimimoSource {
-    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("xiaomimimo") }
-    fn display_name(&self) -> Cow<'_, str> { Cow::Owned(t!("provider_name.xiaomimimo").into_owned()) }
+    fn id(&self) -> Cow<'_, str> {
+        Cow::Borrowed("xiaomimimo")
+    }
+    fn display_name(&self) -> Cow<'_, str> {
+        Cow::Owned(t!("provider_name.xiaomimimo").into_owned())
+    }
     /// 优先 Bearer（API key），401 时降级到 Cookie。两个输入都展示在设置面板。
     /// 决策逻辑见 [`decide_auth_strategy`] + [`Xiaomimimo::fetch`]。
-    fn auth_kind(&self) -> AuthKind { AuthKind::ApiKeyOrCookie }
+    fn auth_kind(&self) -> AuthKind {
+        AuthKind::ApiKeyOrCookie
+    }
 
     fn set_state<'a>(
         &'a self,
         cfg: serde_json::Value,
     ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {
-            let region_str = cfg.get("providers")
+            let region_str = cfg
+                .get("providers")
                 .and_then(|p| p.get("xiaomimimo"))
                 .and_then(|m| m.get("xiaomi_region"))
                 .and_then(|r| r.as_str())
@@ -134,11 +146,13 @@ impl QuotaSource for XiaomimimoSource {
                 "ams" => XiaomiRegion::Ams,
                 _ => XiaomiRegion::Cn,
             };
-            let overrides: ProviderOverrides = cfg.get("schema_overrides")
+            let overrides: ProviderOverrides = cfg
+                .get("schema_overrides")
                 .and_then(|so| so.get("xiaomimimo"))
                 .and_then(|m| serde_json::from_value(m.clone()).ok())
                 .unwrap_or_default();
-            let display_mode: XiaomiDisplayMode = cfg.get("providers")
+            let display_mode: XiaomiDisplayMode = cfg
+                .get("providers")
                 .and_then(|p| p.get("xiaomimimo"))
                 .and_then(|m| m.get("xiaomi_display_mode"))
                 .and_then(|d| serde_json::from_value(d.clone()).ok())
@@ -153,51 +167,56 @@ impl QuotaSource for XiaomimimoSource {
     fn fetch<'a>(
         &'a self,
         credentials: &'a Credentials,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>>
+    {
         Box::pin(async move {
             let state = self.state.read().await.clone();
             let display_mode = state.display_mode;
             let strategy = decide_auth_strategy(credentials);
             let fetch_result = match strategy {
                 AuthStrategy::None => Err(FetchError::unconfigured(
-                    t!("error.xiaomi.unconfigured_both").into_owned()
+                    t!("error.xiaomi.unconfigured_both").into_owned(),
                 )),
                 AuthStrategy::BearerOnly => {
                     // H14 fix: 之前是 .unwrap()，依赖 decide_auth_strategy 的不变量。
                     // 若 decide 逻辑改了（比如新增 Unknown 变体），这里会 panic。
                     // 改成 explicit Some/None match，None 走 unconfigured 错误而不是 panic。
                     match credentials.api_key.as_deref() {
-                        Some(key) => Xiaomimimo::do_fetch_bearer(key, state.region, &state.overrides)
-                            .await
-                            .map(|(_, snap)| snap),
+                        Some(key) => {
+                            Xiaomimimo::do_fetch_bearer(key, state.region, &state.overrides)
+                                .await
+                                .map(|(_, snap)| snap)
+                        }
                         None => Err(FetchError::unconfigured(
-                            t!("error.xiaomi.unconfigured_key").into_owned()
+                            t!("error.xiaomi.unconfigured_key").into_owned(),
                         )),
                     }
                 }
-                AuthStrategy::CookieOnly => {
-                    match credentials.cookie.as_deref() {
-                        Some(cookie) => Xiaomimimo::do_fetch(cookie, state.region, &state.overrides)
-                            .await
-                            .map(|(_, snap)| snap),
-                        None => Err(FetchError::unconfigured(
-                            t!("error.xiaomi.unconfigured_cookie").into_owned()
-                        )),
-                    }
-                }
+                AuthStrategy::CookieOnly => match credentials.cookie.as_deref() {
+                    Some(cookie) => Xiaomimimo::do_fetch(cookie, state.region, &state.overrides)
+                        .await
+                        .map(|(_, snap)| snap),
+                    None => Err(FetchError::unconfigured(
+                        t!("error.xiaomi.unconfigured_cookie").into_owned(),
+                    )),
+                },
                 AuthStrategy::BearerThenCookie => {
                     // 同 H14 fix —— None 走 unconfigured 而不是 panic
                     let key = match credentials.api_key.as_deref() {
                         Some(k) => k,
-                        None => return Err(FetchError::unconfigured(
-                            t!("error.xiaomi.unconfigured_key").into_owned()
-                        )),
+                        None => {
+                            return Err(FetchError::unconfigured(
+                                t!("error.xiaomi.unconfigured_key").into_owned(),
+                            ))
+                        }
                     };
                     let cookie = match credentials.cookie.as_deref() {
                         Some(c) => c,
-                        None => return Err(FetchError::unconfigured(
-                            t!("error.xiaomi.unconfigured_cookie").into_owned()
-                        )),
+                        None => {
+                            return Err(FetchError::unconfigured(
+                                t!("error.xiaomi.unconfigured_cookie").into_owned(),
+                            ))
+                        }
                     };
                     // 先 Bearer，401/403 退到 Cookie（其他错误原样返）
                     match Xiaomimimo::do_fetch_bearer(key, state.region, &state.overrides).await {
@@ -265,7 +284,8 @@ pub(crate) fn decide_auth_strategy(creds: &Credentials) -> AuthStrategy {
 
 #[derive(Debug, Default)]
 pub struct Xiaomimimo {
-    #[allow(dead_code)] // 旧 ProviderImpl 兼容层（dump CLI 还在用），保留字段给 v2 切回时的兼容性垫底
+    #[allow(dead_code)]
+    // 旧 ProviderImpl 兼容层（dump CLI 还在用），保留字段给 v2 切回时的兼容性垫底
     pub region: XiaomiRegion,
 }
 
@@ -284,7 +304,7 @@ impl Xiaomimimo {
     ) -> Result<(serde_json::Value, ProviderSnapshot), FetchError> {
         if api_key.trim().is_empty() {
             return Err(FetchError::unconfigured(
-                t!("error.common.api_key_empty").into_owned()
+                t!("error.common.api_key_empty").into_owned(),
             ));
         }
         let client = shared_client();
@@ -294,18 +314,20 @@ impl Xiaomimimo {
             .header("Accept", "application/json")
             .send()
             .await
-            .map_err(|e| FetchError::network(
-                t!("error.common.network", url = USAGE_URL, err = e.to_string()).into_owned()
-            ))?;
+            .map_err(|e| {
+                FetchError::network(
+                    t!("error.common.network", url = USAGE_URL, err = e.to_string()).into_owned(),
+                )
+            })?;
         let status = resp.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(FetchError::auth(
-                t!("error.xiaomi.api_key_unauthorized_hint").into_owned()
+                t!("error.xiaomi.api_key_unauthorized_hint").into_owned(),
             ));
         }
         if status == reqwest::StatusCode::FORBIDDEN {
             return Err(FetchError::auth(
-                t!("error.common.forbidden", provider = "Xiaomi MiMo").into_owned()
+                t!("error.common.forbidden", provider = "Xiaomi MiMo").into_owned(),
             ));
         }
         if !status.is_success() {
@@ -315,20 +337,18 @@ impl Xiaomimimo {
                     "error.xiaomi.http_error",
                     status = status.as_u16(),
                     body = body.chars().take(200).collect::<String>()
-                ).into_owned()
+                )
+                .into_owned(),
             ));
         }
-        let raw: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| FetchError::parse(
-                t!("error.common.parse_json", err = e.to_string()).into_owned()
-            ))?;
+        let raw: serde_json::Value = resp.json().await.map_err(|e| {
+            FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
+        })?;
         if let Some(code) = raw.get("code").and_then(|v| v.as_i64()) {
             if code != 0 {
                 let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
                 return Err(FetchError::server(
-                    t!("error.xiaomi.business_code", code = code, msg = msg).into_owned()
+                    t!("error.xiaomi.business_code", code = code, msg = msg).into_owned(),
                 ));
             }
         }
@@ -370,7 +390,7 @@ impl Xiaomimimo {
     ) -> Result<(serde_json::Value, ProviderSnapshot), FetchError> {
         if cookie.trim().is_empty() {
             return Err(FetchError::unconfigured(
-                t!("error.xiaomi.cookie_empty").into_owned()
+                t!("error.xiaomi.cookie_empty").into_owned(),
             ));
         }
 
@@ -378,9 +398,16 @@ impl Xiaomimimo {
         // 行首空白，reqwest 的 HeaderValue 会把这些字符静默丢弃或 reject，但错误
         // 表现为 "Cookie header value is invalid" 而不是清晰的 "请重新复制"。
         // 这里在 send 前过滤常见异常字符 + 给出友好的 FetchError::auth。
-        if let Some(bad) = cookie.chars().find(|c| matches!(c, '\r' | '\n' | '\t' | '\0')) {
+        if let Some(bad) = cookie
+            .chars()
+            .find(|c| matches!(c, '\r' | '\n' | '\t' | '\0'))
+        {
             return Err(FetchError::auth(
-                t!("error.xiaomi.cookie_format_invalid", ch = format!("{bad:?}")).into_owned()
+                t!(
+                    "error.xiaomi.cookie_format_invalid",
+                    ch = format!("{bad:?}")
+                )
+                .into_owned(),
             ));
         }
 
@@ -393,9 +420,11 @@ impl Xiaomimimo {
             .header("Accept", "application/json")
             .send()
             .await
-            .map_err(|e| FetchError::network(
-                t!("error.common.network", url = USAGE_URL, err = e.to_string()).into_owned()
-            ))?;
+            .map_err(|e| {
+                FetchError::network(
+                    t!("error.common.network", url = USAGE_URL, err = e.to_string()).into_owned(),
+                )
+            })?;
 
         let status = resp.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
@@ -407,7 +436,7 @@ impl Xiaomimimo {
                 || body_preview.to_lowercase().contains("token");
             if looks_like_auth {
                 return Err(FetchError::auth(
-                    t!("error.xiaomi.cookie_invalid_hint").into_owned()
+                    t!("error.xiaomi.cookie_invalid_hint").into_owned(),
                 ));
             } else {
                 return Err(FetchError::server(
@@ -415,13 +444,14 @@ impl Xiaomimimo {
                         "error.xiaomi.http_error",
                         status = status.as_u16(),
                         body = body_preview.chars().take(200).collect::<String>()
-                    ).into_owned()
+                    )
+                    .into_owned(),
                 ));
             }
         }
         if status == reqwest::StatusCode::FORBIDDEN {
             return Err(FetchError::auth(
-                t!("error.common.forbidden", provider = "Xiaomi MiMo").into_owned()
+                t!("error.common.forbidden", provider = "Xiaomi MiMo").into_owned(),
             ));
         }
         if !status.is_success() {
@@ -431,23 +461,21 @@ impl Xiaomimimo {
                     "error.xiaomi.http_error",
                     status = status.as_u16(),
                     body = body.chars().take(200).collect::<String>()
-                ).into_owned()
+                )
+                .into_owned(),
             ));
         }
 
-        let raw: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| FetchError::parse(
-                t!("error.common.parse_json", err = e.to_string()).into_owned()
-            ))?;
+        let raw: serde_json::Value = resp.json().await.map_err(|e| {
+            FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
+        })?;
 
         // 业务级 code
         if let Some(code) = raw.get("code").and_then(|v| v.as_i64()) {
             if code != 0 {
                 let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
                 return Err(FetchError::server(
-                    t!("error.xiaomi.business_code", code = code, msg = msg).into_owned()
+                    t!("error.xiaomi.business_code", code = code, msg = msg).into_owned(),
                 ));
             }
         }
@@ -470,15 +498,23 @@ impl Xiaomimimo {
 }
 
 impl ProviderImpl for Xiaomimimo {
-    fn id(&self) -> Provider { Provider::Xiaomimimo }
-    fn display_name(&self) -> &'static str { "Xiaomi MiMo" }
+    fn id(&self) -> Provider {
+        Provider::Xiaomimimo
+    }
+    fn display_name(&self) -> &'static str {
+        "Xiaomi MiMo"
+    }
 
     fn fetch<'a>(
         &'a self,
         _api_key: &'a str,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, String>> + Send + 'a>> {
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, String>> + Send + 'a>>
+    {
         Box::pin(async move {
-            Err("Xiaomi MiMo 走 do_fetch（需要 dashboard cookie），ProviderImpl::fetch 未实现".to_string())
+            Err(
+                "Xiaomi MiMo 走 do_fetch（需要 dashboard cookie），ProviderImpl::fetch 未实现"
+                    .to_string(),
+            )
         })
     }
 }
@@ -595,8 +631,8 @@ fn parse(
     // 总额度这行不显示，避免"套餐 13% / 总额度 13%"这种重复信息
     let show_total = match (plan_pct, month_pct) {
         (Some(p), Some(m)) => (m - p).abs() >= 0.5,
-        (None, Some(_)) => true,   // 没套餐但有总额度（schema 变了）→ 还是显示
-        (Some(_), None) => false,  // 有套餐但没总额度 → 隐式 skipped
+        (None, Some(_)) => true, // 没套餐但有总额度（schema 变了）→ 还是显示
+        (Some(_), None) => false, // 有套餐但没总额度 → 隐式 skipped
         (None, None) => false,
     };
     if show_total {
@@ -1015,7 +1051,9 @@ mod tests {
         // 2026-06-22 fix: rows.len() 1 或 2 都行（default 字段可能也解出一行）,
         // 关键是 override 路径生效 — utilization 应来自 new_plan_token (42.0)
         assert!(!snap.rows.is_empty());
-        let plan_row = snap.rows.iter()
+        let plan_row = snap
+            .rows
+            .iter()
             .find(|r| r.label == t!("row.plan"))
             .expect("应该有套餐行");
         assert!((plan_row.utilization.unwrap() - 42.0).abs() < 0.001);
@@ -1057,8 +1095,11 @@ mod tests {
         assert!(snap.success);
         let resets = snap.rows[0].resets_at.unwrap();
         // 2026-06-22 fix: 放宽 epoch range (timezone drift ±1 天)
-        assert!(resets > 1_781_000_000_000 && resets < 1_787_000_000_000,
-            "parse_datetime_utc_ms 返回 {} 应在 2026-06 范围内", resets);
+        assert!(
+            resets > 1_781_000_000_000 && resets < 1_787_000_000_000,
+            "parse_datetime_utc_ms 返回 {} 应在 2026-06 范围内",
+            resets
+        );
     }
 
     #[test]
@@ -1070,9 +1111,11 @@ mod tests {
         // 验证从 2026-06-27 起的合理范围（宽到 ±1 天 = 86_400_000 ms）:
         // 2026-06-26 UTC ≈ 1_781_817_600_000
         // 2026-06-28 UTC ≈ 1_786_704_000_000
-        assert!(ms > 1_781_000_000_000 && ms < 1_787_000_000_000,
+        assert!(
+            ms > 1_781_000_000_000 && ms < 1_787_000_000_000,
             "parse_datetime_utc_ms(\"2026-06-27 23:59:59\") = {} 应在 2026-06 范围内",
-            ms);
+            ms
+        );
         assert!(parse_datetime_utc_ms("not a date").is_none());
         assert!(parse_datetime_utc_ms("").is_none());
     }
@@ -1089,10 +1132,16 @@ mod tests {
             }
         });
         let custom = vec!["b", "a"];
-        assert_eq!(pick_item_percent(&raw, "/data/items", &custom, "a"), Some(50.0));
+        assert_eq!(
+            pick_item_percent(&raw, "/data/items", &custom, "a"),
+            Some(50.0)
+        );
         // override 都不中 → fallback 默认
         let custom = vec!["c", "d"];
-        assert_eq!(pick_item_percent(&raw, "/data/items", &custom, "a"), Some(10.0));
+        assert_eq!(
+            pick_item_percent(&raw, "/data/items", &custom, "a"),
+            Some(10.0)
+        );
         // 全部不中
         let custom = vec!["x", "y"];
         assert_eq!(pick_item_percent(&raw, "/data/items", &custom, "z"), None);
@@ -1109,7 +1158,7 @@ mod tests {
                 QuotaRow {
                     label: t!("row.plan").to_string(),
                     utilization: Some(13.0),
-                    resets_at: Some(1785024000000),  // 2026-06-28 07:20 UTC
+                    resets_at: Some(1785024000000), // 2026-06-28 07:20 UTC
                     unit: Some("%".to_string()),
                     ..Default::default()
                 },
@@ -1173,11 +1222,13 @@ mod tests {
     fn display_mode_total_only_no_plan_resets_at_stays_none() {
         // 极端：所有行都没 resets_at（detail 缺失）→ 总额度这行也别伪造
         let mut snap = snap_with_3_rows();
-        snap.rows[0].resets_at = None;  // 套餐也没
+        snap.rows[0].resets_at = None; // 套餐也没
         let out = apply_display_mode(snap, XiaomiDisplayMode::TotalOnly);
         assert_eq!(out.rows.len(), 1);
-        assert_eq!(out.rows[0].resets_at, None,
-            "套餐无 resets_at → 总额度也保持 None（不编造）");
+        assert_eq!(
+            out.rows[0].resets_at, None,
+            "套餐无 resets_at → 总额度也保持 None（不编造）"
+        );
     }
 
     #[test]

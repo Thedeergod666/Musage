@@ -27,8 +27,8 @@ use uuid::Uuid;
 
 use crate::config::{custom_sources as custom_persist, delete_credential_for_id};
 use crate::providers::{CustomSource, CustomSourceSpec, ProviderSnapshot, QuotaSource};
-use crate::AppState;
 use crate::t;
+use crate::AppState;
 
 /// 列表：返回所有 custom source specs（无 id 时返空 vec）。
 #[tauri::command]
@@ -65,7 +65,11 @@ pub async fn add_custom_source(
         return Err(t!("commands.custom_path_invalid").into_owned());
     }
     if spec.method != "GET" && spec.method != "POST" {
-        return Err(t!("commands.custom_method_invalid", method = spec.method.as_str()).into_owned());
+        return Err(t!(
+            "commands.custom_method_invalid",
+            method = spec.method.as_str()
+        )
+        .into_owned());
     }
 
     // 2. 拿锁 + 写
@@ -79,7 +83,11 @@ pub async fn add_custom_source(
         extract: spec.extract,
         plan_name_path: spec.plan_name_path.and_then(|s| {
             let t = s.trim();
-            if t.is_empty() { None } else { Some(t.to_string()) }
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
         }),
         accent: spec.accent,
         created_at: chrono::Utc::now().timestamp(),
@@ -90,8 +98,15 @@ pub async fn add_custom_source(
         if customs.len() >= 50 {
             return Err(t!("commands.custom_limit_reached").into_owned());
         }
-        if customs.iter().any(|s| s.display_name == new_spec.display_name) {
-            return Err(t!("commands.custom_duplicate", name = new_spec.display_name.as_str()).into_owned());
+        if customs
+            .iter()
+            .any(|s| s.display_name == new_spec.display_name)
+        {
+            return Err(t!(
+                "commands.custom_duplicate",
+                name = new_spec.display_name.as_str()
+            )
+            .into_owned());
         }
         customs.push(new_spec);
         custom_persist::save_custom_sources(&customs)?;
@@ -124,12 +139,18 @@ pub async fn update_custom_source(
         return Err(t!("commands.custom_path_invalid").into_owned());
     }
     if spec.method != "GET" && spec.method != "POST" {
-        return Err(t!("commands.custom_method_invalid", method = spec.method.as_str()).into_owned());
+        return Err(t!(
+            "commands.custom_method_invalid",
+            method = spec.method.as_str()
+        )
+        .into_owned());
     }
 
     let existing_created_at = {
         let customs = state.custom_sources.read().await;
-        let existing = customs.iter().find(|s| s.id == spec.id)
+        let existing = customs
+            .iter()
+            .find(|s| s.id == spec.id)
             .ok_or_else(|| t!("commands.custom_not_found", id = spec.id.as_str()).into_owned())?;
         existing.created_at
     };
@@ -143,7 +164,11 @@ pub async fn update_custom_source(
         extract: spec.extract,
         plan_name_path: spec.plan_name_path.and_then(|s| {
             let t = s.trim();
-            if t.is_empty() { None } else { Some(t.to_string()) }
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
         }),
         accent: spec.accent,
         // created_at 保留原值（不从客户端接收）
@@ -152,11 +177,22 @@ pub async fn update_custom_source(
 
     {
         let mut customs = state.custom_sources.write().await;
-        let pos = customs.iter().position(|s| s.id == cleaned.id)
-            .ok_or_else(|| t!("commands.custom_not_found", id = cleaned.id.as_str()).into_owned())?;
-        if customs.iter().enumerate()
-            .any(|(i, s)| i != pos && s.display_name == cleaned.display_name) {
-            return Err(t!("commands.custom_duplicate", name = cleaned.display_name.as_str()).into_owned());
+        let pos = customs
+            .iter()
+            .position(|s| s.id == cleaned.id)
+            .ok_or_else(|| {
+                t!("commands.custom_not_found", id = cleaned.id.as_str()).into_owned()
+            })?;
+        if customs
+            .iter()
+            .enumerate()
+            .any(|(i, s)| i != pos && s.display_name == cleaned.display_name)
+        {
+            return Err(t!(
+                "commands.custom_duplicate",
+                name = cleaned.display_name.as_str()
+            )
+            .into_owned());
         }
         customs[pos] = cleaned;
         custom_persist::save_custom_sources(&customs)?;
@@ -180,7 +216,9 @@ pub async fn delete_custom_source(
 ) -> Result<(), String> {
     {
         let mut customs = state.custom_sources.write().await;
-        let pos = customs.iter().position(|s| s.id == id)
+        let pos = customs
+            .iter()
+            .position(|s| s.id == id)
             .ok_or_else(|| t!("commands.custom_not_found", id = id.as_str()).into_owned())?;
         customs.remove(pos);
         custom_persist::save_custom_sources(&customs)?;

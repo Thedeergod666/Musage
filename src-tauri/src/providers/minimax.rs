@@ -35,10 +35,13 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
-use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderImpl, ProviderSnapshot, QuotaRow, QuotaSource};
+use super::{
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderImpl,
+    ProviderSnapshot, QuotaRow, QuotaSource,
+};
 
-use crate::t;
 use crate::config::ProviderOverrides;
+use crate::t;
 
 const URL_CN: &str = "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains";
 const URL_EN: &str = "https://api.minimax.io/v1/api/openplatform/coding_plan/remains";
@@ -82,7 +85,9 @@ pub struct MinimaxSource {
 
 impl Default for MinimaxSource {
     fn default() -> Self {
-        Self { state: Arc::new(RwLock::new(MinimaxState::default())) }
+        Self {
+            state: Arc::new(RwLock::new(MinimaxState::default())),
+        }
     }
 }
 
@@ -97,9 +102,15 @@ impl MinimaxSource {
 }
 
 impl QuotaSource for MinimaxSource {
-    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("minimax") }
-    fn display_name(&self) -> Cow<'_, str> { Cow::Owned(t!("provider_name.minimax").into_owned()) }
-    fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
+    fn id(&self) -> Cow<'_, str> {
+        Cow::Borrowed("minimax")
+    }
+    fn display_name(&self) -> Cow<'_, str> {
+        Cow::Owned(t!("provider_name.minimax").into_owned())
+    }
+    fn auth_kind(&self) -> AuthKind {
+        AuthKind::ApiKey
+    }
 
     fn set_state<'a>(
         &'a self,
@@ -107,7 +118,8 @@ impl QuotaSource for MinimaxSource {
     ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
         Box::pin(async move {
             // cfg 是 AppConfig 的 JSON，自己取需要的字段
-            let region_str = cfg.get("providers")
+            let region_str = cfg
+                .get("providers")
                 .and_then(|p| p.get("minimax"))
                 .and_then(|m| m.get("region"))
                 .and_then(|r| r.as_str())
@@ -116,7 +128,8 @@ impl QuotaSource for MinimaxSource {
                 "en" => Region::En,
                 _ => Region::Cn,
             };
-            let overrides: ProviderOverrides = cfg.get("schema_overrides")
+            let overrides: ProviderOverrides = cfg
+                .get("schema_overrides")
                 .and_then(|so| so.get("minimax"))
                 .and_then(|m| serde_json::from_value(m.clone()).ok())
                 .unwrap_or_default();
@@ -129,16 +142,19 @@ impl QuotaSource for MinimaxSource {
     fn fetch<'a>(
         &'a self,
         credentials: &'a Credentials,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>>
+    {
         Box::pin(async move {
             let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
                 return Err(FetchError::unconfigured(
-                    t!("error.provider.unconfigured_key", provider = "MiniMax").into_owned()
+                    t!("error.provider.unconfigured_key", provider = "MiniMax").into_owned(),
                 ));
             }
             let state = self.state.read().await.clone();
-            Minimax::do_fetch(api_key, state.region, &state.overrides).await.map(|(_, snap)| snap)
+            Minimax::do_fetch(api_key, state.region, &state.overrides)
+                .await
+                .map(|(_, snap)| snap)
         })
     }
 }
@@ -162,7 +178,7 @@ impl Minimax {
     ) -> Result<(serde_json::Value, ProviderSnapshot), FetchError> {
         if api_key.trim().is_empty() {
             return Err(FetchError::unconfigured(
-                t!("error.common.api_key_empty").into_owned()
+                t!("error.common.api_key_empty").into_owned(),
             ));
         }
 
@@ -175,9 +191,16 @@ impl Minimax {
             .header("Content-Type", "application/json")
             .send()
             .await
-            .map_err(|e| FetchError::network(
-                t!("error.common.network", url = region.api_url(), err = e.to_string()).into_owned()
-            ))?;
+            .map_err(|e| {
+                FetchError::network(
+                    t!(
+                        "error.common.network",
+                        url = region.api_url(),
+                        err = e.to_string()
+                    )
+                    .into_owned(),
+                )
+            })?;
 
         let status = resp.status();
         // M16 fix: 429 显式 → RateLimited（前端用 RateLimited UI 展示 + poller 走 backoff）
@@ -189,12 +212,12 @@ impl Minimax {
         }
         if status == reqwest::StatusCode::UNAUTHORIZED {
             return Err(FetchError::auth(
-                t!("error.common.auth_failed", provider = "MiniMax").into_owned()
+                t!("error.common.auth_failed", provider = "MiniMax").into_owned(),
             ));
         }
         if status == reqwest::StatusCode::FORBIDDEN {
             return Err(FetchError::auth(
-                t!("error.provider.minimax_403").into_owned()
+                t!("error.provider.minimax_403").into_owned(),
             ));
         }
         if !status.is_success() {
@@ -205,16 +228,14 @@ impl Minimax {
                     provider = "MiniMax",
                     status = status.as_u16(),
                     body = body.chars().take(200).collect::<String>()
-                ).into_owned()
+                )
+                .into_owned(),
             ));
         }
 
-        let raw: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| FetchError::parse(
-                t!("error.common.parse_json", err = e.to_string()).into_owned()
-            ))?;
+        let raw: serde_json::Value = resp.json().await.map_err(|e| {
+            FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
+        })?;
 
         let snap = parse(&raw, region, overrides);
         Ok((raw, snap))
@@ -222,13 +243,18 @@ impl Minimax {
 }
 
 impl ProviderImpl for Minimax {
-    fn id(&self) -> Provider { Provider::Minimax }
-    fn display_name(&self) -> &'static str { "MiniMax" }
+    fn id(&self) -> Provider {
+        Provider::Minimax
+    }
+    fn display_name(&self) -> &'static str {
+        "MiniMax"
+    }
 
     fn fetch<'a>(
         &'a self,
         api_key: &'a str,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, String>> + Send + 'a>> {
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, String>> + Send + 'a>>
+    {
         let region = self.region;
         Box::pin(async move {
             Minimax::do_fetch(api_key, region, &ProviderOverrides::default())
@@ -242,12 +268,19 @@ impl ProviderImpl for Minimax {
 // ── 解析逻辑（不变）────────────────────────────────────────────────
 
 /// 灵活解析：兼容 6/1 前后的 schema
-fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides) -> ProviderSnapshot {
+fn parse(
+    raw: &serde_json::Value,
+    _region: Region,
+    overrides: &ProviderOverrides,
+) -> ProviderSnapshot {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
     // 业务级错误（ccswitch 也这么做）
     if let Some(base_resp) = raw.get("base_resp") {
-        let code = base_resp.get("status_code").and_then(|v| v.as_i64()).unwrap_or(-1);
+        let code = base_resp
+            .get("status_code")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(-1);
         if code != 0 {
             let msg = base_resp
                 .get("status_msg")
@@ -257,7 +290,15 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
                 provider: Provider::Minimax,
                 success: false,
                 rows: vec![],
-                error: Some(t!("error.common.business_code", provider = "MiniMax", code = code, msg = msg).into_owned()),
+                error: Some(
+                    t!(
+                        "error.common.business_code",
+                        provider = "MiniMax",
+                        code = code,
+                        msg = msg
+                    )
+                    .into_owned(),
+                ),
                 error_kind: Some(ErrorKind::ServerError),
                 fetched_at: Some(now_ms),
                 next_fetch_at: None,
@@ -292,7 +333,14 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
             provider: Provider::Minimax,
             success: false,
             rows: vec![],
-            error: Some(t!("error.common.missing_field", provider = "MiniMax", field = "model_remains[0]").into_owned()),
+            error: Some(
+                t!(
+                    "error.common.missing_field",
+                    provider = "MiniMax",
+                    field = "model_remains[0]"
+                )
+                .into_owned(),
+            ),
             error_kind: Some(ErrorKind::Parse),
             fetched_at: Some(now_ms),
             next_fetch_at: None,
@@ -306,24 +354,52 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
     };
 
     // 先试新 schema（percent-based），任一 tier 解不出时回退到旧 schema（count-based）
-    let five_hour = parse_tier_percent(item, "current_interval_remaining_percent",
-                                          "current_interval_status", "end_time")
-        .or_else(|| parse_tier_count(item, &[
-            // 旧 schema（ccswitch 老版本用的）
-            ("current_interval_total_count", "current_interval_usage_count", "end_time"),
-            // 候选新 schema（如果 6/1 改名了）
-            ("interval_total", "interval_remaining", "interval_end"),
-            ("window_total", "window_remaining", "window_end"),
-            ("total_5h", "used_5h", "reset_5h"),
-        ], &overrides.five_hour.count_candidates));
+    let five_hour = parse_tier_percent(
+        item,
+        "current_interval_remaining_percent",
+        "current_interval_status",
+        "end_time",
+    )
+    .or_else(|| {
+        parse_tier_count(
+            item,
+            &[
+                // 旧 schema（ccswitch 老版本用的）
+                (
+                    "current_interval_total_count",
+                    "current_interval_usage_count",
+                    "end_time",
+                ),
+                // 候选新 schema（如果 6/1 改名了）
+                ("interval_total", "interval_remaining", "interval_end"),
+                ("window_total", "window_remaining", "window_end"),
+                ("total_5h", "used_5h", "reset_5h"),
+            ],
+            &overrides.five_hour.count_candidates,
+        )
+    });
 
-    let weekly = parse_tier_percent(item, "current_weekly_remaining_percent",
-                                       "current_weekly_status", "weekly_end_time")
-        .or_else(|| parse_tier_count(item, &[
-            ("current_weekly_total_count", "current_weekly_usage_count", "weekly_end_time"),
-            ("weekly_total", "weekly_remaining", "weekly_end"),
-            ("total_week", "used_week", "reset_week"),
-        ], &overrides.weekly.count_candidates));
+    let weekly = parse_tier_percent(
+        item,
+        "current_weekly_remaining_percent",
+        "current_weekly_status",
+        "weekly_end_time",
+    )
+    .or_else(|| {
+        parse_tier_count(
+            item,
+            &[
+                (
+                    "current_weekly_total_count",
+                    "current_weekly_usage_count",
+                    "weekly_end_time",
+                ),
+                ("weekly_total", "weekly_remaining", "weekly_end"),
+                ("total_week", "used_week", "reset_week"),
+            ],
+            &overrides.weekly.count_candidates,
+        )
+    });
 
     // 转成 QuotaRow
     let mut rows = Vec::new();
@@ -366,7 +442,11 @@ fn parse(raw: &serde_json::Value, _region: Region, overrides: &ProviderOverrides
         } else {
             Some(t!("error.provider.schema_unknown_hint").into_owned())
         },
-        error_kind: if success { None } else { Some(ErrorKind::SchemaUnknown) },
+        error_kind: if success {
+            None
+        } else {
+            Some(ErrorKind::SchemaUnknown)
+        },
         fetched_at: Some(now_ms),
         next_fetch_at: None,
         raw: Some(raw.clone()),
@@ -418,8 +498,14 @@ pub fn parse_tier_percent(
         }
     }
     // 3. reset：智能识别（duration-seconds vs epoch-ms）
-    let resets_at = item.get(k_reset).and_then(|v| v.as_i64()).map(smart_reset_to_ms);
-    Some(TierInternal { utilization, resets_at })
+    let resets_at = item
+        .get(k_reset)
+        .and_then(|v| v.as_i64())
+        .map(smart_reset_to_ms);
+    Some(TierInternal {
+        utilization,
+        resets_at,
+    })
 }
 
 /// 旧 schema 解析（count-based，已知 2026-06-01 后对 Plus 订阅者已不可靠）
@@ -441,9 +527,15 @@ pub fn parse_tier_count(
         if let (Some(t), Some(r)) = (total, remain) {
             if t > 0.0 {
                 let utilization = ((t - r) / t) * 100.0;
-                let resets_at = triple.end.as_deref()
-                    .and_then(|k| item.get(k)
-                        .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok()))))
+                let resets_at = triple
+                    .end
+                    .as_deref()
+                    .and_then(|k| {
+                        item.get(k).and_then(|v| {
+                            v.as_i64()
+                                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                        })
+                    })
                     .map(smart_reset_to_ms);
                 return Some(TierInternal {
                     utilization,
@@ -459,8 +551,12 @@ pub fn parse_tier_count(
         if let (Some(t), Some(r)) = (total, remain) {
             if t > 0.0 {
                 let utilization = ((t - r) / t) * 100.0;
-                let resets_at = item.get(*k_reset)
-                    .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse().ok())))
+                let resets_at = item
+                    .get(*k_reset)
+                    .and_then(|v| {
+                        v.as_i64()
+                            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+                    })
                     .map(smart_reset_to_ms);
                 return Some(TierInternal {
                     utilization,
@@ -498,8 +594,8 @@ fn num_to_f64(v: &serde_json::Value) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::providers::test_fixtures::minimax_new_schema;
     use crate::config::ProviderOverrides;
+    use crate::providers::test_fixtures::minimax_new_schema;
 
     #[test]
     fn parse_tier_percent_status_must_be_1() {
@@ -508,8 +604,13 @@ mod tests {
             "current_interval_status": 2,  // not in plan, percent=80 视为哨兵
             "end_time": 100
         });
-        assert!(parse_tier_percent(&item, "current_interval_remaining_percent",
-                                       "current_interval_status", "end_time").is_none());
+        assert!(parse_tier_percent(
+            &item,
+            "current_interval_remaining_percent",
+            "current_interval_status",
+            "end_time"
+        )
+        .is_none());
     }
 
     #[test]
@@ -525,13 +626,23 @@ mod tests {
                 "current_interval_status": status,
                 "end_time": 14523
             });
-            let t = parse_tier_percent(&item, "current_interval_remaining_percent",
-                                           "current_interval_status", "end_time")
-                .unwrap_or_else(|| panic!("status={status} + percent=0 must not drop"));
-            assert!((t.utilization - 100.0).abs() < 0.001,
-                    "status={status} utilization={}", t.utilization);
+            let t = parse_tier_percent(
+                &item,
+                "current_interval_remaining_percent",
+                "current_interval_status",
+                "end_time",
+            )
+            .unwrap_or_else(|| panic!("status={status} + percent=0 must not drop"));
+            assert!(
+                (t.utilization - 100.0).abs() < 0.001,
+                "status={status} utilization={}",
+                t.utilization
+            );
             // reset 字段也要正常解析
-            assert!(t.resets_at.is_some(), "status={status} resets_at should be Some");
+            assert!(
+                t.resets_at.is_some(),
+                "status={status} resets_at should be Some"
+            );
         }
     }
 
@@ -543,9 +654,13 @@ mod tests {
             "current_interval_remaining_percent": 35,
             "end_time": 14523
         });
-        let t = parse_tier_percent(&item, "current_interval_remaining_percent",
-                                       "current_interval_status", "end_time")
-            .expect("missing status should fall back to trusting percent");
+        let t = parse_tier_percent(
+            &item,
+            "current_interval_remaining_percent",
+            "current_interval_status",
+            "end_time",
+        )
+        .expect("missing status should fall back to trusting percent");
         assert!((t.utilization - 65.0).abs() < 0.001);
     }
 
@@ -556,14 +671,26 @@ mod tests {
             "current_interval_status": 1,
             "end_time": 14523  // duration seconds
         });
-        let t = parse_tier_percent(&item, "current_interval_remaining_percent",
-                                       "current_interval_status", "end_time").unwrap();
-        assert!((t.utilization - 28.0).abs() < 0.001, "utilization = {}", t.utilization);
+        let t = parse_tier_percent(
+            &item,
+            "current_interval_remaining_percent",
+            "current_interval_status",
+            "end_time",
+        )
+        .unwrap();
+        assert!(
+            (t.utilization - 28.0).abs() < 0.001,
+            "utilization = {}",
+            t.utilization
+        );
         let resets = t.resets_at.unwrap();
         let now = chrono::Utc::now().timestamp_millis();
         // resets should be ~14523s in the future
         assert!(resets > now, "resets should be in the future");
-        assert!(resets - now <= 14523 * 1000 + 100, "resets within 14523s + 100ms");
+        assert!(
+            resets - now <= 14523 * 1000 + 100,
+            "resets within 14523s + 100ms"
+        );
     }
 
     #[test]
@@ -575,8 +702,13 @@ mod tests {
             "current_interval_status": 1,
             "end_time": future
         });
-        let t = parse_tier_percent(&item, "current_interval_remaining_percent",
-                                       "current_interval_status", "end_time").unwrap();
+        let t = parse_tier_percent(
+            &item,
+            "current_interval_remaining_percent",
+            "current_interval_status",
+            "end_time",
+        )
+        .unwrap();
         assert_eq!(t.resets_at, Some(future));
     }
 
@@ -587,8 +719,13 @@ mod tests {
             "current_interval_status": 1,
             "end_time": 100
         });
-        assert!(parse_tier_percent(&item, "current_interval_remaining_percent",
-                                       "current_interval_status", "end_time").is_none());
+        assert!(parse_tier_percent(
+            &item,
+            "current_interval_remaining_percent",
+            "current_interval_status",
+            "end_time"
+        )
+        .is_none());
     }
 
     #[test]
@@ -598,9 +735,16 @@ mod tests {
             "current_interval_usage_count": 56,
             "end_time": 14523
         });
-        let t = parse_tier_count(&item,
-            &[("current_interval_total_count", "current_interval_usage_count", "end_time")],
-            &[]).unwrap();
+        let t = parse_tier_count(
+            &item,
+            &[(
+                "current_interval_total_count",
+                "current_interval_usage_count",
+                "end_time",
+            )],
+            &[],
+        )
+        .unwrap();
         // (200-56)/200 = 0.72 → 72%
         assert!((t.utilization - 72.0).abs() < 0.001);
     }
@@ -627,9 +771,16 @@ mod tests {
             "current_interval_total_count": 0,
             "current_interval_usage_count": 0
         });
-        assert!(parse_tier_count(&item,
-            &[("current_interval_total_count", "current_interval_usage_count", "end_time")],
-            &[]).is_none());
+        assert!(parse_tier_count(
+            &item,
+            &[(
+                "current_interval_total_count",
+                "current_interval_usage_count",
+                "end_time"
+            )],
+            &[]
+        )
+        .is_none());
     }
 
     #[test]

@@ -43,7 +43,10 @@ use std::pin::Pin;
 use chrono::{NaiveDate, NaiveTime};
 use serde_json::Value;
 
-use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource};
+use super::{
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
+    QuotaSource,
+};
 
 use crate::t;
 
@@ -54,13 +57,21 @@ const URL: &str = "https://api.tavily.com/usage";
 pub struct TavilySource;
 
 impl Default for TavilySource {
-    fn default() -> Self { Self }
+    fn default() -> Self {
+        Self
+    }
 }
 
 impl QuotaSource for TavilySource {
-    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("tavily") }
-    fn display_name(&self) -> Cow<'_, str> { Cow::Owned(t!("provider_name.tavily").into_owned()) }
-    fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
+    fn id(&self) -> Cow<'_, str> {
+        Cow::Borrowed("tavily")
+    }
+    fn display_name(&self) -> Cow<'_, str> {
+        Cow::Owned(t!("provider_name.tavily").into_owned())
+    }
+    fn auth_kind(&self) -> AuthKind {
+        AuthKind::ApiKey
+    }
 
     fn set_state<'a>(
         &'a self,
@@ -73,12 +84,13 @@ impl QuotaSource for TavilySource {
     fn fetch<'a>(
         &'a self,
         credentials: &'a Credentials,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>>
+    {
         Box::pin(async move {
             let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
                 return Err(FetchError::unconfigured(
-                    t!("error.provider.unconfigured_key", provider = "Tavily").into_owned()
+                    t!("error.provider.unconfigured_key", provider = "Tavily").into_owned(),
                 ));
             }
             do_fetch(api_key).await
@@ -89,7 +101,7 @@ impl QuotaSource for TavilySource {
 async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
     if api_key.trim().is_empty() {
         return Err(FetchError::unconfigured(
-            t!("error.common.api_key_empty").into_owned()
+            t!("error.common.api_key_empty").into_owned(),
         ));
     }
 
@@ -101,9 +113,11 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| FetchError::network(
-            t!("error.common.network", url = URL, err = e.to_string()).into_owned()
-        ))?;
+        .map_err(|e| {
+            FetchError::network(
+                t!("error.common.network", url = URL, err = e.to_string()).into_owned(),
+            )
+        })?;
 
     let status = resp.status();
     // H6 fix: 429 显式分支 → RateLimited（前端走 rate-limit UI 而不是 server-error 兜底）
@@ -115,7 +129,7 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
     }
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(FetchError::auth(
-            t!("error.common.auth_failed", provider = "Tavily").into_owned()
+            t!("error.common.auth_failed", provider = "Tavily").into_owned(),
         ));
     }
     if !status.is_success() {
@@ -126,16 +140,14 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
                 provider = "Tavily",
                 status = status.as_u16(),
                 body = body.chars().take(200).collect::<String>()
-            ).into_owned()
+            )
+            .into_owned(),
         ));
     }
 
-    let raw: Value = resp
-        .json()
-        .await
-        .map_err(|e| FetchError::parse(
-            t!("error.common.parse_json", err = e.to_string()).into_owned()
-        ))?;
+    let raw: Value = resp.json().await.map_err(|e| {
+        FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
+    })?;
 
     parse(&raw)
 }
@@ -146,11 +158,16 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
 fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
-    let key = raw
-        .get("key")
-        .ok_or_else(|| FetchError::parse(
-            t!("error.common.missing_field", provider = "Tavily", field = "key").into_owned()
-        ))?;
+    let key = raw.get("key").ok_or_else(|| {
+        FetchError::parse(
+            t!(
+                "error.common.missing_field",
+                provider = "Tavily",
+                field = "key"
+            )
+            .into_owned(),
+        )
+    })?;
 
     let used = num_f64(key, "usage");
     let mut limit = num_f64(key, "limit");
@@ -179,13 +196,11 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         .pointer("/account/current_billing_period/end")
         .and_then(|v| v.as_str())
         .and_then(|s| {
-            NaiveDate::parse_from_str(s, "%Y-%m-%d")
-                .ok()
-                .map(|d| {
-                    d.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap())
-                        .and_utc()
-                        .timestamp_millis()
-                })
+            NaiveDate::parse_from_str(s, "%Y-%m-%d").ok().map(|d| {
+                d.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap())
+                    .and_utc()
+                    .timestamp_millis()
+            })
         });
 
     let mut rows = Vec::new();
@@ -202,7 +217,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
                 resets_at,
                 unit: Some(t!("row.credits").to_string()),
                 extra: None,
-            kind: None,
+                kind: None,
             });
         } else {
             // limit = 0 → 理论上不该出现，但保险起见也列
@@ -215,7 +230,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
                 resets_at,
                 unit: Some(t!("row.credits").to_string()),
                 extra: None,
-            kind: None,
+                kind: None,
             });
         }
     } else if let Some(u) = used {
@@ -252,14 +267,19 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
                 resets_at: None,
                 unit: Some(t!("row.calls").to_string()),
                 extra: None,
-            kind: None,
+                kind: None,
             });
         }
     }
 
     if rows.is_empty() {
         return Err(FetchError::parse(
-            t!("error.common.missing_field", provider = "Tavily", field = "any usage").into_owned()
+            t!(
+                "error.common.missing_field",
+                provider = "Tavily",
+                field = "any usage"
+            )
+            .into_owned(),
         ));
     }
 

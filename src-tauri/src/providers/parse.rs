@@ -71,11 +71,15 @@ pub fn read_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
             '.' => {
                 // 段名到下一个 `.` 或 `[` 或结尾
                 while let Some(&nc) = chars.peek() {
-                    if nc == '.' || nc == '[' { break; }
+                    if nc == '.' || nc == '[' {
+                        break;
+                    }
                     buf.push(nc);
                     chars.next();
                 }
-                if buf.is_empty() { return None; }
+                if buf.is_empty() {
+                    return None;
+                }
                 current = current.get(&buf)?;
                 buf.clear();
             }
@@ -83,19 +87,23 @@ pub fn read_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
                 // 数字到 `]`
                 let mut idx_str = String::new();
                 while let Some(&nc) = chars.peek() {
-                    if nc == ']' { break; }
+                    if nc == ']' {
+                        break;
+                    }
                     idx_str.push(nc);
                     chars.next();
                 }
                 // 必须以 `]` 收尾
-                if chars.next() != Some(']') { return None; }
+                if chars.next() != Some(']') {
+                    return None;
+                }
                 let idx: usize = match idx_str.trim().parse() {
                     Ok(n) => n,
                     Err(_) => return None,
                 };
                 current = current.get(idx)?;
             }
-            _ => return None,  // 不应该到这里（段名都在 . / [ 分支里消费）
+            _ => return None, // 不应该到这里（段名都在 . / [ 分支里消费）
         }
     }
 
@@ -110,9 +118,15 @@ pub fn read_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
 ///
 /// 数字字符串容忍：前导 0 / 包含小数点 / 包含指数都接受。
 pub fn num_f64(v: &Value) -> Option<f64> {
-    if let Some(n) = v.as_f64() { return Some(n); }
-    if let Some(n) = v.as_i64() { return Some(n as f64); }
-    if let Some(n) = v.as_u64() { return Some(n as f64); }
+    if let Some(n) = v.as_f64() {
+        return Some(n);
+    }
+    if let Some(n) = v.as_i64() {
+        return Some(n as f64);
+    }
+    if let Some(n) = v.as_u64() {
+        return Some(n as f64);
+    }
     if let Some(s) = v.as_str() {
         return s.trim().parse().ok();
     }
@@ -179,8 +193,8 @@ mod tests {
         let v = json!({"data": 100});
         assert_eq!(read_path(&v, ""), None);
         assert_eq!(read_path(&v, "   "), None);
-        assert_eq!(read_path(&v, "[abc]"), None);  // 非数字
-        assert_eq!(read_path(&v, "data[unclosed"), None);  // 缺 ]
+        assert_eq!(read_path(&v, "[abc]"), None); // 非数字
+        assert_eq!(read_path(&v, "data[unclosed"), None); // 缺 ]
     }
 
     #[test]
@@ -226,7 +240,7 @@ mod tests {
     fn num_f64_accepts_string() {
         assert_eq!(num_f64(&json!("100")), Some(100.0));
         assert_eq!(num_f64(&json!("1.5")), Some(1.5));
-        assert_eq!(num_f64(&json!("  100  ")), Some(100.0));  // 容 trim
+        assert_eq!(num_f64(&json!("  100  ")), Some(100.0)); // 容 trim
     }
 
     #[test]

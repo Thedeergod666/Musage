@@ -27,7 +27,10 @@ use std::pin::Pin;
 
 use serde_json::Value;
 
-use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource};
+use super::{
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
+    QuotaSource,
+};
 use crate::t;
 
 const URL_CREDITS: &str = "https://openrouter.ai/api/v1/credits";
@@ -45,8 +48,9 @@ enum Endpoint {
     Credits,
     Key,
 }
-static LAST_SUCCESSFUL: std::sync::OnceLock<std::sync::Mutex<Option<(std::time::Instant, Endpoint)>>> =
-    std::sync::OnceLock::new();
+static LAST_SUCCESSFUL: std::sync::OnceLock<
+    std::sync::Mutex<Option<(std::time::Instant, Endpoint)>>,
+> = std::sync::OnceLock::new();
 
 fn last_successful() -> &'static std::sync::Mutex<Option<(std::time::Instant, Endpoint)>> {
     LAST_SUCCESSFUL.get_or_init(|| std::sync::Mutex::new(None))
@@ -68,7 +72,9 @@ fn clear_endpoint_cache() {
 
 fn should_skip_endpoint(ep: Endpoint) -> bool {
     // 如果最近 5 分钟内有别的 endpoint 成功，跳过这个
-    let Ok(g) = last_successful().lock() else { return false };
+    let Ok(g) = last_successful().lock() else {
+        return false;
+    };
     match g.as_ref() {
         Some((ts, last)) if ts.elapsed() < std::time::Duration::from_secs(300) => last != &ep,
         _ => false,
@@ -76,13 +82,21 @@ fn should_skip_endpoint(ep: Endpoint) -> bool {
 }
 
 impl Default for OpenrouterSource {
-    fn default() -> Self { Self }
+    fn default() -> Self {
+        Self
+    }
 }
 
 impl QuotaSource for OpenrouterSource {
-    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("openrouter") }
-    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("OpenRouter") }
-    fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
+    fn id(&self) -> Cow<'_, str> {
+        Cow::Borrowed("openrouter")
+    }
+    fn display_name(&self) -> Cow<'_, str> {
+        Cow::Borrowed("OpenRouter")
+    }
+    fn auth_kind(&self) -> AuthKind {
+        AuthKind::ApiKey
+    }
 
     fn set_state<'a>(
         &'a self,
@@ -94,12 +108,13 @@ impl QuotaSource for OpenrouterSource {
     fn fetch<'a>(
         &'a self,
         credentials: &'a Credentials,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>>
+    {
         Box::pin(async move {
             let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
                 return Err(FetchError::unconfigured(
-                    t!("error.provider.unconfigured_key", provider = "OpenRouter").into_owned()
+                    t!("error.provider.unconfigured_key", provider = "OpenRouter").into_owned(),
                 ));
             }
             do_fetch(api_key).await
@@ -153,9 +168,16 @@ async fn fetch_credits(
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| FetchError::network(
-            t!("error.common.network", url = URL_CREDITS, err = e.to_string()).into_owned()
-        ))?;
+        .map_err(|e| {
+            FetchError::network(
+                t!(
+                    "error.common.network",
+                    url = URL_CREDITS,
+                    err = e.to_string()
+                )
+                .into_owned(),
+            )
+        })?;
 
     let status = resp.status();
     // H6 fix: 429 显式 → RateLimited（之前的 is_success() 兜底会归到 ServerError，
@@ -168,21 +190,23 @@ async fn fetch_credits(
     }
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(FetchError::auth(
-            t!("error.common.auth_failed", provider = "OpenRouter").into_owned()
+            t!("error.common.auth_failed", provider = "OpenRouter").into_owned(),
         ));
     }
     if !status.is_success() {
         return Err(FetchError::server(
-            t!("error.common.http_error_simple", provider = "OpenRouter", status = status.as_u16()).into_owned()
+            t!(
+                "error.common.http_error_simple",
+                provider = "OpenRouter",
+                status = status.as_u16()
+            )
+            .into_owned(),
         ));
     }
 
-    let raw: Value = resp
-        .json()
-        .await
-        .map_err(|e| FetchError::parse(
-            t!("error.common.parse_json", err = e.to_string()).into_owned()
-        ))?;
+    let raw: Value = resp.json().await.map_err(|e| {
+        FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
+    })?;
 
     parse_credits(&raw)
 }
@@ -198,9 +222,11 @@ async fn fetch_key(
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| FetchError::network(
-            t!("error.common.network", url = URL_KEY, err = e.to_string()).into_owned()
-        ))?;
+        .map_err(|e| {
+            FetchError::network(
+                t!("error.common.network", url = URL_KEY, err = e.to_string()).into_owned(),
+            )
+        })?;
 
     let status = resp.status();
     // 同 fetch_credits：429 显式 → RateLimited
@@ -212,7 +238,7 @@ async fn fetch_key(
     }
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(FetchError::auth(
-            t!("error.common.auth_failed", provider = "OpenRouter").into_owned()
+            t!("error.common.auth_failed", provider = "OpenRouter").into_owned(),
         ));
     }
     if !status.is_success() {
@@ -223,16 +249,14 @@ async fn fetch_key(
                 provider = "OpenRouter",
                 status = status.as_u16(),
                 body = body.chars().take(200).collect::<String>()
-            ).into_owned()
+            )
+            .into_owned(),
         ));
     }
 
-    let raw: Value = resp
-        .json()
-        .await
-        .map_err(|e| FetchError::parse(
-            t!("error.common.parse_json", err = e.to_string()).into_owned()
-        ))?;
+    let raw: Value = resp.json().await.map_err(|e| {
+        FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
+    })?;
 
     parse_key(&raw)
 }
@@ -240,16 +264,27 @@ async fn fetch_key(
 /// 解析 `/api/v1/credits` 响应 → 1 行「余额 $X.XX USD」
 fn parse_credits(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let data = raw
-        .get("data")
-        .ok_or_else(|| FetchError::parse(
-            t!("error.common.missing_field", provider = "OpenRouter", field = "data").into_owned()
-        ))?;
+    let data = raw.get("data").ok_or_else(|| {
+        FetchError::parse(
+            t!(
+                "error.common.missing_field",
+                provider = "OpenRouter",
+                field = "data"
+            )
+            .into_owned(),
+        )
+    })?;
 
-    let total_credits = num_f64(data, "total_credits")
-        .ok_or_else(|| FetchError::parse(
-            t!("error.common.missing_field", provider = "OpenRouter", field = "total_credits").into_owned()
-        ))?;
+    let total_credits = num_f64(data, "total_credits").ok_or_else(|| {
+        FetchError::parse(
+            t!(
+                "error.common.missing_field",
+                provider = "OpenRouter",
+                field = "total_credits"
+            )
+            .into_owned(),
+        )
+    })?;
     let total_usage = num_f64(data, "total_usage").unwrap_or(0.0);
     let remaining = (total_credits - total_usage).max(0.0);
 
@@ -262,7 +297,7 @@ fn parse_credits(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         resets_at: None,
         unit: Some("USD".to_string()),
         extra: None,
-            kind: None,
+        kind: None,
     }];
 
     Ok(ProviderSnapshot {
@@ -285,15 +320,18 @@ fn parse_credits(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
 /// 解析 `/api/v1/key` 响应 → 1 行「余额 $X.XX USD」（per-key fallback）
 fn parse_key(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
-    let data = raw
-        .get("data")
-        .ok_or_else(|| FetchError::parse(
-            t!("error.common.missing_data_field", provider = "OpenRouter").into_owned()
-        ))?;
+    let data = raw.get("data").ok_or_else(|| {
+        FetchError::parse(
+            t!("error.common.missing_data_field", provider = "OpenRouter").into_owned(),
+        )
+    })?;
 
     let remaining = num_f64(data, "limit_remaining");
     let limit = num_f64(data, "limit");
-    let is_free_tier = data.get("is_free_tier").and_then(|v| v.as_bool()).unwrap_or(false);
+    let is_free_tier = data
+        .get("is_free_tier")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
     let plan_name = if is_free_tier {
         Some(t!("row.free_tier").to_string())
@@ -319,7 +357,11 @@ fn parse_key(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
 
     if rows.is_empty() {
         return Err(FetchError::parse(
-            t!("error.common.missing_field_generic", field = "limit_remaining").into_owned()
+            t!(
+                "error.common.missing_field_generic",
+                field = "limit_remaining"
+            )
+            .into_owned(),
         ));
     }
 

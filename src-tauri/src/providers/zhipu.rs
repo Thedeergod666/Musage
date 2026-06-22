@@ -54,7 +54,9 @@ use std::sync::RwLock;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{shared_client, AuthKind, Credentials, FetchError, ProviderSnapshot, QuotaRow, QuotaSource};
+use super::{
+    shared_client, AuthKind, Credentials, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
+};
 use crate::t;
 
 const URL_CN: &str = "https://open.bigmodel.cn/api/monitor/usage/quota/limit";
@@ -120,9 +122,15 @@ impl Default for ZhipuSource {
 }
 
 impl QuotaSource for ZhipuSource {
-    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("zhipu") }
-    fn display_name(&self) -> Cow<'_, str> { Cow::Owned(t!("provider_name.zhipu_cn").into_owned()) }
-    fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
+    fn id(&self) -> Cow<'_, str> {
+        Cow::Borrowed("zhipu")
+    }
+    fn display_name(&self) -> Cow<'_, str> {
+        Cow::Owned(t!("provider_name.zhipu_cn").into_owned())
+    }
+    fn auth_kind(&self) -> AuthKind {
+        AuthKind::ApiKey
+    }
 
     fn set_state<'a>(
         &'a self,
@@ -148,20 +156,16 @@ impl QuotaSource for ZhipuSource {
     fn fetch<'a>(
         &'a self,
         credentials: &'a Credentials,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>>
+    {
         Box::pin(async move {
             let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
                 return Err(FetchError::unconfigured(
-                    t!("error.provider.unconfigured_key", provider = "智谱 GLM").into_owned()
+                    t!("error.provider.unconfigured_key", provider = "智谱 GLM").into_owned(),
                 ));
             }
-            let region = self
-                .region
-                .read()
-                .ok()
-                .and_then(|g| *g)
-                .unwrap_or_default();
+            let region = self.region.read().ok().and_then(|g| *g).unwrap_or_default();
             do_fetch(api_key, region).await
         })
     }
@@ -179,41 +183,50 @@ async fn do_fetch(api_key: &str, region: ZhipuRegion) -> Result<ProviderSnapshot
         .header("Accept-Language", "en-US,en")
         .send()
         .await
-        .map_err(|e| FetchError::network(
-            t!("error.common.network", url = url, err = e.to_string()).into_owned()
-        ))?;
+        .map_err(|e| {
+            FetchError::network(
+                t!("error.common.network", url = url, err = e.to_string()).into_owned(),
+            )
+        })?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(FetchError::auth(
-            t!("error.zhipu.auth_failed_hint").into_owned()
+            t!("error.zhipu.auth_failed_hint").into_owned(),
         ));
     }
     if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        let region_label = match region { ZhipuRegion::Cn => "国区", ZhipuRegion::En => "国际" };
+        let region_label = match region {
+            ZhipuRegion::Cn => "国区",
+            ZhipuRegion::En => "国际",
+        };
         return Err(FetchError::server(
             t!(
                 "error.common.http_error",
                 provider = format!("智谱 GLM ({region_label})"),
                 status = status.as_u16(),
                 body = body.chars().take(200).collect::<String>()
-            ).into_owned()
+            )
+            .into_owned(),
         ));
     }
 
-    let raw: Value = resp
-        .json()
-        .await
-        .map_err(|e| FetchError::parse(
-            t!("error.common.parse_json", err = e.to_string()).into_owned()
-        ))?;
+    let raw: Value = resp.json().await.map_err(|e| {
+        FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
+    })?;
 
     // 业务级 success 检查
     if raw.get("success").and_then(|v| v.as_bool()) == Some(false) {
         let msg = raw.get("msg").and_then(|v| v.as_str()).unwrap_or("");
         return Err(FetchError::server(
-            t!("error.common.business_code", provider = "智谱 GLM", code = 0, msg = msg).into_owned()
+            t!(
+                "error.common.business_code",
+                provider = "智谱 GLM",
+                code = 0,
+                msg = msg
+            )
+            .into_owned(),
         ));
     }
 
@@ -230,11 +243,16 @@ async fn do_fetch(api_key: &str, region: ZhipuRegion) -> Result<ProviderSnapshot
 fn parse(raw: &Value, region: ZhipuRegion) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
-    let data = raw
-        .get("data")
-        .ok_or_else(|| FetchError::parse(
-            t!("error.common.missing_field", provider = "智谱 GLM", field = "data").into_owned()
-        ))?;
+    let data = raw.get("data").ok_or_else(|| {
+        FetchError::parse(
+            t!(
+                "error.common.missing_field",
+                provider = "智谱 GLM",
+                field = "data"
+            )
+            .into_owned(),
+        )
+    })?;
 
     let (five_h, weekly) = classify_zhipu_limits(data);
 
@@ -382,7 +400,10 @@ mod tests {
         assert!(snap.success);
         assert_eq!(snap.source_id.as_deref(), Some("zhipu"));
         assert_eq!(snap.plan_name.as_deref(), Some("pro"));
-        assert_eq!(snap.source_display_name.as_deref(), Some(t!("provider_name.zhipu_cn").as_ref()));
+        assert_eq!(
+            snap.source_display_name.as_deref(),
+            Some(t!("provider_name.zhipu_cn").as_ref())
+        );
         assert_eq!(snap.rows.len(), 2);
 
         let five_h = &snap.rows[0];
@@ -522,7 +543,8 @@ mod tests {
         // 但 fixture 没 data 字段, success check 后继续走到 parse data 返 Parse。
         // 接受 ServerError 或 Parse — 都是"非成功响应", 不需精确分类。
         assert!(
-            err.kind == FetchError::server("test").kind || err.kind == FetchError::parse("test").kind,
+            err.kind == FetchError::server("test").kind
+                || err.kind == FetchError::parse("test").kind,
             "err.kind 应该 ServerError 或 Parse, 实际: {:?}",
             err.kind
         );
@@ -541,7 +563,10 @@ mod tests {
             }
         });
         let snap_cn = parse(&raw, ZhipuRegion::Cn).expect("parse_cn");
-        assert_eq!(snap_cn.source_display_name.as_deref(), Some(t!("provider_name.zhipu_cn").as_ref()));
+        assert_eq!(
+            snap_cn.source_display_name.as_deref(),
+            Some(t!("provider_name.zhipu_cn").as_ref())
+        );
         let snap_en = parse(&raw, ZhipuRegion::En).expect("parse_en");
         assert_eq!(snap_en.source_display_name.as_deref(), Some("Z.ai"));
         // 数据本身一致，只有 display name 不同

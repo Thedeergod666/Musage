@@ -42,7 +42,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::parse::{num_f64, read_path};
-use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderSnapshot, QuotaRow, QuotaSource};
+use super::{
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderSnapshot,
+    QuotaRow, QuotaSource,
+};
 use crate::t;
 
 // ── 类型定义 ────────────────────────────────────────────────────────
@@ -133,7 +136,7 @@ impl CustomSource {
         Self { spec }
     }
 
-    #[allow(dead_code)]  // Phase E IPC 接收 spec 时用，避免重新 clone
+    #[allow(dead_code)] // Phase E IPC 接收 spec 时用，避免重新 clone
     pub fn spec(&self) -> &CustomSourceSpec {
         &self.spec
     }
@@ -161,15 +164,16 @@ impl QuotaSource for CustomSource {
     fn fetch<'a>(
         &'a self,
         credentials: &'a Credentials,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>>
+    {
         Box::pin(async move {
             let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
                 return Err(FetchError::unconfigured(
-                    t!("error.custom.unconfigured_key").into_owned()
+                    t!("error.custom.unconfigured_key").into_owned(),
                 ));
             }
-            let spec = self.spec.clone();  // 'static lifetime 需要 owned
+            let spec = self.spec.clone(); // 'static lifetime 需要 owned
             do_fetch(api_key, &spec).await
         })
     }
@@ -185,20 +189,16 @@ async fn do_fetch(api_key: &str, spec: &CustomSourceSpec) -> Result<ProviderSnap
     // spec parse 时已经校验 path.starts_with('/')，这里再防御一次（防篡改 config）。
     if !spec.path.starts_with('/') {
         return Err(FetchError::auth(
-            t!("error.custom.path_must_start_with_slash").into_owned()
+            t!("error.custom.path_must_start_with_slash").into_owned(),
         ));
     }
-    let url = format!(
-        "{}{}",
-        spec.base_url.trim_end_matches('/'),
-        spec.path
-    );
+    let url = format!("{}{}", spec.base_url.trim_end_matches('/'), spec.path);
     // H9 fix: SSRF / protocol confusion 防护 —— user-provided base_url 必须 https://
     // 拒绝 http:// (泄露 API key 走明文) / file:// / javascript: / 其他 scheme。
     // 即使 saved config 也每次都校验（防御篡改）。
     if !url.starts_with("https://") {
         return Err(FetchError::auth(
-            t!("error.common.url_scheme_invalid", url = url).into_owned()
+            t!("error.common.url_scheme_invalid", url = url).into_owned(),
         ));
     }
 
@@ -209,7 +209,7 @@ async fn do_fetch(api_key: &str, spec: &CustomSourceSpec) -> Result<ProviderSnap
         other => {
             return Err(FetchError::new(
                 ErrorKind::Other,
-                t!("commands.custom_method_invalid", method = other).into_owned()
+                t!("commands.custom_method_invalid", method = other).into_owned(),
             ));
         }
     };
@@ -217,28 +217,23 @@ async fn do_fetch(api_key: &str, spec: &CustomSourceSpec) -> Result<ProviderSnap
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json");
 
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| FetchError::network(
-            t!("error.custom.network", err = e.to_string()).into_owned()
-        ))?;
+    let resp = req.send().await.map_err(|e| {
+        FetchError::network(t!("error.custom.network", err = e.to_string()).into_owned())
+    })?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED {
         return Err(FetchError::auth(
-            t!("error.custom.auth_failed").into_owned()
+            t!("error.custom.auth_failed").into_owned(),
         ));
     }
     if status == reqwest::StatusCode::FORBIDDEN {
-        return Err(FetchError::auth(
-            t!("error.custom.forbidden").into_owned()
-        ));
+        return Err(FetchError::auth(t!("error.custom.forbidden").into_owned()));
     }
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
         return Err(FetchError::new(
             ErrorKind::RateLimited,
-            t!("error.custom.rate_limited").into_owned()
+            t!("error.custom.rate_limited").into_owned(),
         ));
     }
     if !status.is_success() {
@@ -248,18 +243,17 @@ async fn do_fetch(api_key: &str, spec: &CustomSourceSpec) -> Result<ProviderSnap
                 "error.custom.http_error",
                 status = status.as_u16(),
                 body = body.chars().take(200).collect::<String>()
-            ).into_owned()
+            )
+            .into_owned(),
         ));
     }
 
-    let raw: Value = resp
-        .json()
-        .await
-        .map_err(|e| FetchError::parse(
-            t!("error.common.parse_json", err = e.to_string()).into_owned()
-        ))?;
+    let raw: Value = resp.json().await.map_err(|e| {
+        FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
+    })?;
 
-    let (rows, plan_name) = parse_with_extract(&raw, &spec.extract, spec.plan_name_path.as_deref())?;
+    let (rows, plan_name) =
+        parse_with_extract(&raw, &spec.extract, spec.plan_name_path.as_deref())?;
 
     Ok(ProviderSnapshot {
         // ⚠ Provider::Minimax 是历史占位（plan §13 review #4）。
@@ -299,7 +293,7 @@ fn parse_with_extract(
             // 浮窗 health_label 误判为 alert；Infinity 直接污染 JSON）。
             if !div.is_finite() || div <= 0.0 {
                 return Err(FetchError::parse(
-                    t!("error.custom.newapi_divide_zero").into_owned()
+                    t!("error.custom.newapi_divide_zero").into_owned(),
                 ));
             }
             let remaining = read_path(raw, "data.quota")
@@ -314,7 +308,7 @@ fn parse_with_extract(
             };
             if remaining.is_none() && used.is_none() {
                 return Err(FetchError::parse(
-                    t!("error.custom.newapi_data_missing").into_owned()
+                    t!("error.custom.newapi_data_missing").into_owned(),
                 ));
             }
             QuotaRow {
@@ -326,7 +320,7 @@ fn parse_with_extract(
                 resets_at: None,
                 unit: Some("USD".to_string()),
                 extra: None,
-            kind: None,
+                kind: None,
             }
         }
         ExtractSpec::Balance {
@@ -337,7 +331,7 @@ fn parse_with_extract(
             let div = divide.unwrap_or(1.0);
             if !div.is_finite() || div <= 0.0 {
                 return Err(FetchError::parse(
-                    t!("error.custom.balance_divide_zero").into_owned()
+                    t!("error.custom.balance_divide_zero").into_owned(),
                 ));
             }
             let remaining = read_path(raw, balance_path.as_str())
@@ -345,7 +339,11 @@ fn parse_with_extract(
                 .map(|v| v / div);
             if remaining.is_none() {
                 return Err(FetchError::parse(
-                    t!("error.custom.balance_path_invalid", path = balance_path.as_str()).into_owned()
+                    t!(
+                        "error.custom.balance_path_invalid",
+                        path = balance_path.as_str()
+                    )
+                    .into_owned(),
                 ));
             }
             let unit = currency_path
@@ -361,7 +359,7 @@ fn parse_with_extract(
                 resets_at: None,
                 unit,
                 extra: None,
-            kind: None,
+                kind: None,
             }
         }
         ExtractSpec::Custom {
@@ -374,7 +372,7 @@ fn parse_with_extract(
             let div = divide.unwrap_or(1.0);
             if !div.is_finite() || div <= 0.0 {
                 return Err(FetchError::parse(
-                    t!("error.custom.custom_divide_zero").into_owned()
+                    t!("error.custom.custom_divide_zero").into_owned(),
                 ));
             }
             let remaining = remaining_path
@@ -394,7 +392,7 @@ fn parse_with_extract(
                 .map(|v| v / div);
             if remaining.is_none() && used.is_none() && total.is_none() {
                 return Err(FetchError::parse(
-                    t!("error.custom.custom_path_no_match").into_owned()
+                    t!("error.custom.custom_path_no_match").into_owned(),
                 ));
             }
             QuotaRow {
@@ -406,7 +404,7 @@ fn parse_with_extract(
                 resets_at: None,
                 unit: unit.clone(),
                 extra: None,
-            kind: None,
+                kind: None,
             }
         }
     };
@@ -442,11 +440,14 @@ mod tests {
         let raw = json!({
             "data": { "quota": 50000, "used_quota": 5000 }
         });
-        let spec = make_spec(ExtractSpec::NewApi { divide: Some(500_000.0) });
-        let (rows, plan) = parse_with_extract(&raw, &spec.extract, spec.plan_name_path.as_deref()).unwrap();
+        let spec = make_spec(ExtractSpec::NewApi {
+            divide: Some(500_000.0),
+        });
+        let (rows, plan) =
+            parse_with_extract(&raw, &spec.extract, spec.plan_name_path.as_deref()).unwrap();
         assert_eq!(rows.len(), 1);
-        assert!((rows[0].remaining.unwrap() - 0.1).abs() < 0.001);  // 50000 / 500000 = 0.1
-        assert!((rows[0].used.unwrap() - 0.01).abs() < 0.001);     // 5000 / 500000 = 0.01
+        assert!((rows[0].remaining.unwrap() - 0.1).abs() < 0.001); // 50000 / 500000 = 0.1
+        assert!((rows[0].used.unwrap() - 0.01).abs() < 0.001); // 5000 / 500000 = 0.01
         assert!((rows[0].total.unwrap() - 0.11).abs() < 0.001);
         assert_eq!(rows[0].unit.as_deref(), Some("USD"));
         assert!(plan.is_none());
@@ -455,7 +456,7 @@ mod tests {
     #[test]
     fn extract_newapi_default_divide_500000() {
         let raw = json!({ "data": { "quota": 500000 } });
-        let spec = make_spec(ExtractSpec::NewApi { divide: None });  // 用默认
+        let spec = make_spec(ExtractSpec::NewApi { divide: None }); // 用默认
         let (rows, _) = parse_with_extract(&raw, &spec.extract, None).unwrap();
         assert!((rows[0].remaining.unwrap() - 1.0).abs() < 0.001);
     }
@@ -615,7 +616,10 @@ mod tests {
     fn custom_source_unconfigured_key_errors() {
         let spec = make_spec(ExtractSpec::NewApi { divide: None });
         let src = CustomSource::new(spec);
-        let creds = Credentials { api_key: None, cookie: None };
+        let creds = Credentials {
+            api_key: None,
+            cookie: None,
+        };
         let rt = tokio::runtime::Runtime::new().unwrap();
         let err = rt.block_on(src.fetch(&creds)).unwrap_err();
         assert_eq!(err.kind, ErrorKind::UnconfiguredKey);

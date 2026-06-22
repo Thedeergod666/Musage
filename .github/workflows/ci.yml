@@ -123,9 +123,34 @@ jobs:
         env:
           # CI 上没必要开 macos-private-api,省 objc2 链接
           RUSTFLAGS: ""
-      - name: cargo test (no-run)
+      - name: cargo test
+        # 2026-06-22 收紧 CI: 之前 `cargo test --locked --no-run` 只编译不跑,
+        # 10 个 pre-existing broken test (rust 1.96 升级后 RwLock::get 弃用 +
+        # i18n 切换后中文 hard-code 断言破裂) 全部看不见, CI 假绿。
+        # 改 `cargo test --locked` 真正跑测试, 失败立刻红。
+        # ci.yml:128 历史 commit `06d8821` 已经修 188 个 test 全绿。
         working-directory: src-tauri
-        run: cargo test --locked --no-run
+        run: cargo test --locked
+      - name: cargo fmt --check
+        # 强制 fmt: PR 引入未格式化代码立刻红。`fmt` 不在 toolchain 默认装,
+        # rustup component add rustfmt 装一次。
+        working-directory: src-tauri
+        run: |
+          rustup component add rustfmt || true
+          cargo fmt --all -- --check
+      - name: cargo clippy
+        # 2026-06-22 加 clippy 守门: 项目之前从未跑过 clippy, 累积 37 个
+        # style 警告 (mostly unnecessary_to_owned / too_many_arguments /
+        # needless_borrow 等), 一次性清不完。先用 `cargo clippy` 默认 (warning
+        # 不 fail), 让 PR 后续慢慢消解。未来 PR 4-6 大重构后改 -D warnings 一次锁死。
+        working-directory: src-tauri
+        run: |
+          rustup component add clippy || true
+          cargo clippy --locked --all-targets
+      - name: tsc --noEmit
+        # 前端类型守门: tsc 不跑 vite, 只 type check。
+        # 跟 pnpm build (tsc + vite) 区别: 这里失败不产物, 速度更快更明确。
+        run: pnpm exec tsc --noEmit
 
   # ── 前端构建产物在所有平台保持一致:对比 hash ──
   frontend-consistency:

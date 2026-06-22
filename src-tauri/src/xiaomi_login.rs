@@ -68,9 +68,8 @@ const LOGIN_URL: &str = "https://platform.xiaomimimo.com/console/plan-manage";
 fn is_dashboard_url(url: &Url) -> bool {
     let s = url.as_str();
     let host_ok = s.contains("platform.xiaomimimo.com");
-    let not_login = !s.contains("account.xiaomi.com")
-        && !s.contains("serviceLogin")
-        && !s.contains("passport");
+    let not_login =
+        !s.contains("account.xiaomi.com") && !s.contains("serviceLogin") && !s.contains("passport");
     host_ok && not_login
 }
 
@@ -133,12 +132,10 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
             }
 
             // 并发锁：已有任务在跑就跳过
-            if EXTRACTING.compare_exchange(
-                false,
-                true,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            ).is_err() {
+            if EXTRACTING
+                .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+                .is_err()
+            {
                 tracing::debug!("on_page_load: 已有提取任务在运行，跳过");
                 return;
             }
@@ -272,7 +269,8 @@ async fn extract_and_save(window: &tauri::WebviewWindow) -> Result<usize, String
             expected = WANTED_COOKIES.len(),
             wanted = format!("{WANTED_COOKIES:?}"),
             available = format!("{available:?}")
-        ).into_owned());
+        )
+        .into_owned());
     }
 
     // F4 fix: require at least `api-platform_serviceToken` AND `userId` to be present
@@ -308,7 +306,9 @@ async fn extract_and_save(window: &tauri::WebviewWindow) -> Result<usize, String
     // - api-platform_serviceToken：真正的认证 token
     // - userId：dashboard API 路由参数
     // 任何一个缺失就 return Err，不覆盖原有的有效 cookie（避免用户被锁在"看似登录了但 API 401"的状态）。
-    let has_service_token = cookie_parts.iter().any(|p| p.starts_with("api-platform_serviceToken="));
+    let has_service_token = cookie_parts
+        .iter()
+        .any(|p| p.starts_with("api-platform_serviceToken="));
     let has_user_id = cookie_parts.iter().any(|p| p.starts_with("userId="));
     if !(has_service_token && has_user_id) {
         tracing::error!(
@@ -321,7 +321,8 @@ async fn extract_and_save(window: &tauri::WebviewWindow) -> Result<usize, String
             "xiaomi_login.cookies_incomplete",
             has_service_token = has_service_token,
             has_user_id = has_user_id
-        ).into_owned());
+        )
+        .into_owned());
     }
 
     let cookie_str = cookie_parts.join("; ");
@@ -386,9 +387,7 @@ mod tests {
             "https://account.xiaomi.com/serviceLogin?followup=..."
         )));
         // 第三方 SSO 跳板
-        assert!(!is_dashboard_url(&url(
-            "https://passport.xiaomi.com/..."
-        )));
+        assert!(!is_dashboard_url(&url("https://passport.xiaomi.com/...")));
     }
 
     #[test]

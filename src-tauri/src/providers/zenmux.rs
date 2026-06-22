@@ -51,7 +51,10 @@ use std::sync::RwLock;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource};
+use super::{
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
+    QuotaSource,
+};
 use crate::t;
 
 const URL_PAYG: &str = "https://zenmux.ai/api/v1/management/payg/balance";
@@ -100,9 +103,15 @@ impl Default for ZenmuxSource {
 }
 
 impl QuotaSource for ZenmuxSource {
-    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("zenmux") }
-    fn display_name(&self) -> Cow<'_, str> { Cow::Owned(t!("provider_name.zenmux").into_owned()) }
-    fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
+    fn id(&self) -> Cow<'_, str> {
+        Cow::Borrowed("zenmux")
+    }
+    fn display_name(&self) -> Cow<'_, str> {
+        Cow::Owned(t!("provider_name.zenmux").into_owned())
+    }
+    fn auth_kind(&self) -> AuthKind {
+        AuthKind::ApiKey
+    }
 
     fn set_state<'a>(
         &'a self,
@@ -137,12 +146,13 @@ impl QuotaSource for ZenmuxSource {
     fn fetch<'a>(
         &'a self,
         credentials: &'a Credentials,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>>
+    {
         Box::pin(async move {
             let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
                 return Err(FetchError::unconfigured(
-                    t!("error.provider.unconfigured_key", provider = "ZenMux").into_owned()
+                    t!("error.provider.unconfigured_key", provider = "ZenMux").into_owned(),
                 ));
             }
             let mode = self.mode.read().ok().and_then(|g| *g).unwrap_or_default();
@@ -171,7 +181,7 @@ async fn do_fetch(
     // 任何非 https:// 协议。即使 mode 默认 URL 也校验（防御 config 损坏）。
     if !url.starts_with("https://") {
         return Err(FetchError::auth(
-            t!("error.common.url_scheme_invalid", url = url).into_owned()
+            t!("error.common.url_scheme_invalid", url = url).into_owned(),
         ));
     }
     let client = shared_client();
@@ -182,9 +192,11 @@ async fn do_fetch(
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| FetchError::network(
-            t!("error.common.network", url = url, err = e.to_string()).into_owned()
-        ))?;
+        .map_err(|e| {
+            FetchError::network(
+                t!("error.common.network", url = url, err = e.to_string()).into_owned(),
+            )
+        })?;
 
     let status = resp.status();
     // H6 fix: 429 显式 → RateLimited
@@ -197,7 +209,7 @@ async fn do_fetch(
     // H7 fix: 401/403 用 auth_failed 模板，而不是 unconfigured_key（误导用户"key 没填"）
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(FetchError::auth(
-            t!("error.common.auth_failed", provider = "ZenMux").into_owned()
+            t!("error.common.auth_failed", provider = "ZenMux").into_owned(),
         ));
     }
     if !status.is_success() {
@@ -208,16 +220,14 @@ async fn do_fetch(
                 provider = "ZenMux",
                 status = status.as_u16(),
                 body = body.chars().take(200).collect::<String>()
-            ).into_owned()
+            )
+            .into_owned(),
         ));
     }
 
-    let raw: Value = resp
-        .json()
-        .await
-        .map_err(|e| FetchError::parse(
-            t!("error.common.parse_json", err = e.to_string()).into_owned()
-        ))?;
+    let raw: Value = resp.json().await.map_err(|e| {
+        FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
+    })?;
 
     match mode {
         ZenmuxMode::Payg => parse_payg(&raw),
@@ -239,13 +249,24 @@ fn parse_payg(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     if raw.get("success").and_then(|v| v.as_bool()) != Some(true) {
         let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
         return Err(FetchError::server(
-            t!("error.common.business_code", provider = "ZenMux", code = 0, msg = msg).into_owned()
+            t!(
+                "error.common.business_code",
+                provider = "ZenMux",
+                code = 0,
+                msg = msg
+            )
+            .into_owned(),
         ));
     }
 
     let data = raw.get("data").ok_or_else(|| {
         FetchError::parse(
-            t!("error.common.missing_field", provider = "ZenMux", field = "data").into_owned()
+            t!(
+                "error.common.missing_field",
+                provider = "ZenMux",
+                field = "data"
+            )
+            .into_owned(),
         )
     })?;
 
@@ -256,10 +277,16 @@ fn parse_payg(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         .unwrap_or("usd")
         .to_uppercase();
 
-    let total = num_f64(data, "total_credits")
-        .ok_or_else(|| FetchError::parse(
-            t!("error.common.missing_field", provider = "ZenMux", field = "total_credits").into_owned()
-        ))?;
+    let total = num_f64(data, "total_credits").ok_or_else(|| {
+        FetchError::parse(
+            t!(
+                "error.common.missing_field",
+                provider = "ZenMux",
+                field = "total_credits"
+            )
+            .into_owned(),
+        )
+    })?;
 
     let top_up = num_f64(data, "top_up_credits");
     let bonus = num_f64(data, "bonus_credits");
@@ -276,7 +303,7 @@ fn parse_payg(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         resets_at: None,
         unit: Some(currency.clone()),
         extra: None,
-            kind: None,
+        kind: None,
     });
 
     // 细分：充值（Tavily 风格，only-used）
@@ -335,14 +362,15 @@ fn parse_subscription(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
     if raw.get("success").and_then(|v| v.as_bool()) != Some(true) {
-        let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("Unknown error");
+        let msg = raw
+            .get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
         return Err(FetchError::server(format!("ZenMux API error: {msg}")));
     }
 
     let data = raw.get("data").ok_or_else(|| {
-        FetchError::parse(
-            t!("error.common.missing_data_field", provider = "ZenMux").into_owned()
-        )
+        FetchError::parse(t!("error.common.missing_data_field", provider = "ZenMux").into_owned())
     })?;
 
     let mut rows = Vec::new();
@@ -365,8 +393,14 @@ fn parse_subscription(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         ));
     }
 
-    let plan_tier = data.pointer("/plan/tier").and_then(|v| v.as_str()).unwrap_or("");
-    let account_status = data.get("account_status").and_then(|v| v.as_str()).unwrap_or("");
+    let plan_tier = data
+        .pointer("/plan/tier")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let account_status = data
+        .get("account_status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let plan_name = if !plan_tier.is_empty() {
         if !account_status.is_empty() {
             Some(format!("{plan_tier} ({account_status})"))
@@ -411,7 +445,7 @@ fn parse_subscription_window(q: &Value, label: &str) -> Option<QuotaRow> {
         resets_at,
         unit: Some("%".to_string()),
         extra: None,
-            kind: None,
+        kind: None,
     })
 }
 
@@ -654,7 +688,10 @@ mod tests {
         let src = ZenmuxSource::default();
         let cfg = json!({ "zenmux_base_url": "https://custom.example/v1/x" });
         src.set_state(cfg).await;
-        assert_eq!(src.base_url.read().unwrap().as_deref(), Some("https://custom.example/v1/x"));
+        assert_eq!(
+            src.base_url.read().unwrap().as_deref(),
+            Some("https://custom.example/v1/x")
+        );
     }
 
     #[tokio::test]

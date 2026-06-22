@@ -61,7 +61,10 @@ use crate::t;
 #[derive(Debug)]
 enum TrayRequest {
     /// 更新托盘图标 + tooltip
-    Update { snap: Box<QuotaSnapshot>, style: TrayIconStyle },
+    Update {
+        snap: Box<QuotaSnapshot>,
+        style: TrayIconStyle,
+    },
     /// 重建菜单（locale 切换时，menu label 走 t!() 重新拿当前 locale）
     RebuildMenu,
 }
@@ -79,21 +82,19 @@ static TRAY_REQUEST_TX: OnceLock<Mutex<Option<mpsc::UnboundedSender<TrayRequest>
     OnceLock::new();
 
 fn tray_request_tx() -> Option<mpsc::UnboundedSender<TrayRequest>> {
-    TRAY_REQUEST_TX
-        .get()
-        .and_then(|m| {
-            // **B-NEW-7（2026-06-19 audit）**：mutex poison 自动恢复。
-            // 之前 .lock().ok() 在 poisoned 时返 Err → 整个闭包返 None →
-            // 所有 tray 更新静默丢弃。改成 log warn + into_inner() 继续用，
-            // 与 logstore / 其他模块的 poison 恢复策略保持一致。
-            match m.lock() {
-                Ok(g) => g.clone(),
-                Err(p) => {
-                    tracing::warn!("tray_request_tx mutex poisoned，自动恢复");
-                    p.into_inner().clone()
-                }
+    TRAY_REQUEST_TX.get().and_then(|m| {
+        // **B-NEW-7（2026-06-19 audit）**：mutex poison 自动恢复。
+        // 之前 .lock().ok() 在 poisoned 时返 Err → 整个闭包返 None →
+        // 所有 tray 更新静默丢弃。改成 log warn + into_inner() 继续用，
+        // 与 logstore / 其他模块的 poison 恢复策略保持一致。
+        match m.lock() {
+            Ok(g) => g.clone(),
+            Err(p) => {
+                tracing::warn!("tray_request_tx mutex poisoned，自动恢复");
+                p.into_inner().clone()
             }
-        })
+        }
+    })
 }
 
 /// 派发一条 tray 请求到 main thread。失败（receiver 已 drop）→ log warn skip。
@@ -141,8 +142,7 @@ static FONT: OnceLock<Option<FontVec>> = OnceLock::new();
 fn load_font() -> Option<&'static FontVec> {
     FONT.get_or_init(|| {
         // 1. 用户自选填
-        let user_path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/font.ttf");
+        let user_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/font.ttf");
         if let Some(font) = try_load_font(&user_path) {
             tracing::debug!(path = %user_path.display(), "loaded user font");
             return Some(font);
@@ -374,9 +374,27 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 /// 把浮窗真顶到最上面（**会**抢焦点，但用户点菜单那一瞬间本来就在
 /// 操作我们 app，UX 可接受）。
 fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let toggle_i = MenuItem::with_id(app, "toggle", t!("tray.menu.toggle").to_string(), true, None::<&str>)?;
-    let settings_i = MenuItem::with_id(app, "settings", t!("tray.menu.settings").to_string(), true, None::<&str>)?;
-    let refresh_i = MenuItem::with_id(app, "refresh", t!("tray.menu.refresh").to_string(), true, None::<&str>)?;
+    let toggle_i = MenuItem::with_id(
+        app,
+        "toggle",
+        t!("tray.menu.toggle").to_string(),
+        true,
+        None::<&str>,
+    )?;
+    let settings_i = MenuItem::with_id(
+        app,
+        "settings",
+        t!("tray.menu.settings").to_string(),
+        true,
+        None::<&str>,
+    )?;
+    let refresh_i = MenuItem::with_id(
+        app,
+        "refresh",
+        t!("tray.menu.refresh").to_string(),
+        true,
+        None::<&str>,
+    )?;
     let force_top_i = MenuItem::with_id(
         app,
         "force_top_floating",
@@ -384,7 +402,13 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         cfg!(target_os = "windows"),
         None::<&str>,
     )?;
-    let quit_i = MenuItem::with_id(app, "quit", t!("tray.menu.quit").to_string(), true, None::<&str>)?;
+    let quit_i = MenuItem::with_id(
+        app,
+        "quit",
+        t!("tray.menu.quit").to_string(),
+        true,
+        None::<&str>,
+    )?;
     Menu::with_items(
         app,
         &[&toggle_i, &settings_i, &refresh_i, &force_top_i, &quit_i],
@@ -613,12 +637,12 @@ fn draw_mini_bars(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64
     //   PAD_X 3/32, BAR_H 9/32, GAP 2/32, TOP 6/32, RADIUS 2/32
     // 32→64 时这些值整体翻倍（6/12/4/12/4/52/18/4），布局完全等比。
     let s = ICON_SIZE as i32;
-    let pad_x = s * 3 / 32;          // 3  →  6
-    let bar_w = s - pad_x * 2;       // 26 → 52
-    let bar_h = s * 9 / 32;          // 9  → 18
-    let gap = s * 2 / 32;            // 2  →  4
-    let top = s * 6 / 32;            // 6  → 12
-    let radius = s * 2 / 32;         // 2  →  4
+    let pad_x = s * 3 / 32; // 3  →  6
+    let bar_w = s - pad_x * 2; // 26 → 52
+    let bar_h = s * 9 / 32; // 9  → 18
+    let gap = s * 2 / 32; // 2  →  4
+    let top = s * 6 / 32; // 6  → 12
+    let radius = s * 2 / 32; // 2  →  4
     let track = Rgba([60u8, 60, 60, 255]);
     let fill = Rgba([255u8, 255, 255, 255]);
 
@@ -740,10 +764,10 @@ fn draw_percent(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64, 
 
     let s = ICON_SIZE as i32;
     let scale = PxScale::from(s as f32 * 20.0 / 32.0); // 20 → 40
-    // 两行贴边（间距 = 字号 = 20/40），Bold 数字 cap height ≈ 0.7×scale，
-    // 第一行底 14/28 < 第二行顶 16/32 不重叠
-    let y_top = 0;          //  0 →  0
-    let y_bot = s / 2;      // 16 → 32
+                                                       // 两行贴边（间距 = 字号 = 20/40），Bold 数字 cap height ≈ 0.7×scale，
+                                                       // 第一行底 14/28 < 第二行顶 16/32 不重叠
+    let y_top = 0; //  0 →  0
+    let y_bot = s / 2; // 16 → 32
     let pad_right = s * 2 / 32; // 右边留 2px 内边距
     let color = Rgba([255, 255, 255, 255]);
 
@@ -827,7 +851,8 @@ fn provider_short_body(p: &ProviderSnapshot) -> String {
             "tray.tooltip.provider_error",
             provider = p.provider.display_name(),
             error = truncate(err, 30)
-        ).to_string();
+        )
+        .to_string();
     }
     match p.provider {
         Provider::Minimax => {
@@ -837,11 +862,14 @@ fn provider_short_body(p: &ProviderSnapshot) -> String {
             let mut parts = Vec::new();
             for r in &p.rows {
                 if let Some(u) = r.utilization {
-                    parts.push(t!(
-                        "tray.tooltip.row_pct",
-                        label = r.label.as_str(),
-                        pct = u.round() as i64
-                    ).to_string());
+                    parts.push(
+                        t!(
+                            "tray.tooltip.row_pct",
+                            label = r.label.as_str(),
+                            pct = u.round() as i64
+                        )
+                        .to_string(),
+                    );
                 }
             }
             if parts.is_empty() {
@@ -851,7 +879,8 @@ fn provider_short_body(p: &ProviderSnapshot) -> String {
                     "tray.tooltip.provider_rows",
                     provider = p.provider.display_name(),
                     rows = parts.join(" / ")
-                ).to_string()
+                )
+                .to_string()
             }
         }
         Provider::Deepseek => {
@@ -867,7 +896,8 @@ fn provider_short_body(p: &ProviderSnapshot) -> String {
                     provider = p.provider.display_name(),
                     amount = amount,
                     unit = unit
-                ).to_string()
+                )
+                .to_string()
             } else {
                 p.provider.display_name().to_string()
             }
@@ -877,11 +907,14 @@ fn provider_short_body(p: &ProviderSnapshot) -> String {
             let mut parts = Vec::new();
             for r in &p.rows {
                 if let Some(u) = r.utilization {
-                    parts.push(t!(
-                        "tray.tooltip.row_pct",
-                        label = r.label.as_str(),
-                        pct = u.round() as i64
-                    ).to_string());
+                    parts.push(
+                        t!(
+                            "tray.tooltip.row_pct",
+                            label = r.label.as_str(),
+                            pct = u.round() as i64
+                        )
+                        .to_string(),
+                    );
                 }
             }
             if parts.is_empty() {
@@ -891,7 +924,8 @@ fn provider_short_body(p: &ProviderSnapshot) -> String {
                     "tray.tooltip.provider_rows",
                     provider = p.provider.display_name(),
                     rows = parts.join(" / ")
-                ).to_string()
+                )
+                .to_string()
             }
         }
     }

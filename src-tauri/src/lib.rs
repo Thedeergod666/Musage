@@ -33,11 +33,11 @@ use std::sync::Arc;
 use tauri::{Listener, Manager};
 use tokio::sync::RwLock;
 
+use crate::commands::apply_pin_mode_to_window;
 use crate::config::AppConfig;
 use crate::logstore::LogStore;
 use crate::poller_backoff::BackoffState;
 use crate::providers::{builtin_sources, CustomSource, CustomSourceSpec, QuotaSnapshot};
-use crate::commands::apply_pin_mode_to_window;
 
 pub struct AppState {
     pub snapshot: Arc<RwLock<QuotaSnapshot>>,
@@ -55,10 +55,10 @@ pub struct AppState {
     pub custom_sources: Arc<RwLock<Vec<CustomSourceSpec>>>,
 }
 
+pub use crate::commands::i18n::get_app_locale;
 /// 前端调用的"切换语言"命令。实现见 [`crate::commands::i18n::set_app_locale`]。
 /// 这里只 re-export 给 `tauri::generate_handler!` 用。
 pub use crate::commands::i18n::set_app_locale;
-pub use crate::commands::i18n::get_app_locale;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -334,10 +334,7 @@ pub fn run() {
 /// 修复 H1：原来每个像素的 `WindowEvent::Moved` 都 spawn 一个 tokio 任务并立即
 /// `save()` —— 拖 300px 会 spawn 300 个任务 + 写 300 次 config.json。
 /// 现在的策略：回调里只更新共享状态，background task 定时（500ms）检查并落盘。
-fn spawn_debounced_geom_persister(
-    app: tauri::AppHandle,
-    win: tauri::WebviewWindow,
-) {
+fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWindow) {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -384,10 +381,22 @@ fn spawn_debounced_geom_persister(
                 let state = app.state::<AppState>();
                 let mut cfg = state.config.write().await;
                 let mut dirty = false;
-                if cfg.floating_x != Some(x) { cfg.floating_x = Some(x); dirty = true; }
-                if cfg.floating_y != Some(y) { cfg.floating_y = Some(y); dirty = true; }
-                if w > 0 && cfg.floating_w != Some(w) { cfg.floating_w = Some(w); dirty = true; }
-                if h > 0 && cfg.floating_h != Some(h) { cfg.floating_h = Some(h); dirty = true; }
+                if cfg.floating_x != Some(x) {
+                    cfg.floating_x = Some(x);
+                    dirty = true;
+                }
+                if cfg.floating_y != Some(y) {
+                    cfg.floating_y = Some(y);
+                    dirty = true;
+                }
+                if w > 0 && cfg.floating_w != Some(w) {
+                    cfg.floating_w = Some(w);
+                    dirty = true;
+                }
+                if h > 0 && cfg.floating_h != Some(h) {
+                    cfg.floating_h = Some(h);
+                    dirty = true;
+                }
                 if dirty {
                     if let Err(e) = cfg.save() {
                         tracing::warn!(error = %e, "保存浮窗几何失败 (debounced)");
@@ -408,8 +417,8 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
         let cfg = AppConfig::load_from_disk().unwrap_or_default();
         // 加载 custom sources 供 dump CLI 用——standalone CLI 没有 AppState,
         // 直接从 custom_sources.json 读即可(跟 lib.rs setup() 那条路径同款)。
-        let customs: Vec<CustomSourceSpec> = config::custom_sources::load_custom_sources()
-            .unwrap_or_default();
+        let customs: Vec<CustomSourceSpec> =
+            config::custom_sources::load_custom_sources().unwrap_or_default();
 
         // 决定要 dump 哪些 source
         let sources: Vec<Box<dyn crate::providers::QuotaSource>> = match provider_filter {
@@ -435,9 +444,18 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
                 } else {
                     // 拼"已知 id"列表(builtin + custom),错误消息更友好
                     let mut known: Vec<String> = builtin_sources()
-                        .iter().map(|s| s.id().to_string()).collect();
+                        .iter()
+                        .map(|s| s.id().to_string())
+                        .collect();
                     known.extend(customs.iter().map(|s| s.id.clone()));
-                    eprintln!("{}", t!("cli.dump_unknown_source", id = id, known = known.join(" / ")));
+                    eprintln!(
+                        "{}",
+                        t!(
+                            "cli.dump_unknown_source",
+                            id = id,
+                            known = known.join(" / ")
+                        )
+                    );
                     return 2;
                 }
             }
@@ -449,7 +467,14 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
         }
 
         for src in sources {
-            println!("{}", t!("cli.dump_header", display_name = src.display_name(), id = src.id()));
+            println!(
+                "{}",
+                t!(
+                    "cli.dump_header",
+                    display_name = src.display_name(),
+                    id = src.id()
+                )
+            );
 
             // 加载凭据
             let creds = match config::load_credential_for_id(src.id().as_ref()) {
@@ -470,16 +495,16 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
             // 走 registry 路径（Phase 1 起的新路径）
             // M5 fix: 包 30s timeout —— shared reqwest client 默认 10s timeout，但
             // 某些 provider (deepseek / stepfun) 偶发挂 30s+ 不返；dump CLI 不应挂死。
-            let result = match tokio::time::timeout(
-                std::time::Duration::from_secs(30),
-                src.fetch(&creds),
-            ).await {
-                Ok(r) => r,
-                Err(_) => {
-                    eprintln!("[musage dump] {} fetch 超时（30s）", src.id());
-                    continue;
-                }
-            };
+            let result =
+                match tokio::time::timeout(std::time::Duration::from_secs(30), src.fetch(&creds))
+                    .await
+                {
+                    Ok(r) => r,
+                    Err(_) => {
+                        eprintln!("[musage dump] {} fetch 超时（30s）", src.id());
+                        continue;
+                    }
+                };
 
             match result {
                 Ok(snap) => {
@@ -488,7 +513,10 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
                         println!("{}", serde_json::to_string_pretty(raw).unwrap_or_default());
                     }
                     println!("{}", t!("cli.dump_parsed_result"));
-                    println!("{}", serde_json::to_string_pretty(&snap).unwrap_or_default());
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&snap).unwrap_or_default()
+                    );
                 }
                 Err(e) => {
                     eprintln!("{}", t!("cli.dump_fetch_failed", err = format!("{e:?}")));
@@ -501,6 +529,9 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
 }
 
 /// 给 dump CLI 推 source state（region / overrides）—— 走 commands 模块的共享逻辑。
-async fn update_source_state_for_dump(src: &Box<dyn crate::providers::QuotaSource>, cfg: &AppConfig) {
+async fn update_source_state_for_dump(
+    src: &Box<dyn crate::providers::QuotaSource>,
+    cfg: &AppConfig,
+) {
     crate::commands::update_source_state(src, cfg).await;
 }

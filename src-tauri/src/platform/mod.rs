@@ -66,10 +66,7 @@ pub fn set_window_normal<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 #[cfg(target_os = "linux")]
-pub fn set_window_hover_raise<R: tauri::Runtime>(
-    app: &tauri::AppHandle<R>,
-    hovering: bool,
-) {
+pub fn set_window_hover_raise<R: tauri::Runtime>(app: &tauri::AppHandle<R>, hovering: bool) {
     if let Some(win) = app.get_webview_window("floating") {
         let _ = win.set_always_on_top(hovering);
     }
@@ -88,7 +85,4 @@ pub fn start_hover_emitter<R: tauri::Runtime>(_app: tauri::AppHandle<R>) {}
 #[cfg(target_os = "linux")]
 pub fn start_fullscreen_watcher<R: tauri::Runtime>(_app: tauri::AppHandle<R>) {}
 #[cfg(target_os = "linux")]
-pub fn set_auto_hide_in_fullscreen<R: tauri::Runtime>(
-    _app: &tauri::AppHandle<R>,
-    _enabled: bool,
-) {}
+pub fn set_auto_hide_in_fullscreen<R: tauri::Runtime>(_app: &tauri::AppHandle<R>, _enabled: bool) {}

@@ -18,8 +18,7 @@ use crate::AppState;
 /// task 完成或 panic 后自动从 set 里清理（JoinSet::join_next 移除）。当前
 /// 不在 quit_app 时主动 abort —— 浮窗最常见关闭是"窗口关闭"拦截（tray 隐藏），
 /// poller 跟 app 同生同死。后续如要 abort-on-quit，给 AppState 加 abort flag。
-static IN_FLIGHT: std::sync::OnceLock<std::sync::Mutex<JoinSet<()>>> =
-    std::sync::OnceLock::new();
+static IN_FLIGHT: std::sync::OnceLock<std::sync::Mutex<JoinSet<()>>> = std::sync::OnceLock::new();
 
 fn in_flight() -> &'static std::sync::Mutex<JoinSet<()>> {
     IN_FLIGHT.get_or_init(|| std::sync::Mutex::new(JoinSet::new()))
@@ -74,12 +73,10 @@ pub fn start(app: AppHandle) {
             // 算 finished（await JoinHandle 会返 Err）。2026-06-20 audit：
             // 之前完全 fire-and-forget 累积 panic task。
             {
-                let mut set = in_flight()
-                    .lock()
-                    .unwrap_or_else(|e| {
-                        tracing::warn!("poller IN_FLIGHT mutex poisoned, recovering");
-                        e.into_inner()
-                    });
+                let mut set = in_flight().lock().unwrap_or_else(|e| {
+                    tracing::warn!("poller IN_FLIGHT mutex poisoned, recovering");
+                    e.into_inner()
+                });
                 while let Some(res) = set.try_join_next() {
                     if let Err(e) = res {
                         if e.is_panic() {
@@ -93,9 +90,9 @@ pub fn start(app: AppHandle) {
             // H1: 同上,改用 all_sources(&state)——custom source 必须能被轮询
             for src in all_sources(&state).await {
                 let id = src.id();
-                let id_str = id.as_ref();  // Cow → &str，给 is_enabled_id / map.get 用
+                let id_str = id.as_ref(); // Cow → &str，给 is_enabled_id / map.get 用
                 if !cfg.is_enabled_id(id_str) {
-                    continue;  // 用户关了，不拉
+                    continue; // 用户关了，不拉
                 }
                 // STUB 默认 disabled: 公开 API 无 quota endpoint 的 provider
                 // 拉一次就是 30 min 退避。用户没显式
@@ -118,7 +115,7 @@ pub fn start(app: AppHandle) {
 
                 let entry = next_fetch.entry(id.to_string()).or_insert(now);
                 if now < *entry {
-                    continue;  // 还没到点
+                    continue; // 还没到点
                 }
                 // 到点 → 拉这个 provider（独立 task，并发）
                 let app_clone = app.clone();
@@ -167,7 +164,10 @@ pub async fn tick(app: &AppHandle) -> Result<(), String> {
         let state = app.state::<AppState>();
         let mut guard = state.snapshot.write().await;
         for new_p in &new_snap.providers {
-            let new_id = new_p.source_id.as_deref().unwrap_or(new_p.provider.id_str());
+            let new_id = new_p
+                .source_id
+                .as_deref()
+                .unwrap_or(new_p.provider.id_str());
             if let Some(idx) = guard
                 .providers
                 .iter()

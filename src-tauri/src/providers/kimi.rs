@@ -44,7 +44,10 @@ use std::pin::Pin;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource};
+use super::{
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
+    QuotaSource,
+};
 use crate::t;
 
 const URL: &str = "https://api.kimi.com/coding/v1/usages";
@@ -54,13 +57,21 @@ const URL: &str = "https://api.kimi.com/coding/v1/usages";
 pub struct KimiSource;
 
 impl Default for KimiSource {
-    fn default() -> Self { Self }
+    fn default() -> Self {
+        Self
+    }
 }
 
 impl QuotaSource for KimiSource {
-    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("kimi") }
-    fn display_name(&self) -> Cow<'_, str> { Cow::Owned(t!("provider_name.kimi").into_owned()) }
-    fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
+    fn id(&self) -> Cow<'_, str> {
+        Cow::Borrowed("kimi")
+    }
+    fn display_name(&self) -> Cow<'_, str> {
+        Cow::Owned(t!("provider_name.kimi").into_owned())
+    }
+    fn auth_kind(&self) -> AuthKind {
+        AuthKind::ApiKey
+    }
 
     fn set_state<'a>(
         &'a self,
@@ -73,12 +84,13 @@ impl QuotaSource for KimiSource {
     fn fetch<'a>(
         &'a self,
         credentials: &'a Credentials,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>>
+    {
         Box::pin(async move {
             let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
                 return Err(FetchError::unconfigured(
-                    t!("error.provider.unconfigured_key", provider = "Kimi").into_owned()
+                    t!("error.provider.unconfigured_key", provider = "Kimi").into_owned(),
                 ));
             }
             do_fetch(api_key).await
@@ -95,9 +107,11 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| FetchError::network(
-            t!("error.common.network", url = URL, err = e.to_string()).into_owned()
-        ))?;
+        .map_err(|e| {
+            FetchError::network(
+                t!("error.common.network", url = URL, err = e.to_string()).into_owned(),
+            )
+        })?;
 
     let status = resp.status();
     // H6 fix: 429 显式 → RateLimited
@@ -109,7 +123,7 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
     }
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(FetchError::auth(
-            t!("error.common.auth_failed", provider = "Kimi").into_owned()
+            t!("error.common.auth_failed", provider = "Kimi").into_owned(),
         ));
     }
     if !status.is_success() {
@@ -120,16 +134,14 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
                 provider = "Kimi",
                 status = status.as_u16(),
                 body = body.chars().take(200).collect::<String>()
-            ).into_owned()
+            )
+            .into_owned(),
         ));
     }
 
-    let raw: Value = resp
-        .json()
-        .await
-        .map_err(|e| FetchError::parse(
-            t!("error.common.parse_json", err = e.to_string()).into_owned()
-        ))?;
+    let raw: Value = resp.json().await.map_err(|e| {
+        FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
+    })?;
 
     parse(&raw)
 }
@@ -145,7 +157,9 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
     // ── 5 小时窗口：从 limits[].detail 取 ──
     if let Some(limits) = raw.get("limits").and_then(|v| v.as_array()) {
         for limit_item in limits {
-            let Some(detail) = limit_item.get("detail") else { continue };
+            let Some(detail) = limit_item.get("detail") else {
+                continue;
+            };
             let limit = parse_f64(detail.get("limit"));
             let remaining = parse_f64(detail.get("remaining"));
             let resets_at = extract_reset_ms(detail.get("resetTime"));
@@ -163,7 +177,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
                         resets_at,
                         unit: Some("%".to_string()),
                         extra: None,
-            kind: None,
+                        kind: None,
                     });
                     break; // 只取第一条 5h 限额
                 }
@@ -190,7 +204,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
                     resets_at,
                     unit: Some("%".to_string()),
                     extra: None,
-            kind: None,
+                    kind: None,
                 });
             }
         }

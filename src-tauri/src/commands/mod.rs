@@ -23,13 +23,14 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::config::{self, AppConfig, FloatingPinMode, ProviderConfig, TrayIconStyle, UserRegion};
-use crate::providers::{
-    all_sources, builtin_sources, find_source, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderSnapshot, QuotaSnapshot, QuotaSource,
-};
 use crate::providers::minimax::Region as MinimaxRegion;
 use crate::providers::xiaomi::XiaomiDisplayMode;
-use crate::AppState;
+use crate::providers::{
+    all_sources, builtin_sources, find_source, AuthKind, Credentials, ErrorKind, FetchError,
+    Provider, ProviderSnapshot, QuotaSnapshot, QuotaSource,
+};
 use crate::t;
+use crate::AppState;
 
 /// 立即更新 provider 顺序 + 落盘 + emit config-changed（前端调，无需走
 /// save_config 全量保存）。前端用这个实现「↑↓ 按钮即时生效」。
@@ -101,9 +102,8 @@ pub async fn set_provider_enabled(
     if !enabled {
         let state_arc = app.state::<AppState>();
         let mut snap = state_arc.snapshot.write().await;
-        snap.providers.retain(|p| {
-            p.source_id.as_deref().unwrap_or(p.provider.id_str()) != id
-        });
+        snap.providers
+            .retain(|p| p.source_id.as_deref().unwrap_or(p.provider.id_str()) != id);
         let emit_snap = snap.clone();
         drop(snap);
         // 排序 + emit
@@ -131,18 +131,17 @@ pub async fn set_provider_enabled(
         {
             let state_arc = app.state::<AppState>();
             let mut snap = state_arc.snapshot.write().await;
-            let already_present = snap.providers.iter().any(|p| {
-                p.source_id.as_deref() == Some(&id)
-            });
+            let already_present = snap
+                .providers
+                .iter()
+                .any(|p| p.source_id.as_deref() == Some(&id));
             if !already_present {
                 let mut placeholder = ProviderSnapshot::placeholder(&state_arc, &id).await;
                 // **B-NEW-10（2026-06-19 audit）**：placeholder 默认 next_fetch_at=None，
                 // 浮窗错误卡片显示"未知"倒计时。填上 ~5s 默认值（典型 HTTP fetch
                 // 耗时），让用户看到"~5s 后取数"的进度。fetch 完成后 refresh_single_inner
                 // 自己会 emit 真 snapshot 替换 placeholder。
-                placeholder.next_fetch_at = Some(
-                    chrono::Utc::now().timestamp_millis() + 5_000
-                );
+                placeholder.next_fetch_at = Some(chrono::Utc::now().timestamp_millis() + 5_000);
                 snap.providers.push(placeholder);
             }
             let cfg2 = state_arc.config.read().await;
@@ -244,7 +243,8 @@ pub async fn set_schema_overrides(
                         id = id,
                         tier = tier_name,
                         idx = i
-                    ).into_owned());
+                    )
+                    .into_owned());
                 }
             }
         }
@@ -309,7 +309,9 @@ pub async fn set_minimax_region(
     };
     {
         let mut cfg = state.config.write().await;
-        let entry = cfg.providers.entry("minimax".to_string())
+        let entry = cfg
+            .providers
+            .entry("minimax".to_string())
             .or_insert(ProviderConfig::default());
         entry.region = Some(parsed);
         cfg.save()?;
@@ -334,7 +336,9 @@ pub async fn set_xiaomi_region_field(
     };
     {
         let mut cfg = state.config.write().await;
-        let entry = cfg.providers.entry("xiaomimimo".to_string())
+        let entry = cfg
+            .providers
+            .entry("xiaomimimo".to_string())
             .or_insert(ProviderConfig::default());
         entry.xiaomi_region = Some(parsed);
         cfg.save()?;
@@ -372,7 +376,11 @@ pub async fn set_zenmux_base_url(
     }
     {
         let mut cfg = state.config.write().await;
-        cfg.zenmux_base_url = if trimmed.is_empty() { None } else { Some(trimmed.to_string()) };
+        cfg.zenmux_base_url = if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        };
         cfg.save()?;
     }
     let _ = refresh_single_inner(&app, "zenmux").await;
@@ -464,7 +472,10 @@ pub async fn refresh_now(
     {
         let mut guard = state.snapshot.write().await;
         for new_p in &snap.providers {
-            let new_id = new_p.source_id.as_deref().unwrap_or(new_p.provider.id_str());
+            let new_id = new_p
+                .source_id
+                .as_deref()
+                .unwrap_or(new_p.provider.id_str());
             if let Some(idx) = guard
                 .providers
                 .iter()
@@ -525,7 +536,12 @@ pub async fn save_config(
             }
         }
         if !is_valid_hex_color(v) {
-            return Err(t!("commands.color_value_invalid", k = k.as_str(), v = v.as_str()).into_owned());
+            return Err(t!(
+                "commands.color_value_invalid",
+                k = k.as_str(),
+                v = v.as_str()
+            )
+            .into_owned());
         }
     }
     // H2 fix: 先更 in-memory state，再 save + 副作用。
@@ -617,12 +633,10 @@ pub async fn list_sources(state: State<'_, AppState>) -> Result<Vec<SourceMeta>,
 }
 
 #[tauri::command]
-pub async fn has_source_credential(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<bool, String> {
+pub async fn has_source_credential(state: State<'_, AppState>, id: String) -> Result<bool, String> {
     // 验证 id 存在（防 IPC 注入任意 key 名）
-    let _ = find_source(&state, &id).await
+    let _ = find_source(&state, &id)
+        .await
         .ok_or_else(|| t!("commands.source_unknown", id = id.as_str()).into_owned())?;
     Ok(config::load_credential_for_id(&id)?.is_some())
 }
@@ -641,7 +655,8 @@ pub async fn set_source_credential(
     // 否则两个输入框都保存到 api_key，cookie 永远落不进去。
     field: Option<String>,
 ) -> Result<(), String> {
-    let src = find_source(&state, &id).await
+    let src = find_source(&state, &id)
+        .await
         .ok_or_else(|| t!("commands.source_unknown", id = id.as_str()).into_owned())?;
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -686,8 +701,14 @@ fn build_credentials(
         },
     };
     Ok(match target {
-        "api_key" => Credentials { api_key: Some(value.to_string()), cookie: None },
-        "cookie" => Credentials { api_key: None, cookie: Some(value.to_string()) },
+        "api_key" => Credentials {
+            api_key: Some(value.to_string()),
+            cookie: None,
+        },
+        "cookie" => Credentials {
+            api_key: None,
+            cookie: Some(value.to_string()),
+        },
         _ => unreachable!(),
     })
 }
@@ -698,7 +719,8 @@ pub async fn delete_source_credential(
     app: AppHandle,
     id: String,
 ) -> Result<(), String> {
-    let _ = find_source(&state, &id).await
+    let _ = find_source(&state, &id)
+        .await
         .ok_or_else(|| t!("commands.source_unknown", id = id.as_str()).into_owned())?;
     config::delete_credential_for_id(&id)?;
     // 跟 set_source_credential 对称：删了 key 浮窗应该立刻看到 "未配置"
@@ -719,7 +741,8 @@ pub async fn get_source_credential(
     state: State<'_, AppState>,
     id: String,
 ) -> Result<Option<String>, String> {
-    let _ = find_source(&state, &id).await
+    let _ = find_source(&state, &id)
+        .await
         .ok_or_else(|| t!("commands.source_unknown", id = id.as_str()).into_owned())?;
     let cred = config::load_credential_for_id(&id)?;
     Ok(cred.and_then(|c| c.api_key.or(c.cookie)))
@@ -837,9 +860,7 @@ pub async fn get_api_key_for(provider: Provider) -> Result<Option<String>, Strin
 /// 还没解析的那几十毫秒里画的就是深色，肉眼无感。注意：Windows 8+ 上
 /// `Color` 的 alpha 通道会被 webview 层忽略（见 tauri_utils config 注释），
 /// `0xff` 只是给阅读代码的人看的。
-pub(crate) fn build_settings_window(
-    app: &AppHandle,
-) -> tauri::Result<tauri::WebviewWindow> {
+pub(crate) fn build_settings_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
     let bg = tauri::webview::Color(0x1a, 0x1c, 0x22, 0xff);
     tauri::WebviewWindowBuilder::new(
         app,
@@ -873,7 +894,8 @@ pub async fn open_settings_window(app: AppHandle) -> Result<(), String> {
         let _ = w.show();
         let _ = w.set_focus();
     } else {
-        build_settings_window(&app).map_err(|e| t!("commands.create_settings", err = e.to_string()).into_owned())?;
+        build_settings_window(&app)
+            .map_err(|e| t!("commands.create_settings", err = e.to_string()).into_owned())?;
     }
     Ok(())
 }
@@ -915,7 +937,8 @@ pub async fn reset_floating_window(app: AppHandle) -> Result<(), String> {
 
     // 优先用 Tauri 内置 center() —— 自己算 monitor 几何的旧实现
     // (commands.rs:209-216 旧版) 有 .max(0) 截断的 bug，多显示器 / 负坐标场景会偏。
-    win.center().map_err(|e| t!("commands.center_failed", err = e.to_string()).into_owned())?;
+    win.center()
+        .map_err(|e| t!("commands.center_failed", err = e.to_string()).into_owned())?;
 
     // 持久化（on_window_event(Moved) 也会触发，但先写一次更稳）
     if let Ok(pos) = win.outer_position() {
@@ -1006,10 +1029,10 @@ pub async fn resize_floating_window(app: AppHandle, height: f64) -> Result<(), S
     if let Some(w) = app.get_webview_window("floating") {
         // 保留用户当前的宽度（auto-resize 只调高度，不动宽 —— 宽度由用户拖控制）
         // 用 inner_size 的 logical 版本，绕开 macOS 上 outer/inner 的细微差
-        let cur_logical: tauri::LogicalSize<f64> =
-            w.inner_size().map_err(|e| t!("commands.size_failed", err = e.to_string()).into_owned())?.to_logical(
-                w.scale_factor().unwrap_or(1.0),
-            );
+        let cur_logical: tauri::LogicalSize<f64> = w
+            .inner_size()
+            .map_err(|e| t!("commands.size_failed", err = e.to_string()).into_owned())?
+            .to_logical(w.scale_factor().unwrap_or(1.0));
         let width = cur_logical.width;
         // 限高 —— 必须与 tauri.conf.json 的 minHeight/maxHeight 同步，否则
         // Tauri 会把后端 set_size 拽回 conf 设的范围 → "前端给 1500 但窗口还是 800"。
@@ -1044,8 +1067,11 @@ pub async fn set_region(
         other => return Err(t!("commands.region_invalid", other = other).into_owned()),
     };
 
-    let default_order: Vec<String> = parsed.default_provider_order()
-        .iter().map(|s| s.to_string()).collect();
+    let default_order: Vec<String> = parsed
+        .default_provider_order()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
 
     {
         let mut cfg = state.config.write().await;
@@ -1122,13 +1148,16 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
     let state = app.state::<AppState>();
     let sources = all_sources(&state).await;
     // P1 重构：closure 返 FetchError 而不是 String，kind 在 collect 时直接拿。
-    let mut tasks: Vec<(String, u64, tokio::task::JoinHandle<Result<ProviderSnapshot, FetchError>>)> =
-        Vec::new();
+    let mut tasks: Vec<(
+        String,
+        u64,
+        tokio::task::JoinHandle<Result<ProviderSnapshot, FetchError>>,
+    )> = Vec::new();
 
     for src in &sources {
         let id = src.id();
-        let id_str = id.as_ref();  // Cow<'_, str> → &str，避免在循环里反复 .as_ref()
-        // 跳过未启用的
+        let id_str = id.as_ref(); // Cow<'_, str> → &str，避免在循环里反复 .as_ref()
+                                  // 跳过未启用的
         if !cfg.is_enabled_id(id_str) {
             continue;
         }
@@ -1179,9 +1208,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                 // P1 重构：返回 FetchError 而不是 String，kind 在 closure 内就
                 // 保留住，collect 时直接 e.kind 拿（不再走 classify_error_message）。
                 let task: tokio::task::JoinHandle<Result<ProviderSnapshot, FetchError>> =
-                    tokio::spawn(async move {
-                        src_box.fetch(&creds).await
-                    });
+                    tokio::spawn(async move { src_box.fetch(&creds).await });
                 tasks.push((id_owned, default_interval_secs, task));
             }
             Ok(None) => {
@@ -1197,7 +1224,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                     // 读 keys.json 失败归到 Network（IO 错误类），不归到 Other
                     // 让前端能正确分类显示
                     Err(FetchError::network(
-                        t!("error.common.read_keys_failed", err = e.to_string()).into_owned()
+                        t!("error.common.read_keys_failed", err = e.to_string()).into_owned(),
                     ))
                 });
                 tasks.push((id_owned, default_interval_secs, task));
@@ -1227,14 +1254,16 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                     e.kind,
                     e.message,
                     false, // L8: 真实错误,非 transient
-                ).await;
+                )
+                .await;
                 // 写 backoff：失败（如果 kind 属于可退避类）→ 翻倍
                 fill_next_fetch_at(app, &id, default_interval_secs, &mut err_snap).await;
                 snap.providers.push(err_snap);
             }
             Err(join_err) => {
                 let provider = Provider::from_id_str(&id);
-                let msg = t!("error.common.join_task_failed", err = join_err.to_string()).into_owned();
+                let msg =
+                    t!("error.common.join_task_failed", err = join_err.to_string()).into_owned();
                 log_provider_error(app, &id, ErrorKind::Other, &msg);
                 // join_err 走 Other, next_fetch_at 用默认间隔(无 backoff)
                 let mut err_snap = ProviderSnapshot::empty_error(
@@ -1244,9 +1273,10 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                     ErrorKind::Other,
                     msg,
                     false, // L8: 真实错误
-                ).await;
+                )
+                .await;
                 err_snap.next_fetch_at = Some(
-                    chrono::Utc::now().timestamp_millis() + (default_interval_secs as i64) * 1000
+                    chrono::Utc::now().timestamp_millis() + (default_interval_secs as i64) * 1000,
                 );
                 snap.providers.push(err_snap);
             }
@@ -1293,11 +1323,8 @@ fn apply_provider_order(snap: &mut QuotaSnapshot, cfg: &AppConfig) {
     // 修法：把 enumerate 索引和 sort key 绑在一起 —— `sort_by` 是 stable 的，
     // 复合 key `(pos, orig_idx)` 在 pos 相同时回退到 orig_idx，保持原 Vec
     // 相对顺序。
-    let mut indexed: Vec<(usize, crate::providers::ProviderSnapshot)> = snap
-        .providers
-        .drain(..)
-        .enumerate()
-        .collect();
+    let mut indexed: Vec<(usize, crate::providers::ProviderSnapshot)> =
+        snap.providers.drain(..).enumerate().collect();
     indexed.sort_by(|(ai, a), (bi, b)| {
         let apos = cfg
             .provider_order
@@ -1327,7 +1354,7 @@ pub async fn refresh_single(app: AppHandle, id: String) -> Result<(), String> {
 pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), String> {
     let cfg = app.state::<AppState>().config.read().await.clone();
     if !cfg.is_enabled_id(id) {
-        return Ok(());  // 已被关掉，跳过
+        return Ok(()); // 已被关掉，跳过
     }
     // H1: builtin_sources() 不含 custom sources,改用 find_source(state, id)
     // ——这才能让 custom_<uuid> 被单源刷新(add/update_custom_source 后立即拉
@@ -1354,7 +1381,8 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
                     kind,
                     e.message,
                     false, // L8: 真实错误
-                ).await
+                )
+                .await
             }
         },
         None => {
@@ -1371,7 +1399,8 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
                 kind,
                 msg,
                 false, // L8: 真实错误(无 credential,持久)
-            ).await
+            )
+            .await
         }
     };
 
@@ -1476,7 +1505,8 @@ fn _classify_error_message_removed(_msg: &str) -> ErrorKind {
 
 /// (provider_id, kind_short_label) → 上次写日志的毫秒时间戳。
 /// 在 60s 窗口内的同 key 错误被吞掉，不重复写。
-fn dedup_cache() -> &'static std::sync::Mutex<std::collections::HashMap<(String, &'static str), i64>> {
+fn dedup_cache() -> &'static std::sync::Mutex<std::collections::HashMap<(String, &'static str), i64>>
+{
     use std::collections::HashMap;
     use std::sync::{Mutex, OnceLock};
     static CACHE: OnceLock<Mutex<HashMap<(String, &'static str), i64>>> = OnceLock::new();
@@ -1504,7 +1534,7 @@ fn log_provider_error(app: &AppHandle, provider_id: &str, kind: ErrorKind, messa
     {
         let mut g = match dedup_cache().lock() {
             Ok(g) => g,
-            Err(poisoned) => poisoned.into_inner(),  // 中毒也继续，日志比强一致重要
+            Err(poisoned) => poisoned.into_inner(), // 中毒也继续，日志比强一致重要
         };
         if let Some(&last_ts) = g.get(&key) {
             if now - last_ts < LOG_DEDUP_WINDOW_MS {
@@ -1651,7 +1681,12 @@ pub async fn set_display_thresholds(
             }
         }
         if !is_valid_hex_color(v) {
-            return Err(t!("commands.color_value_invalid", k = k.as_str(), v = v.as_str()).into_owned());
+            return Err(t!(
+                "commands.color_value_invalid",
+                k = k.as_str(),
+                v = v.as_str()
+            )
+            .into_owned());
         }
     }
     {
@@ -1703,10 +1738,14 @@ const LOG_CLEAR_GRACE_MS: i64 = 60_000;
 // 跟同文件 dedup_cache() 同款 pattern —— OnceLock<Mutex<Option<i64>>>,
 // init 只跑一次。原版直接 `static Mutex::new(None)` 也能跑(Mutex::new 是 const fn),
 // 但风格上跟 dedup_cache 不一致,统一过来少一种"两种风格并存"的认知负担。
-static LAST_CLEAR_TS: std::sync::OnceLock<std::sync::Mutex<Option<i64>>> = std::sync::OnceLock::new();
+static LAST_CLEAR_TS: std::sync::OnceLock<std::sync::Mutex<Option<i64>>> =
+    std::sync::OnceLock::new();
 
 pub(crate) fn is_in_clear_grace(now_ms: i64) -> bool {
-    let g = match LAST_CLEAR_TS.get_or_init(|| std::sync::Mutex::new(None)).lock() {
+    let g = match LAST_CLEAR_TS
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+    {
         Ok(g) => g,
         Err(_) => return false,
     };

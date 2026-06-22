@@ -27,7 +27,10 @@
 use std::borrow::Cow;
 use std::pin::Pin;
 
-use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderImpl, ProviderSnapshot, QuotaRow, QuotaSource};
+use super::{
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError, Provider, ProviderImpl,
+    ProviderSnapshot, QuotaRow, QuotaSource,
+};
 
 use crate::t;
 
@@ -38,13 +41,21 @@ const URL: &str = "https://api.deepseek.com/user/balance";
 pub struct DeepseekSource;
 
 impl Default for DeepseekSource {
-    fn default() -> Self { Self }
+    fn default() -> Self {
+        Self
+    }
 }
 
 impl QuotaSource for DeepseekSource {
-    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("deepseek") }
-    fn display_name(&self) -> Cow<'_, str> { Cow::Borrowed("DeepSeek") }
-    fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
+    fn id(&self) -> Cow<'_, str> {
+        Cow::Borrowed("deepseek")
+    }
+    fn display_name(&self) -> Cow<'_, str> {
+        Cow::Borrowed("DeepSeek")
+    }
+    fn auth_kind(&self) -> AuthKind {
+        AuthKind::ApiKey
+    }
 
     fn set_state<'a>(
         &'a self,
@@ -57,12 +68,13 @@ impl QuotaSource for DeepseekSource {
     fn fetch<'a>(
         &'a self,
         credentials: &'a Credentials,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>>
+    {
         Box::pin(async move {
             let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
                 return Err(FetchError::unconfigured(
-                    t!("error.provider.unconfigured_key", provider = "DeepSeek").into_owned()
+                    t!("error.provider.unconfigured_key", provider = "DeepSeek").into_owned(),
                 ));
             }
             do_fetch(api_key).await
@@ -76,23 +88,26 @@ impl QuotaSource for DeepseekSource {
 pub struct Deepseek;
 
 impl ProviderImpl for Deepseek {
-    fn id(&self) -> Provider { Provider::Deepseek }
-    fn display_name(&self) -> &'static str { "DeepSeek" }
+    fn id(&self) -> Provider {
+        Provider::Deepseek
+    }
+    fn display_name(&self) -> &'static str {
+        "DeepSeek"
+    }
 
     fn fetch<'a>(
         &'a self,
         api_key: &'a str,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, String>> + Send + 'a>> {
-        Box::pin(async move {
-            do_fetch(api_key).await.map_err(|e| e.message)
-        })
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, String>> + Send + 'a>>
+    {
+        Box::pin(async move { do_fetch(api_key).await.map_err(|e| e.message) })
     }
 }
 
 async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
     if api_key.trim().is_empty() {
         return Err(FetchError::unconfigured(
-            t!("error.common.api_key_empty").into_owned()
+            t!("error.common.api_key_empty").into_owned(),
         ));
     }
 
@@ -104,25 +119,27 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| FetchError::network(
-            t!("error.common.network", url = URL, err = e.to_string()).into_owned()
-        ))?;
+        .map_err(|e| {
+            FetchError::network(
+                t!("error.common.network", url = URL, err = e.to_string()).into_owned(),
+            )
+        })?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED {
         return Err(FetchError::auth(
-            t!("error.common.auth_failed", provider = "DeepSeek").into_owned()
+            t!("error.common.auth_failed", provider = "DeepSeek").into_owned(),
         ));
     }
     if status == reqwest::StatusCode::FORBIDDEN {
         return Err(FetchError::auth(
-            t!("error.common.forbidden", provider = "DeepSeek").into_owned()
+            t!("error.common.forbidden", provider = "DeepSeek").into_owned(),
         ));
     }
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
         return Err(FetchError::new(
             ErrorKind::RateLimited,
-            t!("error.common.rate_limited", provider = "DeepSeek").into_owned()
+            t!("error.common.rate_limited", provider = "DeepSeek").into_owned(),
         ));
     }
     if !status.is_success() {
@@ -133,16 +150,14 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
                 provider = "DeepSeek",
                 status = status.as_u16(),
                 body = body.chars().take(200).collect::<String>()
-            ).into_owned()
+            )
+            .into_owned(),
         ));
     }
 
-    let raw: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| FetchError::parse(
-            t!("error.common.parse_json", err = e.to_string()).into_owned()
-        ))?;
+    let raw: serde_json::Value = resp.json().await.map_err(|e| {
+        FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
+    })?;
 
     let is_available = raw
         .get("is_available")
@@ -164,7 +179,11 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
                 .or_else(|| {
                     let g = parse_f64(info, "granted_balance").unwrap_or(0.0);
                     let t = parse_f64(info, "topped_up_balance").unwrap_or(0.0);
-                    if g + t > 0.0 { Some(g + t) } else { None }
+                    if g + t > 0.0 {
+                        Some(g + t)
+                    } else {
+                        None
+                    }
                 });
             rows.push(QuotaRow {
                 label: t!("row.balance").to_string(),
@@ -175,14 +194,19 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
                 resets_at: None,
                 unit: Some(currency),
                 extra: None,
-            kind: None,
+                kind: None,
             });
         }
     }
 
     if rows.is_empty() {
         return Err(FetchError::parse(
-            t!("error.common.missing_field", provider = "DeepSeek", field = "balance_infos").into_owned()
+            t!(
+                "error.common.missing_field",
+                provider = "DeepSeek",
+                field = "balance_infos"
+            )
+            .into_owned(),
         ));
     }
 

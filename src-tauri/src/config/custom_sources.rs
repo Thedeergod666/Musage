@@ -37,8 +37,7 @@ pub fn load_custom_sources() -> Result<Vec<CustomSourceSpec>, String> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let s = std::fs::read_to_string(&path)
-        .map_err(|e| format!("read custom_sources.json: {e}"))?;
+    let s = std::fs::read_to_string(&path).map_err(|e| format!("read custom_sources.json: {e}"))?;
     if s.trim().is_empty() {
         return Ok(Vec::new());
     }
@@ -75,7 +74,7 @@ pub fn load_custom_sources() -> Result<Vec<CustomSourceSpec>, String> {
 /// M11 fix: 整个函数体在 save_lock() 保护下 —— 与 keys.json 写串行化，
 /// 避免用户同时改 custom source + 改 key 时 cfg.save / keys 写 / customs 写
 /// 三条路径互相竞争丢字段。
-#[allow(dead_code)]  // Phase E add/update/delete_custom_source IPC 会用
+#[allow(dead_code)] // Phase E add/update/delete_custom_source IPC 会用
 pub fn save_custom_sources(specs: &[CustomSourceSpec]) -> Result<(), String> {
     let _g = super::save_lock().lock().unwrap_or_else(|e| {
         tracing::warn!("save_custom_sources save_lock poisoned, recovering");

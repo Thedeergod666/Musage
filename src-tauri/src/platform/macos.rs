@@ -60,7 +60,7 @@ static LEVEL_SWITCHING_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// PinBottom 模式启动时调：把 level 切到 below-normal，并开启 hover 切 level。
 /// tracker 已由 [`start_hover_emitter`] 在 app 启动时拉起，这里只翻开关。
 pub fn set_window_pin_bottom<R: Runtime>(app: &AppHandle<R>) {
-    set_window_level(app, LEVEL_BELOW_NORMAL, true);  // M3 fix: true = is_pin_bottom
+    set_window_level(app, LEVEL_BELOW_NORMAL, true); // M3 fix: true = is_pin_bottom
     LEVEL_SWITCHING_ACTIVE.store(true, Ordering::SeqCst);
     // 防御：如果 lib.rs setup 之外的路径走到这（理论上不会），保底拉起 tracker
     start_hover_emitter(app.clone());
@@ -70,13 +70,13 @@ pub fn set_window_pin_bottom<R: Runtime>(app: &AppHandle<R>) {
 /// hover 事件 emit 不变，前端的玻璃效果继续受惠。
 pub fn set_window_pin_top<R: Runtime>(app: &AppHandle<R>) {
     LEVEL_SWITCHING_ACTIVE.store(false, Ordering::SeqCst);
-    set_window_level(app, LEVEL_FLOATING, false);  // M3 fix: false = 非 PinBottom
+    set_window_level(app, LEVEL_FLOATING, false); // M3 fix: false = 非 PinBottom
 }
 
 /// Normal 模式：level 切回 0，关闭 hover 切 level。
 pub fn set_window_normal<R: Runtime>(app: &AppHandle<R>) {
     LEVEL_SWITCHING_ACTIVE.store(false, Ordering::SeqCst);
-    set_window_level(app, kCGNormalWindowLevel, false);  // M3 fix: false = 非 PinBottom
+    set_window_level(app, kCGNormalWindowLevel, false); // M3 fix: false = 非 PinBottom
 }
 
 /// hover 切 level 的"前端兜底信号"：macOS 上 tracker 已自行处理，此处 no-op。
@@ -122,9 +122,13 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
 
                     // (2) PinBottom 模式：同步切 NSWindow level
                     if LEVEL_SWITCHING_ACTIVE.load(Ordering::SeqCst) {
-                        let level = if inside { LEVEL_FLOATING } else { LEVEL_BELOW_NORMAL };
+                        let level = if inside {
+                            LEVEL_FLOATING
+                        } else {
+                            LEVEL_BELOW_NORMAL
+                        };
                         tracing::trace!(?level, inside, "PinBottom hover 切 level");
-                        set_window_level(&app, level, true);  // M3 fix: true = PinBottom 模式内
+                        set_window_level(&app, level, true); // M3 fix: true = PinBottom 模式内
                     }
                 }
             }
@@ -217,8 +221,7 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
                 tracing::warn!("is_floating_topmost_at: MainThreadMarker 不可用，跳过本 tick");
                 return Some(false);
             };
-            let topmost =
-                NSWindow::windowNumberAtPoint_belowWindowWithWindowNumber(point, 0, mtm);
+            let topmost = NSWindow::windowNumberAtPoint_belowWindowWithWindowNumber(point, 0, mtm);
             Some(topmost == our_id)
         })();
         // **B-NEW-1 / Fix #5（2026-06-19 audit）**：mutex poison 自动恢复而不是 .expect()。
@@ -226,10 +229,7 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
         // （理论极少见但一旦发生），hover emitter 后续每次 20Hz 调 is_floating_topmost_at
         // 都会跟着 panic，tray 整体停摆。改成 unwrap_or_else(|e| e.into_inner())。
         {
-            let mut g = slot2
-                .slot
-                .lock()
-                .unwrap_or_else(|e| e.into_inner());
+            let mut g = slot2.slot.lock().unwrap_or_else(|e| e.into_inner());
             *g = Some(result.unwrap_or(false));
         }
         slot2.cvar.notify_all();
@@ -239,10 +239,7 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
     let started = std::time::Instant::now();
     let deadline = Duration::from_millis(50);
     // 同样：poison 恢复（mutex 共享，跟上面 write 路径同源）
-    let mut guard = slot
-        .slot
-        .lock()
-        .unwrap_or_else(|e| e.into_inner());
+    let mut guard = slot.slot.lock().unwrap_or_else(|e| e.into_inner());
     while guard.is_none() && started.elapsed() < deadline {
         let remaining = deadline.saturating_sub(started.elapsed());
         if remaining.is_zero() {

@@ -60,7 +60,10 @@ use std::pin::Pin;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource};
+use super::{
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
+    QuotaSource,
+};
 use crate::t;
 
 const URL: &str = "https://api.anthropic.com/api/oauth/usage";
@@ -75,13 +78,21 @@ const OAUTH_BETA: &str = "oauth-2025-04-20";
 pub struct ClaudeOfficialSource;
 
 impl Default for ClaudeOfficialSource {
-    fn default() -> Self { Self }
+    fn default() -> Self {
+        Self
+    }
 }
 
 impl QuotaSource for ClaudeOfficialSource {
-    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("claude_official") }
-    fn display_name(&self) -> Cow<'_, str> { Cow::Owned(t!("provider_name.claude_official").into_owned()) }
-    fn auth_kind(&self) -> AuthKind { AuthKind::Cookie }
+    fn id(&self) -> Cow<'_, str> {
+        Cow::Borrowed("claude_official")
+    }
+    fn display_name(&self) -> Cow<'_, str> {
+        Cow::Owned(t!("provider_name.claude_official").into_owned())
+    }
+    fn auth_kind(&self) -> AuthKind {
+        AuthKind::Cookie
+    }
 
     fn set_state<'a>(
         &'a self,
@@ -94,7 +105,8 @@ impl QuotaSource for ClaudeOfficialSource {
     fn fetch<'a>(
         &'a self,
         credentials: &'a Credentials,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>>
+    {
         Box::pin(async move {
             // 优先用 cookie 字段；其次用 api_key 字段（用户可能误填进 api_key）
             let raw = credentials
@@ -105,7 +117,7 @@ impl QuotaSource for ClaudeOfficialSource {
                 .trim();
             if raw.is_empty() {
                 return Err(FetchError::unconfigured(
-                    t!("error.provider.unconfigured_key", provider = "Claude").into_owned()
+                    t!("error.provider.unconfigured_key", provider = "Claude").into_owned(),
                 ));
             }
             let session_key = normalize_session_key(raw);
@@ -151,14 +163,16 @@ async fn do_fetch(session_key: &str) -> Result<ProviderSnapshot, FetchError> {
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| FetchError::network(
-            t!("error.common.network", url = URL, err = e.to_string()).into_owned()
-        ))?;
+        .map_err(|e| {
+            FetchError::network(
+                t!("error.common.network", url = URL, err = e.to_string()).into_owned(),
+            )
+        })?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(FetchError::auth(
-            t!("error.claude_official.cookie_invalid_hint").into_owned()
+            t!("error.claude_official.cookie_invalid_hint").into_owned(),
         ));
     }
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
@@ -186,7 +200,8 @@ async fn do_fetch(session_key: &str) -> Result<ProviderSnapshot, FetchError> {
                 "error.common.rate_limited_with_retry",
                 provider = "Claude",
                 retry_secs = s
-            ).into_owned(),
+            )
+            .into_owned(),
             None => t!("error.common.rate_limited", provider = "Claude").into_owned(),
         };
         return Err(FetchError::new(ErrorKind::RateLimited, msg));
@@ -199,16 +214,14 @@ async fn do_fetch(session_key: &str) -> Result<ProviderSnapshot, FetchError> {
                 provider = "Claude",
                 status = status.as_u16(),
                 body = body.chars().take(200).collect::<String>()
-            ).into_owned()
+            )
+            .into_owned(),
         ));
     }
 
-    let raw: Value = resp
-        .json()
-        .await
-        .map_err(|e| FetchError::parse(
-            t!("error.common.parse_json", err = e.to_string()).into_owned()
-        ))?;
+    let raw: Value = resp.json().await.map_err(|e| {
+        FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
+    })?;
 
     parse(&raw)
 }
@@ -277,7 +290,7 @@ fn build_tier_row(label: &str, tier: &Value) -> Option<QuotaRow> {
         resets_at,
         unit: Some("%".to_string()),
         extra: None,
-            kind: None,
+        kind: None,
     })
 }
 
@@ -317,7 +330,10 @@ mod tests {
         let snap = parse(&raw).expect("parse");
         assert!(snap.success);
         assert_eq!(snap.source_id.as_deref(), Some("claude_official"));
-        assert_eq!(snap.source_display_name.as_deref(), Some(t!("provider_name.claude_official").as_ref()));
+        assert_eq!(
+            snap.source_display_name.as_deref(),
+            Some(t!("provider_name.claude_official").as_ref())
+        );
         assert_eq!(snap.plan_name.as_deref(), Some("Pro/Max"));
         assert_eq!(snap.rows.len(), 2);
 
@@ -431,10 +447,7 @@ mod tests {
 
     #[test]
     fn normalize_with_prefix() {
-        assert_eq!(
-            normalize_session_key("sessionKey=abc123"),
-            "abc123"
-        );
+        assert_eq!(normalize_session_key("sessionKey=abc123"), "abc123");
     }
 
     #[test]
@@ -448,10 +461,7 @@ mod tests {
 
     #[test]
     fn normalize_trims_whitespace() {
-        assert_eq!(
-            normalize_session_key("  sessionKey=abc123  "),
-            "abc123"
-        );
+        assert_eq!(normalize_session_key("  sessionKey=abc123  "), "abc123");
     }
 
     #[test]

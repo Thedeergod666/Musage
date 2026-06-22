@@ -216,11 +216,7 @@ pub fn set_window_hover_raise<R: Runtime>(_app: &AppHandle<R>, _hovering: bool) 
 // Win 全屏检测需要多信号源（focus + 几何 + DWM），未实现。设置项保留可见
 // 但 Win/Linux 开了无效，help 文字告诉用户「目前仅 macOS 生效」。
 pub fn start_fullscreen_watcher<R: Runtime>(_app: tauri::AppHandle<R>) {}
-pub fn set_auto_hide_in_fullscreen<R: Runtime>(
-    _app: &tauri::AppHandle<R>,
-    _enabled: bool,
-) {
-}
+pub fn set_auto_hide_in_fullscreen<R: Runtime>(_app: &tauri::AppHandle<R>, _enabled: bool) {}
 
 /// 启动 hover emitter 线程。idempotent —— 第二次调用立即返回。
 /// 由 lib.rs setup() 调一次即可。启动后整个 app 生命周期不停。

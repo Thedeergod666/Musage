@@ -135,11 +135,7 @@ impl LogStore {
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            if let Ok(mut f) = OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&path)
-            {
+            if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
                 if let Ok(s) = serde_json::to_string(&entry) {
                     let _ = writeln!(f, "{}", s);
                 }
@@ -164,15 +160,14 @@ impl LogStore {
     fn truncate_file(&self, ring: &VecDeque<LogEntry>) -> Result<(), String> {
         let path = log_path()?;
         let tmp = path.with_extension("jsonl.tmp");
-        let mut f = std::fs::File::create(&tmp)
-            .map_err(|e| format!("logstore truncate tmp: {e}"))?;
+        let mut f =
+            std::fs::File::create(&tmp).map_err(|e| format!("logstore truncate tmp: {e}"))?;
         for entry in ring {
             if let Ok(s) = serde_json::to_string(entry) {
                 let _ = writeln!(f, "{}", s);
             }
         }
-        std::fs::rename(&tmp, &path)
-            .map_err(|e| format!("logstore truncate rename: {e}"))
+        std::fs::rename(&tmp, &path).map_err(|e| format!("logstore truncate rename: {e}"))
     }
 
     /// 快照：返回最近 n 条（按时间正序）。n == None → 全部。
@@ -183,7 +178,15 @@ impl LogStore {
         });
         match n {
             None => g.iter().cloned().collect(),
-            Some(k) => g.iter().rev().take(k).cloned().collect::<Vec<_>>().into_iter().rev().collect(),
+            Some(k) => g
+                .iter()
+                .rev()
+                .take(k)
+                .cloned()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect(),
         }
     }
 

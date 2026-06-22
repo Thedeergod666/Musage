@@ -40,7 +40,10 @@
 use std::borrow::Cow;
 use std::pin::Pin;
 
-use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource};
+use super::{
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
+    QuotaSource,
+};
 use crate::t;
 
 const URL: &str = "https://api.siliconflow.cn/v1/user/info";
@@ -50,13 +53,21 @@ const URL: &str = "https://api.siliconflow.cn/v1/user/info";
 pub struct SiliconflowSource;
 
 impl Default for SiliconflowSource {
-    fn default() -> Self { Self }
+    fn default() -> Self {
+        Self
+    }
 }
 
 impl QuotaSource for SiliconflowSource {
-    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("siliconflow") }
-    fn display_name(&self) -> Cow<'_, str> { Cow::Owned(t!("provider_name.siliconflow").into_owned()) }
-    fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
+    fn id(&self) -> Cow<'_, str> {
+        Cow::Borrowed("siliconflow")
+    }
+    fn display_name(&self) -> Cow<'_, str> {
+        Cow::Owned(t!("provider_name.siliconflow").into_owned())
+    }
+    fn auth_kind(&self) -> AuthKind {
+        AuthKind::ApiKey
+    }
 
     fn set_state<'a>(
         &'a self,
@@ -69,12 +80,13 @@ impl QuotaSource for SiliconflowSource {
     fn fetch<'a>(
         &'a self,
         credentials: &'a Credentials,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>>
+    {
         Box::pin(async move {
             let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
                 return Err(FetchError::unconfigured(
-                    t!("error.provider.unconfigured_key", provider = "SiliconFlow").into_owned()
+                    t!("error.provider.unconfigured_key", provider = "SiliconFlow").into_owned(),
                 ));
             }
             do_fetch(api_key).await
@@ -85,7 +97,7 @@ impl QuotaSource for SiliconflowSource {
 async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
     if api_key.trim().is_empty() {
         return Err(FetchError::unconfigured(
-            t!("error.common.api_key_empty").into_owned()
+            t!("error.common.api_key_empty").into_owned(),
         ));
     }
 
@@ -97,25 +109,27 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
         .header("Accept", "application/json")
         .send()
         .await
-        .map_err(|e| FetchError::network(
-            t!("error.common.network", url = URL, err = e.to_string()).into_owned()
-        ))?;
+        .map_err(|e| {
+            FetchError::network(
+                t!("error.common.network", url = URL, err = e.to_string()).into_owned(),
+            )
+        })?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED {
         return Err(FetchError::auth(
-            t!("error.common.auth_failed", provider = "SiliconFlow").into_owned()
+            t!("error.common.auth_failed", provider = "SiliconFlow").into_owned(),
         ));
     }
     if status == reqwest::StatusCode::FORBIDDEN {
         return Err(FetchError::auth(
-            t!("error.common.forbidden", provider = "SiliconFlow").into_owned()
+            t!("error.common.forbidden", provider = "SiliconFlow").into_owned(),
         ));
     }
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
         return Err(FetchError::new(
             ErrorKind::RateLimited,
-            t!("error.common.rate_limited", provider = "SiliconFlow").into_owned()
+            t!("error.common.rate_limited", provider = "SiliconFlow").into_owned(),
         ));
     }
     if !status.is_success() {
@@ -126,16 +140,14 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
                 provider = "SiliconFlow",
                 status = status.as_u16(),
                 body = body.chars().take(200).collect::<String>()
-            ).into_owned()
+            )
+            .into_owned(),
         ));
     }
 
-    let raw: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| FetchError::parse(
-            t!("error.common.parse_json", err = e.to_string()).into_owned()
-        ))?;
+    let raw: serde_json::Value = resp.json().await.map_err(|e| {
+        FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
+    })?;
 
     parse(&raw)
 }
@@ -148,7 +160,13 @@ fn parse(raw: &serde_json::Value) -> Result<ProviderSnapshot, FetchError> {
     if raw.get("status").and_then(|v| v.as_bool()) == Some(false) {
         let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
         return Err(FetchError::server(
-            t!("error.common.business_code", provider = "SiliconFlow", code = 0, msg = msg).into_owned()
+            t!(
+                "error.common.business_code",
+                provider = "SiliconFlow",
+                code = 0,
+                msg = msg
+            )
+            .into_owned(),
         ));
     }
     let code = raw.get("code").and_then(|v| v.as_i64()).unwrap_or(0);
@@ -159,21 +177,28 @@ fn parse(raw: &serde_json::Value) -> Result<ProviderSnapshot, FetchError> {
     if code != 20000 {
         let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
         return Err(FetchError::server(
-            t!("error.common.business_code", provider = "SiliconFlow", code = code, msg = msg).into_owned()
+            t!(
+                "error.common.business_code",
+                provider = "SiliconFlow",
+                code = code,
+                msg = msg
+            )
+            .into_owned(),
         ));
     }
 
-    let data = raw
-        .get("data")
-        .ok_or_else(|| FetchError::parse(
-            t!("error.common.missing_data_field", provider = "SiliconFlow").into_owned()
-        ))?;
+    let data = raw.get("data").ok_or_else(|| {
+        FetchError::parse(
+            t!("error.common.missing_data_field", provider = "SiliconFlow").into_owned(),
+        )
+    })?;
 
     // 余额字段是字符串 → parse_f64 容错
-    let balance = parse_f64(data.get("balance"))
-        .ok_or_else(|| FetchError::parse(
-            t!("error.common.missing_field_generic", field = "data.balance").into_owned()
-        ))?;
+    let balance = parse_f64(data.get("balance")).ok_or_else(|| {
+        FetchError::parse(
+            t!("error.common.missing_field_generic", field = "data.balance").into_owned(),
+        )
+    })?;
 
     let account_status = data
         .get("status")
@@ -190,7 +215,7 @@ fn parse(raw: &serde_json::Value) -> Result<ProviderSnapshot, FetchError> {
         resets_at: None,
         unit: Some("CNY".to_string()),
         extra: None,
-            kind: None,
+        kind: None,
     }];
 
     Ok(ProviderSnapshot {

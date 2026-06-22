@@ -192,7 +192,10 @@ pub struct FetchError {
 
 impl FetchError {
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
-        Self { kind, message: message.into() }
+        Self {
+            kind,
+            message: message.into(),
+        }
     }
     pub fn unconfigured(message: impl Into<String>) -> Self {
         Self::new(ErrorKind::UnconfiguredKey, message)
@@ -416,25 +419,37 @@ impl ProviderSnapshot {
             return "unknown";
         }
         if let Some(threshold) = wallet_alert_threshold {
-            if self.rows.iter().any(|r| {
-                r.remaining.map(|rem| rem < threshold).unwrap_or(false)
-            }) {
+            if self
+                .rows
+                .iter()
+                .any(|r| r.remaining.map(|rem| rem < threshold).unwrap_or(false))
+            {
                 return "alert";
             }
         }
         match self.provider {
             Provider::Deepseek => {
-                if self.is_healthy { "ok" } else { "alert" }
+                if self.is_healthy {
+                    "ok"
+                } else {
+                    "alert"
+                }
             }
             Provider::Minimax | Provider::Xiaomimimo => {
                 // 取第一个有 utilization 的 row
-                let u = self.rows.iter()
+                let u = self
+                    .rows
+                    .iter()
                     .filter_map(|r| r.utilization)
                     .next()
                     .unwrap_or(0.0);
-                if u < 70.0 { "ok" }
-                else if u < 90.0 { "warn" }
-                else { "alert" }
+                if u < 70.0 {
+                    "ok"
+                } else if u < 90.0 {
+                    "warn"
+                } else {
+                    "alert"
+                }
             }
         }
     }
@@ -501,12 +516,16 @@ pub trait QuotaSource: Send + Sync {
     /// 也想看其他卡片的布局"。
     ///
     /// 默认 `true`（绝大多数 provider 是真实现）。
-    fn default_enabled(&self) -> bool { true }
+    fn default_enabled(&self) -> bool {
+        true
+    }
     /// 是否是 STUB（公开 API 无 quota endpoint、fetch 永远返 `error.provider.not_supported`）。
     /// UI 用这个加灰显 + "未支持" 角标，避免用户配 key 后看到 30 min 退避风暴。
     ///
     /// 默认 `false`。
-    fn is_stub(&self) -> bool { false }
+    fn is_stub(&self) -> bool {
+        false
+    }
     /// 更新运行时状态（region / overrides）。`value` 是 [`AppConfig`] 的
     /// 完整 JSON 序列化，source 自己按需取字段。无状态的 source 可以忽略。
     ///

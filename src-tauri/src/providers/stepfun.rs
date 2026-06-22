@@ -61,7 +61,10 @@ use std::pin::Pin;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use super::{shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource};
+use super::{
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
+    QuotaSource,
+};
 use crate::t;
 
 const URL_RATE_LIMIT: &str =
@@ -74,13 +77,21 @@ const URL_PLAN_STATUS: &str =
 pub struct StepfunSource;
 
 impl Default for StepfunSource {
-    fn default() -> Self { Self }
+    fn default() -> Self {
+        Self
+    }
 }
 
 impl QuotaSource for StepfunSource {
-    fn id(&self) -> Cow<'_, str> { Cow::Borrowed("stepfun") }
-    fn display_name(&self) -> Cow<'_, str> { Cow::Owned(t!("provider_name.stepfun").into_owned()) }
-    fn auth_kind(&self) -> AuthKind { AuthKind::ApiKey }
+    fn id(&self) -> Cow<'_, str> {
+        Cow::Borrowed("stepfun")
+    }
+    fn display_name(&self) -> Cow<'_, str> {
+        Cow::Owned(t!("provider_name.stepfun").into_owned())
+    }
+    fn auth_kind(&self) -> AuthKind {
+        AuthKind::ApiKey
+    }
 
     fn set_state<'a>(
         &'a self,
@@ -93,7 +104,8 @@ impl QuotaSource for StepfunSource {
     fn fetch<'a>(
         &'a self,
         credentials: &'a Credentials,
-    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>>
+    {
         Box::pin(async move {
             let token = credentials
                 .api_key
@@ -103,7 +115,7 @@ impl QuotaSource for StepfunSource {
                 .trim();
             if token.is_empty() {
                 return Err(FetchError::unconfigured(
-                    t!("error.stepfun.token_unconfigured_hint").into_owned()
+                    t!("error.stepfun.token_unconfigured_hint").into_owned(),
                 ));
             }
             do_fetch(token).await
@@ -114,7 +126,7 @@ impl QuotaSource for StepfunSource {
 async fn do_fetch(oasis_token: &str) -> Result<ProviderSnapshot, FetchError> {
     // 并行拉 rate limit + plan status（互不依赖）
     let rate = fetch_rate_limit(oasis_token).await?;
-    let plan = fetch_plan_status(oasis_token).await.ok().flatten();  // 失败不阻塞
+    let plan = fetch_plan_status(oasis_token).await.ok().flatten(); // 失败不阻塞
 
     parse(rate, plan)
 }
@@ -128,23 +140,30 @@ async fn fetch_rate_limit(token: &str) -> Result<Value, FetchError> {
         .header("Cookie", format!("Oasis-Token={token}"))
         .header("Content-Type", "application/json")
         .header("Accept", "application/json")
-        .body("{}")  // 空 body，服务端 schema 不需要参数
+        .body("{}") // 空 body，服务端 schema 不需要参数
         .send()
         .await
-        .map_err(|e| FetchError::network(
-            t!("error.common.network", url = URL_RATE_LIMIT, err = e.to_string()).into_owned()
-        ))?;
+        .map_err(|e| {
+            FetchError::network(
+                t!(
+                    "error.common.network",
+                    url = URL_RATE_LIMIT,
+                    err = e.to_string()
+                )
+                .into_owned(),
+            )
+        })?;
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(FetchError::auth(
-            t!("error.stepfun.token_invalid_hint").into_owned()
+            t!("error.stepfun.token_invalid_hint").into_owned(),
         ));
     }
     if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
         return Err(FetchError::new(
             ErrorKind::RateLimited,
-            t!("error.common.rate_limited", provider = "StepFun").into_owned()
+            t!("error.common.rate_limited", provider = "StepFun").into_owned(),
         ));
     }
     if !status.is_success() {
@@ -155,23 +174,27 @@ async fn fetch_rate_limit(token: &str) -> Result<Value, FetchError> {
                 provider = "StepFun",
                 status = status.as_u16(),
                 body = body.chars().take(200).collect::<String>()
-            ).into_owned()
+            )
+            .into_owned(),
         ));
     }
 
-    let raw: Value = resp
-        .json()
-        .await
-        .map_err(|e| FetchError::parse(
-            t!("error.common.parse_json", err = e.to_string()).into_owned()
-        ))?;
+    let raw: Value = resp.json().await.map_err(|e| {
+        FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
+    })?;
 
     // 业务级 code 检查
     let code = raw.get("code").and_then(|v| v.as_i64()).unwrap_or(-1);
     if code != 0 {
         let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
         return Err(FetchError::server(
-            t!("error.common.business_code", provider = "StepFun", code = code, msg = msg).into_owned()
+            t!(
+                "error.common.business_code",
+                provider = "StepFun",
+                code = code,
+                msg = msg
+            )
+            .into_owned(),
         ));
     }
 
@@ -223,16 +246,17 @@ async fn fetch_plan_status(token: &str) -> Result<Option<String>, FetchError> {
 fn parse(rate_raw: Value, plan_name: Option<String>) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
-    let data = rate_raw
-        .get("data")
-        .ok_or_else(|| FetchError::parse(
-            t!("error.common.missing_data_field", provider = "StepFun").into_owned()
-        ))?;
+    let data = rate_raw.get("data").ok_or_else(|| {
+        FetchError::parse(t!("error.common.missing_data_field", provider = "StepFun").into_owned())
+    })?;
 
     let mut rows = Vec::new();
 
     // 5h tier
-    if let Some(left) = data.get("five_hour_usage_left_rate").and_then(|v| v.as_f64()) {
+    if let Some(left) = data
+        .get("five_hour_usage_left_rate")
+        .and_then(|v| v.as_f64())
+    {
         if (0.0..=1.0).contains(&left) {
             let used_pct = (1.0 - left) * 100.0;
             let reset = data
@@ -247,7 +271,7 @@ fn parse(rate_raw: Value, plan_name: Option<String>) -> Result<ProviderSnapshot,
                 resets_at: reset,
                 unit: Some("%".to_string()),
                 extra: None,
-            kind: None,
+                kind: None,
             });
         }
     }
@@ -268,7 +292,7 @@ fn parse(rate_raw: Value, plan_name: Option<String>) -> Result<ProviderSnapshot,
                 resets_at: reset,
                 unit: Some("%".to_string()),
                 extra: None,
-            kind: None,
+                kind: None,
             });
         }
     }
@@ -421,7 +445,7 @@ mod tests {
         // parse 本身只检查 data 字段
         let raw = json!({ "code": 401, "message": "token expired" });
         let err = parse(raw, None).unwrap_err();
-        assert_eq!(err.kind, FetchError::parse("test").kind);  // 缺 data 字段 → parse 错
+        assert_eq!(err.kind, FetchError::parse("test").kind); // 缺 data 字段 → parse 错
     }
 
     #[test]

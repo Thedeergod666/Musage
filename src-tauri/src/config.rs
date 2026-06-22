@@ -264,20 +264,44 @@ impl UserRegion {
     pub fn default_provider_order(&self) -> &'static [&'static str] {
         match self {
             UserRegion::Cn => &[
-                "minimax", "deepseek", "xiaomimimo", "kimi", "zhipu",
-                "openrouter", "tavily", "zenmux",
-                "stepfun", "siliconflow", "claude_official",
+                "minimax",
+                "deepseek",
+                "xiaomimimo",
+                "kimi",
+                "zhipu",
+                "openrouter",
+                "tavily",
+                "zenmux",
+                "stepfun",
+                "siliconflow",
+                "claude_official",
             ],
             UserRegion::Global => &[
-                "openrouter", "claude_official", "tavily", "deepseek",
-                "zenmux", "kimi", "siliconflow", "minimax",
-                "zhipu", "stepfun", "xiaomimimo",
+                "openrouter",
+                "claude_official",
+                "tavily",
+                "deepseek",
+                "zenmux",
+                "kimi",
+                "siliconflow",
+                "minimax",
+                "zhipu",
+                "stepfun",
+                "xiaomimimo",
             ],
             // Custom：理论上不该被调用（set_region 守卫），但兜底走 Cn
             UserRegion::Custom => &[
-                "minimax", "deepseek", "xiaomimimo", "kimi", "zhipu",
-                "openrouter", "tavily", "zenmux",
-                "stepfun", "siliconflow", "claude_official",
+                "minimax",
+                "deepseek",
+                "xiaomimimo",
+                "kimi",
+                "zhipu",
+                "openrouter",
+                "tavily",
+                "zenmux",
+                "stepfun",
+                "siliconflow",
+                "claude_official",
             ],
         }
     }
@@ -488,9 +512,9 @@ impl AppConfig {
                     enabled: true,
                     region: legacy.region.or(Some(Region::Cn)),
                     xiaomi_region: None,
-                refresh_interval_secs: None,
-                xiaomi_display_mode: None,
-            },
+                    refresh_interval_secs: None,
+                    xiaomi_display_mode: None,
+                },
             );
             cfg.refresh_interval_secs = legacy.refresh_interval_secs.unwrap_or(60);
             cfg.floating_x = legacy.floating_x;
@@ -555,23 +579,23 @@ impl AppConfig {
                         enabled: true,
                         region: Some(Region::Cn),
                         xiaomi_region: None,
-                refresh_interval_secs: None,
-                xiaomi_display_mode: None,
-            },
+                        refresh_interval_secs: None,
+                        xiaomi_display_mode: None,
+                    },
                     Provider::Deepseek => ProviderConfig {
                         enabled: true,
                         region: None,
                         xiaomi_region: None,
-                refresh_interval_secs: None,
-                xiaomi_display_mode: None,
-            },
+                        refresh_interval_secs: None,
+                        xiaomi_display_mode: None,
+                    },
                     Provider::Xiaomimimo => ProviderConfig {
                         enabled: true,
                         region: None,
                         xiaomi_region: Some(XiaomiRegion::Cn),
-                refresh_interval_secs: None,
-                xiaomi_display_mode: None,
-            },
+                        refresh_interval_secs: None,
+                        xiaomi_display_mode: None,
+                    },
                 });
         }
         self
@@ -611,23 +635,23 @@ impl AppConfig {
                     enabled,
                     region: Some(Region::Cn),
                     xiaomi_region: None,
-                refresh_interval_secs: None,
-                xiaomi_display_mode: None,
-            },
+                    refresh_interval_secs: None,
+                    xiaomi_display_mode: None,
+                },
                 Provider::Deepseek => ProviderConfig {
                     enabled,
                     region: None,
                     xiaomi_region: None,
-                refresh_interval_secs: None,
-                xiaomi_display_mode: None,
-            },
+                    refresh_interval_secs: None,
+                    xiaomi_display_mode: None,
+                },
                 Provider::Xiaomimimo => ProviderConfig {
                     enabled,
                     region: None,
                     xiaomi_region: Some(XiaomiRegion::Cn),
-                refresh_interval_secs: None,
-                xiaomi_display_mode: None,
-            },
+                    refresh_interval_secs: None,
+                    xiaomi_display_mode: None,
+                },
             });
         entry.enabled = enabled;
     }
@@ -713,7 +737,9 @@ impl AppConfig {
 /// logstore 的 `app_log.jsonl.tmp` 孤儿永远不被清理。
 pub fn cleanup_orphan_tmp_files() {
     let Ok(dir) = config_dir() else { return };
-    let Ok(entries) = std::fs::read_dir(&dir) else { return };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         let is_tmp = path.extension().and_then(|e| e.to_str()) == Some("tmp");
@@ -768,7 +794,8 @@ fn write_keys_atomic(map: &KeysMap) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
     }
     let tmp = path.with_extension("json.tmp");
-    let s = serde_json::to_string_pretty(map).map_err(|e| t!("commands.config_serialize", err = e.to_string()).into_owned())?;
+    let s = serde_json::to_string_pretty(map)
+        .map_err(|e| t!("commands.config_serialize", err = e.to_string()).into_owned())?;
     std::fs::write(&tmp, &s).map_err(|_| t!("commands.keys_io", op = "write tmp").into_owned())?;
 
     #[cfg(unix)]
@@ -791,7 +818,8 @@ fn read_keys() -> Result<KeysMap, String> {
     if !path.exists() {
         return Ok(BTreeMap::new());
     }
-    let s = std::fs::read_to_string(&path).map_err(|e| t!("commands.read_keys", err = e.to_string()).into_owned())?;
+    let s = std::fs::read_to_string(&path)
+        .map_err(|e| t!("commands.read_keys", err = e.to_string()).into_owned())?;
     if s.trim().is_empty() {
         return Ok(BTreeMap::new());
     }
@@ -807,7 +835,11 @@ fn read_keys() -> Result<KeysMap, String> {
                 .unwrap_or(0);
             let backup = path.with_extension(format!("json.bak.{ts}"));
             let _ = std::fs::copy(&path, &backup);
-            Err(t!("commands.parse_keys", err = format!("{e}; 备份到 {}", backup.display())).into_owned())
+            Err(t!(
+                "commands.parse_keys",
+                err = format!("{e}; 备份到 {}", backup.display())
+            )
+            .into_owned())
         }
     }
 }
@@ -825,7 +857,7 @@ pub fn save_api_key_for(provider: Provider, key: &str) -> Result<(), String> {
         tracing::warn!("save_api_key_for save_lock poisoned, recovering");
         e.into_inner()
     });
-    let mut map = read_keys()?;  // F3 fix: 传播错误，不要 unwrap_or_default（会删光其他 key）
+    let mut map = read_keys()?; // F3 fix: 传播错误，不要 unwrap_or_default（会删光其他 key）
     map.insert(provider.id_str().to_string(), key.to_string());
     write_keys_atomic(&map)
 }
@@ -835,13 +867,14 @@ pub fn delete_api_key_for(provider: Provider) -> Result<(), String> {
         tracing::warn!("delete_api_key_for save_lock poisoned, recovering");
         e.into_inner()
     });
-    let mut map = read_keys()?;  // 同上
+    let mut map = read_keys()?; // 同上
     map.remove(provider.id_str());
     if map.is_empty() {
         // 全部删完就连文件一起删，避免空文件 + 0 字节文件混在目录里
         let path = keys_path()?;
         if path.exists() {
-            std::fs::remove_file(&path).map_err(|_| t!("commands.keys_io", op = "remove empty").into_owned())?;
+            std::fs::remove_file(&path)
+                .map_err(|_| t!("commands.keys_io", op = "remove empty").into_owned())?;
         }
     } else {
         write_keys_atomic(&map)?;
@@ -865,7 +898,7 @@ pub fn save_cookie_for(provider: Provider, cookie: &str) -> Result<(), String> {
         tracing::warn!("save_cookie_for save_lock poisoned, recovering");
         e.into_inner()
     });
-    let mut map = read_keys()?;  // F3 fix
+    let mut map = read_keys()?; // F3 fix
     map.insert(cookie_key(provider), cookie.to_string());
     write_keys_atomic(&map)
 }
@@ -875,12 +908,13 @@ pub fn delete_cookie_for(provider: Provider) -> Result<(), String> {
         tracing::warn!("delete_cookie_for save_lock poisoned, recovering");
         e.into_inner()
     });
-    let mut map = read_keys()?;  // F3 fix
+    let mut map = read_keys()?; // F3 fix
     map.remove(&cookie_key(provider));
     if map.is_empty() {
         let path = keys_path()?;
         if path.exists() {
-            std::fs::remove_file(&path).map_err(|_| t!("commands.keys_io", op = "remove empty").into_owned())?;
+            std::fs::remove_file(&path)
+                .map_err(|_| t!("commands.keys_io", op = "remove empty").into_owned())?;
         }
     } else {
         write_keys_atomic(&map)?;
@@ -908,11 +942,11 @@ pub fn save_credential_for_id(id: &str, cred: &Credentials) -> Result<(), String
         tracing::warn!("save_credential_for_id save_lock poisoned, recovering");
         e.into_inner()
     });
-    let mut map = read_keys()?;  // F3 fix
-    // 防御性写法:分别处理 api_key / cookie 两个字段。
-    // 旧实现的 match 在 (Some, Some) 时只插 api_key,cookie 被静默丢弃——
-    // 当前 build_credentials 强制二选一所以不会触发,但 API 是 public 的,
-    // 未来给用户同时填两个 key 就会撞这里。改成 if-let 链就不会丢。
+    let mut map = read_keys()?; // F3 fix
+                                // 防御性写法:分别处理 api_key / cookie 两个字段。
+                                // 旧实现的 match 在 (Some, Some) 时只插 api_key,cookie 被静默丢弃——
+                                // 当前 build_credentials 强制二选一所以不会触发,但 API 是 public 的,
+                                // 未来给用户同时填两个 key 就会撞这里。改成 if-let 链就不会丢。
     let mut wrote_any = false;
     if let Some(k) = &cred.api_key {
         map.insert(id.to_string(), k.clone());
@@ -935,7 +969,7 @@ pub fn delete_credential_for_id(id: &str) -> Result<(), String> {
         tracing::warn!("delete_credential_for_id save_lock poisoned, recovering");
         e.into_inner()
     });
-    let mut map = read_keys()?;  // F3 fix
+    let mut map = read_keys()?; // F3 fix
     map.remove(id);
     map.remove(&format!("{id}:cookie"));
     if map.is_empty() {

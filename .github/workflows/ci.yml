@@ -258,3 +258,34 @@ jobs:
               fi
             done
           exit 1
+
+  # ── docs: PR 守门: docs: 开头的 PR 只能改 .md 文件 ──
+  #
+  # 2026-06-22 加: 防止 PR 标题写 "docs:" 但偷偷带代码改动 (跟 PR 1 教训)
+  # 检查逻辑:
+  #   1. PR 标题以 "docs:" 开头 → 激活此 job
+  #   2. 拿 PR 跟 origin/main 的 diff, 过滤出非 .md 文件
+  #   3. 如果非 .md 改动非空 → fail (强制纯 docs 改动)
+  #   4. 跳过: merge commit (跟 PR 行为无关)
+  docs-only-check:
+    name: docs-only PR check
+    if: startsWith(github.event.pull_request.title, 'docs:')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+      - name: Check non-.md file changes
+        run: |
+          # github.event.pull_request.base.ref 给出 PR base 分支 (一般是 main)
+          BASE_BRANCH="${GITHUB_BASE_REF:-main}"
+          # 拿 PR 分支跟 base 比 diff, 过滤 .md 文件
+          NON_MD_FILES=$(git diff --name-only "origin/${BASE_BRANCH}...HEAD" | grep -v '\.md$' || true)
+          if [[ -n "$NON_MD_FILES" ]]; then
+            echo "::error::docs: PR 应该不修改非 .md 文件, 但发现:"
+            echo "$NON_MD_FILES"
+            echo ""
+            echo "如果这次改动真的需要带代码, 请把 PR 标题前缀从 'docs:' 改成 'fix:'/'refactor:'/等"
+            exit 1
+          fi
+          echo "✓ docs: PR 纯 .md 改动, 通过"

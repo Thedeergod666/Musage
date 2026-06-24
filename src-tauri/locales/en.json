@@ -107,6 +107,13 @@
     }
   },
 
+  "notification": {
+    "xiaomi_cookie_expired_title": "Xiaomi MiMo cookie expired",
+    "xiaomi_cookie_expired_body": "Your Xiaomi MiMo cookie has expired (~8h). Click the floating window to re-login.",
+    "claude_session_expired_title": "Claude sessionKey expired",
+    "claude_session_expired_body": "Your Claude sessionKey has expired. Open Settings → claude_official → paste new sessionKey."
+  },
+
   "commands": {
     "region_invalid": "Invalid region: {other} (must be cn / global / custom)",
     "source_unknown": "Unknown source id: {id}",

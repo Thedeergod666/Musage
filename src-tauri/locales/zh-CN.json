@@ -107,6 +107,13 @@
     }
   },
 
+  "notification": {
+    "xiaomi_cookie_expired_title": "Xiaomi MiMo cookie 已失效",
+    "xiaomi_cookie_expired_body": "你的 Xiaomi MiMo cookie 已失效（约 8h）。点浮窗错误卡可重新登录。",
+    "claude_session_expired_title": "Claude sessionKey 已失效",
+    "claude_session_expired_body": "你的 Claude sessionKey 已失效。打开设置 → claude_official → 粘贴新 sessionKey。"
+  },
+
   "commands": {
     "region_invalid": "未知的 region: {other}（必须为 cn / global / custom）",
     "source_unknown": "未知的 source id: {id}",

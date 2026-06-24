@@ -711,6 +711,31 @@ button.order-down {
   opacity: 0.85;
 }
 
+/* v0.2.1 commit 7 (P2-B-10): import/export section */
+.import-export-section {
+  margin-top: var(--sp-4, 12px);
+  padding: var(--sp-3, 8px);
+  background: var(--bg-2);
+  border-radius: var(--r-md, 6px);
+}
+.import-export-section h3 {
+  margin: 0 0 var(--sp-2, 6px);
+  font-size: 1em;
+}
+.import-export-section .help {
+  margin: 0 0 var(--sp-3, 8px);
+  font-size: 0.9em;
+  opacity: 0.85;
+}
+.io-actions {
+  display: flex;
+  gap: var(--sp-3, 8px);
+  align-items: center;
+}
+.io-actions input[type="file"] {
+  display: none;
+}
+
 .provider-group {
   margin-bottom: var(--sp-3, 8px);
 }

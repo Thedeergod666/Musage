@@ -88,6 +88,9 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        // v0.2.1 commit 7 (P2-B-8): 注册 notification plugin 让 log_provider_error
+        // 在 Xiaomi/Claude cookie 失效时弹系统通知。
+        .plugin(tauri_plugin_notification::init())
         // M6 fix: .manage() 移到 .setup() 之前。之前 .setup() 里
         // app.state::<AppState>() 在 .manage() 之前调用，Tauri 2 部分版本
         // 会 panic（state 未注册）。更安全的做法:先 manage 注册 state，

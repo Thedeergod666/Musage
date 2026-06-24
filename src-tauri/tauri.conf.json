@@ -64,6 +64,7 @@
       "windows": {
         "installMode": "passive"
       }
-    }
+    },
+    "notification": {}
   }
 }

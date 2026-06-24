@@ -245,7 +245,14 @@
       "xiaomi_cookie_help_2": "How to get it: Chrome login ",
       "xiaomi_cookie_help_3": "→ F12 → Network → any /api/v1/tokenPlan/* request → right-click → Copy → Copy request headers → find ",
       "xiaomi_cookie_help_4": "row and paste the whole line above.",
-      "xiaomi_cookie_help_5": "Cookie expires when logged out; on expiry (HTTP 401) error message will guide you to re-paste."
+      "xiaomi_cookie_help_5": "Cookie expires when logged out; on expiry (HTTP 401) error message will guide you to re-paste.",
+      "io_title": "Import / Export config (no keys)",
+      "io_help": "Export your config (preferences, display modes, order) as JSON. Import to overwrite the config on this machine. API keys and cookies are NOT included — those stay on this machine only.",
+      "export_btn": "Export to JSON",
+      "import_btn": "Import from JSON",
+      "io_exported": "Exported config to file.",
+      "io_imported": "Imported config — reloading settings panel.",
+      "io_import_failed": "Import failed: {err}"
     },
     "logs": {
       "section_title": "Logs",

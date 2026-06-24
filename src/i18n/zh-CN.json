@@ -245,7 +245,14 @@
       "xiaomi_cookie_help_2": "获取方法：Chrome 登录 ",
       "xiaomi_cookie_help_3": "→ F12 → Network → 任意 /api/v1/tokenPlan/* 请求 → 右键 → Copy → Copy request headers → 找 ",
       "xiaomi_cookie_help_4": "这一行整段粘贴到上面。",
-      "xiaomi_cookie_help_5": "Cookie 登出后失效，过期时 (HTTP 401) 错误信息会引导重粘。"
+      "xiaomi_cookie_help_5": "Cookie 登出后失效，过期时 (HTTP 401) 错误信息会引导重粘。",
+      "io_title": "导入 / 导出 配置（不含 keys）",
+      "io_help": "导出配置（偏好、显示模式、顺序）为 JSON；导入可覆盖本机配置。**不含** API key 和 cookie —— 这些始终留在本机。",
+      "export_btn": "导出为 JSON",
+      "import_btn": "从 JSON 导入",
+      "io_exported": "配置已导出到文件。",
+      "io_imported": "配置已导入 —— 设置面板即将刷新。",
+      "io_import_failed": "导入失败：{err}"
     },
     "logs": {
       "section_title": "日志",

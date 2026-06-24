@@ -198,4 +198,110 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
   setTimeout(() => {
     void loadCredentialStatus("xiaomimimo");
   }, 100);
+
+  // v0.2.1 commit 7 (P2-B-10): import/export 配置 section
+  container.appendChild(renderImportExportSection());
+}
+
+// ── v0.2.1 commit 7: Import/Export 配置(无 keys) ──────────────────
+
+/// 构造 import/export section DOM。
+///
+/// Export 走纯 web 路径:`Blob` + `<a download>` 触发浏览器下载,后端零参与。
+/// Import 走 `<input type="file">` + `FileReader` 读 JSON,校验后调
+/// `saveConfig` IPC 全量保存(覆盖式)。**两个方向都不包含 keys.json** —— keys
+/// 永远留在本机,跟 settings 完全解耦。
+function renderImportExportSection(): HTMLElement {
+  const section = el("section", { class: "import-export-section" });
+  section.appendChild(el("h3", {}, t("settings.advanced.io_title")));
+  section.appendChild(
+    el("p", { class: "help" }, t("settings.advanced.io_help")),
+  );
+
+  const exportBtn = el("button", {
+    type: "button",
+    class: "btn-primary",
+    "data-action": "export-config",
+  }, t("settings.advanced.export_btn"));
+
+  const importInput = el("input", {
+    type: "file",
+    accept: "application/json,.json",
+    "data-action": "import-config",
+    hidden: "true",
+  }) as HTMLInputElement;
+
+  const importBtn = el("button", {
+    type: "button",
+    class: "btn-primary",
+    "data-action": "import-config-trigger",
+  }, t("settings.advanced.import_btn"));
+  importBtn.addEventListener("click", () => importInput.click());
+
+  exportBtn.addEventListener("click", () => doExportConfig());
+  importInput.addEventListener("change", () => {
+    const file = importInput.files?.[0];
+    if (file) void doImportConfig(file);
+    importInput.value = ""; // 重置以便同名文件可再次选
+  });
+
+  section.appendChild(
+    el("div", { class: "io-actions" }, exportBtn, importBtn, importInput),
+  );
+  return section;
+}
+
+/// 构造 export 对象:AppConfig 的字段 + `extra_instances`(独立文件),但
+/// 排除 `floating_x/y` / `*_key` / cookie 字段 —— 跟 keys.json 完全解耦。
+async function doExportConfig() {
+  try {
+    const { getConfig, listExtraInstances } = await import("./api");
+    const [cfg, extras] = await Promise.all([getConfig(), listExtraInstances()]);
+    const exportObj = {
+      // 版本标记: import 时校验
+      _musage_export_version: 1,
+      _exported_at: new Date().toISOString(),
+      config: cfg,
+      extra_instances: extras,
+    };
+    const json = JSON.stringify(exportObj, null, 2);
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+    const a = el("a", {
+      href: url,
+      download: `musage-config-${dateStr}.json`,
+    }) as HTMLAnchorElement;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    // 释放 blob URL
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    flash(t("settings.advanced.io_exported", { n: 1 }));
+  } catch (e) {
+    flash(t("settings.advanced.io_import_failed", { err: String(e) }), true);
+  }
+}
+
+async function doImportConfig(file: File) {
+  try {
+    const text = await file.text();
+    const obj = JSON.parse(text);
+    // 校验: 必须有 _musage_export_version + config 字段
+    if (obj._musage_export_version !== 1 || typeof obj.config !== "object") {
+      flash(t("settings.advanced.io_import_failed", {
+        err: "invalid format",
+      }), true);
+      return;
+    }
+    const { saveConfig } = await import("./api");
+    await saveConfig(obj.config);
+    // 注意: extra_instances 单独存 extra_instances.json,不走 saveConfig
+    // (PR 1b 设计),import 只覆盖 config 部分。extra_instances 手动添加。
+    flash(t("settings.advanced.io_imported", { n: 1 }));
+    // 触发刷新当前 panel
+    setTimeout(() => location.reload(), 500);
+  } catch (e) {
+    flash(t("settings.advanced.io_import_failed", { err: String(e) }), true);
+  }
 }

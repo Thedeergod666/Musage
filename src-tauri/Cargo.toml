@@ -22,6 +22,9 @@ tauri-plugin-autostart = "2"
 tauri-plugin-os = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# v0.2.1 commit 7 (P2-B-8): Xiaomi/Claude cookie 失效时弹系统通知。
+# 跟 update 走同一通道 —— plugin 本身是官方维护,只是 init() 一下即可。
+tauri-plugin-notification = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }

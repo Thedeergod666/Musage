@@ -1468,6 +1468,36 @@ fn log_provider_error(app: &AppHandle, provider_id: &str, kind: ErrorKind, messa
         kind.as_str(),
         message,
     ));
+
+    // v0.2.1 commit 7 (P2-B-8): Xiaomi/Claude cookie 失效弹系统通知。
+    // dedup 60s 窗口已经保证一次失败 → 一条通知,poller 60s 一次轮询不会
+    // 弹疯 (8h cookie 失效 → 60min 内最多 60 条通知)。其他 provider (minimax 等
+    // Bearer key 失败) 不弹,减少干扰。
+    if matches!(kind, ErrorKind::AuthFailed)
+        && matches!(provider_id, "xiaomimimo" | "claude_official")
+    {
+        let (title_key, body_key) = if provider_id == "xiaomimimo" {
+            ("notification.xiaomi_cookie_expired_title", "notification.xiaomi_cookie_expired_body")
+        } else {
+            ("notification.claude_session_expired_title", "notification.claude_session_expired_body")
+        };
+        let title = t!(title_key).to_string();
+        let body = t!(body_key, provider = provider_id).to_string();
+        let app_for_notif = app.clone();
+        // 异步 fire-and-forget:通知失败也不影响主流程
+        tauri::async_runtime::spawn(async move {
+            use tauri_plugin_notification::NotificationExt;
+            if let Err(e) = app_for_notif
+                .notification()
+                .builder()
+                .title(title)
+                .body(body)
+                .show()
+            {
+                tracing::warn!(error = %e, "系统通知发送失败");
+            }
+        });
+    }
 }
 
 // ── 设置面板"即时生效"command 群 ──────────────────────────────────

@@ -790,7 +790,14 @@ pub(crate) fn build_settings_window(app: &AppHandle) -> tauri::Result<tauri::Web
 }
 
 #[tauri::command]
-pub async fn open_settings_window(app: AppHandle) -> Result<(), String> {
+pub async fn open_settings_window(
+    app: AppHandle,
+    section: Option<String>,
+) -> Result<(), String> {
+    // v0.2.1 commit 8: section 参数取值 "providers" / "floating" / "app" /
+    // "advanced" / "logs" / "about" / "region"。
+    // 修复之前 P1 commit `5b976e2` 留的隐藏 bug:前端 \`data-section="advanced"\`
+    // 传过来但后端不接收 → "open advanced" 按钮点了只开 settings,不跳 tab。
     if let Some(w) = app.get_webview_window("settings") {
         // Win11 已存在窗口的恢复链：unminimize 必须在 show 之前 ——
         // Win 上 show() 对 minimized 窗口是 no-op（不会自动 SW_RESTORE），
@@ -802,6 +809,13 @@ pub async fn open_settings_window(app: AppHandle) -> Result<(), String> {
     } else {
         build_settings_window(&app)
             .map_err(|e| t!("commands.create_settings", err = e.to_string()).into_owned())?;
+    }
+    // v0.2.1 commit 8: 跳 section。settings.ts init() 监听这个事件,
+    // 找到对应 .nav-item 调 .click()。
+    if let Some(s) = section.as_deref() {
+        // 短暂 sleep 等 settings webview 起来(首次创建窗口时)
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        let _ = app.emit("musage://settings-navigate", s);
     }
     Ok(())
 }

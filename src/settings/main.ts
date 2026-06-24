@@ -73,6 +73,20 @@ function setupNav() {
     logs: navLogsIcon,
     about: navAboutIcon,
   };
+
+  // v0.2.1 commit 8: 抽 helper,nav click 跟外部 navigate 事件都走同一条路径。
+  function navigateToSection(target: string): boolean {
+    const btn = document.querySelector<HTMLButtonElement>(`.nav-item[data-section="${target}"]`);
+    if (!btn) return false;
+    navItems.forEach((n) =>
+      n.classList.toggle("active", n.dataset.section === target),
+    );
+    sections.forEach((s) => {
+      s.hidden = s.dataset.section !== target;
+    });
+    return true;
+  }
+
   navItems.forEach((item) => {
     const section = item.dataset.section;
     const iconUrl = section ? iconBySection[section] : undefined;
@@ -90,14 +104,16 @@ function setupNav() {
     item.addEventListener("click", () => {
       const target = item.dataset.section;
       if (!target) return;
-      navItems.forEach((n) =>
-        n.classList.toggle("active", n.dataset.section === target),
-      );
-      sections.forEach((s) => {
-        s.hidden = s.dataset.section !== target;
-      });
+      navigateToSection(target);
     });
   });
+
+  // v0.2.1 commit 8: 后端 open_settings_window 命令带 section 参数时发
+  // 这个事件,settings 窗口接收后跳对应 tab。修复之前 P1 commit `5b976e2`
+  // 留的半残按钮(open advanced 只开窗不跳 section)。
+  listen<string>("musage://settings-navigate", (e) => {
+    navigateToSection(e.payload);
+  }).catch((err) => console.error("settings-navigate listen failed:", err));
 }
 
 setupNav();

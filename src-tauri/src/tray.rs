@@ -240,7 +240,9 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             "settings" => {
                 let app2 = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = crate::commands::open_settings_window(app2).await {
+                    // v0.2.1 commit 8: 走默认 tab (None),保留之前"打开设置"
+                    // 不跳 section 的行为。
+                    if let Err(e) = crate::commands::open_settings_window(app2, None).await {
                         tracing::warn!(error = %e, "打开设置失败");
                     }
                 });

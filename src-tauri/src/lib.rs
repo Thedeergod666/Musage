@@ -175,15 +175,28 @@ pub fn run() {
                 let cfg = cfg_handle.config.blocking_read().clone();
                 let scale = win.scale_factor().unwrap_or(1.0);
 
-                // "有效位置"判定：saved x/y 都存在 + 不在 OS 默认左上角
-                // —— 老用户首次跑（升级前）的位置被 OS 放 (0,0) 附近并被
-                // Moved 事件持久化下来，留在 config.json 里。如果直接当
-                // "有保存位置" 恢复，新行为（top-right）永远触发不到。
-                // 把 (<= 50, <= 50) 视作"未设置" + 走 top-right。
-                let saved_pos_valid = matches!(
-                    (cfg.floating_x, cfg.floating_y),
-                    (Some(x), Some(y)) if x > 50 || y > 50
-                );
+                // "有效位置"判定（v0.2.1 commit 9 升级：跨屏感知）：
+                // - saved x/y 都存在
+                // - 该位置在当前任何一块 monitor 的物理像素矩形内
+                // 老 v0.2.0 实现用 `(x > 50 || y > 50)` 简单判断"非 OS 默认"，
+                // 在多屏场景下不靠谱 —— 用户拖到 (300, -200) 也 > 50，但
+                // 副屏拔了之后 (300, -200) 不在任何 monitor 内,启动后窗口
+                // 飞出去看不见。改成走 `available_monitors()` 几何检查。
+                let monitors: Vec<tauri::Monitor> = win
+                    .available_monitors()
+                    .unwrap_or_default();
+                let saved_pos_valid = if monitors.is_empty() {
+                    // 兜底:拿不到 monitor 列表时,沿用老的 >50 启发式判断。
+                    matches!(
+                        (cfg.floating_x, cfg.floating_y),
+                        (Some(x), Some(y)) if x > 50 || y > 50
+                    )
+                } else {
+                    matches!(
+                        (cfg.floating_x, cfg.floating_y),
+                        (Some(x), Some(y)) if position_is_visible(x, y, &monitors)
+                    )
+                };
 
                 if saved_pos_valid {
                     if let (Some(x), Some(y)) = (cfg.floating_x, cfg.floating_y) {
@@ -412,6 +425,25 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
 
 /// `musage dump [provider]` 子命令：拉一次用量并打印
 ///
+/// v0.2.1 commit 9 (P1-1): 浮窗跨屏感知。
+///
+/// 多屏用户拖到副屏,重启后位置可能"不在任何 monitor 内"(比如副屏拔了、
+/// 主屏 DPI 变了、显卡驱动重置了 monitor layout)。返回 false 让 caller
+/// 走 top-right fallback 而不是把窗口放到看不见的地方。
+///
+/// monitors: `WebviewWindow::available_monitors()` 返回的列表。
+/// x/y: 物理像素 (跟 `PhysicalPosition` 一致)。
+fn position_is_visible(x: i32, y: i32, monitors: &[tauri::Monitor]) -> bool {
+    monitors.iter().any(|m| {
+        let pos = m.position();
+        let size = m.size();
+        x >= pos.x
+            && x < pos.x + size.width as i32
+            && y >= pos.y
+            && y < pos.y + size.height as i32
+    })
+}
+
 /// `provider`：可选，`minimax` / `deepseek` / `xiaomimimo` / `tavily` / `custom_<uuid>`，
 /// 不传则跑全部启用的(builtin + custom 都跑)。
 fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {

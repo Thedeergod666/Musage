@@ -219,12 +219,145 @@ fn extra_instances_path() -> Result<PathBuf, String> {
     Ok(dir.join("com.musage.app").join(EXTRA_INSTANCES_FILE))
 }
 
-/// PR 1a · 给 [`crate::config::custom_sources::load_or_migrate`] 用：
-/// 只检查文件是否存在，不读内容。
-pub(crate) fn extra_instances_path_for_migration_check() -> bool {
+/// v0.2.1 commit 2 后,迁移 wrapper 内联到本模块,这个 pub(crate) helper 失去用途 ——
+/// `load_or_migrate` 内部用 `extra_instances_path()` 直接调,不再走 pub(crate) 间接层。
+/// `pub(crate)` 让外部模块 (`super::custom_sources`) 用得到,但模块已删,留 dead。
+/// 删掉,避免 dead_code 警告。
+///
+/// 启动时调一次：读 `extra_instances.json`，不存在则从老 `custom_sources.json` 迁。
+///
+/// v0.2.1 commit 2 后:从 `config/custom_sources.rs::load_or_migrate` 内联过来,
+/// wrapper 文件 `config/custom_sources.rs` 删除。语义未变,只是把函数搬到家。
+///
+/// 行为：
+/// 1. `extra_instances.json` 存在 → 直接 `load()`
+/// 2. 否则 `custom_sources.json` 存在 → 迁:
+///    - 读老 `Vec<CustomSourceSpec>`
+///    - 转成 `Vec<ExtraInstance>`(每个 spec 一个 ExtraInstance,instance_index 按
+///      created_at 升序从 2 起 —— 跟 builtin 副本编号语义一致)
+///    - 写 `extra_instances.json`(原子写 + 0600)
+///    - rename 老文件 → `custom_sources.json.migrated`(失败也不 panic,只是日志)
+/// 3. 都不存在 → `Ok(vec![])`
+pub fn load_or_migrate() -> Result<Vec<ExtraInstance>, String> {
+    // 1. 新文件已存在 → 直接返
+    if extra_instances_path_exists() {
+        return load();
+    }
+
+    // 2. 尝试读老文件
+    let old_path = custom_sources_path()?;
+    if !old_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let old_specs = match load_custom_sources_for_migration() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "load_or_migrate: 老 custom_sources.json 读取失败,跳过迁移");
+            return Ok(Vec::new());
+        }
+    };
+
+    // 转 spec → ExtraInstance
+    let now = chrono::Utc::now().timestamp();
+    let mut by_created: Vec<crate::providers::CustomSourceSpec> = old_specs;
+    by_created.sort_by_key(|s| s.created_at);
+
+    let new_instances: Vec<ExtraInstance> = by_created
+        .into_iter()
+        .enumerate()
+        .map(|(i, spec)| ExtraInstance {
+            id: uuid::Uuid::new_v4(),
+            provider_id: "custom".to_string(),
+            instance_index: (i as u32) + 2, // custom 也从 2 起
+            api_key_ref: spec.id.clone(),
+            custom: Some(spec),
+            created_at: now,
+        })
+        .collect();
+
+    // 写新文件(best-effort:写失败返空,不 panic —— 用户数据全在老文件)
+    if let Err(e) = save(&new_instances) {
+        tracing::error!(error = %e, "load_or_migrate: 写 extra_instances.json 失败");
+        return Ok(Vec::new());
+    }
+
+    // rename 老文件 → .migrated(best-effort)
+    let migrated_path = old_path.with_extension("json.migrated");
+    if let Err(e) = std::fs::rename(&old_path, &migrated_path) {
+        tracing::warn!(
+            error = %e,
+            old = %old_path.display(),
+            migrated = %migrated_path.display(),
+            "load_or_migrate: rename 老 custom_sources.json 失败(不影响功能,老文件留在原地)",
+        );
+    } else {
+        tracing::info!(
+            count = new_instances.len(),
+            migrated = %migrated_path.display(),
+            "load_or_migrate: 已把 custom_sources.json 迁到 extra_instances.json",
+        );
+    }
+
+    Ok(new_instances)
+}
+
+fn extra_instances_path_exists() -> bool {
     extra_instances_path()
         .map(|p| p.exists())
         .unwrap_or(false)
+}
+
+const CUSTOM_SOURCES_LEGACY_FILE: &str = "custom_sources.json";
+
+fn custom_sources_path() -> Result<PathBuf, String> {
+    let dir = super::config_dir()?;
+    Ok(dir.join("com.musage.app").join(CUSTOM_SOURCES_LEGACY_FILE))
+}
+
+/// 老 `custom_sources.json` 读取(仅供 [`load_or_migrate`] 内部迁移用)。
+///
+/// 行为跟原来 [`crate::config::custom_sources::load_custom_sources`] 完全一致:
+/// - 文件不存在 → `Ok(vec![])`
+/// - parse 失败 → 备份到 `.bak.<ts>` + `Ok(vec![])`
+/// - 文件为空字符串 → `Ok(vec![])`
+fn load_custom_sources_for_migration() -> Result<Vec<crate::providers::CustomSourceSpec>, String> {
+    let path = custom_sources_path()?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let s = std::fs::read_to_string(&path)
+        .map_err(|e| format!("read custom_sources.json: {e}"))?;
+    if s.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    match serde_json::from_str::<Vec<crate::providers::CustomSourceSpec>>(&s) {
+        Ok(v) => Ok(v),
+        Err(e) => {
+            // parse 失败:备份到 .bak.<ts> + 返空。避免一次坏写入把全部 spec 删了。
+            // 2026-06-20 audit:之前 backup 失败用 `let _ = std::fs::copy(...)`
+            // 吞错,read-only 目录 / 满盘 → backup 失败 → 下次 save 用空 Vec
+            // 覆盖 → 用户全部 custom source 静默丢失。改 error 级日志。
+            let ts = chrono::Utc::now().timestamp();
+            let backup = path.with_extension(format!("json.bak.{ts}"));
+            if let Err(copy_err) = std::fs::copy(&path, &backup) {
+                tracing::error!(
+                    source = %path.display(),
+                    backup = %backup.display(),
+                    copy_error = %copy_err,
+                    parse_error = %e,
+                    "custom_sources.json 解析失败且备份失败 — 下次 save 会用空 Vec 覆盖",
+                );
+            } else {
+                tracing::warn!(
+                    error = %e,
+                    backup = %backup.display(),
+                    "custom_sources.json parse 失败,已备份到 .bak",
+                );
+            }
+            Ok(Vec::new())
+        }
+    }
 }
 
 /// 计算下一个 instance_index —— 同 `provider_id` 内 max+1。

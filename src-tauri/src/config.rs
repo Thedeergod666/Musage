@@ -778,11 +778,9 @@ pub fn cleanup_orphan_tmp_files() {
     }
 }
 
-// PR 3：用户自定义 New API source 持久化（独立文件，不进 config.json）。
-// PR 1a：保留为 legacy loader —— 老 custom_sources.json 会被迁到 extra_instances.json。
-pub mod custom_sources;
-
 // PR 1a：用户额外添加的 source 实例（内置 provider 副本 + New API 中转站）。
+// v0.2.1 commit 2: 老的 `pub mod custom_sources` wrapper 文件已删,迁移逻辑
+// (`load_or_migrate`) 内联到 `extra_instances` 同模块,语义未变。
 pub mod extra_instances;
 
 // PR 1b 重新导出 ExtraInstance，方便 commands / lib.rs 直接 `use crate::config::ExtraInstance`

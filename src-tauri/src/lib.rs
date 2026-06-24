@@ -34,7 +34,7 @@ use tauri::{Listener, Manager};
 use tokio::sync::RwLock;
 
 use crate::commands::apply_pin_mode_to_window;
-use crate::config::{custom_sources as custom_persist, extra_instances, AppConfig};
+use crate::config::{extra_instances, AppConfig};
 use crate::logstore::LogStore;
 use crate::poller_backoff::BackoffState;
 use crate::providers::{builtin_sources, CustomSource, QuotaSnapshot};
@@ -101,8 +101,10 @@ pub fn run() {
             // PR 3 → PR 1a：extra_instances 启动 load。优先读新文件 extra_instances.json，
             // 老 custom_sources.json 自动迁移后 rename 成 .migrated。
             // load 失败时返空 Vec（不阻塞启动）。
+            // v0.2.1 commit 2: load_or_migrate 从 config/custom_sources.rs 内联到
+            // extra_instances.rs 同模块，wrapper 文件已删。
             extra_instances: Arc::new(RwLock::new(
-                custom_persist::load_or_migrate().unwrap_or_default(),
+                extra_instances::load_or_migrate().unwrap_or_default(),
             )),
         })
         .setup(|app| {
@@ -240,7 +242,7 @@ pub fn run() {
                     .flatten()
                     .is_some()
             });
-            let custom_has_key = config::custom_sources::load_or_migrate()
+            let custom_has_key = extra_instances::load_or_migrate()
                 .unwrap_or_default()
                 .iter()
                 .any(|inst| {
@@ -416,7 +418,7 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
         // 加载 extra instances 供 dump CLI 用——standalone CLI 没有 AppState,
         // 直接从 extra_instances.json 读即可(跟 lib.rs setup() 那条路径同款)。
         let customs: Vec<extra_instances::ExtraInstance> =
-            config::custom_sources::load_or_migrate().unwrap_or_default();
+            extra_instances::load_or_migrate().unwrap_or_default();
 
         // 决定要 dump 哪些 source
         let sources: Vec<Box<dyn crate::providers::QuotaSource>> = match provider_filter {

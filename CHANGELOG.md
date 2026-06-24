@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **浮窗错误卡 "⚙ Advanced" 半残 bug**:P1 commit `5b976e2` 引入错误卡 advanced 按钮时前端已传 `{section: "advanced"}` 给后端,但 Rust `open_settings_window` 命令当时不接受 `section` 参数 → Tauri 2 对未知参数静默忽略,导致点按钮只开 settings 窗口但不跳 advanced tab。本 commit 修复:后端 `open_settings_window(app, section: Option<String>)` 接收参数,窗口起后 emit `musage://settings-navigate` 事件,settings.ts 新增 listener 调 `navigateToSection(target)` helper 跳 section。同步影响 `err-btn-logs`(错误恢复完整版新增)。
+
+### Added
+
+- **浮窗位置跨屏感知 (P1-1)**:多屏用户拖到副屏后重启,位置可能"不在任何 monitor 内"(副屏拔了 / DPI 变 / 显卡驱动重置)。`saved_pos_valid` 判定从 `x > 50 || y > 50` 启发式升级成 `position_is_visible(x, y, &[Monitor])` 几何检查:遍历 `win.available_monitors()` 矩形包含测试。拿不到 monitor 列表(Wayland 老版本)时 fallback 老启发式。monitor hotplug 监听留 ROADMAP Next。
+- **错误恢复完整版 (P2-A-7)**:浮窗错误卡新增 2 个通用按钮 (任何 error_kind 都可用):
+  - `📋 Copy error`: 复制 `p.error` 到剪贴板 + mini flash 反馈 (3 秒自动淡出,玻璃风格 backdrop-filter)
+  - `📋 Logs`: 打开设置 + 跳到 logs section (复用上面修好的 section 通道)
+
 ## [0.2.1] - 2026-06-24
 
 v0.2.0 后的一次性收尾:7 个 commit,文档与代码同步 + 5 个 PR 1b 残留限制解除 + P2-A/P2-B 增量。

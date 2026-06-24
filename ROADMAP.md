@@ -18,7 +18,7 @@
 
 详细 plan / 关键发现见 [docs/codeplan/2026-06-15-extend-providers.md](docs/codeplan/2026-06-15-extend-providers.md)。
 
-## Active (2026-06-24 审查后实际状态)
+## Active (2026-06-25 审查后实际状态)
 
 **Phase: 文档同步 + tech debt 收尾**(~1.5 人天,2026-06-24 一个批次 7 commit)
 
@@ -26,30 +26,31 @@
 
 | 原计划 | 项 | 状态 | 备注 |
 |---|---|---|---|
-| **P1** | 浮窗位置跨屏感知 | ⏳ | 自承认在 Next,不算 P1 实做 |
+| **P1** | 浮窗位置跨屏感知 | ✅ (commit 9) | `position_is_visible(x, y, &[Monitor])` 几何检查 |
 | **P1** | 首启空态 | ✅ | commit `5b976e2` / `bbaa56f` |
 | **P1** | 错误态一键恢复按钮 | ✅ | `src/main.ts:585-608` 按 error_kind 分发 4 按钮 + 倒计时 |
 | **P1** | 关键 i18n 收尾 | ⚠️ ~95% | 残留 `<5%`(`types.ts` 6 行 / `credentials.ts:307/387` / `updater.ts:90`) |
-| **P2-A** | 批量粘贴 key 自动匹配 | ✅ (commit 6) | `credentials.ts` 加 batch textarea + 前缀识别 |
-| **P2-A** | New API preset 显眼化 | ✅ (commit 6) | `extra-instance-form.ts` 加 callout |
-| **P2-A** | 错误恢复完整版 | ⏳ | 仅 P1-3 按钮本体,无额外恢复路径(自动重试 / 复制错误 / 忽略等) |
-| **P2-B** | Xiaomi/Claude 8h 失效系统通知 | ✅ (commit 7) | `tauri-plugin-notification` + 60s 去重 + 仅 xiaomi/claude |
+| **P2-A** | 批量粘贴 key 自动匹配 | ✅ (v0.2.1 commit 6) | `credentials.ts` 加 batch textarea + 前缀识别 |
+| **P2-A** | New API preset 显眼化 | ✅ (v0.2.1 commit 6) | `extra-instance-form.ts` 加 callout |
+| **P2-A** | 错误恢复完整版 | ✅ (commit 10) | 复制错误 + 跳日志按钮 (mini flash 反馈) |
+| **P2-B** | Xiaomi/Claude 8h 失效系统通知 | ✅ (v0.2.1 commit 7) | `tauri-plugin-notification` + 60s 去重 + 仅 xiaomi/claude |
 | **P2-B** | 一键重登(4 跳 → 1 跳) | ⚠️ 半完成 | Xiaomi ✅(commit `c561c2e`),Claude ❌(仍多跳,需研究 cookie 抓取) |
-| **P2-B** | import/export(无 keys) | ✅ (commit 7) | `advanced.ts` 加 Import/Export section,纯 web 实现 0 新 dep |
+| **P2-B** | import/export(无 keys) | ✅ (v0.2.1 commit 7) | `advanced.ts` 加 Import/Export section,纯 web 实现 0 新 dep |
 
 ## Next (等下个 phase 推进)
 
-**v0.2.1 已做但部分遗留 + 新需求**:
-- 错误恢复完整版(P2-A-7 增量:复制错误 / 打开日志 tab / 忽略本次)
-- Claude cookie 一键重登(P2-B-9 增量)
-- 浮窗位置跨屏感知完整版(monitor hotplug)
+**本轮(v0.2.2)增量 + 新需求**:
+- Claude cookie 一键重登(P2-B-9 增量,需要研究 cookie 抓取)
+- monitor hotplug 监听(拔插副屏时实时重新判定浮窗位置)
+- 错误卡"忽略本次错误"按钮(P2-A-7 增量 2/3)
+- Frontend 单元测试 4 核心函数(contentFingerprint / render / updateCard / autoResizeWindow)
 
 **FUTURE / 产品方向**:
 - 多 provider 限速(FUTURE.md "2-3 天")
-- 配额预警通知(系统通知,80% 阈值 — 现在有 notification 插件了,门槛大幅降低)
+- 配额预警通知(80% 阈值,现在有 notification 插件,门槛大幅降低)
 - Export raw JSON(给"今日消耗"用户替代方案)
-- 多语言 ja-JP(FUTURE.md "1 周",UI 已 i18n 化,加 1 个 JSON)
-- Frontend 单元测试 4 核心函数(contentFingerprint / render / updateCard / autoResizeWindow)
+- 多语言 ja-JP(UI 已 i18n 化,加 1 个 JSON)
+- Tech debt: `http_status_to_error_kind` / Backoff 持久化 / Per-provider shutdown / `refresh_inner` Box::new 优化 / `delete_extra_instance` v2 (keys.json schema break)
 
 ## Later
 

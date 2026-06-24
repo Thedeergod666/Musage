@@ -67,7 +67,10 @@
     },
     "err_btn_relogin_xiaomi": "Re-login Xiaomi account",
     "err_btn_retry": "Retry",
-    "err_retry_in_minutes": "Next auto-retry in ~{mins}m"
+    "err_retry_in_minutes": "Next auto-retry in ~{mins}m",
+    "err_btn_copy": "📋 Copy error",
+    "err_btn_logs": "📋 Logs",
+    "err_btn_copied": "Error copied to clipboard"
   },
   "row": {
     "five_hour": "5h",

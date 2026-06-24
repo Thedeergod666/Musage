@@ -438,6 +438,40 @@ body[data-hover] #app .err-server_error     .err-label { color: #ff453a; backgro
 .err-btn:hover  { background: #2294ff; }
 .err-btn:active { transform: scale(0.96); }
 
+/* v0.2.1 commit 10 (P2-A-7): 复制 / 日志按钮 用稍淡的色调区分 */
+.err-btn-copy, .err-btn-logs {
+  background: rgba(255, 255, 255, 0.18);
+  margin-left: 4px;
+}
+.err-btn-copy:hover, .err-btn-logs:hover {
+  background: rgba(255, 255, 255, 0.28);
+}
+
+/* v0.2.1 commit 10: mini flash (复制成功等临时提示,3s 自动淡出) */
+.mini-flash {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%) translateY(8px);
+  padding: 8px 16px;
+  background: rgba(28, 28, 30, 0.92);
+  color: #fff;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.1px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s, transform 0.2s;
+  z-index: 9999;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.mini-flash.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
 /* ── 首启空态 (2026-06-17 commit) ──
  * 取代原来的"⏳ Loading..."假占位。新用户没配 key 时展示引导页:
  *   标题:🚀 Musage (品牌,无 i18n)

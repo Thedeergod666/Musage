@@ -79,6 +79,28 @@ function escapeXml(s: string): string {
   );
 }
 
+/// v0.2.1 commit 10: 浮窗就地 mini flash 反馈(复制成功等)。
+/// 不导入 settings/utils.ts 的 flash —— 跨模块会拖进 setCurrentKnownIds /
+/// currentProviderOrder 等 settings-only 状态,污染浮窗 runtime。
+/// 自己写一个最小实现,setTimeout 3 秒淡出。复用浮窗 .card 的 err-card 样式。
+let miniFlashTimer: ReturnType<typeof setTimeout> | null = null;
+function showMiniFlash(msg: string): void {
+  const root = document.getElementById("app");
+  if (!root) return;
+  let el = root.querySelector<HTMLElement>(".mini-flash");
+  if (!el) {
+    el = document.createElement("div");
+    el.className = "mini-flash";
+    root.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add("visible");
+  if (miniFlashTimer) clearTimeout(miniFlashTimer);
+  miniFlashTimer = setTimeout(() => {
+    el?.classList.remove("visible");
+  }, 3000);
+}
+
 type FloatingPinMode = "pin_top" | "pin_bottom" | "normal";
 
 /// 浮窗渲染相关的用户偏好（从 config 拉到，config 变时由 init 里的
@@ -593,6 +615,13 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
     // - parse / other:                   只显示错,无按钮 (开发者向)
     let actionBtn = "";
     let retryInfo = "";
+    // v0.2.1 commit 10 (P2-A-7 错误恢复完整版): 通用按钮 —— 任何错误态都
+    // 允许复制错误信息和跳日志 tab,跟具体 error_kind 的恢复按钮并列。
+    // 用 data-unique-id 反查 snap,前端不需要给每个按钮传 p.error 长字符串。
+    const commonErrBtns = p.error
+      ? `<button class="err-btn err-btn-copy" data-unique-id="${escapeHtml(id)}">${escapeHtml(t("floating.err_btn_copy"))}</button>`
+        + `<button class="err-btn err-btn-logs" data-unique-id="${escapeHtml(id)}">${escapeHtml(t("floating.err_btn_logs"))}</button>`
+      : "";
     if (kind === "unconfigured_key" || kind === "auth_failed") {
       // **L8 fix（2026-06-19）**：transient=true 时（这是 placeholder 而非
       // 真实错误态）跳过"打开设置"按钮渲染。placeholder 只会持续 2-5s，
@@ -615,6 +644,8 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
         retryInfo = `<div class="hint">${escapeHtml(t("floating.err_retry_in_minutes", { mins }))}</div>`;
       }
     }
+    // v0.2.1 commit 10: 通用复制+日志按钮追加在 actionBtn 之后。
+    actionBtn = actionBtn + commonErrBtns;
     card.classList.add("err-card", `err-${kind}`);
     // H8 修复：err-label 加在 .card-head-status 里，CSS 用 row-reverse
     // 把 [dot, label] 渲染成 [label, dot] —— dot 永远在卡片右上角，
@@ -1090,9 +1121,11 @@ async function init() {
   // - .err-btn-retry (data-unique-id): 立即重拉该 provider (绕过 backoff)
   // - .err-btn-advanced (data-section="advanced"): 打开设置 + 跳到高级 section
   // - .err-btn-relogin (data-action="relogin-xiaomi"): 打开小米登录窗
-  app.addEventListener("click", (e) => {
-    const t = e.target as HTMLElement;
-    const target = t.closest<HTMLElement>(".err-btn, .empty-state-cta");
+  // - .err-btn-copy (data-unique-id): 复制错误信息到剪贴板 (commit 10)
+  // - .err-btn-logs (data-unique-id): 打开设置 + 跳到日志 section (commit 10)
+  app.addEventListener("click", async (e) => {
+    const el = e.target as HTMLElement;
+    const target = el.closest<HTMLElement>(".err-btn, .empty-state-cta");
     if (!target) return;
     e.stopPropagation();
     if (target.classList.contains("open-settings")) {
@@ -1107,6 +1140,29 @@ async function init() {
       invoke("open_settings_window", { section }).catch((err) => console.error(err));
     } else if (target.classList.contains("err-btn-relogin")) {
       invoke("open_xiaomi_login_window").catch((err) => console.error(err));
+    } else if (target.classList.contains("err-btn-copy")) {
+      // v0.2.1 commit 10: 反查 snapshot 拿 p.error 复制到剪贴板。
+      // 不在按钮上拼长字符串(每次 render 都 escape,效率差)。
+      const uniqueId = target.dataset.uniqueId;
+      if (!uniqueId) return;
+      try {
+        const snap = await invoke<QuotaSnapshot>("get_snapshot");
+        const p = snap.providers.find(
+          (x) => (x.unique_id ?? x.source_id ?? x.provider) === uniqueId,
+        );
+        const errText = p?.error ?? "";
+        if (errText) {
+          await navigator.clipboard.writeText(errText);
+          showMiniFlash(t("floating.err_btn_copied"));
+        }
+      } catch (err) {
+        console.error("copy error failed:", err);
+      }
+    } else if (target.classList.contains("err-btn-logs")) {
+      // v0.2.1 commit 10 + commit 8: 跳日志 section (commit 8 后端已支持)
+      invoke("open_settings_window", { section: "logs" }).catch((err) =>
+        console.error(err),
+      );
     }
   });
 

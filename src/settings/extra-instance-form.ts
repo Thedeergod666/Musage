@@ -38,8 +38,11 @@ const ACCENT_PALETTE = [
   "#d97706",
 ];
 
-/** 「+ 添加新来源」按钮绑的事件入口 */
-export async function openAddExtraInstanceModal(): Promise<void> {
+/** 「+ 添加新来源」按钮绑的事件入口
+ *
+ * @param preselectProviderId  可选 —— 复制按钮调用时传入，让 picker 默认选中当前 provider
+ */
+export async function openAddExtraInstanceModal(preselectProviderId?: string): Promise<void> {
   // 1. 拉 provider picker 数据
   let providers: PickerProvider[];
   try {
@@ -48,8 +51,13 @@ export async function openAddExtraInstanceModal(): Promise<void> {
     flash(t("settings.providers.add_load_picker_failed", { err: String(e) }), true);
     return;
   }
+  // 决定默认选中：先看 preselect 传参，否则取第一个
+  const initialId =
+    preselectProviderId && providers.some((p) => p.id === preselectProviderId)
+      ? preselectProviderId
+      : providers[0]?.id ?? "minimax";
   // 2. 构造表单
-  const body = buildForm(providers);
+  const body = buildForm(providers, initialId);
   showModal({
     title: t("settings.providers.add_source"),
     body,
@@ -61,7 +69,7 @@ export async function openAddExtraInstanceModal(): Promise<void> {
 // ── 内部 ──────────────────────────────────────────────────────
 
 /** 构造两段式表单 body。 */
-function buildForm(providers: PickerProvider[]): HTMLElement {
+function buildForm(providers: PickerProvider[], initialProviderId: string): HTMLElement {
   const root = el("div", { class: "extra-instance-form" });
 
   // Step 1: provider picker
@@ -74,6 +82,7 @@ function buildForm(providers: PickerProvider[]): HTMLElement {
       ...providers.map((p) => el("option", {
         value: p.id,
         "data-is-builtin": String(p.is_builtin),
+        ...(p.id === initialProviderId ? { selected: "true" } : {}),
       }, t(p.name_key as any) as string)),
     ),
     el("div", { class: "help" },
@@ -85,8 +94,8 @@ function buildForm(providers: PickerProvider[]): HTMLElement {
   const dynamicFields = el("div", { id: "ei-dynamic-fields" });
   root.appendChild(dynamicFields);
 
-  // 初始渲染（默认第一个 provider）
-  renderDynamicFields(providers[0]?.id ?? "minimax", providers, dynamicFields);
+  // 初始渲染（用 initialProviderId）
+  renderDynamicFields(initialProviderId, providers, dynamicFields);
 
   // picker change → 重渲染 dynamic fields
   root.addEventListener("change", (e) => {

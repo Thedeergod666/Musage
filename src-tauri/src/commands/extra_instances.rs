@@ -56,7 +56,13 @@ pub struct PickerProvider {
 }
 
 /// 创建副本 / 新 custom 的请求体。
+///
+/// **PR 1b fix**：加 `#[serde(rename_all = "camelCase")]` —— Tauri 2 默认
+/// outer 走 camelCase (`req: {...}` 没问题) 但 inner struct 字段如果不标
+/// rename_all 会被 strict 模式报缺 `providerId` / `apiKey` (前端报错信息
+/// 原文："command test_extra_instance missing required key providerId")。
 #[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AddExtraInstanceRequest {
     pub provider_id: String,
     pub api_key: Option<String>,
@@ -65,7 +71,10 @@ pub struct AddExtraInstanceRequest {
 }
 
 /// 更新副本的请求体（api_key / api_cookie / custom 任一可选）。
+///
+/// **PR 1b fix**：同上 `rename_all = "camelCase"`。
 #[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UpdateExtraInstanceRequest {
     pub id: uuid::Uuid,
     pub api_key: Option<String>,

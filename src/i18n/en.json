@@ -541,6 +541,26 @@
     "test_passing": "Test passed, saving...",
     "added": "added (id: {id})"
   },
+  "provider_name": {
+    "minimax": "MiniMax",
+    "deepseek": "DeepSeek",
+    "xiaomimimo": "Xiaomi MiMo",
+    "tavily": "Tavily",
+    "zenmux": "ZenMux",
+    "openrouter": "OpenRouter",
+    "kimi": "Kimi",
+    "zhipu_cn": "Zhipu GLM",
+    "zhipu_en": "Z.ai",
+    "stepfun": "StepFun Step Plan",
+    "siliconflow": "SiliconFlow",
+    "claude_official": "Claude"
+  },
+  "provider": {
+    "suffix": {
+      "dup": " #{}"
+    },
+    "custom": "New API relay"
+  },
   "help": {
     "minimax": "Key saved to local <code>keys.json</code> with <code>0600</code> permission (same dir as config, no system keychain, no startup password).<br><br>Get it from <a href=\"https://platform.minimaxi.com/user-center/basic-information/interface-key\" target=\"_blank\" class=\"link-ext\">platform.minimaxi.com</a>.",
     "deepseek": "Key saved to local <code>keys.json</code> with <code>0600</code> permission (independent of MiniMax key).<br><br>Get it from <a href=\"https://platform.deepseek.com/api_keys\" target=\"_blank\" class=\"link-ext\">platform.deepseek.com</a>.",

@@ -541,6 +541,26 @@
     "test_passing": "测试通过，正在保存...",
     "added": "已添加 (id: {id})"
   },
+  "provider_name": {
+    "minimax": "MiniMax",
+    "deepseek": "DeepSeek",
+    "xiaomimimo": "Xiaomi MiMo",
+    "tavily": "Tavily",
+    "zenmux": "ZenMux",
+    "openrouter": "OpenRouter",
+    "kimi": "Kimi",
+    "zhipu_cn": "智谱 GLM",
+    "zhipu_en": "Z.ai",
+    "stepfun": "阶跃星辰 Step Plan",
+    "siliconflow": "SiliconFlow",
+    "claude_official": "Claude 官方"
+  },
+  "provider": {
+    "suffix": {
+      "dup": " #{}"
+    },
+    "custom": "New API 中转站"
+  },
   "help": {
     "minimax": "密钥以 <code>0600</code> 权限存到本机 <code>keys.json</code>（与 config 同目录，不走系统钥匙串，启动零弹窗）。<br><br>从 <a href=\"https://platform.minimaxi.com/user-center/basic-information/interface-key\" target=\"_blank\" class=\"link-ext\">platform.minimaxi.com</a> 获取。",
     "deepseek": "密钥以 <code>0600</code> 权限存到本机 <code>keys.json</code>（与 MiniMax 的 key 互不影响）。<br><br>从 <a href=\"https://platform.deepseek.com/api_keys\" target=\"_blank\" class=\"link-ext\">platform.deepseek.com</a> 获取。",

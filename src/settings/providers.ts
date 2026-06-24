@@ -335,9 +335,8 @@ function renderCopyBuiltinButton(meta: SourceMeta): HTMLElement {
     title: t("settings.providers.copy_builtin_btn_title", { name: meta.display_name }),
   }, "⎘");
   btn.addEventListener("click", () => {
-    // 复用 openAddExtraInstanceModal —— 走 picker → 用户选自己的 provider。
-    // 简化实现：modal 里 user 自己再选一次（不预填）。
-    openAddExtraInstanceModal();
+    // 复用 openAddExtraInstanceModal —— 预选当前 provider。
+    openAddExtraInstanceModal(meta.id);
   });
   return btn;
 }

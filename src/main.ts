@@ -182,6 +182,12 @@ interface ProviderSnapshot {
   next_fetch_at?: number | null;
   raw?: unknown;
   is_healthy: boolean;
+  /** v0.2.1 commit 3：多 instance 唯一标识。
+   *  - 内置 provider 第 1 份 = `"minimax"`(同 `id()`)
+   *  - 内置 provider 副本 = `"minimax#2"` / `"minimax#3"` ...
+   *  - New API 中转站 = `"custom_<uuid>"`(UUID 已唯一,不带 #N)
+   *  老 snapshot (v0.2.0 落 logstore) 没这个字段,fallback 到 source_id。 */
+  unique_id?: string | null;
   /** **L8 fix（2026-06-19）**：true = 这个 snapshot 是 placeholder（乐观 emit
    *  给浮窗的临时态），不是真实 fetch 结果。浮窗应跳过"打开设置"按钮渲染，
    *  避免 2-5s 真实 fetch 完成前的闪烁。None / false = 真实快照，正常渲染。 */
@@ -220,8 +226,11 @@ function isTransientError(kind: string | null | undefined): boolean {
 /// v0.2 前 CustomSource 的 p.provider 全是 "minimax" 占位, 多个 CustomSource
 /// 共享同一 key → set() 互相覆盖, get() 拿到错的 snapshot。
 /// v0.2 删 enum 后 p.provider = "minimax" (历史残留), p.source_id 才是真 id。
+/// v0.2.1 commit 3: p.unique_id 优先 —— 多 instance 时返 "minimax#2" / "custom_<uuid>",
+/// p.source_id 是 base id (多 instance 撞),p.provider 是 v0.1 兼容字段。fallback 链
+/// unique_id → source_id → provider,确保老 snapshot (没 unique_id 字段) 仍能渲染。
 function snapKey(p: ProviderSnapshot): string {
-  return (p.source_id ?? p.provider) as string;
+  return (p.unique_id ?? p.source_id ?? p.provider) as string;
 }
 
 function effectiveSnap(p: ProviderSnapshot): ProviderSnapshot {
@@ -312,7 +321,7 @@ function render(snap: QuotaSnapshot) {
   let anchor: ChildNode | null = null;
   for (const p of snap.providers) {
     // Phase 1：用 source_id 路由（registry-driven），provider 字段保兼容
-    const id = p.source_id ?? p.provider;
+    const id = p.unique_id ?? p.source_id ?? p.provider;
     let card = existingCards.get(id);
     if (card) {
       existingCards.delete(id);
@@ -348,14 +357,14 @@ function render(snap: QuotaSnapshot) {
   // 已经一致，整个 reorder loop 就是 no-op。但原实现每张卡都要 querySelector
   // + 检查 desiredNext → 即使不需要 reorder 也要遍历 N 次，浪费且微 reflow。
   // 先做一次 string comparison 决定是否要 reorder，99% 的 case 直接跳过。
-  const expectedOrder = snap.providers.map((p) => p.source_id ?? p.provider).join("|");
+  const expectedOrder = snap.providers.map((p) => p.unique_id ?? p.source_id ?? p.provider).join("|");
   const actualOrder = [...app.querySelectorAll<HTMLElement>(".card[data-provider]")]
     .map((el) => el.dataset.provider ?? "")
     .join("|");
   if (expectedOrder !== actualOrder) {
     let reorderAnchor: ChildNode | null = null;
     for (const p of snap.providers) {
-      const id = p.source_id ?? p.provider;
+      const id = p.unique_id ?? p.source_id ?? p.provider;
       const card = app.querySelector<HTMLElement>(`.card[data-provider="${cssEscape(id)}"]`);
       if (!card) continue;
       if (reorderAnchor == null) {
@@ -386,7 +395,7 @@ function render(snap: QuotaSnapshot) {
 
 /// 按 RenderPrefs 过滤 / 改写 rows（影响渲染前的数据，不动后端）
 function rowsForRender(p: ProviderSnapshot): QuotaRow[] {
-  const id = p.source_id ?? p.provider;
+  const id = p.unique_id ?? p.source_id ?? p.provider;
   if (id === "tavily" && renderPrefs.tavilyConciseMode) {
     // 简洁模式：只保留主指标行（"209/1000 credits" 那条），隐藏 5 个
     // endpoint 细分行（search/extract/crawl/map/research）。
@@ -505,7 +514,7 @@ function buildCardSkeleton(providerId: string): HTMLElement {
 function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
   const title = card.querySelector<HTMLElement>(".card-title")!;
   // Phase 1：用 source_id 路由（registry-driven），provider 字段保兼容
-  const id = p.source_id ?? p.provider;
+  const id = p.unique_id ?? p.source_id ?? p.provider;
   // 智谱 GLM 用 source_display_name 二次路由：CN="智谱 GLM" / EN="Z.ai"
   // 让两张 logo（紫色渐变 vs z.ai 官方）按区域切换。
   // 智谱 GLM 两个区域共用 source_id "zhipu"；只有 EN 区（Z.ai）
@@ -574,7 +583,7 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
 
     // ── 持久错误 / 还没拉到过任何成功数据：走老 UI ──
     const label = errorKindLabel(kind);
-    const id = p.source_id ?? p.provider;
+    const id = p.unique_id ?? p.source_id ?? p.provider;
     // 按 error_kind 分发按钮 (2026-06-17 commit):
     // - unconfigured_key / auth_failed: 打开设置面板
     // - auth_failed + xiaomimimo:        🔑 重新登录 (走 xiaomi_login window)
@@ -600,7 +609,7 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
       const schemaHint = `<div class="hint">${escapeHtml(t("floating.init_error_hint"))}</div>`;
       retryInfo = schemaHint;
     } else if (kind === "network" || kind === "rate_limited" || kind === "server_error") {
-      actionBtn = `<button class="err-btn err-btn-retry" data-source-id="${escapeHtml(id)}">${escapeHtml(t("floating.err_btn_retry"))}</button>`;
+      actionBtn = `<button class="err-btn err-btn-retry" data-unique-id="${escapeHtml(id)}">${escapeHtml(t("floating.err_btn_retry"))}</button>`;
       if (p.next_fetch_at && p.next_fetch_at > Date.now()) {
         const mins = Math.max(1, Math.ceil((p.next_fetch_at - Date.now()) / 60000));
         retryInfo = `<div class="hint">${escapeHtml(t("floating.err_retry_in_minutes", { mins }))}</div>`;
@@ -1078,7 +1087,7 @@ async function init() {
   // 事件代理：错误卡片的恢复按钮 (2026-06-17 commit)
   // 5 种 action 通过 data-* 区分:
   // - .open-settings (无 data-*):  打开设置面板 (原有)
-  // - .err-btn-retry (data-source-id): 立即重拉该 provider (绕过 backoff)
+  // - .err-btn-retry (data-unique-id): 立即重拉该 provider (绕过 backoff)
   // - .err-btn-advanced (data-section="advanced"): 打开设置 + 跳到高级 section
   // - .err-btn-relogin (data-action="relogin-xiaomi"): 打开小米登录窗
   app.addEventListener("click", (e) => {
@@ -1089,9 +1098,9 @@ async function init() {
     if (target.classList.contains("open-settings")) {
       invoke("open_settings_window").catch((err) => console.error(err));
     } else if (target.classList.contains("err-btn-retry")) {
-      const sourceId = target.dataset.sourceId;
-      if (sourceId) {
-        invoke("refresh_single", { id: sourceId }).catch((err) => console.error(err));
+      const uniqueId = target.dataset.uniqueId;
+      if (uniqueId) {
+        invoke("refresh_single", { id: uniqueId }).catch((err) => console.error(err));
       }
     } else if (target.classList.contains("err-btn-advanced")) {
       const section = target.dataset.section ?? "advanced";

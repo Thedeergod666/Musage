@@ -234,6 +234,7 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
         raw: Some(raw),
         is_healthy: is_available,
         source_id: Some("deepseek".to_string()),
+        unique_id: None,
         source_display_name: Some("DeepSeek".to_string()),
         plan_name: None,
         transient: None,

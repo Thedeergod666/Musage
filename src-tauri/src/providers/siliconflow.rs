@@ -263,6 +263,7 @@ fn parse(raw: &serde_json::Value) -> Result<ProviderSnapshot, FetchError> {
         raw: Some(raw.clone()),
         is_healthy,
         source_id: Some("siliconflow".to_string()),
+        unique_id: None,
         source_display_name: Some("SiliconFlow".to_string()),
         plan_name: None,
         transient: None,

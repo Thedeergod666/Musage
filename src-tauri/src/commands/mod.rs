@@ -1113,8 +1113,21 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                 update_source_state(&src_box, cfg).await;
                 // P1 重构：返回 FetchError 而不是 String，kind 在 closure 内就
                 // 保留住，collect 时直接 e.kind 拿（不再走 classify_error_message）。
+                // v0.2.1 commit 3: src_box 在 spawn 前算 unique_id 字符串,闭包
+                // 内部 move 进 fetch 结果的 snapshot.unique_id 字段。多 instance
+                // 时返 "minimax#2" 之类;老 fallback 走 source_id。
+                let unique_id_str = src_box.unique_id();
                 let task: tokio::task::JoinHandle<Result<ProviderSnapshot, FetchError>> =
-                    tokio::spawn(async move { src_box.fetch(&creds).await });
+                    tokio::spawn(async move {
+                        let result = src_box.fetch(&creds).await;
+                        match result {
+                            Ok(mut s) => {
+                                s.unique_id = Some(unique_id_str);
+                                Ok(s)
+                            }
+                            Err(e) => Err(e),
+                        }
+                    });
                 tasks.push((id_owned, default_interval_secs, task));
             }
             Ok(None) => {
@@ -1269,9 +1282,14 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
     // "未支持" 错就清楚表达 STUB 状态;poller 才按 default_enabled 自动跳过)。
     let creds = config::load_credential_for_id(id)?;
     update_source_state(&src, &cfg).await;
+    // v0.2.1 commit 3: 多 instance 区分 —— snapshot.unique_id 由 src 注入。
+    let unique_id_str = src.unique_id();
     let mut provider_snap = match creds {
         Some(c) => match src.fetch(&c).await {
-            Ok(s) => s,
+            Ok(mut s) => {
+                s.unique_id = Some(unique_id_str);
+                s
+            }
             Err(e) => {
                 let kind = e.kind;
                 log_provider_error(app, id, kind, &e.message);

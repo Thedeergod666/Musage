@@ -265,6 +265,21 @@ pub struct ProviderSnapshot {
     /// Phase 1 新增：套餐名（如 "Standard" / "Free tier"）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plan_name: Option<String>,
+    /// v0.2.1 commit 3：多 instance 唯一标识。
+    /// - 内置 provider 第 1 份 = `"minimax"`（同 `id()`）
+    /// - 内置 provider 副本 = `"minimax#2"` / `"minimax#3"` ...
+    /// - New API 中转站 = `"custom_<uuid>"`（同 `id()`，UUID 已唯一）
+    ///
+    /// 前端 DOM `data-unique-id` / tray tooltip `#N` 后缀 / poller `next_fetch` map
+    /// key 共用这个字段。`#[serde(default)]` 让老 snapshot (v0.2.0 落 logstore 的历史)
+    /// 仍能反序列化 —— 老 snapshot 没这个字段,前端 fallback 到 `source_id`。
+    ///
+    /// **填充约定**：12 个 provider 的 `do_fetch` 不接 `&self`,没法在内部
+    /// 算 `self.unique_id()`,所以构造 snapshot literal 时填 `unique_id: None`，
+    /// 由 caller (`refresh_inner` / `refresh_single_inner` / `empty_error`)
+    /// 在 closure / find_source 后用 `src.unique_id()` 注入。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unique_id: Option<String>,
     /// **L8 fix（2026-06-19）**：true = 这个 snapshot 是 placeholder（乐观 emit
     /// 给浮窗的临时态），不是真实 fetch 结果。浮窗应跳过"打开设置"按钮渲染，
     /// 避免 2-5s 真实 fetch 完成前的闪烁。None / false = 真实快照，正常渲染。
@@ -294,6 +309,9 @@ impl ProviderSnapshot {
         let display_name = find_source(state, id)
             .await
             .map(|s| s.display_name().to_string());
+        // v0.2.1 commit 3:跟 display_name 同款思路 —— find_source 拿到 source,
+        // 调 src.unique_id() 填。多 instance 时返 "minimax#2" 之类。
+        let unique_id = find_source(state, id).await.map(|s| s.unique_id());
         Self {
             // 兼容字段：v0.2 前序列化的是 enum 变体名 ("minimax" 等),
             // 现在直接写 source id (同样 "minimax" 等, 对前端行为零变化)。
@@ -311,6 +329,7 @@ impl ProviderSnapshot {
             source_id: Some(id.to_string()),
             source_display_name: display_name,
             plan_name: None,
+            unique_id,
             transient: if transient { Some(true) } else { None },
         }
     }

@@ -541,20 +541,6 @@
     "test_passing": "Test passed, saving...",
     "added": "added (id: {id})"
   },
-  "provider_name": {
-    "minimax": "MiniMax",
-    "deepseek": "DeepSeek",
-    "xiaomimimo": "Xiaomi MiMo",
-    "tavily": "Tavily",
-    "zenmux": "ZenMux",
-    "openrouter": "OpenRouter",
-    "kimi": "Kimi",
-    "zhipu_cn": "Zhipu GLM",
-    "zhipu_en": "Z.ai",
-    "stepfun": "StepFun Step Plan",
-    "siliconflow": "SiliconFlow",
-    "claude_official": "Claude"
-  },
   "provider": {
     "suffix": {
       "dup": " #{}"

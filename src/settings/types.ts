@@ -259,10 +259,16 @@ export interface LogEntry {
 }
 
 /** PR 1b: provider picker 用的 option（11 内置 + custom）。
- *  后端 list_picker_providers 返回这个结构。 */
+ *  后端 list_picker_providers 返回这个结构。
+ *
+ *  v0.2.1 commit 4:`display_name` 是后端 `t!()` 注入的翻译字符串(单一来源 =
+ *  后端 `src-tauri/locales/{en,zh-CN}.json`),前端不再用 `t("provider_name.xxx")`。
+ *  `name_key` 字段在 DTO 上是 `skip_serializing_if="is_empty"`,新版本后端不会返。
+ *  保留字段是为了兼容过渡期前端代码不崩。 */
 export interface PickerProvider {
   id: string;
-  name_key: string;
+  name_key?: string;
+  display_name: string;
   auth_kind: "api_key" | "cookie" | "api_key_or_cookie";
   is_builtin: boolean;
 }

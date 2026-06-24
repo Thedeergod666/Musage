@@ -541,20 +541,6 @@
     "test_passing": "测试通过，正在保存...",
     "added": "已添加 (id: {id})"
   },
-  "provider_name": {
-    "minimax": "MiniMax",
-    "deepseek": "DeepSeek",
-    "xiaomimimo": "Xiaomi MiMo",
-    "tavily": "Tavily",
-    "zenmux": "ZenMux",
-    "openrouter": "OpenRouter",
-    "kimi": "Kimi",
-    "zhipu_cn": "智谱 GLM",
-    "zhipu_en": "Z.ai",
-    "stepfun": "阶跃星辰 Step Plan",
-    "siliconflow": "SiliconFlow",
-    "claude_official": "Claude 官方"
-  },
   "provider": {
     "suffix": {
       "dup": " #{}"

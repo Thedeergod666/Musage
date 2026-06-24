@@ -83,7 +83,9 @@ function buildForm(providers: PickerProvider[], initialProviderId: string): HTML
         value: p.id,
         "data-is-builtin": String(p.is_builtin),
         ...(p.id === initialProviderId ? { selected: "true" } : {}),
-      }, t(p.name_key as any) as string)),
+        // v0.2.1 commit 4: 后端已经 t!() 注入翻译好的字符串,直接用
+        // display_name。前端不再走 t("provider_name.xxx") 翻译。
+      }, p.display_name)),
     ),
     el("div", { class: "help" },
       t("extra.form.provider_type_help")),

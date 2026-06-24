@@ -45,10 +45,20 @@ const TOTAL_EXTRA_LIMIT: usize = 50;
 // ── DTOs ────────────────────────────────────────────────────────
 
 /// 前端 picker 用的 provider option（11 内置 + custom）。
+///
+/// v0.2.1 commit 4:`name_key` 字段保留（兼容）但后端会同时返 `display_name`
+/// 翻译好的字符串。前端 v0.2.1 起只用 `display_name`，单一来源 = 后端
+/// `src-tauri/locales/{en,zh-CN}.json` 的 `provider_name.*` 11 项 + `extra.provider.custom`。
 #[derive(Debug, Clone, Serialize)]
 pub struct PickerProvider {
     pub id: String,
+    /// v0.2.1 commit 4 已 deprecated,前端改用 display_name。保留字段
+    /// 是为防 build 顺序中老 frontend 暂未升级时仍能跑。
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub name_key: String,
+    /// v0.2.1 commit 4:后端用 `rust_i18n::t!()` 在返前端前注入翻译好的字符串。
+    /// 前端 picker 直接显示,不再走 `t("provider_name.xxx")`。
+    pub display_name: String,
     pub auth_kind: String,
     /// true = 内置副本（需要 api_key 即可）
     /// false = custom 中转站（需要 base_url / path / extract）
@@ -300,78 +310,96 @@ pub async fn delete_extra_instance(
 }
 
 /// 前端 modal 的 provider picker 数据源：11 内置 + 1 custom。
+///
+/// v0.2.1 commit 4:`display_name` 由后端 `t!()` 注入翻译好的字符串,前端
+/// 不再走 `t("provider_name.xxx")`。`name_key` 字段保留但 `skip_serializing_if`
+/// 空串不返,避免老 frontend 抓不到时崩。
 #[tauri::command]
 pub async fn list_picker_providers() -> Result<Vec<PickerProvider>, String> {
     Ok(vec![
         PickerProvider {
             id: "minimax".to_string(),
-            name_key: "provider_name.minimax".to_string(),
+            name_key: String::new(),
+            display_name: t!("provider_name.minimax").into_owned(),
             auth_kind: "api_key".to_string(),
             is_builtin: true,
         },
         PickerProvider {
             id: "deepseek".to_string(),
-            name_key: "provider_name.deepseek".to_string(),
+            name_key: String::new(),
+            display_name: t!("provider_name.deepseek").into_owned(),
             auth_kind: "api_key".to_string(),
             is_builtin: true,
         },
         PickerProvider {
             id: "xiaomimimo".to_string(),
-            name_key: "provider_name.xiaomimimo".to_string(),
+            name_key: String::new(),
+            display_name: t!("provider_name.xiaomimimo").into_owned(),
             auth_kind: "api_key_or_cookie".to_string(),
             is_builtin: true,
         },
         PickerProvider {
             id: "tavily".to_string(),
-            name_key: "provider_name.tavily".to_string(),
+            name_key: String::new(),
+            display_name: t!("provider_name.tavily").into_owned(),
             auth_kind: "api_key".to_string(),
             is_builtin: true,
         },
         PickerProvider {
             id: "zenmux".to_string(),
-            name_key: "provider_name.zenmux".to_string(),
+            name_key: String::new(),
+            display_name: t!("provider_name.zenmux").into_owned(),
             auth_kind: "api_key".to_string(),
             is_builtin: true,
         },
         PickerProvider {
             id: "openrouter".to_string(),
-            name_key: "provider_name.openrouter".to_string(),
+            name_key: String::new(),
+            display_name: t!("provider_name.openrouter").into_owned(),
             auth_kind: "api_key".to_string(),
             is_builtin: true,
         },
         PickerProvider {
             id: "kimi".to_string(),
-            name_key: "provider_name.kimi".to_string(),
+            name_key: String::new(),
+            display_name: t!("provider_name.kimi").into_owned(),
             auth_kind: "api_key".to_string(),
             is_builtin: true,
         },
         PickerProvider {
             id: "zhipu".to_string(),
-            name_key: "provider_name.zhipu_cn".to_string(),
+            name_key: String::new(),
+            display_name: t!("provider_name.zhipu_cn").into_owned(),
             auth_kind: "api_key".to_string(),
             is_builtin: true,
         },
         PickerProvider {
             id: "stepfun".to_string(),
-            name_key: "provider_name.stepfun".to_string(),
+            name_key: String::new(),
+            display_name: t!("provider_name.stepfun").into_owned(),
             auth_kind: "api_key".to_string(),
             is_builtin: true,
         },
         PickerProvider {
             id: "siliconflow".to_string(),
-            name_key: "provider_name.siliconflow".to_string(),
+            name_key: String::new(),
+            display_name: t!("provider_name.siliconflow").into_owned(),
             auth_kind: "api_key".to_string(),
             is_builtin: true,
         },
         PickerProvider {
             id: "claude_official".to_string(),
-            name_key: "provider_name.claude_official".to_string(),
+            name_key: String::new(),
+            display_name: t!("provider_name.claude_official").into_owned(),
             auth_kind: "cookie".to_string(),
             is_builtin: true,
         },
         PickerProvider {
             id: "custom".to_string(),
-            name_key: "extra.provider.custom".to_string(),
+            name_key: String::new(),
+            // v0.2.1 commit 4:custom 走 `extra.provider.custom` key,不在
+            // `provider_name.*` 命名空间下(命名空间差异历史原因)
+            display_name: t!("extra.provider.custom").into_owned(),
             auth_kind: "api_key".to_string(),
             is_builtin: false,
         },

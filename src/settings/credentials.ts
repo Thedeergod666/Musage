@@ -634,3 +634,112 @@ export async function loadXiaomiDisplayMode(): Promise<void> {
   );
   if (select) select.value = mode;
 }
+
+// ── v0.2.1 commit 6：批量粘贴 key 自动匹配 ───────────────────────────
+
+/// 各 provider 的 API key 前缀识别规则 (用于批量粘贴)。
+///
+/// 优先级: 行首 "provider=" 显式标注 → 优先匹配 (override prefix 自动检测)。
+/// 无标注时按 prefix 长度从长到短匹配,避免 "sk-" 这种短前缀抢匹配
+/// (kimi / openrouter 都用 sk- 但长度不同 → sk-or-v1- 先匹配)。
+///
+/// 配 `apiKeyPlaceholder()` 的 prefix 走,加 cookie-based provider
+/// (xiaomimimo / claude_official) 走特殊识别 (cookie 不是 prefix-based)。
+export interface BatchMatch {
+  id: string;
+  field: "api_key" | "cookie";
+  value: string;
+}
+
+const BATCH_PREFIX_RULES: Array<{
+  prefix: string;
+  id: string;
+  field: "api_key" | "cookie";
+}> = [
+  // 长度从长到短排列,长前缀先吃
+  { prefix: "sk-or-v1-", id: "openrouter", field: "api_key" },
+  { prefix: "sk-cp-", id: "minimax", field: "api_key" },
+  { prefix: "Oasis-Token", id: "stepfun", field: "api_key" },
+  { prefix: "tvly-", id: "tavily", field: "api_key" },
+  // 通用 sk- 前缀: minimax/zenmux/openrouter/kimi/siliconflow 都有
+  // 用 host 识别;无 host 的按 priority
+  { prefix: "sk-", id: "minimax", field: "api_key" }, // minimax 是最常见的 sk- 源,优先级高
+  // tp- → Xiaomi (cookie 路径虽然用 tp-,但 frontend 也允许 api_key 别名)
+  { prefix: "tp-", id: "xiaomimimo", field: "cookie" },
+  // zhipu 用 "id.secret" 格式 (数字ID.字母数字 secret)
+  // claude_official 用 "sessionKey=..." 格式
+];
+
+/// 解析一行 (去除前导 `provider=` 标注 + 去除尾部空白 + 跳过空行/注释)。
+///
+/// 返回 `BatchMatch[]`(通常 0 或 1 项)。
+function parseBatchLine(raw: string): BatchMatch[] {
+  const line = raw.trim();
+  if (!line || line.startsWith("#")) return [];
+
+  // 显式标注: "minimax=sk-xxx" 或 "minimax: sk-xxx"
+  let providerHint: string | null = null;
+  let value = line;
+  for (const sep of ["=", ":"]) {
+    const idx = line.indexOf(sep);
+    if (idx > 0 && idx < 20) {
+      // 只在前 20 字符内识别 (避免 key 中含 = 误判)
+      const head = line.slice(0, idx).trim().toLowerCase();
+      const tail = line.slice(idx + 1).trim();
+      if (/^[a-z_]+$/.test(head) && KNOWN_PROVIDER_IDS.has(head)) {
+        providerHint = head;
+        value = tail;
+        break;
+      }
+    }
+  }
+
+  if (providerHint) {
+    const field = providerHint === "xiaomimimo" || providerHint === "claude_official"
+      ? "cookie" : "api_key";
+    return [{ id: providerHint, field, value }];
+  }
+
+  // 自动按 prefix 检测
+  for (const rule of BATCH_PREFIX_RULES) {
+    if (value.startsWith(rule.prefix)) {
+      return [{ id: rule.id, field: rule.field, value }];
+    }
+  }
+
+  return [];
+}
+
+/// 已知 provider id 集合 (用于 `provider=value` 显式标注解析)。
+const KNOWN_PROVIDER_IDS = new Set([
+  "minimax", "deepseek", "xiaomimimo", "tavily", "zenmux", "openrouter",
+  "kimi", "zhipu", "stepfun", "siliconflow", "claude_official", "custom",
+]);
+
+/// 批量粘贴入口:粘贴多行 → split → 逐行识别 → 批量 setSourceCredential。
+///
+/// 返 `{recognized, unrecognized}` 计数给调用方 flash。
+export async function batchPasteKeys(
+  text: string,
+): Promise<{ recognized: number; unrecognized: number; errors: string[] }> {
+  const errors: string[] = [];
+  const counts = { recognized: 0, unrecognized: 0 };
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    const matches = parseBatchLine(line);
+    if (matches.length === 0) {
+      const trimmed = line.trim();
+      if (trimmed) counts.unrecognized++;
+      continue;
+    }
+    for (const m of matches) {
+      try {
+        await setSourceCredential(m.id, m.value, m.field);
+        counts.recognized++;
+      } catch (e) {
+        errors.push(`${m.id}: ${String(e)}`);
+      }
+    }
+  }
+  return { ...counts, errors };
+}

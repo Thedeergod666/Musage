@@ -25,7 +25,7 @@ import {
 import { el, escapeHtml, setCurrentKnownIds, flash, currentProviderOrder, formatDisplayName } from "./utils";
 import { getProviderExtras } from "./source-extras";
 import { renderOrderSection, withSuppress } from "./order";
-import { renderCredentialBlock, loadCredentialStatus } from "./credentials";
+import { renderCredentialBlock, loadCredentialStatus, batchPasteKeys } from "./credentials";
 import { getProviderMeta } from "./logos";
 import { getGroupDef, groupKeyFor } from "./groups";
 import { openAddExtraInstanceModal } from "./extra-instance-form";
@@ -90,6 +90,10 @@ export async function renderProvidersSection(container: HTMLElement) {
   const addBtn = toolbar.querySelector<HTMLButtonElement>("#add-custom-source");
   addBtn?.addEventListener("click", () => openAddExtraInstanceModal());
   container.appendChild(toolbar);
+
+  // v0.2.1 commit 6: 批量粘贴 key 的折叠 textarea,在 toolbar 下方。
+  // 用户粘多行 `provider=value` 或纯 key,自动识别 provider 填入。
+  container.appendChild(renderBatchPasteSection());
 
   // 2) 顶部"浮窗卡片顺序"（带 enabled/disabled 分区）
   renderOrderSection(container, allSources, cfg.provider_order, cfg);
@@ -346,4 +350,67 @@ function renderCopyBuiltinButton(meta: SourceMeta): HTMLElement {
 /// 等价，但走 id-based 统一接口。
 export async function loadAllCredentialStatus(sources: SourceMeta[]) {
   await Promise.all(sources.map((s) => loadCredentialStatus(s.id)));
+}
+
+// ── v0.2.1 commit 6：批量粘贴 key 入口 (P2-A-5) ──────────────────────
+
+/// 在 providers section 顶部 toolbar 下方渲染一个 `<details>` 折叠的
+/// batch textarea。用户粘贴多行 key,自动识别 provider 前缀(`sk-cp-` /
+/// `sk-or-v1-` / `tvly-` / `Oasis-Token` / `tp-` / `sessionKey=` /
+/// 显式 `provider=xxx` 标注),批量调 `setSourceCredential` 填入。
+///
+/// flash 反馈:
+/// - `recognized` 0 / `unrecognized` > 0 → "未识别 N 行" 红条
+/// - `recognized` > 0 → "已识别 N 个 provider" 绿条
+/// - `errors.length > 0` → "N 个错误: ..." 红条
+function renderBatchPasteSection(): HTMLElement {
+  const details = el("details", { class: "batch-paste-details" });
+  const summary = el("summary", {},
+    t("credentials.batch_paste_title"),
+  );
+  details.appendChild(summary);
+
+  const textarea = el("textarea", {
+    class: "batch-paste-textarea",
+    id: "batch-paste-textarea",
+    placeholder: t("credentials.batch_paste_help"),
+    rows: "6",
+    autocomplete: "off",
+    spellcheck: "false",
+  }) as HTMLTextAreaElement;
+
+  const submitBtn = el("button", {
+    type: "button",
+    class: "btn-primary",
+    "data-action": "batch-paste-submit",
+  }, t("credentials.batch_paste_btn"));
+
+  submitBtn.addEventListener("click", async () => {
+    const text = textarea.value;
+    if (!text.trim()) return;
+    const result = await batchPasteKeys(text);
+    if (result.errors.length > 0) {
+      flash(t("credentials.batch_paste_errors", {
+        n: result.errors.length,
+        errs: result.errors.slice(0, 3).join("; "),
+      }), true);
+    } else if (result.recognized > 0 && result.unrecognized > 0) {
+      flash(t("credentials.batch_paste_mixed", {
+        rec: result.recognized,
+        unrec: result.unrecognized,
+      }));
+    } else if (result.recognized > 0) {
+      flash(t("credentials.batch_paste_recognized", { n: result.recognized }));
+    } else if (result.unrecognized > 0) {
+      flash(t("credentials.batch_paste_unrecognized", { n: result.unrecognized }), true);
+    }
+    // 成功后清空 textarea,失败保留让用户能修正
+    if (result.errors.length === 0 && result.recognized > 0) {
+      textarea.value = "";
+    }
+  });
+
+  details.appendChild(textarea);
+  details.appendChild(el("div", { class: "batch-paste-actions" }, submitBtn));
+  return details;
 }

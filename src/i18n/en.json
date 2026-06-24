@@ -437,7 +437,14 @@
     "default_help": "API key saved to local keys.json.",
     "cookie_status_saved": "Saved to local",
     "cookie_status_unset": "Not set",
-    "cookie_status_placeholder": "—"
+    "cookie_status_placeholder": "—",
+    "batch_paste_title": "Batch paste API keys",
+    "batch_paste_help": "One key per line. Auto-detects provider from prefix (sk-cp- / sk-or-v1- / tvly- / Oasis-Token / tp- / sessionKey=). You can also write \"minimax=sk-xxx\" to be explicit.",
+    "batch_paste_btn": "Save all",
+    "batch_paste_recognized": "Recognized {n} provider(s).",
+    "batch_paste_unrecognized": "No provider prefix matched for {n} line(s).",
+    "batch_paste_mixed": "Recognized {rec}, {unrec} unrecognized.",
+    "batch_paste_errors": "{n} error(s): {errs}"
   },
   "extras": {
     "minimax_region_label": "MiniMax region",
@@ -529,7 +536,9 @@
       "provider_type_help": "All 11 built-in providers can have multiple instances (each with its own key); custom is for New API relays",
       "api_key_label": "API key",
       "api_key_placeholder": "sk-...",
-      "api_key_help": "Built-in provider instances use separate keys (independent from the built-in 1st copy)"
+      "api_key_help": "Built-in provider instances use separate keys (independent from the built-in 1st copy)",
+      "custom_callout_title": "💡 New API relay",
+      "custom_callout_body": "Use this for one-api / new-api / one-api-type relay stations. Fill in your relay's base URL + path + extract template (3 presets). The same id-based key persists across app restarts."
     },
     "err": {
       "provider_required": "Please select a source type",

@@ -437,7 +437,14 @@
     "default_help": "API key 存到本机 keys.json。",
     "cookie_status_saved": "已保存到本机",
     "cookie_status_unset": "未设置",
-    "cookie_status_placeholder": "—"
+    "cookie_status_placeholder": "—",
+    "batch_paste_title": "批量粘贴 API Key",
+    "batch_paste_help": "每行一个 key,自动按前缀识别 provider(sk-cp- / sk-or-v1- / tvly- / Oasis-Token / tp- / sessionKey=)。也可写 \"minimax=sk-xxx\" 显式标注。",
+    "batch_paste_btn": "全部保存",
+    "batch_paste_recognized": "已识别 {n} 个 provider。",
+    "batch_paste_unrecognized": "{n} 行未能识别 provider 前缀。",
+    "batch_paste_mixed": "已识别 {rec}, {unrec} 行未识别。",
+    "batch_paste_errors": "{n} 个错误: {errs}"
   },
   "extras": {
     "minimax_region_label": "MiniMax 区域",
@@ -529,7 +536,9 @@
       "provider_type_help": "11 内置 provider 都可以加多份（每个用各自 key）；custom 是 New API 中转站",
       "api_key_label": "API key",
       "api_key_placeholder": "sk-...",
-      "api_key_help": "内置 provider 副本用各自 key（跟『内置第 1 份』互不影响）"
+      "api_key_help": "内置 provider 副本用各自 key（跟『内置第 1 份』互不影响）",
+      "custom_callout_title": "💡 New API 中转站",
+      "custom_callout_body": "适用于 one-api / new-api 等中转站。填中转站的 base_url + path + extract 模板（3 个 preset）。Key 用 id 持久化,跨重启保留。"
     },
     "err": {
       "provider_required": "请选一种来源类型",

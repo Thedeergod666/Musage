@@ -653,6 +653,64 @@ button.order-down {
   flex: 0 0 auto;
 }
 
+/* v0.2.1 commit 6 (P2-A-5): 批量粘贴 key 折叠区 */
+.batch-paste-details {
+  margin-bottom: var(--sp-3, 8px);
+  padding: var(--sp-2, 6px) var(--sp-3, 8px);
+  background: var(--bg-2);
+  border-radius: var(--r-md, 6px);
+}
+.batch-paste-details summary {
+  cursor: pointer;
+  user-select: none;
+  font-weight: 500;
+  list-style: revert;
+}
+.batch-paste-details[open] summary {
+  margin-bottom: var(--sp-2, 6px);
+}
+.batch-paste-textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 6px 10px;
+  background: var(--bg-1, transparent);
+  border: 1px solid var(--bg-3, rgba(255, 255, 255, 0.1));
+  border-radius: var(--r-sm, 4px);
+  color: inherit;
+  font: inherit;
+  font-family: var(--font-mono, monospace);
+  resize: vertical;
+}
+.batch-paste-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--sp-2, 6px);
+}
+
+/* v0.2.1 commit 6 (P2-A-6): 选 New API 中转站时的强调 callout */
+.callout.custom-callout {
+  margin-top: var(--sp-2, 6px);
+  padding: var(--sp-3, 8px) var(--sp-3, 8px);
+  background: var(--accent-bg, rgba(64, 169, 255, 0.12));
+  border-left: 3px solid var(--accent, #40a9ff);
+  border-radius: var(--r-sm, 4px);
+  color: inherit;
+}
+.callout.custom-callout[hidden] {
+  display: none;
+}
+.callout.custom-callout strong {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--accent, #40a9ff);
+}
+.callout.custom-callout p {
+  margin: 0;
+  font-size: 0.9em;
+  line-height: 1.4;
+  opacity: 0.85;
+}
+
 .provider-group {
   margin-bottom: var(--sp-3, 8px);
 }

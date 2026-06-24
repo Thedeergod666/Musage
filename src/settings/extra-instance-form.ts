@@ -92,6 +92,18 @@ function buildForm(providers: PickerProvider[], initialProviderId: string): HTML
   );
   root.appendChild(pickerField);
 
+  // v0.2.1 commit 6 (P2-A-6 New API 显眼化): 选 custom 时显示强调 callout
+  // 引导用户用 New API 中转站 (custom provider) 模板。初始 hidden。
+  const customCallout = el("div", {
+    class: "callout custom-callout",
+    role: "note",
+  },
+    el("strong", {}, t("extra.form.custom_callout_title")),
+    el("p", {}, t("extra.form.custom_callout_body")),
+  );
+  customCallout.hidden = initialProviderId !== "custom";
+  root.appendChild(customCallout);
+
   // Step 2: dynamic fields（按 provider 类型切换）
   const dynamicFields = el("div", { id: "ei-dynamic-fields" });
   root.appendChild(dynamicFields);
@@ -99,11 +111,16 @@ function buildForm(providers: PickerProvider[], initialProviderId: string): HTML
   // 初始渲染（用 initialProviderId）
   renderDynamicFields(initialProviderId, providers, dynamicFields);
 
-  // picker change → 重渲染 dynamic fields
+  // picker change → 重渲染 dynamic fields + toggle callout
   root.addEventListener("change", (e) => {
     const target = e.target as HTMLSelectElement;
     if (target.id === "ei-provider") {
       renderDynamicFields(target.value, providers, dynamicFields);
+      // v0.2.1 commit 6 (P2-A-6 New API 显眼化): 选 custom 时显示 callout
+      const callout = root.querySelector<HTMLElement>(".custom-callout");
+      if (callout) {
+        callout.hidden = target.value !== "custom";
+      }
     }
   });
 

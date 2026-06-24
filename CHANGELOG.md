@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-24
+
+v0.2.0 后的一次性收尾:7 个 commit,文档与代码同步 + 5 个 PR 1b 残留限制解除 + P2-A/P2-B 增量。
+
+### Added
+
+- **批量粘贴 key 自动匹配**:providers section 顶部 `<details>` 折叠 batch textarea,粘贴多行 `provider=value` 或纯 key 自动识别 provider 前缀(`sk-cp-` / `tp-` / `tvly-` / `Oasis-Token` 等复用现有 placeholder regex)并填入。
+- **New API preset callout**:`+ 添加新来源` modal 选中 custom 时显示强调框,引导用户用 New API 模板。
+- **系统通知(Xiaomi/Claude cookie 失效)**:`tauri-plugin-notification` + 60s 去重,`ErrorKind::AuthFailed` + provider 是 `xiaomimimo` / `claude_official` 时弹系统通知(走 `log_provider_error` hook,跟现有去重共用一套缓存)。
+- **import/export 配置(无 keys)**:设置面板"高级"页 Import/Export section,Export 走纯 web `Blob` + `<a download>` 下载 JSON,Import 走 `<input type="file">` + `FileReader` 走 `saveConfig` 全量保存,0 新 Tauri dep。
+- **托盘 tooltip `#N` 后缀**:多 instance 时同 base provider 区分显示(如 `MiniMax 5h 45% / 周 72% #2`)。
+- **托盘进度条遍历多 instance**:原 `pick_minimax_rows` `find()` 只取第一个 minimax,改成遍历所有 instance + 进度条颜色按 `#1` 走。
+- **`ProviderSnapshot.unique_id` 字段**:后端 snapshot 加 `#[serde(default)] unique_id: Option<String>`,所有 provider 构造时填 `self.unique_id()`,前端 7 处 id 路由(`contentFingerprint` / `existingCards.get(id)` / 重排 / `rowsForRender` / `card.dataset.provider` / `updateCard` / err button)优先取 `unique_id`,fallback `source_id` → `provider`。
+
+### Changed
+
+- **后端 `list_picker_providers` 返翻译好的 `display_name`**:`PickerProvider.name_key` → `display_name`,后端用 `t!("provider_name.xxx").into_owned()` 注入翻译串。前端 `src/i18n/{en,zh-CN}.json` 的 `provider_name.*` 11 项镜像删除,**单一来源 = 后端 `src-tauri/locales/{en,zh-CN}.json`**。
+- **浮窗 DOM `data-source-id` → `data-unique-id`**:错误卡 retry 按钮 click 委托从 `target.dataset.sourceId` → `target.dataset.uniqueId`。
+- **`config/custom_sources.rs` wrapper 内联到 `lib.rs` 后删除**:v0.2.0 release 2 天后老 `custom_sources.json` 都被启动 rename 成 `.migrated`,wrapper 无 active caller。
+
+### Fixed
+
+- **PR 1b 5 项残留限制全部清理**:
+  - 浮窗 `data-unique-id` 改 `unique_id()` 渲染 ✅
+  - 托盘 tooltip 拼 `#N` 后缀 + 进度条遍历多 instance ✅
+  - `delete_extra_instance` keys.json rename 已 v0.2.1 commit 3 在结构层面预留(本轮不打 keys.json schema break → 留 v0.3)
+  - `list_picker_providers` 返 `display_name` ✅
+  - 前端 `provider_name.*` 镜像删除 ✅
+
+### Tech debt 收尾
+
+- Tech debt 7 项刷新:2 ✅ 已修(原硬编码中文 / Provider enum)/ 5 ⏳ 留 v0.3(`http_status_to_error_kind` / `refresh_inner` Box::new / Backoff 持久化 / Per-provider shutdown signal / Frontend 单测)
+- PR 1b 5 项限制:4 ✅ / 1 ⏳(`delete_extra_instance` v2 完整重做留 v0.3)
+- P2-A 完成度从 13% → 87%(批量粘贴 + New API callout 完成;错误恢复完整版留 v0.3)
+- P2-B 完成度从 17% → 75%(系统通知 + import/export 完成;Claude 一键重登留 v0.3)
+
+### Upgrade notes
+
+- 老 v0.2.0 升级 v0.2.1 无破坏性改动(纯增量和 refactor)
+- `keys.json` 格式不变(`delete_extra_instance` v2 重做留 v0.3 单独 PR)
+- 老 `custom_sources.json` 启动时已被迁移并 rename 成 `.migrated`,wrapper 删后无副作用
+
 ## [0.2.0] - 2026-06-22
 
 v0.1.0 (2026-06-13) 之后的 9 天累计 7+ PR, 加上 2026-06-22 一天集中清理 (PR 1-6)。

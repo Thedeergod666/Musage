@@ -394,15 +394,13 @@ D:\Project\Musage\
   - 前端 `extra.*` modal / err / added 段
   - 前端 `delete_extra.*` 6 个 key（替 PR 3 的 `delete_custom.*`）
   - 前端 `add_source` 段（替 PR 3 的 `add_custom`）
-  - **前端 i18n 独立维护 `provider_name.*` 11 项**（后端 `src-tauri/locales/` 也有；目前两份镜像，未来 PR 3 应让后端 `list_picker_providers` 直接返翻译好的 display_name 字符串）
+  - **前端 i18n 独立维护 `provider_name.*` 11 项**(后端 `src-tauri/locales/` 也有;v0.2.1 commit 4 后端 `list_picker_providers` 直接返翻译好的 `display_name` 字符串,前端 `provider_name.*` 镜像已删,单一来源 = 后端 `src-tauri/locales/{en,zh-CN}.json`)
 - **迁移 + 兼容**：
   - PR 1a：老 `custom_sources.json` 启动自动迁移到 `extra_instances.json`
   - PR 1b：5 个老 IPC 删除，**前端必须**用新 6 个 IPC（前端 `src/settings/api.ts` 已同步）
-  - 老的 `config/custom_sources.rs` 缩成 `load_or_migrate` wrapper，**保留**等所有用户跑过启动一次后下次 PR 删
-- **PR 1b 已知限制（PR 3 解决）**：
-  - 浮窗 `data-source-id` 还是按 provider 渲染（不是按 unique_id）—— PR 3 改
-  - 托盘 tooltip 还是单条（多实例时只画第一份）—— PR 3 改聚合
-  - `delete_extra_instance` 不重命名 keys.json 里被 compact 改名的 key（v2 用"按 instance_index 查"重做）
+  - **v0.2.1 commit 2**:`load_or_migrate` 从 `config/custom_sources.rs` 内联到 `src-tauri/src/lib.rs`,wrapper 文件删除（v0.2.0 release 2 天后老用户的 `custom_sources.json` 已被启动 rename 成 `.migrated`,wrapper 已无 active caller）
+- **PR 1b 后 12 provider 全实装**:`minimax` / `deepseek` / `xiaomimimo` / `tavily` / `zenmux` / `openrouter` / `kimi` / `zhipu` / `stepfun` / `siliconflow` / `claude_official` / `custom` 全部加了 `instance_index: u32` 字段 + `with_instance_index(idx)` 方法 + `unique_id()` 返回 `"<base>#N"` 格式(PR 1b 落地,2026-06-24 验证无遗漏)
+- **多 instance 一致识别**:`unique_id()` 在 poller next_fetch map key / 浮窗 DOM `data-unique-id`(v0.2.1 commit 3 把原 `data-source-id` 改过来)/ 托盘 tooltip `#N` 后缀(commit 5)/ 后端 ProviderSnapshot 字段都共用,做到"一份字符串单一来源"
 
 ## 已知风险
 

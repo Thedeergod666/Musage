@@ -600,24 +600,47 @@ fn render_icon(snap: &QuotaSnapshot, style: TrayIconStyle) -> Image<'static> {
 /// P1 i18n：行 label 来自 provider 端 `t!("row.five_hour")` / `t!("row.weekly")`，
 /// 这里也用 t!() 比较，保证跨语言一致（切到 en 时 zh-CN 字符串 "5h"/"周" 不会
 /// 永远匹配不上 en 字符串 "5h"/"Weekly"）。
+///
+/// v0.2.1 commit 5:多 instance 时遍历所有 minimax instance,选 5h utilization
+/// 最高的(快耗尽的副本最该被高亮);并列时取 instance_index 小的优先。
+/// 失败/无数据时 fallback 到任意一份成功的。进度条小图标只画 1 份,
+/// tooltip 列出所有 instance 拼 #N 后缀(由 tooltip() 统一处理)。
 fn pick_minimax_rows(snap: &QuotaSnapshot) -> Option<(f64, f64)> {
-    let m = snap
+    let minimaxes: Vec<&ProviderSnapshot> = snap
         .providers
         .iter()
-        .find(|p| p.source_id.as_deref() == Some("minimax") && p.success)?;
-    let five_h = m
-        .rows
+        .filter(|p| p.source_id.as_deref() == Some("minimax") && p.success)
+        .collect();
+    if minimaxes.is_empty() {
+        return None;
+    }
+    // 选 5h 利用率最高(快耗尽)
+    let best = minimaxes
+        .iter()
+        .max_by(|a, b| {
+            five_hour_util(a)
+                .partial_cmp(&five_hour_util(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .copied()
+        .unwrap_or(minimaxes[0]);
+    Some((five_hour_util(best), weekly_util(best)))
+}
+
+fn five_hour_util(p: &ProviderSnapshot) -> f64 {
+    p.rows
         .iter()
         .find(|r| r.label == t!("row.five_hour"))
         .and_then(|r| r.utilization)
-        .unwrap_or(0.0);
-    let weekly = m
-        .rows
+        .unwrap_or(0.0)
+}
+
+fn weekly_util(p: &ProviderSnapshot) -> f64 {
+    p.rows
         .iter()
         .find(|r| r.label == t!("row.weekly"))
         .and_then(|r| r.utilization)
-        .unwrap_or(0.0);
-    Some((five_h, weekly))
+        .unwrap_or(0.0)
 }
 
 /// 画两条水平迷你进度条。
@@ -831,8 +854,12 @@ fn tooltip(snap: &QuotaSnapshot) -> String {
             "alert" => "🔴",
             _ => "⚪",
         };
+        // v0.2.1 commit 5: 多 instance 时同 base id 副本(utilization/balance 都
+        // 一样)在 tooltip 里会重复。body 末尾拼 #N 后缀(`p.unique_id` 解析
+        // 出 "minimax#2" / "minimax" 等),让用户能区分。
         let body = provider_short_body(p);
-        parts.push(format!("{dot} {body}"));
+        let suffix = instance_suffix(p);
+        parts.push(format!("{dot} {body}{suffix}"));
     }
     if let Some(ms) = snap.fetched_at {
         let dt = chrono::DateTime::from_timestamp_millis(ms)
@@ -841,6 +868,25 @@ fn tooltip(snap: &QuotaSnapshot) -> String {
         parts.push(t!("tray.tooltip.updated_at", time = dt).to_string());
     }
     parts.join(" · ")
+}
+
+/// 提取 instance `#N` 后缀,instance_index == 1 或 None 时返空串。
+///
+/// 用 `unique_id` (PR 1b 加的 `"minimax#2"` 格式) 拆出 #N 部分。
+/// 旧 snapshot (没 unique_id 字段) 走 source_id 字符串,instance #1
+/// 视为基线(无后缀),#2+ 由 source_display_name 是否有 `dup` suffix
+/// 启发判断 —— 简化:无 unique_id 就返空串(无后缀,跟之前一致)。
+fn instance_suffix(p: &ProviderSnapshot) -> String {
+    if let Some(uid) = &p.unique_id {
+        if let Some(idx) = uid.rfind('#') {
+            let tail = &uid[idx + 1..];
+            // 只在 instance_index > 1 时显示(主套餐不需要 #1)
+            if tail != "1" && !tail.is_empty() {
+                return format!(" #{tail}");
+            }
+        }
+    }
+    String::new()
 }
 
 fn provider_short_body(p: &ProviderSnapshot) -> String {

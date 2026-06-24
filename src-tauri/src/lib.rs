@@ -34,10 +34,10 @@ use tauri::{Listener, Manager};
 use tokio::sync::RwLock;
 
 use crate::commands::apply_pin_mode_to_window;
-use crate::config::AppConfig;
+use crate::config::{custom_sources as custom_persist, extra_instances, AppConfig};
 use crate::logstore::LogStore;
 use crate::poller_backoff::BackoffState;
-use crate::providers::{builtin_sources, CustomSource, CustomSourceSpec, QuotaSnapshot};
+use crate::providers::{builtin_sources, CustomSource, QuotaSnapshot};
 
 pub struct AppState {
     pub snapshot: Arc<RwLock<QuotaSnapshot>>,
@@ -49,10 +49,12 @@ pub struct AppState {
     /// - 读：poller 调度 tick 时算下次间隔
     /// 详见 [`crate::poller_backoff`]
     pub backoff: Arc<RwLock<BackoffState>>,
-    /// PR 3：用户自定义 New API sources。启动时从 `custom_sources.json` load。
-    /// 写：add/update/delete_custom_source IPC 命令（会 persist）。
-    /// 读：providers::all_sources / find_source 拼 customs 进去。
-    pub custom_sources: Arc<RwLock<Vec<CustomSourceSpec>>>,
+    /// PR 1b：用户额外添加的 source 实例（内置 provider 副本 + New API 中转站）。
+    /// 启动时从 `extra_instances.json` load（PR 1a 起的迁移 wrapper 会从老
+    /// `custom_sources.json` 迁过来，PR 1c 删老文件）。
+    /// 写：add/update/delete_extra_instance IPC 命令（会 persist）。
+    /// 读：providers::all_sources / find_source 拼 extras 进去。
+    pub extra_instances: Arc<RwLock<Vec<extra_instances::ExtraInstance>>>,
 }
 
 pub use crate::commands::i18n::get_app_locale;
@@ -96,9 +98,11 @@ pub fn run() {
             // 从磁盘 reload 最近 200 条 —— 启动时一次性 IO，不在热路径
             log: Arc::new(LogStore::load_from_disk()),
             backoff: Arc::new(RwLock::new(BackoffState::new())),
-            // PR 3：custom_sources 启动 load。load 失败时返空 Vec（不阻塞启动）。
-            custom_sources: Arc::new(RwLock::new(
-                config::custom_sources::load_custom_sources().unwrap_or_default(),
+            // PR 3 → PR 1a：extra_instances 启动 load。优先读新文件 extra_instances.json，
+            // 老 custom_sources.json 自动迁移后 rename 成 .migrated。
+            // load 失败时返空 Vec（不阻塞启动）。
+            extra_instances: Arc::new(RwLock::new(
+                custom_persist::load_or_migrate().unwrap_or_default(),
             )),
         })
         .setup(|app| {
@@ -236,11 +240,11 @@ pub fn run() {
                     .flatten()
                     .is_some()
             });
-            let custom_has_key = config::custom_sources::load_custom_sources()
+            let custom_has_key = config::custom_sources::load_or_migrate()
                 .unwrap_or_default()
                 .iter()
-                .any(|spec| {
-                    config::load_credential_for_id(&spec.id)
+                .any(|inst| {
+                    config::load_credential_for_id(&inst.api_key_ref)
                         .ok()
                         .flatten()
                         .is_some()
@@ -293,12 +297,13 @@ pub fn run() {
             // P2 区域向导：用户选 cn/global 后 apply 默认 provider 顺序 + endpoint
             commands::set_region,
             commands::get_region,
-            // PR 3: 用户自定义 New API source (5 commands)
-            commands::custom_sources::list_custom_sources,
-            commands::custom_sources::add_custom_source,
-            commands::custom_sources::update_custom_source,
-            commands::custom_sources::delete_custom_source,
-            commands::custom_sources::test_custom_source,
+            // PR 1b：用户额外 source 实例 (6 commands，替换 PR 3 的 5 个 custom_sources)
+            commands::extra_instances::list_extra_instances,
+            commands::extra_instances::add_extra_instance,
+            commands::extra_instances::update_extra_instance,
+            commands::extra_instances::delete_extra_instance,
+            commands::extra_instances::list_picker_providers,
+            commands::extra_instances::test_extra_instance,
             // C3 fix: source-extras 6 个 per-field setter (region / mode / concise / base_url)
             commands::set_minimax_region,
             commands::set_xiaomi_region_field,
@@ -408,10 +413,10 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
     let rt = tokio::runtime::Runtime::new().expect("create tokio runtime");
     rt.block_on(async {
         let cfg = AppConfig::load_from_disk().unwrap_or_default();
-        // 加载 custom sources 供 dump CLI 用——standalone CLI 没有 AppState,
-        // 直接从 custom_sources.json 读即可(跟 lib.rs setup() 那条路径同款)。
-        let customs: Vec<CustomSourceSpec> =
-            config::custom_sources::load_custom_sources().unwrap_or_default();
+        // 加载 extra instances 供 dump CLI 用——standalone CLI 没有 AppState,
+        // 直接从 extra_instances.json 读即可(跟 lib.rs setup() 那条路径同款)。
+        let customs: Vec<extra_instances::ExtraInstance> =
+            config::custom_sources::load_or_migrate().unwrap_or_default();
 
         // 决定要 dump 哪些 source
         let sources: Vec<Box<dyn crate::providers::QuotaSource>> = match provider_filter {
@@ -421,9 +426,18 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
                     .filter(|s| cfg.is_enabled_id(s.id().as_ref()))
                     .collect();
                 // custom source 单独 append —— builtin 列表里没有
-                for spec in &customs {
-                    if cfg.is_enabled_id(&spec.id) {
-                        all.push(Box::new(CustomSource::new(spec.clone())));
+                // PR 1a：extra instance 里只 append provider_id == "custom" 的
+                // (内置副本由 builtin_sources() 已含的 11 份 ... 不对, 副本不走 builtin)
+                // PR 1a 简化：dump CLI 暂时不展示内置副本(builtin_sources() 只返 11 份
+                // 内置第 1 份),全量 dump 时只 append custom 中转站。后续 PR 1b
+                // providers::all_sources 改完后再调它。
+                for inst in &customs {
+                    if inst.provider_id == "custom" {
+                        if let Some(spec) = &inst.custom {
+                            if cfg.is_enabled_id(&inst.api_key_ref) {
+                                all.push(Box::new(CustomSource::new(spec.clone())));
+                            }
+                        }
                     }
                 }
                 all
@@ -432,15 +446,21 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
                 // builtin 优先,然后 custom
                 if let Some(s) = builtin_sources().into_iter().find(|s| s.id() == id) {
                     vec![s]
-                } else if let Some(spec) = customs.iter().find(|s| s.id == id) {
-                    vec![Box::new(CustomSource::new(spec.clone()))]
+                } else if let Some(inst) = customs.iter().find(|s| s.api_key_ref == id) {
+                    if let Some(spec) = &inst.custom {
+                        vec![Box::new(CustomSource::new(spec.clone()))]
+                    } else {
+                        // 找到了 instance 但不是 custom(理论不会到这里)
+                        eprintln!("instance {} found but has no custom spec", inst.api_key_ref);
+                        return 2;
+                    }
                 } else {
                     // 拼"已知 id"列表(builtin + custom),错误消息更友好
                     let mut known: Vec<String> = builtin_sources()
                         .iter()
                         .map(|s| s.id().to_string())
                         .collect();
-                    known.extend(customs.iter().map(|s| s.id.clone()));
+                    known.extend(customs.iter().map(|s| s.api_key_ref.clone()));
                     eprintln!(
                         "{}",
                         t!(

@@ -148,7 +148,16 @@
     "custom_limit_reached": "已达自定义来源上限 (50)",
     "custom_duplicate": "display_name '{name}' 已被其他自定义来源占用",
     "custom_not_found": "custom source '{id}' 不存在",
-    "custom_path_must_start_with_slash": "自定义来源的 path 必须以 '/' 开头（防止 URL 混淆攻击）"
+    "custom_path_must_start_with_slash": "自定义来源的 path 必须以 '/' 开头（防止 URL 混淆攻击）",
+    "extra": {
+      "provider_id_empty": "provider_id 不能为空",
+      "custom_spec_required": "provider_id == 'custom' 时必须填 custom 字段",
+      "unknown_provider": "未知的 provider_id: {id}",
+      "save_key_failed": "保存 key 失败: {err}",
+      "limit_reached": "已达 extra instance 上限 (50)",
+      "not_found": "extra instance '{id}' 不存在",
+      "custom_only_for_custom_provider": "custom 字段只能在 provider_id == 'custom' 的 instance 上修改"
+    }
   },
 
   "cli": {
@@ -179,6 +188,13 @@
     "stepfun": "阶跃星辰 Step Plan",
     "siliconflow": "SiliconFlow",
     "claude_official": "Claude 官方"
+  },
+
+  "provider": {
+    "suffix": {
+      "dup": " #{}"
+    },
+    "custom": "New API 中转站"
   },
 
   "xiaomi_login": {

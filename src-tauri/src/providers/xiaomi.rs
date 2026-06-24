@@ -92,17 +92,32 @@ pub struct XiaomimimoState {
 
 pub struct XiaomimimoSource {
     state: Arc<RwLock<XiaomimimoState>>,
+    /// PR 1b：1 = 内置第 1 份，≥2 = 副本
+    instance_index: u32,
 }
 
 impl Default for XiaomimimoSource {
     fn default() -> Self {
         Self {
             state: Arc::new(RwLock::new(XiaomimimoState::default())),
+            instance_index: 1,
         }
     }
 }
 
 impl XiaomimimoSource {
+    /// PR 1b：带 instance_index 的新实例
+    pub fn with_instance_index(mut self, idx: u32) -> Self {
+        self.instance_index = idx;
+        self
+    }
+
+    /// PR 1b：in-place 改 instance_index
+    #[allow(dead_code)] // 预留 v2 备用（PR 1b 用 with_instance_index 已覆盖当前路径）
+    pub fn set_instance_index(&mut self, idx: u32) {
+        self.instance_index = idx;
+    }
+
     #[allow(dead_code)] // 预留 v2 状态推送 API，Phase 1 重构后 commands 改走 trait 方法（impl QuotaSource 那个 set_state）。这里保留旧的 helper 给后续 unit test / 调试路径用。
     pub async fn set_state(
         &self,
@@ -121,8 +136,23 @@ impl QuotaSource for XiaomimimoSource {
     fn id(&self) -> Cow<'_, str> {
         Cow::Borrowed("xiaomimimo")
     }
+    fn unique_id(&self) -> String {
+        if self.instance_index <= 1 {
+            "xiaomimimo".to_string()
+        } else {
+            format!("xiaomimimo#{}", self.instance_index)
+        }
+    }
     fn display_name(&self) -> Cow<'_, str> {
-        Cow::Owned(t!("provider_name.xiaomimimo").into_owned())
+        if self.instance_index <= 1 {
+            Cow::Owned(t!("provider_name.xiaomimimo").into_owned())
+        } else {
+            Cow::Owned(format!(
+                "{}{}",
+                t!("provider_name.xiaomimimo").as_ref(),
+                t!("provider.suffix.dup", n = self.instance_index),
+            ))
+        }
     }
     /// 优先 Bearer（API key），401 时降级到 Cookie。两个输入都展示在设置面板。
     /// 决策逻辑见 [`decide_auth_strategy`] + [`Xiaomimimo::fetch`]。

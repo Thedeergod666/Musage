@@ -18,7 +18,8 @@
 //! PR 3：custom_sources 子模块装 5 个用户自定义 New API source 的 IPC。
 //! 拆出子模块是因为 `commands/mod.rs` 本身已经 1200+ 行。
 
-pub mod custom_sources;
+// PR 1b：用户额外 source 实例 IPC (6 commands)
+pub mod extra_instances;
 pub mod i18n;
 
 use tauri::{AppHandle, Emitter, Manager, State};

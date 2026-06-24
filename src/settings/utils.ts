@@ -156,6 +156,15 @@ export function formatLogTime(ms: number): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
+/// PR 1b: 渲染 source 显示名 —— instance_index == 1 不加后缀，>=2 加 "#N"（带空格）。
+///
+/// 后端 `display_name()` 已经做了这件事，前端这里做"纯本地 fallback"（比如
+/// 拿到 meta 但没拿 display_name 时用，或老 customs 的 spec.display_name）。
+export function formatDisplayName(base: string, instanceIndex: number): string {
+  if (instanceIndex <= 1) return base;
+  return `${base} #${instanceIndex}`;
+}
+
 /** Debounce wrapper —— 连续调用只触发最后一次，delay ms 后执行。
  *  用法: `const flush = debounce(async () => {...}, 300); input.oninput = flush;`
  */

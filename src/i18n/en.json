@@ -119,18 +119,21 @@
       "show_in_floating": "Show in floating window",
       "search_placeholder": "Search provider (id or name)...",
       "count_label": "{enabled} enabled / {total} total",
-      "add_custom": "+ Add custom source",
-      "add_custom_title": "Add custom source",
+      "add_custom": "+ Add new source",
+      "add_custom_title": "Add new source",
+      "add_source": "Add new source",
+      "add_load_picker_failed": "Failed to load provider list: {err}",
       "refresh_interval_override": "Refresh interval (override)",
       "refresh_interval_placeholder": "Default {secs}s (top \"Refresh interval\")",
       "refresh_interval_help": "Empty = use top \"Refresh interval\". At least 10s (avoid triggering provider rate limit).",
       "unit_seconds": "sec",
-      "delete_custom_btn_title": "Delete custom source {name}",
-      "delete_custom_confirm": "Delete custom source \"{name}\"?\nIts API key will also be deleted.",
-      "delete_custom_prompt": "To prevent mis-deletion, please enter display_name \"{name}\" again:",
-      "delete_custom_mismatch": "display_name mismatch, not deleted",
-      "delete_custom_done": "{name} deleted",
+      "delete_extra_btn_title": "Delete instance {name}",
+      "delete_extra_confirm": "Delete instance \"{name}\"?\nIts API key will also be deleted.",
+      "delete_extra_prompt": "To prevent mis-deletion, please enter the full name \"{name}\" again:",
+      "delete_extra_mismatch": "Name mismatch, not deleted",
+      "delete_extra_done": "{name} deleted",
       "delete_failed": "Delete failed: {err}",
+      "copy_builtin_btn_title": "Copy this provider (add new instance)",
       "load_failed": "Failed to load sources: {err}",
       "flash_toggle_failed": "Toggle display failed: {err}"
     },
@@ -519,6 +522,24 @@
     },
     "test_passing": "Test passed, saving...",
     "added": "{name} added (id: {id})"
+  },
+  "extra": {
+    "form": {
+      "provider_type_label": "Source type",
+      "provider_type_help": "All 11 built-in providers can have multiple instances (each with its own key); custom is for New API relays",
+      "api_key_label": "API key",
+      "api_key_placeholder": "sk-...",
+      "api_key_help": "Built-in provider instances use separate keys (independent from the built-in 1st copy)"
+    },
+    "err": {
+      "provider_required": "Please select a source type",
+      "api_key_required": "API key must not be empty",
+      "test_failed": "Test failed: {err}",
+      "test_error": "Test connection error: {err}",
+      "save_failed": "Save failed: {err}"
+    },
+    "test_passing": "Test passed, saving...",
+    "added": "added (id: {id})"
   },
   "help": {
     "minimax": "Key saved to local <code>keys.json</code> with <code>0600</code> permission (same dir as config, no system keychain, no startup password).<br><br>Get it from <a href=\"https://platform.minimaxi.com/user-center/basic-information/interface-key\" target=\"_blank\" class=\"link-ext\">platform.minimaxi.com</a>.",

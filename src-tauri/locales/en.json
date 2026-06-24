@@ -148,7 +148,16 @@
     "custom_limit_reached": "Custom source limit reached (50)",
     "custom_duplicate": "display_name '{name}' already used by another custom source",
     "custom_not_found": "custom source '{id}' does not exist",
-    "custom_path_must_start_with_slash": "Custom source path must start with '/' (prevents URL confusion)"
+    "custom_path_must_start_with_slash": "Custom source path must start with '/' (prevents URL confusion)",
+    "extra": {
+      "provider_id_empty": "provider_id must not be empty",
+      "custom_spec_required": "When provider_id == 'custom', the custom field is required",
+      "unknown_provider": "Unknown provider_id: {id}",
+      "save_key_failed": "Failed to save credential: {err}",
+      "limit_reached": "Extra instance limit reached (50)",
+      "not_found": "Extra instance '{id}' does not exist",
+      "custom_only_for_custom_provider": "custom field can only be modified on provider_id == 'custom' instances"
+    }
   },
 
   "cli": {
@@ -179,6 +188,13 @@
     "stepfun": "StepFun Step Plan",
     "siliconflow": "SiliconFlow",
     "claude_official": "Claude"
+  },
+
+  "provider": {
+    "suffix": {
+      "dup": " #{}"
+    },
+    "custom": "New API relay"
   },
 
   "xiaomi_login": {

@@ -7,7 +7,9 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AppConfig,
   CustomSourceSpec,
+  ExtraInstance,
   LogEntry,
+  PickerProvider,
   ProviderOverrides,
   ProviderSnapshot,
   QuotaSnapshot,
@@ -185,54 +187,60 @@ export async function getAppVersion(): Promise<string> {
   return invoke<string>("get_app_version");
 }
 
-// ── PR 3: 用户自定义 New API source ─────────────────────────────
+// ── PR 1b: 用户额外 source 实例 (内置副本 + New API 中转站) ──────────
 
-/** 列出所有 custom source specs（无 customs 时返空数组） */
-export async function listCustomSources(): Promise<CustomSourceSpec[]> {
-  return invoke<CustomSourceSpec[]>("list_custom_sources");
+/** PR 1b：列出所有 extra instance（包含 custom + 内置副本） */
+export async function listExtraInstances(): Promise<ExtraInstance[]> {
+  return invoke<ExtraInstance[]>("list_extra_instances");
 }
 
-/**
- * 添加 custom source。
- *
- * 后端会：
- * 1. 校验 display_name/base_url/path/method
- * 2. 生成 `custom_<uuid>` id 和 created_at
- * 3. 持久化到 `custom_sources.json`
- * 4. emit config-changed（settings 重建）
- * 5. **立即 refresh_single**（浮窗不等 poller 就出第一条数据）
- *
- * @returns 新 source 的 id (`custom_<uuid>`)
- */
-export async function addCustomSource(
-  spec: Omit<CustomSourceSpec, "id" | "created_at">,
-): Promise<string> {
-  return invoke<string>("add_custom_source", { spec });
+/** PR 1b：provider picker 数据源（11 内置 + custom） */
+export async function listPickerProviders(): Promise<PickerProvider[]> {
+  return invoke<PickerProvider[]>("list_picker_providers");
 }
 
-/** 更新 custom source（按 id 匹配）—— 后端持久化 + 立即 refresh */
-export async function updateCustomSource(spec: CustomSourceSpec): Promise<void> {
-  await invoke("update_custom_source", { spec });
+/** PR 1b：添加一个 extra instance（内置副本或 custom） */
+export interface AddExtraInstanceRequest {
+  provider_id: string;
+  api_key?: string;
+  api_cookie?: string;
+  custom?: Omit<CustomSourceSpec, "id" | "created_at">;
+}
+export async function addExtraInstance(
+  req: AddExtraInstanceRequest,
+): Promise<ExtraInstance> {
+  return invoke<ExtraInstance>("add_extra_instance", { req });
 }
 
-/** 删除 custom source —— 后端从 custom_sources.json + keys.json 都删 */
-export async function deleteCustomSource(id: string): Promise<void> {
-  await invoke("delete_custom_source", { id });
+/** PR 1b：更新一个 extra instance（按 id 找） */
+export interface UpdateExtraInstanceRequest {
+  id: string;
+  api_key?: string;
+  api_cookie?: string;
+  custom?: Omit<CustomSourceSpec, "id" | "created_at">;
+}
+export async function updateExtraInstance(
+  req: UpdateExtraInstanceRequest,
+): Promise<ExtraInstance> {
+  return invoke<ExtraInstance>("update_extra_instance", { req });
 }
 
-/**
- * 测试连接 —— 不写 spec，只用临时 CustomSource fetch 一次。
- * 用于 modal 的「测试一下」按钮。
- *
- * @param spec     用户填好的 spec（base_url / path / extract 必填）
- * @param apiKey   用户填的 API key（暂存，不持久化）
- * @returns ProviderSnapshot（成功时 success=true + rows，失败时 error+error_kind）
- */
-export async function testCustomSource(
-  spec: Omit<CustomSourceSpec, "id" | "created_at">,
-  apiKey: string,
+/** PR 1b：删除一个 extra instance（按 id） */
+export async function deleteExtraInstance(id: string): Promise<void> {
+  await invoke("delete_extra_instance", { id });
+}
+
+/** PR 1b：测试连接（不写 state） */
+export interface TestExtraInstanceRequest {
+  provider_id: string;
+  api_key?: string;
+  api_cookie?: string;
+  custom?: Omit<CustomSourceSpec, "id" | "created_at">;
+}
+export async function testExtraInstance(
+  req: TestExtraInstanceRequest,
 ): Promise<ProviderSnapshot> {
-  return invoke<ProviderSnapshot>("test_custom_source", { spec, apiKey });
+  return invoke<ProviderSnapshot>("test_extra_instance", { req });
 }
 
 // ── C3 fix: source-extras 6 个交互控件的 per-field setter ────────

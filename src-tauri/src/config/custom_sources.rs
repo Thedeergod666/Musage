@@ -1,11 +1,20 @@
-//! 用户自定义 New API source 的 spec 持久化（PR 3）
+//! 用户自定义 New API source 的 spec 持久化（PR 3 · 迁移 wrapper in PR 1a）
 //!
 //! ## 文件位置
 //!
 //! `<config_dir>/com.musage.app/custom_sources.json` —— 跟 `config.json` /
 //! `keys.json` 同目录，结构 top-level array（不是 map）。
 //!
-//! ## 为什么不进 `config.json`
+//! ## PR 1a 状态：迁移 wrapper
+//!
+//! 老 `custom_sources.json`（`Vec<CustomSourceSpec>`） → 新 `extra_instances.json`
+//! （`Vec<ExtraInstance>`）。`load_or_migrate()` 启动时调用一次：
+//! - 优先读 `extra_instances.json`，存在 → 直接返
+//! - 不存在但 `custom_sources.json` 存在 → 迁：把 spec 转成 ExtraInstance，存
+//!   `extra_instances.json`，rename 老文件成 `.migrated`
+//! - 都不存在 → 返空 Vec
+//!
+//! PR 1b 删这个 wrapper + 老 custom_sources.json 文件。
 //!
 //! - `config.json` 是用户偏好（region / enabled / interval / pin mode 等），
 //!   用 `AppConfig` serde 重度耦合（每个字段都有 default 兼容逻辑）。把 spec 塞
@@ -107,6 +116,89 @@ pub fn save_custom_sources(specs: &[CustomSourceSpec]) -> Result<(), String> {
 fn custom_sources_path() -> Result<PathBuf, String> {
     let dir = super::config_dir()?;
     Ok(dir.join("com.musage.app").join(CUSTOM_SOURCES_FILE))
+}
+
+// ── PR 1a · 迁移 wrapper ────────────────────────────────────────
+
+/// 启动时调一次：读 `extra_instances.json`，不存在则从老 `custom_sources.json` 迁。
+///
+/// 行为：
+/// 1. `extra_instances.json` 存在 → 直接 `extra_instances::load()`
+/// 2. 否则 `custom_sources.json` 存在 → 迁：
+///    - 读老 `Vec<CustomSourceSpec>`
+///    - 转成 `Vec<ExtraInstance>`（每个 spec 一个 ExtraInstance，instance_index 按
+///      created_at 升序从 2 起 —— 跟 builtin 副本编号语义一致）
+///    - 写 `extra_instances.json`（原子写 + 0600）
+///    - rename 老文件 → `custom_sources.json.migrated`（失败也不 panic，只是日志）
+/// 3. 都不存在 → `Ok(vec![])`
+pub fn load_or_migrate() -> Result<Vec<crate::config::extra_instances::ExtraInstance>, String> {
+    use crate::config::extra_instances::{self, ExtraInstance};
+
+    // 1. 新文件已存在 → 直接返
+    if extra_instances_path_exists() {
+        return extra_instances::load();
+    }
+
+    // 2. 尝试读老文件
+    let old_path = custom_sources_path()?;
+    if !old_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let old_specs = match load_custom_sources() {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(error = %e, "load_or_migrate: 老 custom_sources.json 读取失败，跳过迁移");
+            return Ok(Vec::new());
+        }
+    };
+
+    // 转 spec → ExtraInstance
+    let now = chrono::Utc::now().timestamp();
+    let mut by_created: Vec<CustomSourceSpec> = old_specs;
+    by_created.sort_by_key(|s| s.created_at);
+
+    let new_instances: Vec<ExtraInstance> = by_created
+        .into_iter()
+        .enumerate()
+        .map(|(i, spec)| ExtraInstance {
+            id: uuid::Uuid::new_v4(),
+            provider_id: "custom".to_string(),
+            instance_index: (i as u32) + 2, // custom 也从 2 起
+            api_key_ref: spec.id.clone(),
+            custom: Some(spec),
+            created_at: now,
+        })
+        .collect();
+
+    // 写新文件（best-effort：写失败返空，不 panic —— 用户数据全在老文件）
+    if let Err(e) = extra_instances::save(&new_instances) {
+        tracing::error!(error = %e, "load_or_migrate: 写 extra_instances.json 失败");
+        return Ok(Vec::new());
+    }
+
+    // rename 老文件 → .migrated（best-effort）
+    let migrated_path = old_path.with_extension("json.migrated");
+    if let Err(e) = std::fs::rename(&old_path, &migrated_path) {
+        tracing::warn!(
+            error = %e,
+            old = %old_path.display(),
+            migrated = %migrated_path.display(),
+            "load_or_migrate: rename 老 custom_sources.json 失败（不影响功能，老文件留在原地）",
+        );
+    } else {
+        tracing::info!(
+            count = new_instances.len(),
+            migrated = %migrated_path.display(),
+            "load_or_migrate: 已把 custom_sources.json 迁到 extra_instances.json",
+        );
+    }
+
+    Ok(new_instances)
+}
+
+fn extra_instances_path_exists() -> bool {
+    crate::config::extra_instances::extra_instances_path_for_migration_check()
 }
 
 // ── 单元测试（仅函数 + 文件 IO 部分，序列化在 spec crate 里） ──

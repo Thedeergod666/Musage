@@ -1,21 +1,30 @@
-// "添加自定义 New API 来源" modal
+// "添加新来源" modal（PR 1b）
 //
-// PR 3 核心 UI：
-// - 1 个 `<dialog>` 弹窗
-// - 表单：display_name / base_url / path / method (GET/POST) / 3 选 1 extract preset
-//         / 动态字段（按 preset 显示 balance_path 等）/ accent 调色板 / API key
-// - 「测试连接」按钮：调 testCustomSource，成功后才允许「保存」
-// - 「保存」：调 addCustomSource → 后端立即 refresh_single → 浮窗立即出数据
+// PR 3 → PR 1b 重构：
+// - PR 3：只支持 New API 中转站（custom）
+// - PR 1b：两段式表单
+//   - Step 1：provider picker（11 内置下拉 + 1 custom 选项）
+//   - Step 2A（内置）：只显示 API key 输入框
+//   - Step 2B（custom）：原 3 选 1 Extract 模板（New API / 余额 / 自定义）
+// - 提交：调 add_extra_instance(provider_id, api_key, custom?) —— 后端自动算 instance_index
+//
+// 老的 openAddCustomSourceModal / buildForm 等导出**已删除**（PR 1b 砍），
+// 前端只通过新入口 openAddExtraInstanceModal 进入。
 
 import { el, flash } from "./utils";
 import { showModal } from "./modal";
 import {
-  addCustomSource,
-  testCustomSource,
-  listCustomSources,
+  addExtraInstance,
+  testExtraInstance,
+  listExtraInstances,
+  listPickerProviders,
 } from "./api";
 import { t } from "../i18n";
-import type { CustomSourceSpec, ExtractSpec } from "./types";
+import type {
+  CustomSourceSpec,
+  ExtractSpec,
+  PickerProvider,
+} from "./types";
 import { renderProvidersSection } from "./providers";
 
 const ACCENT_PALETTE = [
@@ -29,27 +38,104 @@ const ACCENT_PALETTE = [
   "#d97706",
 ];
 
-/** 「+ 添加自定义来源」按钮绑的事件入口 */
-export function openAddCustomSourceModal(): void {
-  const body = buildForm();
+/** 「+ 添加新来源」按钮绑的事件入口 */
+export async function openAddExtraInstanceModal(): Promise<void> {
+  // 1. 拉 provider picker 数据
+  let providers: PickerProvider[];
+  try {
+    providers = await listPickerProviders();
+  } catch (e) {
+    flash(t("settings.providers.add_load_picker_failed", { err: String(e) }), true);
+    return;
+  }
+  // 2. 构造表单
+  const body = buildForm(providers);
   showModal({
-    title: t("custom_source.title"),
+    title: t("settings.providers.add_source"),
     body,
     submitLabel: t("settings.common.save"),
-    onSubmit: async () => {
-      return submitHandler(body);
-    },
+    onSubmit: async () => submitHandler(body),
   });
 }
 
 // ── 内部 ──────────────────────────────────────────────────────
 
-/** 构造表单 body，存所有字段引用到 dataset。 */
-function buildForm(): HTMLElement {
-  const root = el("div", { class: "custom-source-form" });
+/** 构造两段式表单 body。 */
+function buildForm(providers: PickerProvider[]): HTMLElement {
+  const root = el("div", { class: "extra-instance-form" });
 
-  // display_name
-  root.appendChild(
+  // Step 1: provider picker
+  const pickerField = el("div", { class: "field" },
+    el("label", {}, t("extra.form.provider_type_label")),
+    el("select", {
+      id: "ei-provider",
+      class: "provider-picker",
+    },
+      ...providers.map((p) => el("option", {
+        value: p.id,
+        "data-is-builtin": String(p.is_builtin),
+      }, t(p.name_key as any) as string)),
+    ),
+    el("div", { class: "help" },
+      t("extra.form.provider_type_help")),
+  );
+  root.appendChild(pickerField);
+
+  // Step 2: dynamic fields（按 provider 类型切换）
+  const dynamicFields = el("div", { id: "ei-dynamic-fields" });
+  root.appendChild(dynamicFields);
+
+  // 初始渲染（默认第一个 provider）
+  renderDynamicFields(providers[0]?.id ?? "minimax", providers, dynamicFields);
+
+  // picker change → 重渲染 dynamic fields
+  root.addEventListener("change", (e) => {
+    const target = e.target as HTMLSelectElement;
+    if (target.id === "ei-provider") {
+      renderDynamicFields(target.value, providers, dynamicFields);
+    }
+  });
+
+  return root;
+}
+
+/** 按 provider_id 渲染 dynamic fields。内置走"只填 key"，custom 走 3 选 1 Extract 模板。 */
+function renderDynamicFields(
+  providerId: string,
+  providers: PickerProvider[],
+  host: HTMLElement,
+): void {
+  host.innerHTML = "";
+  const provider = providers.find((p) => p.id === providerId);
+  if (!provider) return;
+
+  if (providerId === "custom") {
+    renderCustomFields(host);
+  } else {
+    renderBuiltinFields(host, provider);
+  }
+}
+
+function renderBuiltinFields(host: HTMLElement, _provider: PickerProvider): void {
+  // 内置副本：只填 key（key 类型按 auth_kind 决定，UI 不重复提示）
+  // 简化：auth_kind = cookie 的也用同一 password 框（不区分 cookie / api_key）
+  host.appendChild(
+    el("div", { class: "field" },
+      el("label", { for: "ei-api-key" }, t("extra.form.api_key_label")),
+      el("input", {
+        type: "password",
+        id: "ei-api-key",
+        autocomplete: "off",
+        placeholder: t("extra.form.api_key_placeholder"),
+      }),
+      el("div", { class: "help" }, t("extra.form.api_key_help")),
+    ),
+  );
+}
+
+function renderCustomFields(host: HTMLElement): void {
+  // ===== display_name =====
+  host.appendChild(
     field("display_name", t("custom_source.field.display_name"), el("input", {
       type: "text",
       id: "cs-name",
@@ -59,8 +145,8 @@ function buildForm(): HTMLElement {
     })),
   );
 
-  // base_url
-  root.appendChild(
+  // ===== base_url =====
+  host.appendChild(
     field("base_url", t("custom_source.field.base_url"), el("input", {
       type: "url",
       id: "cs-base",
@@ -70,8 +156,8 @@ function buildForm(): HTMLElement {
     })),
   );
 
-  // path
-  root.appendChild(
+  // ===== path =====
+  host.appendChild(
     field("path", t("custom_source.field.path"), el("input", {
       type: "text",
       id: "cs-path",
@@ -81,7 +167,7 @@ function buildForm(): HTMLElement {
     })),
   );
 
-  // method (radio GET / POST)
+  // ===== method (radio GET / POST) =====
   const methodGroup = el("div", { class: "field" },
     el("label", {}, t("custom_source.field.method")),
     el("div", { class: "radio-group" },
@@ -89,9 +175,9 @@ function buildForm(): HTMLElement {
       radio("cs-method", "POST", false),
     ),
   );
-  root.appendChild(methodGroup);
+  host.appendChild(methodGroup);
 
-  // extract preset (3 选 1 radio)
+  // ===== extract preset (3 选 1 radio) =====
   const presetGroup = el("div", { class: "field" },
     el("label", {}, t("custom_source.field.extract_preset")),
     el("div", { class: "radio-group" },
@@ -99,18 +185,16 @@ function buildForm(): HTMLElement {
       radio("cs-preset", "balance", false, t("custom_source.preset.balance")),
       radio("cs-preset", "custom", false, t("custom_source.preset.custom")),
     ),
-    el("div", { class: "help" },
-      t("custom_source.preset_help"),
-    ),
+    el("div", { class: "help" }, t("custom_source.preset_help")),
   );
-  root.appendChild(presetGroup);
+  host.appendChild(presetGroup);
 
-  // 动态字段容器：按 preset 切换
-  const dynamicFields = el("div", { id: "cs-dynamic-fields" });
-  root.appendChild(dynamicFields);
+  // ===== dynamic fields (按 preset 切换) =====
+  const csDynamicFields = el("div", { id: "cs-dynamic-fields" });
+  host.appendChild(csDynamicFields);
 
-  // plan_name_path（可选）
-  root.appendChild(
+  // ===== plan_name_path =====
+  host.appendChild(
     field("plan_name_path", t("custom_source.field.plan_name"), el("input", {
       type: "text",
       id: "cs-plan",
@@ -119,7 +203,7 @@ function buildForm(): HTMLElement {
     })),
   );
 
-  // accent 调色板
+  // ===== accent 调色板 =====
   const accentGroup = el("div", { class: "field" },
     el("label", {}, t("custom_source.field.accent")),
     el("div", { class: "accent-palette", id: "cs-accent-palette" },
@@ -133,10 +217,10 @@ function buildForm(): HTMLElement {
     ),
     el("div", { class: "help" }, t("custom_source.field.accent_help")),
   );
-  root.appendChild(accentGroup);
+  host.appendChild(accentGroup);
 
-  // API key
-  root.appendChild(
+  // ===== api_key =====
+  host.appendChild(
     field("api_key", t("custom_source.field.api_key"), el("input", {
       type: "password",
       id: "cs-api-key",
@@ -145,13 +229,12 @@ function buildForm(): HTMLElement {
     })),
   );
 
-  // preset change → 动态字段
-  root.addEventListener("change", (e) => {
+  // preset change → 重新渲染 dynamic fields + accent 选中
+  host.addEventListener("change", (e) => {
     const t = e.target as HTMLInputElement;
-    if (t.name === "cs-preset") renderDynamicFields(t.value);
+    if (t.name === "cs-preset") renderCustomPresetFields(t.value);
     if (t.classList.contains("accent-swatch")) {
-      // 高亮选中
-      root
+      host
         .querySelectorAll<HTMLElement>(".accent-swatch")
         .forEach((s) => s.classList.remove("selected"));
       t.classList.add("selected");
@@ -159,37 +242,10 @@ function buildForm(): HTMLElement {
   });
 
   // 初始 NewApi 字段
-  renderDynamicFields("new_api");
-
-  return root;
+  renderCustomPresetFields("new_api");
 }
 
-function field(_name: string, label: string, input: HTMLElement): HTMLElement {
-  return el("div", { class: "field" },
-    el("label", { for: input.id }, label),
-    el("div", { class: "input-row" }, input),
-  );
-}
-
-function radio(name: string, value: string, checked: boolean, label?: string): HTMLElement {
-  const id = `${name}-${value}`;
-  // 注意：input 必须 margin: 0 + flex-shrink: 0，否则原生 radio 的
-  // "clickable area" 会把旁边的文字推开 / 内部点遮住字母（之前 GET 被
-  // 渲染成 GOT 的根因）。
-  return el("label", { class: "radio", for: id },
-    el("input", {
-      type: "radio",
-      name,
-      id,
-      value,
-      ...(checked ? { checked: "true" } : {}),
-    }),
-    el("span", { class: "radio-label" }, label ?? value),
-  );
-}
-
-/** 按 preset 渲染 dynamic fields（替换 #cs-dynamic-fields 内容） */
-function renderDynamicFields(preset: string): void {
+function renderCustomPresetFields(preset: string): void {
   const host = document.getElementById("cs-dynamic-fields");
   if (!host) return;
   host.innerHTML = "";
@@ -270,8 +326,79 @@ function renderDynamicFields(preset: string): void {
   }
 }
 
+function field(_name: string, label: string, input: HTMLElement): HTMLElement {
+  return el("div", { class: "field" },
+    el("label", { for: input.id }, label),
+    el("div", { class: "input-row" }, input),
+  );
+}
+
+function radio(name: string, value: string, checked: boolean, label?: string): HTMLElement {
+  const id = `${name}-${value}`;
+  return el("label", { class: "radio", for: id },
+    el("input", {
+      type: "radio",
+      name,
+      id,
+      value,
+      ...(checked ? { checked: "true" } : {}),
+    }),
+    el("span", { class: "radio-label" }, label ?? value),
+  );
+}
+
+// ── 提交 ──────────────────────────────────────────────────────
+
 async function submitHandler(body: HTMLElement): Promise<boolean> {
-  // 1. 收集字段
+  // 1. 取 provider 类型
+  const providerId = body.querySelector<HTMLSelectElement>("#ei-provider")!.value;
+  if (!providerId) {
+    flash(t("extra.err.provider_required"), true);
+    return false;
+  }
+
+  // 2. 按类型分支收集字段
+  if (providerId === "custom") {
+    return submitCustom(body);
+  } else {
+    return submitBuiltin(body, providerId);
+  }
+}
+
+async function submitBuiltin(body: HTMLElement, providerId: string): Promise<boolean> {
+  const apiKey = (body.querySelector<HTMLInputElement>("#ei-api-key")?.value ?? "").trim();
+  if (!apiKey) {
+    flash(t("extra.err.api_key_required"), true);
+    return false;
+  }
+
+  // 测试连接
+  try {
+    const snap = await testExtraInstance({ provider_id: providerId, api_key: apiKey });
+    if (!snap.success) {
+      flash(t("extra.err.test_failed", { err: snap.error ?? t("floating.error.unknown") }), true);
+      return false;
+    }
+    flash(t("extra.test_passing"));
+  } catch (e) {
+    flash(t("extra.err.test_error", { err: String(e) }), true);
+    return false;
+  }
+
+  // 保存
+  try {
+    const inst = await addExtraInstance({ provider_id: providerId, api_key: apiKey });
+    flash(t("extra.added", { id: inst.api_key_ref }));
+    await rebuildProvidersSection();
+    return true;
+  } catch (e) {
+    flash(t("extra.err.save_failed", { err: String(e) }), true);
+    return false;
+  }
+}
+
+async function submitCustom(body: HTMLElement): Promise<boolean> {
+  // 1. 收集 custom 字段（跟原 custom-source-form.ts 一样）
   const displayName = (body.querySelector<HTMLInputElement>("#cs-name")!.value ?? "").trim();
   const baseUrl = (body.querySelector<HTMLInputElement>("#cs-base")!.value ?? "").trim();
   const path = (body.querySelector<HTMLInputElement>("#cs-path")!.value ?? "").trim();
@@ -304,14 +431,8 @@ async function submitHandler(body: HTMLElement): Promise<boolean> {
     const balancePath = (body.querySelector<HTMLInputElement>("#cs-balance-path")!.value ?? "").trim();
     if (!balancePath) { flash(t("custom_source.err.balance_path_required"), true); return false; }
     const currencyPath = (body.querySelector<HTMLInputElement>("#cs-currency-path")!.value ?? "").trim();
-    extract = {
-      preset: "balance",
-      balance_path: balancePath,
-      currency_path: currencyPath || null,
-      divide,
-    };
+    extract = { preset: "balance", balance_path: balancePath, currency_path: currencyPath || null, divide };
   } else {
-    // custom
     extract = {
       preset: "custom",
       remaining_path: (body.querySelector<HTMLInputElement>("#cs-remaining-path")?.value ?? "").trim() || null,
@@ -322,18 +443,23 @@ async function submitHandler(body: HTMLElement): Promise<boolean> {
     };
   }
 
-  // 4. 测试连接（不在 store 时跳过 test，让后端 add 失败也 OK）
+  const customSpec: Omit<CustomSourceSpec, "id" | "created_at"> = {
+    display_name: displayName,
+    base_url: baseUrl,
+    path,
+    method: method as "GET" | "POST",
+    extract,
+    plan_name_path: planNamePath || null,
+    accent,
+  };
+
+  // 4. 测试连接
   try {
-    const testSpec: Omit<CustomSourceSpec, "id" | "created_at"> = {
-      display_name: displayName,
-      base_url: baseUrl,
-      path,
-      method: method as "GET" | "POST",
-      extract,
-      plan_name_path: planNamePath || null,
-      accent,
-    };
-    const snap = await testCustomSource(testSpec, apiKey);
+    const snap = await testExtraInstance({
+      provider_id: "custom",
+      api_key: apiKey,
+      custom: customSpec,
+    });
     if (!snap.success) {
       flash(t("custom_source.err.test_failed", { err: snap.error ?? t("floating.error.unknown") }), true);
       return false;
@@ -346,28 +472,26 @@ async function submitHandler(body: HTMLElement): Promise<boolean> {
 
   // 5. 保存
   try {
-    const id = await addCustomSource({
-      display_name: displayName,
-      base_url: baseUrl,
-      path,
-      method: method as "GET" | "POST",
-      extract,
-      plan_name_path: planNamePath || null,
-      accent,
+    const inst = await addExtraInstance({
+      provider_id: "custom",
+      api_key: apiKey,
+      custom: customSpec,
     });
-    flash(t("custom_source.added", { name: displayName, id }));
-    // 重建 settings providers section
-    const container = document.querySelector<HTMLElement>(
-      '.section-view[data-section="providers"]',
-    );
-    if (container) {
-      // 防再 fetch listCustomSources 漏 customs 数量变化
-      await listCustomSources();  // warm
-      await renderProvidersSection(container);
-    }
+    flash(t("custom_source.added", { name: displayName, id: inst.api_key_ref }));
+    await rebuildProvidersSection();
     return true;
   } catch (e) {
     flash(t("custom_source.err.save_failed", { err: String(e) }), true);
     return false;
+  }
+}
+
+async function rebuildProvidersSection(): Promise<void> {
+  const container = document.querySelector<HTMLElement>(
+    '.section-view[data-section="providers"]',
+  );
+  if (container) {
+    await listExtraInstances(); // warm
+    await renderProvidersSection(container);
   }
 }

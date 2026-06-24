@@ -75,11 +75,28 @@ const OAUTH_BETA: &str = "oauth-2025-04-20";
 
 // ── QuotaSource 实现 ─────────────────────────────────────────────
 
-pub struct ClaudeOfficialSource;
+pub struct ClaudeOfficialSource {
+    /// PR 1b：1 = 内置第 1 份，≥2 = 副本
+    instance_index: u32,
+}
 
 impl Default for ClaudeOfficialSource {
     fn default() -> Self {
-        Self
+        Self { instance_index: 1 }
+    }
+}
+
+impl ClaudeOfficialSource {
+    /// PR 1b：带 instance_index 的新实例
+    pub fn with_instance_index(mut self, idx: u32) -> Self {
+        self.instance_index = idx;
+        self
+    }
+
+    /// PR 1b：in-place 改 instance_index
+    #[allow(dead_code)] // 预留 v2 备用（PR 1b 用 with_instance_index 已覆盖当前路径）
+    pub fn set_instance_index(&mut self, idx: u32) {
+        self.instance_index = idx;
     }
 }
 
@@ -87,8 +104,23 @@ impl QuotaSource for ClaudeOfficialSource {
     fn id(&self) -> Cow<'_, str> {
         Cow::Borrowed("claude_official")
     }
+    fn unique_id(&self) -> String {
+        if self.instance_index <= 1 {
+            "claude_official".to_string()
+        } else {
+            format!("claude_official#{}", self.instance_index)
+        }
+    }
     fn display_name(&self) -> Cow<'_, str> {
-        Cow::Owned(t!("provider_name.claude_official").into_owned())
+        if self.instance_index <= 1 {
+            Cow::Owned(t!("provider_name.claude_official").into_owned())
+        } else {
+            Cow::Owned(format!(
+                "{}{}",
+                t!("provider_name.claude_official").as_ref(),
+                t!("provider.suffix.dup", n = self.instance_index),
+            ))
+        }
     }
     fn auth_kind(&self) -> AuthKind {
         AuthKind::Cookie

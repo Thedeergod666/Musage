@@ -119,18 +119,21 @@
       "show_in_floating": "在浮窗显示",
       "search_placeholder": "搜索 provider (id 或名字)...",
       "count_label": "启用 {enabled} / 共 {total}",
-      "add_custom": "+ 添加自定义来源",
-      "add_custom_title": "添加自定义来源",
+      "add_custom": "+ 添加新来源",
+      "add_custom_title": "添加新来源",
+      "add_source": "添加新来源",
+      "add_load_picker_failed": "加载 provider 列表失败: {err}",
       "refresh_interval_override": "轮询间隔（覆盖）",
       "refresh_interval_placeholder": "默认 {secs} 秒（顶部「轮询间隔」）",
       "refresh_interval_help": "留空 = 用顶部「轮询间隔」。至少 10 秒（避免触发 provider rate limit）。",
       "unit_seconds": "秒",
-      "delete_custom_btn_title": "删除自定义来源 {name}",
-      "delete_custom_confirm": "确认删除自定义来源 \"{name}\"？\n其 API key 也会被一起删除。",
-      "delete_custom_prompt": "为防误删，请再次输入 display_name \"{name}\"：",
-      "delete_custom_mismatch": "display_name 不匹配，未删除",
-      "delete_custom_done": "{name} 已删除",
+      "delete_extra_btn_title": "删除副本 {name}",
+      "delete_extra_confirm": "确认删除副本 \"{name}\"？\n其 API key 也会被一起删除。",
+      "delete_extra_prompt": "为防误删，请再次输入完整名称 \"{name}\"：",
+      "delete_extra_mismatch": "名称不匹配，未删除",
+      "delete_extra_done": "{name} 已删除",
       "delete_failed": "删除失败: {err}",
+      "copy_builtin_btn_title": "复制此 provider（添加新副本）",
       "load_failed": "加载 sources 失败: {err}",
       "flash_toggle_failed": "切换显示失败: {err}"
     },
@@ -519,6 +522,24 @@
     },
     "test_passing": "测试通过，正在保存...",
     "added": "{name} 已添加 (id: {id})"
+  },
+  "extra": {
+    "form": {
+      "provider_type_label": "来源类型",
+      "provider_type_help": "11 内置 provider 都可以加多份（每个用各自 key）；custom 是 New API 中转站",
+      "api_key_label": "API key",
+      "api_key_placeholder": "sk-...",
+      "api_key_help": "内置 provider 副本用各自 key（跟『内置第 1 份』互不影响）"
+    },
+    "err": {
+      "provider_required": "请选一种来源类型",
+      "api_key_required": "API key 不能为空",
+      "test_failed": "测试失败: {err}",
+      "test_error": "测试连接出错: {err}",
+      "save_failed": "保存失败: {err}"
+    },
+    "test_passing": "测试通过，正在保存...",
+    "added": "已添加 (id: {id})"
   },
   "help": {
     "minimax": "密钥以 <code>0600</code> 权限存到本机 <code>keys.json</code>（与 config 同目录，不走系统钥匙串，启动零弹窗）。<br><br>从 <a href=\"https://platform.minimaxi.com/user-center/basic-information/interface-key\" target=\"_blank\" class=\"link-ext\">platform.minimaxi.com</a> 获取。",

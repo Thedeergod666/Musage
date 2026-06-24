@@ -779,7 +779,14 @@ pub fn cleanup_orphan_tmp_files() {
 }
 
 // PR 3：用户自定义 New API source 持久化（独立文件，不进 config.json）。
+// PR 1a：保留为 legacy loader —— 老 custom_sources.json 会被迁到 extra_instances.json。
 pub mod custom_sources;
+
+// PR 1a：用户额外添加的 source 实例（内置 provider 副本 + New API 中转站）。
+pub mod extra_instances;
+
+// PR 1b 重新导出 ExtraInstance，方便 commands / lib.rs 直接 `use crate::config::ExtraInstance`
+pub use extra_instances::ExtraInstance;
 
 fn config_dir() -> Result<PathBuf, String> {
     dirs::config_dir().ok_or_else(|| t!("commands.config_dir_not_found").into_owned())

@@ -91,6 +91,8 @@ pub struct ZenmuxSource {
     // 第二次调（用户切换 region/mode）会静默丢弃，必须重启 app 才生效。
     mode: RwLock<Option<ZenmuxMode>>,
     base_url: RwLock<Option<String>>,
+    /// PR 1b：1 = 内置第 1 份，≥2 = 副本
+    instance_index: u32,
 }
 
 impl Default for ZenmuxSource {
@@ -98,7 +100,22 @@ impl Default for ZenmuxSource {
         Self {
             mode: RwLock::new(None),
             base_url: RwLock::new(None),
+            instance_index: 1,
         }
+    }
+}
+
+impl ZenmuxSource {
+    /// PR 1b：带 instance_index 的新实例
+    pub fn with_instance_index(mut self, idx: u32) -> Self {
+        self.instance_index = idx;
+        self
+    }
+
+    /// PR 1b：in-place 改 instance_index
+    #[allow(dead_code)] // 预留 v2 备用（PR 1b 用 with_instance_index 已覆盖当前路径）
+    pub fn set_instance_index(&mut self, idx: u32) {
+        self.instance_index = idx;
     }
 }
 
@@ -106,8 +123,23 @@ impl QuotaSource for ZenmuxSource {
     fn id(&self) -> Cow<'_, str> {
         Cow::Borrowed("zenmux")
     }
+    fn unique_id(&self) -> String {
+        if self.instance_index <= 1 {
+            "zenmux".to_string()
+        } else {
+            format!("zenmux#{}", self.instance_index)
+        }
+    }
     fn display_name(&self) -> Cow<'_, str> {
-        Cow::Owned(t!("provider_name.zenmux").into_owned())
+        if self.instance_index <= 1 {
+            Cow::Owned(t!("provider_name.zenmux").into_owned())
+        } else {
+            Cow::Owned(format!(
+                "{}{}",
+                t!("provider_name.zenmux").as_ref(),
+                t!("provider.suffix.dup", n = self.instance_index),
+            ))
+        }
     }
     fn auth_kind(&self) -> AuthKind {
         AuthKind::ApiKey

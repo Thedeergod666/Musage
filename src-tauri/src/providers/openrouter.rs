@@ -38,7 +38,10 @@ const URL_KEY: &str = "https://openrouter.ai/api/v1/key";
 
 // ── QuotaSource 实现 ─────────────────────────────────────────────
 
-pub struct OpenrouterSource;
+pub struct OpenrouterSource {
+    /// PR 1b：1 = 内置第 1 份，≥2 = 副本
+    instance_index: u32,
+}
 
 // M15 fix: fallback 缓存 —— /credits 和 /key 两个端点都可能被 401 / 5xx 拒绝。
 // 之前每次 fetch 都要先试 /credits（失败）再试 /key，浪费 50% 请求。
@@ -83,7 +86,21 @@ fn should_skip_endpoint(ep: Endpoint) -> bool {
 
 impl Default for OpenrouterSource {
     fn default() -> Self {
-        Self
+        Self { instance_index: 1 }
+    }
+}
+
+impl OpenrouterSource {
+    /// PR 1b：带 instance_index 的新实例
+    pub fn with_instance_index(mut self, idx: u32) -> Self {
+        self.instance_index = idx;
+        self
+    }
+
+    /// PR 1b：in-place 改 instance_index
+    #[allow(dead_code)] // 预留 v2 备用（PR 1b 用 with_instance_index 已覆盖当前路径）
+    pub fn set_instance_index(&mut self, idx: u32) {
+        self.instance_index = idx;
     }
 }
 
@@ -91,8 +108,22 @@ impl QuotaSource for OpenrouterSource {
     fn id(&self) -> Cow<'_, str> {
         Cow::Borrowed("openrouter")
     }
+    fn unique_id(&self) -> String {
+        if self.instance_index <= 1 {
+            "openrouter".to_string()
+        } else {
+            format!("openrouter#{}", self.instance_index)
+        }
+    }
     fn display_name(&self) -> Cow<'_, str> {
-        Cow::Borrowed("OpenRouter")
+        if self.instance_index <= 1 {
+            Cow::Borrowed("OpenRouter")
+        } else {
+            Cow::Owned(format!(
+                "OpenRouter{}",
+                t!("provider.suffix.dup", n = self.instance_index),
+            ))
+        }
     }
     fn auth_kind(&self) -> AuthKind {
         AuthKind::ApiKey

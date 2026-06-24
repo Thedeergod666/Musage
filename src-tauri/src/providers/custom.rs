@@ -129,11 +129,30 @@ pub struct CustomSourceSpec {
 /// `QuotaSource` trait 要求 `Send + Sync`，CustomSource 默认就满足（String + f64）。
 pub struct CustomSource {
     spec: CustomSourceSpec,
+    /// PR 1a · instance_index（≥2）。custom 第 1 份 instance_index = 1 不进
+    /// extra_instances（虽然 PR 1a 决策：custom 也从 2 起，但 ExtraInstance
+    /// 字段仍保留 instance_index 字段兼容）。
+    instance_index: u32,
 }
 
 impl CustomSource {
     pub fn new(spec: CustomSourceSpec) -> Self {
-        Self { spec }
+        Self {
+            spec,
+            instance_index: 1,
+        }
+    }
+
+    /// PR 1a · builder-style：带 instance_index 的新实例。
+    pub fn with_instance_index(mut self, idx: u32) -> Self {
+        self.instance_index = idx;
+        self
+    }
+
+    /// PR 1a · in-place 改 instance_index。
+    #[allow(dead_code)] // 预留 v2 备用（PR 1b 用 with_instance_index 已覆盖当前路径）
+    pub fn set_instance_index(&mut self, idx: u32) {
+        self.instance_index = idx;
     }
 
     #[allow(dead_code)] // Phase E IPC 接收 spec 时用，避免重新 clone
@@ -144,9 +163,16 @@ impl CustomSource {
 
 impl QuotaSource for CustomSource {
     fn id(&self) -> Cow<'_, str> {
+        // 决策 1：custom id 永远 = spec.id ("custom_<uuid>")，不带 #N
         Cow::Owned(self.spec.id.clone())
     }
+    fn unique_id(&self) -> String {
+        // custom 不带 #N 后缀（spec.id 本身已 UUID 唯一）
+        self.spec.id.clone()
+    }
     fn display_name(&self) -> Cow<'_, str> {
+        // 决策 3：custom 的 display_name = 用户起的名字，不拼 #N
+        // （理由：custom 没有"内置第 1 份"做参照，第 1 份 New API 也用 display_name）
         Cow::Owned(self.spec.display_name.clone())
     }
     fn auth_kind(&self) -> AuthKind {

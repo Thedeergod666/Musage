@@ -79,19 +79,45 @@ pub struct MinimaxState {
 }
 
 /// 新的 trait 实现。commands.rs 走这条路径。
+///
+/// ## PR 1a · instance_index
+///
+/// 决策 1（id vs unique_id 分离）+ 决策 3（display_name 渲染时拼）：
+/// - `id()` 永远返 base `"minimax"`（走 `Cow::Borrowed`，零分配）
+/// - `unique_id()` 返 `"minimax#N"`（instance_index > 1 时）—— 给 poller map / DOM 区分
+/// - `display_name()` 走 `t!("provider_name.minimax")` i18n + `t!("provider.suffix.dup", n = idx)`
+///   后缀（**i18n key 复用** —— 中英都带 1 空格，符合"minimax #2"原例）
 pub struct MinimaxSource {
     state: Arc<RwLock<MinimaxState>>,
+    /// 1 = 内置第 1 份（默认），≥2 = 副本（由 `set_instance_index` / `with_instance_index` 设置）
+    instance_index: u32,
 }
 
 impl Default for MinimaxSource {
     fn default() -> Self {
         Self {
             state: Arc::new(RwLock::new(MinimaxState::default())),
+            instance_index: 1,
         }
     }
 }
 
 impl MinimaxSource {
+    /// Builder-style：带 instance_index 的新实例。
+    ///
+    /// **PR 1a 新增**。给 `instantiate_builtin(...)` 之后 `.set_instance_index()`
+    /// 的等价函数式版本。后续 10 个 provider 复制这个签名。
+    pub fn with_instance_index(mut self, idx: u32) -> Self {
+        self.instance_index = idx;
+        self
+    }
+
+    /// In-place 改 instance_index。给 `all_sources(state)` 已经拿到 Box 的场景用。
+    #[allow(dead_code)] // 预留 v2 备用（PR 1b 用 with_instance_index 已覆盖当前路径）
+    pub fn set_instance_index(&mut self, idx: u32) {
+        self.instance_index = idx;
+    }
+
     /// 每次 refresh tick 前由 commands.rs 调用，更新 region / overrides。
     #[allow(dead_code)] // 预留 v2 状态推送 API，Phase 1 重构后 commands 改走 trait 方法（impl QuotaSource 那个 set_state）。这里保留旧的 helper 给后续 unit test / 调试路径用。
     pub async fn set_state(&self, region: Region, overrides: ProviderOverrides) {
@@ -103,10 +129,39 @@ impl MinimaxSource {
 
 impl QuotaSource for MinimaxSource {
     fn id(&self) -> Cow<'_, str> {
+        // 决策 1：id 永远返 base provider_id（"minimax"），不分副本
         Cow::Borrowed("minimax")
     }
+
+    /// PR 1a 新增：全局唯一 id，含 instance_index 后缀。
+    ///
+    /// - instance_index == 1 → `"minimax"`（跟 id() 一样）
+    /// - instance_index >= 2  → `"minimax#2"` / `"minimax#3"` / ...
+    ///
+    /// 用 `#` 分隔（不跟 filesystem 不友好字符撞，跟 js / DOM `data-source-id`
+    /// 用法一致）。poller / settings panel / 浮窗 DOM 区分用这个。
+    fn unique_id(&self) -> String {
+        if self.instance_index <= 1 {
+            "minimax".to_string()
+        } else {
+            format!("minimax#{}", self.instance_index)
+        }
+    }
+
     fn display_name(&self) -> Cow<'_, str> {
-        Cow::Owned(t!("provider_name.minimax").into_owned())
+        // 决策 3：渲染时拼。i18n key `provider.suffix.dup` = " #{}"
+        // （中英都带 1 空格前缀，符合 "minimax #2" 原例）
+        // 注意：t!() 返回 Cow 是临时值，**不能**包成 Cow::Borrowed（生命周期
+        // 不够），统一用 Cow::Owned + into_owned。零分配优化等 v2 再说。
+        if self.instance_index <= 1 {
+            Cow::Owned(t!("provider_name.minimax").into_owned())
+        } else {
+            Cow::Owned(format!(
+                "{}{}",
+                t!("provider_name.minimax").as_ref(),
+                t!("provider.suffix.dup", n = self.instance_index),
+            ))
+        }
     }
     fn auth_kind(&self) -> AuthKind {
         AuthKind::ApiKey

@@ -457,10 +457,37 @@ pub trait QuotaSource: Send + Sync {
     ///
     /// PR 3 起改 `Cow<'_, str>`：内置 source 返 `Cow::Borrowed(...)`（零分配），
     /// [`CustomSource`] 返 `Cow::Owned(spec.id.clone())`。
+    ///
+    /// **PR 1a 决策 1**：**副本共享 base id**（`"minimax"`），不返回 `"minimax#2"`。
+    /// 多实例区分走 [`unique_id`](Self::unique_id)。这样 `all_sources(state)` 之外
+    /// 的 "按 provider 类型" 逻辑（region 解析 / schema_overrides 取字段 /
+    /// builtin_sources 注册表）都还能直接用 `id()`，不破坏。
     fn id(&self) -> Cow<'_, str>;
+    /// **PR 1a 新增**：全局唯一 id，含 instance_index 后缀。
+    ///
+    /// - `id() == "minimax"` + instance_index = 1 → `"minimax"`
+    /// - `id() == "minimax"` + instance_index = 2 → `"minimax#2"`
+    /// - `id() == "minimax"` + instance_index = 3 → `"minimax#3"`
+    ///
+    /// 默认实现：`id() + "#N"`（如果 instance_index > 1），否则 `id()`。
+    /// 大多数 provider 可以直接用默认；custom 走 base id（即 spec.id）
+    /// + 不带后缀的特殊路径，自己 override。
+    ///
+    /// 用法：poller `next_fetch` map key、浮窗 `data-source-id` DOM attr、
+    /// settings panel 行 key —— 所有需要"区分多 instance"的场景。
+    fn unique_id(&self) -> String {
+        // 默认实现：instance_index = 1 → id()；否则 id()#N
+        // 但 trait 默认实现拿不到 instance_index，所以用 1 作为保守默认值
+        // —— 内置 source 必须 override（PR 1a 已实装 minimax，PR 1b 复制）。
+        self.id().into_owned()
+    }
     /// 给用户看的名字（"MiniMax" / "Tavily" / 用户自定义 `"DMX API"`）
     ///
     /// 同 [`id`](Self::id)，PR 3 起 `Cow<'_, str>`。
+    ///
+    /// **PR 1a 决策 3**：副本场景（instance_index > 1）走
+    /// `format!("{base_name} {suffix}", n = idx)` 拼后缀，后缀走 i18n key
+    /// `provider.suffix.dup`。内置 source 必须 override；默认实现 = id()（兜底）。
     fn display_name(&self) -> Cow<'_, str>;
     /// 鉴权方式（决定设置面板显示什么输入框）
     fn auth_kind(&self) -> AuthKind;
@@ -532,25 +559,141 @@ pub fn builtin_sources() -> Vec<Box<dyn QuotaSource>> {
 /// ## Lock 顺序约定
 ///
 /// 调用方在持 `state.config` 锁的情况下**不能**调本函数（会死锁）——
-/// `all_sources` 先拿 `state.custom_sources.read()` 再用 `builtin_sources()`
+/// `all_sources` 先拿 `state.extra_instances.read()` 再用 `builtin_sources()`
 /// 同步版（无锁），不冲突；但拿 `state.config` 后又调本函数会形成
 /// config → custom_sources → ... 的反向锁链。
 pub async fn find_source(state: &crate::AppState, id: &str) -> Option<Box<dyn QuotaSource>> {
     all_sources(state).await.into_iter().find(|s| s.id() == id)
 }
 
-/// 全部 source 的注册表（内置 + 用户自定义）。async 是因为 customs 在
-/// `AppState.custom_sources` 里，需要拿 lock。
+/// 全部 source 的注册表（内置 + 用户自定义 / 副本）。async 是因为 extra instances
+/// 在 `AppState.custom_sources` 里，需要拿 lock。
 ///
-/// **绝大多数 commands 都应该走这个**而不是 `builtin_sources()`，否则 customs
+/// **绝大多数 commands 都应该走这个**而不是 `builtin_sources()`，否则 extra instances
 /// 不会被 poller / refresh_inner 看到。
+///
+/// ## PR 1a
+///
+/// 字段名沿用 `custom_sources`（PR 3 命名），内部值从 `Vec<CustomSourceSpec>` 改
+/// 为 `Vec<ExtraInstance>`。按 instance 路由：
+///
+/// - `provider_id == "custom"` → `CustomSource::new(spec)` （沿用 PR 3）
+/// - 其它内置 provider → `instantiate_builtin(provider_id)` + `set_instance_index`
+///   （PR 1a 已实装 minimax；其它 10 个 provider 待 PR 1b 改 `with_instance_index`）
+///
+/// 排序：先内置按 [`builtin_sources`] 顺序（instance_index=1 隐含），再 extra
+/// 按 created_at 升序（保证浮窗卡片顺序稳定）。
 pub async fn all_sources(state: &crate::AppState) -> Vec<Box<dyn QuotaSource>> {
+    use crate::config::extra_instances::ExtraInstance;
+
     let mut sources = builtin_sources();
-    let customs = state.custom_sources.read().await;
-    for spec in customs.iter() {
-        sources.push(Box::new(custom::CustomSource::new(spec.clone())));
+    let extras = state.extra_instances.read().await;
+
+    // 排序 key：created_at 升序
+    let mut sorted_extras: Vec<&ExtraInstance> = extras.iter().collect();
+    sorted_extras.sort_by_key(|e| e.created_at);
+
+    for inst in sorted_extras {
+        if inst.provider_id == "custom" {
+            // custom 流：CustomSourceSpec 在 inst.custom 里
+            if let Some(spec) = &inst.custom {
+                let src = custom::CustomSource::new(spec.clone())
+                    .with_instance_index(inst.instance_index);
+                sources.push(Box::new(src));
+            }
+            // 没有 spec 的 custom instance 跳过（不应该出现，防御性）
+        } else {
+            // 内置 provider 副本
+            if let Some(src) =
+                instantiate_builtin_with_index(&inst.provider_id, inst.instance_index)
+            {
+                sources.push(src);
+            }
+            // 未知 provider_id 跳过（防御性：用户手改 extra_instances.json 时
+            // 可能填错 id，留日志而不是 panic）
+            else {
+                tracing::warn!(
+                    provider_id = %inst.provider_id,
+                    instance_index = inst.instance_index,
+                    "extra instance 指向未知内置 provider_id, 跳过",
+                );
+            }
+        }
     }
     sources
+}
+
+/// 根据 provider_id 字符串实例化一个内置 source（用于 extra instance 创建）。
+///
+/// 返回 None 表示 `provider_id` 不是 11 个内置之一（custom / 拼写错误）。
+///
+/// ## PR 1a 现状
+///
+/// 只 `minimax` 实现了 `with_instance_index`；其它 10 个 provider 走兜底 `default()`
+/// （即副本实际是第 1 份行为 —— **PR 1a 已知限制**，详见 PR 1b）。为了不让
+/// PR 1a 阻塞 PR 1b，没实现的 provider 返默认实例 + log warn。
+pub fn instantiate_builtin(provider_id: &str) -> Option<Box<dyn QuotaSource>> {
+    match provider_id {
+        "minimax" => Some(Box::new(minimax::MinimaxSource::default())),
+        "deepseek" => Some(Box::new(deepseek::DeepseekSource::default())),
+        "xiaomi" | "xiaomimimo" => Some(Box::new(xiaomi::XiaomimimoSource::default())),
+        "tavily" => Some(Box::new(tavily::TavilySource::default())),
+        "zenmux" => Some(Box::new(zenmux::ZenmuxSource::default())),
+        "openrouter" => Some(Box::new(openrouter::OpenrouterSource::default())),
+        "kimi" => Some(Box::new(kimi::KimiSource::default())),
+        "zhipu" => Some(Box::new(zhipu::ZhipuSource::default())),
+        "stepfun" => Some(Box::new(stepfun::StepfunSource::default())),
+        "siliconflow" => Some(Box::new(siliconflow::SiliconflowSource::default())),
+        "claude_official" => Some(Box::new(claude_official::ClaudeOfficialSource::default())),
+        _ => None,
+    }
+}
+
+/// PR 1b: 实例化内置 source + 应用 instance_index 的便捷版本。
+///
+/// 11 个内置全部实装 `with_instance_index`（PR 1b 收尾）—— 内置副本能正确
+/// 走 `#N` 编号。`instantiate_builtin()` 仍返默认 instance_index=1，给
+/// builtin_sources() / dump CLI 等不需要副本语义的场景用。
+pub fn instantiate_builtin_with_index(
+    provider_id: &str,
+    index: u32,
+) -> Option<Box<dyn QuotaSource>> {
+    match provider_id {
+        "minimax" => Some(Box::new(
+            minimax::MinimaxSource::default().with_instance_index(index),
+        )),
+        "deepseek" => Some(Box::new(
+            deepseek::DeepseekSource::default().with_instance_index(index),
+        )),
+        "xiaomi" | "xiaomimimo" => Some(Box::new(
+            xiaomi::XiaomimimoSource::default().with_instance_index(index),
+        )),
+        "tavily" => Some(Box::new(
+            tavily::TavilySource::default().with_instance_index(index),
+        )),
+        "zenmux" => Some(Box::new(
+            zenmux::ZenmuxSource::default().with_instance_index(index),
+        )),
+        "openrouter" => Some(Box::new(
+            openrouter::OpenrouterSource::default().with_instance_index(index),
+        )),
+        "kimi" => Some(Box::new(
+            kimi::KimiSource::default().with_instance_index(index),
+        )),
+        "zhipu" => Some(Box::new(
+            zhipu::ZhipuSource::default().with_instance_index(index),
+        )),
+        "stepfun" => Some(Box::new(
+            stepfun::StepfunSource::default().with_instance_index(index),
+        )),
+        "siliconflow" => Some(Box::new(
+            siliconflow::SiliconflowSource::default().with_instance_index(index),
+        )),
+        "claude_official" => Some(Box::new(
+            claude_official::ClaudeOfficialSource::default().with_instance_index(index),
+        )),
+        _ => None,
+    }
 }
 
 // ── 共享 HTTP client ────────────────────────────────────────────────

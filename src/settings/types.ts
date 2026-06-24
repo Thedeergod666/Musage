@@ -227,6 +227,24 @@ export interface CustomSourceSpec {
   created_at: number;
 }
 
+// ── PR 1b: 用户额外 source 实例 (内置副本 + New API 中转站) ──────
+
+/**
+ * 一条 extra instance（内置 provider 副本 / New API 中转站）。
+ *
+ * 后端 `commands::extra_instances::*` IPC 返回这个结构。
+ * 浮窗 / settings 面板用 `unique_id` (`minimax#2` / `custom_<uuid>`)
+ * 做 DOM 区分；`instance_index` 用来做后端紧凑重排。
+ */
+export interface ExtraInstance {
+  id: string;
+  provider_id: string;
+  instance_index: number;
+  api_key_ref: string;
+  custom: CustomSourceSpec | null;
+  created_at: number;
+}
+
 export interface QuotaSnapshot {
   providers: ProviderSnapshot[];
   fetched_at: number | null;
@@ -238,4 +256,13 @@ export interface LogEntry {
   provider: string | null;
   kind: string | null;
   message: string;
+}
+
+/** PR 1b: provider picker 用的 option（11 内置 + custom）。
+ *  后端 list_picker_providers 返回这个结构。 */
+export interface PickerProvider {
+  id: string;
+  name_key: string;
+  auth_kind: "api_key" | "cookie" | "api_key_or_cookie";
+  is_builtin: boolean;
 }

@@ -290,7 +290,7 @@ D:\Project\Musage\
 │   │   ├── openrouter-logo.png
 │   │   ├── tavily-logo.svg   ← 配合 ?url + assetsInlineLimit: 0
 │   │   └── zenmux-logo.svg   ← 同上
-│   └── settings/             ← 设置面板子模块（21 个 .ts 文件；PR 3 后 +3：modal.ts / groups.ts / custom-source-form.ts；P2 后 +2：region-wizard.ts / test.ts）
+│   └── settings/             ← 设置面板子模块 (PR 1b: extra-instance-form.ts 替 custom-source-form.ts)
 │       ├── main.ts / app.ts / config.ts / api.ts
 │       ├── credentials.ts / providers.ts / floating.ts
 │       ├── order.ts / logs.ts / test.ts / about.ts
@@ -300,7 +300,7 @@ D:\Project\Musage\
 │       ├── modal.ts            ← PR 3: 原生 <dialog> 包装
 │       ├── region-wizard.ts    ← P2: set_region command UI（多 region provider 区域选择向导）
 │       ├── test.ts             ← dev-only probe 入口（生产构建排除）
-│       └── custom-source-form.ts  ← PR 3: 「+ 添加自定义来源」表单 + 3 选 1 extract 模板
+│       └── extra-instance-form.ts  ← PR 1b: 「+ 添加新来源」两段式表单（picker 12 选项 + 内置/custom 切换；PR 1b 替 PR 3 的 custom-source-form.ts）
 └── src-tauri/                ← Rust 后端
     ├── Cargo.toml            ← crate-type = ["staticlib", "rlib"]（不用 cdylib）
     ├── tauri.conf.json       ← bundle targets: "all"（建议改 "nsis"）
@@ -314,8 +314,8 @@ D:\Project\Musage\
         ├── poller.rs         ← tokio interval
         ├── tray.rs           ← 托盘菜单 + 动态图标（合并了原 icon.rs）
         ├── config.rs         ← AppConfig + keys.json 文件存储
-        ├── commands/         ← tauri::command 暴露给前端（子模块 mod.rs + custom_sources.rs + i18n.rs）
-        ├── providers/        ← 11 个 provider 实现
+        ├── commands/         ← tauri::command 暴露给前端（PR 1b: extra_instances.rs 替 custom_sources.rs）
+        ├── providers/        ← 11 个 provider 实现（PR 1b: 全部加 instance_index + unique_id）
         │   ├── mod.rs / minimax.rs / deepseek.rs / xiaomi.rs
         │   ├── tavily.rs / zenmux.rs / openrouter.rs
         │   ├── kimi.rs / zhipu.rs
@@ -324,10 +324,11 @@ D:\Project\Musage\
         │   └── custom.rs            ← PR 3: CustomSourceSpec + ExtractSpec + CustomSource impl (14 单测)
         ├── config/                  ← PR 3: 拆出子模块
         │   ├── mod.rs (= config.rs)
-        │   └── custom_sources.rs    ← PR 3: load/save + 原子写 + parse 失败 backup
+        │   ├── custom_sources.rs    ← PR 1b: 缩成 load_or_migrate 迁移 wrapper（PR 3 老 custom_sources.json 一次性迁 extra_instances.json）
+        │   └── extra_instances.rs   ← PR 1b: ExtraInstance + load/save/next_index_for/compact_indexes_for (9 单测)
         ├── commands/                ← PR 3: 拆出子模块 (commands.rs → mod.rs)
         │   ├── mod.rs (= commands.rs)
-        │   └── custom_sources.rs    ← PR 3: 5 IPC commands (list/add/update/delete/test)
+        │   └── extra_instances.rs   ← PR 1b: 6 IPC commands (list/add/update/delete/list_picker/test) + DTOs
         └── platform/         ← 平台特定代码（仅 macOS 有非 stub 实现）
             ├── mod.rs
             └── macos.rs
@@ -359,6 +360,50 @@ D:\Project\Musage\
 - **设置面板**：原生 `<details>/<summary>` 分组（6 组：token_plan / balance / official / xiaomi / custom / misc）+ 顶部搜索框 + 「+ 添加自定义来源」按钮 + 原生 `<dialog>` modal
 - **删除确认**：`confirm()` + 二次输入 display_name（防误删短 id）
 
+**PR 1b（2026-06-24，Extra Instance · 内置 provider 副本）新增决策**：
+- **动机**：PR 3 的 "custom" 通道只支持 New API 中转站，**不能加同种内置 provider 的副本**。但现实中一个用户常有多份同种主流套餐（同时持 2 个 MiniMax 套餐 / 2 个 DeepSeek 账号等）。PR 1b 把"任意 source 的额外实例"统一到 `extra_instances.json`
+- **QuotaSource trait 新增**：
+  - `instance_index: u32` 字段（11 provider + custom 全实装，Default = 1）
+  - `with_instance_index(idx) -> Self` 构造方法（11 provider 全实装）
+  - `unique_id() -> String` —— 含 `#N` 后缀（`"minimax#2"`），**给 poller `next_fetch` map key / 浮窗 DOM `data-source-id` 用**
+  - `id()` 决策 1：永远返 base provider_id（`"minimax"`），多实例共享 base；走 `unique_id()` 做区分
+  - `display_name()` 决策 3：渲染时拼 `t!("provider.suffix.dup", n = idx)` = `" #{}"`（中英都带 1 空格）
+- **持久化**：`extra_instances.json`（top-level array，结构跟 PR 3 `custom_sources.json` 同款：原子写 + 0600 + parse 失败 backup 到 `.bak.<ts>`）。老 `custom_sources.json` 在 `config::custom_sources::load_or_migrate` 启动时一次性迁移后 rename 成 `.migrated`
+- **编号规则（决策 1 紧凑 + 决策 5 按类型内编号）**：
+  - 内置 provider 第 1 份 instance_index=1 **不**进 extra_instances.json
+  - 副本从 #2 起按 created_at 升序重排（删除中间一个后 `compact_indexes_for` 自动紧凑）
+  - 同 provider_id 内紧凑，`minimax#2` 和 `deepseek#2` 可共存（按类型内编号）
+  - custom 第 1 份也走 #2 起，但 `unique_id` 仍用 `custom_<uuid>` 不带 `#N`（custom spec.id 已 UUID 唯一）
+- **API key 命名**：
+  - 内置副本：`api_key_ref = "minimax#2"`（`keys.json` 里的 key 名）
+  - custom：`api_key_ref = "custom_<uuid>"`（跟 PR 3 一致，不重命名）
+- **AppState 字段**：`custom_sources: Arc<RwLock<Vec<ExtraInstance>>>` 重命名为 `extra_instances`（type 跟字段名一起改，PR 1a 临时改 type、PR 1b 同步 rename）
+- **6 个新 IPC**（PR 3 的 5 个 `commands::custom_sources::*` 整文件删除）：
+  - `list_extra_instances` / `add_extra_instance` / `update_extra_instance` / `delete_extra_instance` / `list_picker_providers` / `test_extra_instance`
+  - DTO 加 `#[serde(rename_all = "camelCase")]` —— Tauri 2 对 struct 字段也走 camelCase 转换，不加会报 "missing required key providerId"
+- **Poller**：`next_fetch` map key 改 `unique_id()`（PR 1a fix：否则 `minimax#2` 会覆盖 `minimax` entry）
+- **UI 关键变更**：
+  - 「+ 添加自定义来源」→「+ 添加新来源」（按钮文案 + modal 标题）
+  - modal 改成**两段式**：Step 1 provider picker（11 内置下拉 + 1 custom 选项）/ Step 2 内置只填 key / custom 3 选 1 Extract 模板
+  - 内置行 header 加 ⎘ **复制按钮**（在 `enabled` checkbox 左边，弹 modal 时 picker **预选当前 provider**）
+  - extra 行（副本 / custom）header 加 🗑️ 删除按钮（二次确认 prompt 输入含 `#N` 的完整 display_name）
+  - `src/settings/custom-source-form.ts` → `extra-instance-form.ts`（重命名 + 重写两段式）
+- **i18n 关键变更**：
+  - 后端 `commands.extra.*` 6 个错误 key
+  - 后端 `provider.suffix.dup = " #{}"`（中英都带空格，i18n 后缀）
+  - 前端 `extra.*` modal / err / added 段
+  - 前端 `delete_extra.*` 6 个 key（替 PR 3 的 `delete_custom.*`）
+  - 前端 `add_source` 段（替 PR 3 的 `add_custom`）
+  - **前端 i18n 独立维护 `provider_name.*` 11 项**（后端 `src-tauri/locales/` 也有；目前两份镜像，未来 PR 3 应让后端 `list_picker_providers` 直接返翻译好的 display_name 字符串）
+- **迁移 + 兼容**：
+  - PR 1a：老 `custom_sources.json` 启动自动迁移到 `extra_instances.json`
+  - PR 1b：5 个老 IPC 删除，**前端必须**用新 6 个 IPC（前端 `src/settings/api.ts` 已同步）
+  - 老的 `config/custom_sources.rs` 缩成 `load_or_migrate` wrapper，**保留**等所有用户跑过启动一次后下次 PR 删
+- **PR 1b 已知限制（PR 3 解决）**：
+  - 浮窗 `data-source-id` 还是按 provider 渲染（不是按 unique_id）—— PR 3 改
+  - 托盘 tooltip 还是单条（多实例时只画第一份）—— PR 3 改聚合
+  - `delete_extra_instance` 不重命名 keys.json 里被 compact 改名的 key（v2 用"按 instance_index 查"重做）
+
 ## 已知风险
 
 - 🟡 MiniMax 6/1 改 schema，新字段名未明
@@ -389,6 +434,7 @@ D:\Project\Musage\
 - ~~`src/settings/utils.ts:providerDisplay`~~ — 删
 - 单一来源：[`src/main.ts:37`](src/main.ts#L37) + 共享 [`src/i18n/{en,zh-CN}.json`](src/i18n/) 的 `provider.<id>.name`
 - 加新 provider 改 3 处（后端 `providers/<id>.rs` + `providers/mod.rs::builtin_sources()` 注册 + `i18n.json` 的 `provider.<id>.name`）。**注**:settings 面板主结构是动态的（PR 3 改完），但 `src/settings/source-extras.ts` 里的 7 个 `renderXxx` 函数（每个有 region/mode/extras 字段的 provider 1 个）+ `EXTRAS` 表注册**不**是零行 — 真正零行修改的场景是"无 region/mode/extras 字段的纯 Bearer provider"
+- **PR 1b 偏离**：picker modal 走 `name_key` 字符串路径，前端 `src/i18n/*.json` 的 `provider_name.*` 11 项是**镜像**（跟后端 `src-tauri/locales/*.json` 同步）。理想方案是后端 `list_picker_providers` 直接返翻译好的 display_name 字符串，PR 3 收尾
 
 **Locale 切换链路**：
 1. 前端 `setLocale(locale)` → 调 `set_app_locale` Tauri command
@@ -400,14 +446,19 @@ D:\Project\Musage\
 - rust-i18n 3.x 不接受 `features = ["json"]`（默认支持）
 - `#[tauri::command]` + 同名函数在 lib.rs 顶层会触发 `__cmd__xxx` macro 重复定义（放子模块）
 - 子模块用 `t!()` 需 `use crate::t;`（不能 `use rust_i18n::t;`）
+- **Tauri 2 `#[tauri::command]` 对 struct 字段也走 camelCase 转换**：DTO 必须加 `#[serde(rename_all = "camelCase")]`，否则前端 `invoke("foo", { req: { provider_id: "x" } })` 会被后端报 "missing required key providerId"（PR 1b 实测）
+- **JSON i18n 文件双引号坑**：中文字符串里用 `"内置"` 直接写会提前结束 string（position 19xxx 报错）。改用全角引号 `『内置』` 或 `\"` 转义
 
 ## 关键文件链接（按重要性）
 
 - **核心 schema 解析**：`src-tauri/src/providers/minimax.rs`（兼容 2026-06-01 前后的两种 schema）
-- **Provider 实现**：`src-tauri/src/providers/{minimax,deepseek,xiaomi,tavily,zenmux,openrouter,kimi,zhipu,stepfun,siliconflow,claude_official}.rs`
-- **托盘 UI**：`src-tauri/src/tray.rs`（合并了原 icon.rs：动态图标 + 文字绘制 + 菜单 + tooltip）
-- **悬浮窗 UI**：`src/main.ts` + `src/styles.css`
-- **设置面板**：`src/settings/main.ts` + `settings.html`（子模块见 `src/settings/` 21 个文件）
+- **Provider 实现**：`src-tauri/src/providers/{minimax,deepseek,xiaomi,tavily,zenmux,openrouter,kimi,zhipu,stepfun,siliconflow,claude_official}.rs`（PR 1b：11 provider + custom 全加 `instance_index` + `with_instance_index` + override `unique_id` / `display_name`）
+- **Extra instance 持久化**（PR 1b）：`src-tauri/src/config/extra_instances.rs`（`ExtraInstance` + `load` / `save` / `next_index_for` / `compact_indexes_for`，9 单测）
+- **Extra instance IPC**（PR 1b）：`src-tauri/src/commands/extra_instances.rs`（6 IPC + DTOs；DTO `#[serde(rename_all = "camelCase")]`）
+- **Provider 注册 + all_sources**：`src-tauri/src/providers/mod.rs`（`builtin_sources()` + `instantiate_builtin_with_index()` 11 provider 全实装）
+- **托盘 UI**：`src-tauri/src/tray.rs`（合并了原 icon.rs：动态图标 + 文字绘制 + 菜单 + tooltip；PR 3 待做：tooltip 多实例聚合）
+- **悬浮窗 UI**：`src/main.ts` + `src/styles.css`（PR 3 待做：`data-source-id` 改 `unique_id`）
+- **设置面板**：`src/settings/main.ts` + `settings.html`（PR 1b 后 21 个文件：`extra-instance-form.ts` 替 `custom-source-form.ts`）
 - **Logo 资源**：`src/assets/` + `src/assets.d.ts`（含 `?url` 声明，必读 [浮窗 logo 打包后裂开](#浮窗-logo-打包后裂开2026-06-13-修)）
 
 ## 关键记忆

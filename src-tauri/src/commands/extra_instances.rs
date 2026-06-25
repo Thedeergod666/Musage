@@ -310,19 +310,40 @@ pub async fn delete_extra_instance(
         // 同步 keys.json：被 compact 改名的 key 要迁移凭据。
         // compact_indexes_for 已就地把 e.api_key_ref 改成新值；对比新旧
         // api_key_ref，把 old → new 的凭据复制过去，再删旧 key。
+        //
+        // P1-3 fix: save_credential_for_id 失败时跳过 delete_credential_for_id，
+        // 保留旧 key 作为 fallback，避免凭据静默丢失。
         for (inst_id, old_ref) in &old_refs {
             if let Some(inst) = extras.iter().find(|e| &e.id == inst_id) {
                 if inst.api_key_ref != *old_ref {
-                    if let Ok(Some(cred)) = load_credential_for_id(old_ref) {
-                        if save_credential_for_id(&inst.api_key_ref, &cred).is_err() {
+                    match load_credential_for_id(old_ref) {
+                        Ok(Some(cred)) => match save_credential_for_id(&inst.api_key_ref, &cred) {
+                            Ok(()) => {
+                                delete_credential_for_id(old_ref).ok();
+                            }
+                            Err(e) => {
+                                tracing::error!(
+                                    old_key = %old_ref,
+                                    new_key = %inst.api_key_ref,
+                                    error = %e,
+                                    "compact 后复制凭据失败，保留旧 key 不删",
+                                );
+                                // 不回滚 api_key_ref 重命名（compact_indexes_for 已就地改），
+                                // 但保留旧 key 在 keys.json 中 → 数据不丢但需手动恢复。
+                            }
+                        },
+                        Ok(None) => {
+                            // 旧 key 本来就不存在（不应该出现，但防御性处理），删空引用
+                            delete_credential_for_id(old_ref).ok();
+                        }
+                        Err(e) => {
                             tracing::warn!(
                                 old_key = %old_ref,
-                                new_key = %inst.api_key_ref,
-                                "compact 后复制凭据失败",
+                                error = %e,
+                                "compact 时读旧凭据失败，跳过迁移",
                             );
                         }
                     }
-                    delete_credential_for_id(old_ref).ok();
                 }
             }
         }

@@ -126,6 +126,7 @@ mod tests {
             source_display_name: Some("MiniMax".to_string()),
             plan_name: None,
             transient: None,
+            unique_id: None,
         }
     }
 
@@ -144,6 +145,7 @@ mod tests {
             source_display_name: Some("MiniMax".to_string()),
             plan_name: None,
             transient: None,
+            unique_id: None,
         }
     }
 

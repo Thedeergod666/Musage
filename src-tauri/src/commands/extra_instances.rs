@@ -92,6 +92,19 @@ pub struct UpdateExtraInstanceRequest {
     pub custom: Option<CustomSourceSpec>,
 }
 
+/// 测试连接的请求体（不写 state）。
+///
+/// **Fix（deepseek 添加失败 #X）**：跟 `AddExtraInstanceRequest` 同款 `rename_all`，
+/// 因为前端传的是 `{ providerId, apiKey, ... }`。
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TestExtraInstanceRequest {
+    pub provider_id: String,
+    pub api_key: Option<String>,
+    pub api_cookie: Option<String>,
+    pub custom: Option<CustomSourceSpec>,
+}
+
 // ── Commands ────────────────────────────────────────────────────
 
 /// 列表：返回所有 extra instance。
@@ -408,19 +421,21 @@ pub async fn list_picker_providers() -> Result<Vec<PickerProvider>, String> {
 
 /// 测试连接（不写 state）。
 ///
-/// - `provider_id == "custom"` → 用 `custom` 字段构造 CustomSource
+/// - `req.provider_id == "custom"` → 用 `req.custom` 构造 CustomSource
 /// - 其它 → 用 `instantiate_builtin_with_index(provider_id, 1)` 拿默认实例
 ///
 /// 返回 `ProviderSnapshot`。
+///
+/// **Fix（deepseek 添加失败 #X）**：原签名是扁平参数 `provider_id, api_key, ...`，
+/// 但前端 `testExtraInstance` 跟 `add`/`update` 一样传 `{ req: {...} }` —— Tauri
+/// 把整个对象当 `req` 传进来后，后端 deserialize 失败，strict 模式报
+/// "missing required key providerId"。改成跟兄弟命令一致的 `req: TestExtraInstanceRequest`。
 #[tauri::command]
 pub async fn test_extra_instance(
-    provider_id: String,
-    api_key: Option<String>,
-    api_cookie: Option<String>,
-    custom: Option<CustomSourceSpec>,
+    req: TestExtraInstanceRequest,
 ) -> Result<ProviderSnapshot, String> {
-    let api_key_trimmed = api_key.as_deref().map(str::trim).unwrap_or("");
-    let api_cookie_trimmed = api_cookie.as_deref().map(str::trim).unwrap_or("");
+    let api_key_trimmed = req.api_key.as_deref().map(str::trim).unwrap_or("");
+    let api_cookie_trimmed = req.api_cookie.as_deref().map(str::trim).unwrap_or("");
     if api_key_trimmed.is_empty() && api_cookie_trimmed.is_empty() {
         return Err(t!("commands.api_key_empty").into_owned());
     }
@@ -438,15 +453,15 @@ pub async fn test_extra_instance(
         },
     };
 
-    if provider_id == "custom" {
-        let spec = custom.ok_or_else(|| t!("commands.extra.custom_spec_required").into_owned())?;
+    if req.provider_id == "custom" {
+        let spec = req.custom.ok_or_else(|| t!("commands.extra.custom_spec_required").into_owned())?;
         let temp = CustomSource::new(spec);
         temp.fetch(&creds).await.map_err(|e| e.message)
     } else {
-        let src = instantiate_builtin_with_index(&provider_id, 1)
-            .ok_or_else(|| t!("commands.extra.unknown_provider", id = provider_id.as_str()).into_owned())?;
+        let src = instantiate_builtin_with_index(&req.provider_id, 1)
+            .ok_or_else(|| t!("commands.extra.unknown_provider", id = req.provider_id.as_str()).into_owned())?;
         // 校验 key 跟 provider 是否能拉到
-        let _ = load_credential_for_id(&format!("{}#1", provider_id)).ok().flatten();
+        let _ = load_credential_for_id(&format!("{}#1", req.provider_id)).ok().flatten();
         src.fetch(&creds).await.map_err(|e| e.message)
     }
 }

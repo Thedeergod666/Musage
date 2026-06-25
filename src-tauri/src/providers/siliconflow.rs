@@ -308,7 +308,7 @@ mod tests {
                 "status": "normal"
             }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, "siliconflow", "SiliconFlow").expect("parse");
         assert!(snap.success);
         assert_eq!(snap.source_id.as_deref(), Some("siliconflow"));
         assert_eq!(snap.source_display_name.as_deref(), Some("SiliconFlow"));
@@ -330,7 +330,7 @@ mod tests {
                 "status": "normal"
             }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, "siliconflow", "SiliconFlow").expect("parse");
         assert!((snap.rows[0].remaining.unwrap() - 12.34).abs() < 0.001);
     }
 
@@ -341,7 +341,7 @@ mod tests {
             "message": "internal error",
             "status": false
         });
-        let err = parse(&raw).unwrap_err();
+        let err = parse(&raw, "siliconflow", "SiliconFlow").unwrap_err();
         // 业务级失败 → ServerError（前端按 server_error 处理）
         assert_eq!(err.kind, FetchError::server("test").kind);
         // 2026-06-22 fix: rust_i18n 3.1.5 param form 在某些编译配置下 fallback
@@ -369,7 +369,7 @@ mod tests {
                 "status": "frozen"
             }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, "siliconflow", "SiliconFlow").expect("parse");
         assert!(snap.success);
         assert!(!snap.is_healthy); // 健康度 = false
         assert!((snap.rows[0].remaining.unwrap() - 5.0).abs() < 0.001);
@@ -382,14 +382,14 @@ mod tests {
             "status": true,
             "data": { "id": "u-1" }  // 没 balance
         });
-        let err = parse(&raw).unwrap_err();
+        let err = parse(&raw, "siliconflow", "SiliconFlow").unwrap_err();
         assert_eq!(err.kind, FetchError::parse("test").kind);
     }
 
     #[test]
     fn parse_missing_data_is_error() {
         let raw = json!({ "code": 20000, "status": true });
-        let err = parse(&raw).unwrap_err();
+        let err = parse(&raw, "siliconflow", "SiliconFlow").unwrap_err();
         assert_eq!(err.kind, FetchError::parse("test").kind);
     }
 

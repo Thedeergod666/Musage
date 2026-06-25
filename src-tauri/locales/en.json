@@ -106,7 +106,8 @@
       "balance_divide_zero": "Balance template: divide cannot be 0",
       "balance_path_invalid": "Balance template: path '{path}' invalid or non-numeric",
       "custom_path_no_match": "Custom template: no paths matched any value",
-      "custom_divide_zero": "Custom template: divide cannot be 0"
+      "custom_divide_zero": "Custom template: divide cannot be 0",
+      "path_must_start_with_slash": "Custom source path must start with '/' (prevents URL confusion)"
     }
   },
 
@@ -206,6 +207,12 @@
       "dup": " #{}"
     },
     "custom": "New API relay"
+  },
+
+  "extra": {
+    "provider": {
+      "custom": "New API relay"
+    }
   },
 
   "xiaomi_login": {

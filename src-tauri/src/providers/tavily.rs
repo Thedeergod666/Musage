@@ -372,7 +372,7 @@ mod tests {
                 "research_usage": 50
             }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, "tavily", "Tavily").expect("parse");
         assert!(snap.success);
         assert_eq!(snap.plan_name.as_deref(), Some("Research"));
         assert_eq!(snap.source_id.as_deref(), Some("tavily"));
@@ -405,7 +405,7 @@ mod tests {
             "account": { "current_plan": "Pay-as-you-go" },
             "key": { "usage": 42, "limit": null }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, "tavily", "Tavily").expect("parse");
         assert!(snap.success);
         assert_eq!(snap.rows[0].used, Some(42.0));
         assert_eq!(snap.rows[0].total, None);
@@ -422,7 +422,7 @@ mod tests {
             },
             "key": { "usage": 765, "limit": null }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, "tavily", "Tavily").expect("parse");
         let main = &snap.rows[0];
         assert_eq!(main.used, Some(765.0));
         assert_eq!(main.total, Some(1000.0));
@@ -436,7 +436,7 @@ mod tests {
         let raw = json!({
             "key": { "usage": 10, "limit": 100 }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, "tavily", "Tavily").expect("parse");
         assert!(snap.plan_name.is_none());
         // 无 billing period → resets_at 应为 None
         assert!(snap.rows[0].resets_at.is_none());
@@ -445,14 +445,14 @@ mod tests {
     #[test]
     fn parse_missing_key_field_is_error() {
         let raw = json!({ "account": {} });
-        let err = parse(&raw).unwrap_err();
+        let err = parse(&raw, "tavily", "Tavily").unwrap_err();
         assert_eq!(err.kind, FetchError::parse("test").kind);
     }
 
     #[test]
     fn parse_empty_key_is_error() {
         let raw = json!({ "key": {} });
-        let err = parse(&raw).unwrap_err();
+        let err = parse(&raw, "tavily", "Tavily").unwrap_err();
         assert_eq!(err.kind, FetchError::parse("test").kind);
     }
 }

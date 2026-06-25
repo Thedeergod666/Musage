@@ -272,14 +272,14 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
 
     // 5h tier
     if let Some(five_h) = raw.get("five_hour") {
-        if let Some(row) = build_tier_row("5h", five_h) {
+        if let Some(row) = build_tier_row(&t!("row.five_hour").to_string(), five_h) {
             rows.push(row);
         }
     }
 
     // 周 tier
     if let Some(weekly) = raw.get("seven_day") {
-        if let Some(row) = build_tier_row("周", weekly) {
+        if let Some(row) = build_tier_row(&t!("row.weekly").to_string(), weekly) {
             rows.push(row);
         }
     }
@@ -291,7 +291,7 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
     }
 
     Ok(ProviderSnapshot {
-        provider: "minimax".to_string(),
+        provider: "claude_official".to_string(),
         success: true,
         rows,
         error: None,

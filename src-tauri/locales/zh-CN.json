@@ -106,7 +106,8 @@
       "balance_divide_zero": "Balance 模板：divide 不能为 0",
       "balance_path_invalid": "Balance 模板：路径 '{path}' 无效或非数字",
       "custom_path_no_match": "Custom 模板：所有 path 都没匹配到值",
-      "custom_divide_zero": "Custom 模板：divide 不能为 0"
+      "custom_divide_zero": "Custom 模板：divide 不能为 0",
+      "path_must_start_with_slash": "自定义来源的 path 必须以 '/' 开头（防止 URL 混淆攻击）"
     }
   },
 
@@ -206,6 +207,12 @@
       "dup": " #{}"
     },
     "custom": "New API 中转站"
+  },
+
+  "extra": {
+    "provider": {
+      "custom": "New API 中转站"
+    }
   },
 
   "xiaomi_login": {

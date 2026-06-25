@@ -45,8 +45,10 @@ export const t = (key: string, params?: Record<string, string | number>): string
   let s = lookup(effectiveKey);
   if (s == null) {
     // 跨 locale 回退：zh-CN 缺 key 时回退 en，en 还缺才打 key
-    const en = dicts.en?.[key] ?? dicts.en?.[effectiveKey];
-    if (en != null) s = en;
+    // 必须走点号路径查找（lookupInDict），不能用 dicts.en[key] ——
+    // key 是 "provider.minimax.name" 这种嵌套路径，直接属性访问永远 undefined。
+    const enFallback = lookupInDict(dicts.en, key) ?? lookupInDict(dicts.en, effectiveKey);
+    if (enFallback != null) s = enFallback;
     else {
       if (dev) console.warn(`[i18n] missing key '${key}' in locale '${current}'`);
       return key;
@@ -68,6 +70,18 @@ export const t = (key: string, params?: Record<string, string | number>): string
 function lookup(key: string): any {
   const parts = key.split(".");
   let cur: any = dicts[current];
+  for (const p of parts) {
+    if (cur == null || typeof cur !== "object") return undefined;
+    cur = cur[p];
+  }
+  return cur;
+}
+
+/// 在指定的 dict 上走点号路径查找（与 lookup 逻辑相同但不绑定 current locale）。
+/// 供跨 locale 回退使用。
+function lookupInDict(dict: Record<string, any>, key: string): any {
+  const parts = key.split(".");
+  let cur: any = dict;
   for (const p of parts) {
     if (cur == null || typeof cur !== "object") return undefined;
     cur = cur[p];

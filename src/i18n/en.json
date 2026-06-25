@@ -40,7 +40,11 @@
     },
     "claude_official": {
       "name": "Claude"
-    }
+    },
+    "suffix": {
+      "dup": " #{}"
+    },
+    "custom": "New API relay"
   },
   "floating": {
     "loading_error_title": "Error",
@@ -560,12 +564,6 @@
     },
     "test_passing": "Test passed, saving...",
     "added": "added (id: {id})"
-  },
-  "provider": {
-    "suffix": {
-      "dup": " #{}"
-    },
-    "custom": "New API relay"
   },
   "help": {
     "minimax": "Key saved to local <code>keys.json</code> with <code>0600</code> permission (same dir as config, no system keychain, no startup password).<br><br>Get it from <a href=\"https://platform.minimaxi.com/user-center/basic-information/interface-key\" target=\"_blank\" class=\"link-ext\">platform.minimaxi.com</a>.",

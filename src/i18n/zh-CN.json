@@ -40,7 +40,11 @@
     },
     "claude_official": {
       "name": "Claude 官方"
-    }
+    },
+    "suffix": {
+      "dup": " #{}"
+    },
+    "custom": "New API 中转站"
   },
   "floating": {
     "loading_error_title": "错误",
@@ -560,12 +564,6 @@
     },
     "test_passing": "测试通过，正在保存...",
     "added": "已添加 (id: {id})"
-  },
-  "provider": {
-    "suffix": {
-      "dup": " #{}"
-    },
-    "custom": "New API 中转站"
   },
   "help": {
     "minimax": "密钥以 <code>0600</code> 权限存到本机 <code>keys.json</code>（与 config 同目录，不走系统钥匙串，启动零弹窗）。<br><br>从 <a href=\"https://platform.minimaxi.com/user-center/basic-information/interface-key\" target=\"_blank\" class=\"link-ext\">platform.minimaxi.com</a> 获取。",

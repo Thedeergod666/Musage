@@ -439,7 +439,7 @@ mod tests {
                 ]
             }
         });
-        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "智谱 GLM").expect("parse");
+        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "Zhipu GLM").expect("parse");
         assert!(snap.success);
         assert_eq!(snap.source_id.as_deref(), Some("zhipu"));
         assert_eq!(snap.plan_name.as_deref(), Some("pro"));
@@ -473,7 +473,7 @@ mod tests {
                 ]
             }
         });
-        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "智谱 GLM").expect("parse");
+        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "Zhipu GLM").expect("parse");
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].label, t!("row.five_hour"));
         assert!((snap.rows[0].utilization.unwrap() - 2.0).abs() < 0.001);
@@ -503,7 +503,7 @@ mod tests {
                 ]
             }
         });
-        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "智谱 GLM").expect("parse");
+        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "Zhipu GLM").expect("parse");
         assert_eq!(snap.rows.len(), 2);
         assert_eq!(snap.rows[0].label, t!("row.five_hour"));
         assert!((snap.rows[0].utilization.unwrap()).abs() < 0.001);
@@ -525,7 +525,7 @@ mod tests {
                 ]
             }
         });
-        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "智谱 GLM").expect("parse");
+        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "Zhipu GLM").expect("parse");
         assert_eq!(snap.rows.len(), 2);
         // reset 较早的归 5h
         assert_eq!(snap.rows[0].label, t!("row.five_hour"));
@@ -547,7 +547,7 @@ mod tests {
                 ]
             }
         });
-        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "智谱 GLM").expect("parse");
+        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "Zhipu GLM").expect("parse");
         assert_eq!(snap.rows.len(), 2);
         assert_eq!(snap.rows[0].label, t!("row.five_hour"));
         assert!((snap.rows[0].utilization.unwrap() - 11.0).abs() < 0.001);
@@ -567,7 +567,7 @@ mod tests {
                 ]
             }
         });
-        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "智谱 GLM").expect("parse");
+        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "Zhipu GLM").expect("parse");
         assert_eq!(snap.rows.len(), 2);
     }
 
@@ -605,7 +605,7 @@ mod tests {
                 ]
             }
         });
-        let snap_cn = parse(&raw, ZhipuRegion::Cn, "zhipu", "智谱 GLM").expect("parse_cn");
+        let snap_cn = parse(&raw, ZhipuRegion::Cn, "zhipu", "Zhipu GLM").expect("parse_cn");
         assert_eq!(
             snap_cn.source_display_name.as_deref(),
             Some(t!("provider_name.zhipu_cn").as_ref())

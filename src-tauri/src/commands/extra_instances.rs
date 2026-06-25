@@ -245,40 +245,22 @@ pub async fn update_extra_instance(
     app: AppHandle,
     req: UpdateExtraInstanceRequest,
 ) -> Result<ExtraInstance, String> {
-    // Bug fix (2026-06-25): 之前先用 read 锁 clone 全量 + 算 pos, 再在
-    // write 锁里直接用这个 pos。如果两次锁之间 delete_extra_instance 删了
-    // 同一位置或之前的条目, pos 会指向错误元素或触发 index out of bounds panic。
-    // 修复: 安全操作 (save_credential / spec 校验) 在 write 锁外先做, 但
-    // "找 pos → 替换 → save" 必须在同一把 write 锁内完成, 且 pos 在锁内重新查。
+    // P1-5 fix: 调整顺序为 "先 save extras（spec 更新）→ 再 save key"。
+    // 之前先锁外存 key 再锁内存 spec，如果 key 存成功但 spec 存失败（如
+    // 磁盘满），key 已更新但 extras 仍是旧 spec → 状态不一致。现在 spec
+    // 作为结构变更先落盘，key 在后落盘；key 失败时 extras 已经正确，至少
+    // 结构是对的。
+    //
+    // "找 pos → 替换 → save" 在同一把 write 锁内完成，pos 在锁内重新查
+    // （已修复的 2026-06-25 TOCTOU bug）。
 
-    // 改 key / custom spec（在锁外做 —— 这些不依赖 extras 内存状态;
-    // save_credential_for_id 有独立的 save_lock）
-    let api_key_val = req.api_key.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| s.to_string());
-    let api_cookie_val = req.api_cookie.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| s.to_string());
-    if let Some(k) = &api_key_val {
-        // 先读一次拿到 current api_key_ref（锁外读,用于存 key）
-        let extras_read = state.extra_instances.read().await;
-        let inst = extras_read.iter().find(|e| e.id == req.id)
-            .ok_or_else(|| t!("commands.extra.not_found", id = req.id.to_string().as_str()).into_owned())?;
-        let cred = Credentials { api_key: Some(k.clone()), cookie: None };
-        save_credential_for_id(&inst.api_key_ref, &cred)
-            .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
-    }
-    if let Some(c) = &api_cookie_val {
-        let extras_read = state.extra_instances.read().await;
-        let inst = extras_read.iter().find(|e| e.id == req.id)
-            .ok_or_else(|| t!("commands.extra.not_found", id = req.id.to_string().as_str()).into_owned())?;
-        let cred = Credentials { api_key: None, cookie: Some(c.clone()) };
-        save_credential_for_id(&inst.api_key_ref, &cred)
-            .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
-    }
-
-    // 核心：拿到 write 锁后重新查找 pos, 再更新 + save
-    let updated = {
+    // 第一步：write 锁内读 api_key_ref + 更新 spec + save extras
+    let (updated, api_key_ref) = {
         let mut extras = state.extra_instances.write().await;
         let pos = extras.iter().position(|e| e.id == req.id)
             .ok_or_else(|| t!("commands.extra.not_found", id = req.id.to_string().as_str()).into_owned())?;
         let mut updated = extras[pos].clone();
+        let api_key_ref = updated.api_key_ref.clone();
 
         // 改 custom spec
         if let Some(spec) = req.custom {
@@ -290,8 +272,22 @@ pub async fn update_extra_instance(
 
         extras[pos] = updated.clone();
         extra_instances::save(&extras)?;
-        updated
+        (updated, api_key_ref)
     };
+
+    // 第二步：锁外保存 key（save_credential_for_id 有独立 save_lock）
+    let api_key_val = req.api_key.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| s.to_string());
+    let api_cookie_val = req.api_cookie.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| s.to_string());
+    if let Some(k) = &api_key_val {
+        let cred = Credentials { api_key: Some(k.clone()), cookie: None };
+        save_credential_for_id(&api_key_ref, &cred)
+            .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
+    }
+    if let Some(c) = &api_cookie_val {
+        let cred = Credentials { api_key: None, cookie: Some(c.clone()) };
+        save_credential_for_id(&api_key_ref, &cred)
+            .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
+    }
 
     let _ = app.emit("musage://config-changed", ());
     let unique = updated.api_key_ref.clone();

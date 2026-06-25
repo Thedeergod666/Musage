@@ -180,7 +180,8 @@
 
   "window": {
     "settings": "Musage · Settings",
-    "xiaomi_login": "Login Xiaomi — Musage"
+    "xiaomi_login": "Login Xiaomi — Musage",
+    "floating": "Musage"
   },
   "provider_name": {
     "minimax": "MiniMax",

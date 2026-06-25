@@ -148,6 +148,10 @@ pub fn run() {
                         let title = t!("window.xiaomi_login").to_string();
                         let _ = w.set_title(&title);
                     }
+                    if let Some(w) = app_for_locale.get_webview_window("floating") {
+                        let title = t!("window.floating").to_string();
+                        let _ = w.set_title(&title);
+                    }
                 }
             });
 
@@ -245,6 +249,7 @@ pub fn run() {
 
             // 默认显示悬浮窗
             if let Some(win) = app.get_webview_window("floating") {
+                let _ = win.set_title(&t!("window.floating").to_string());
                 let _ = win.show();
                 let _ = win.set_focus();
             }

@@ -990,9 +990,12 @@ async function init() {
   // ── i18n 初始化：必须在任何 t() 调用前完成（加载 dict） ──
   await initLocale();
   PROVIDER_META = buildProviderMeta();
-  // locale 变化时重建元数据 + 刷新所有卡片名称
+  // 同步浮窗 document.title（settings/main.ts 对 settings 做了同样的事）
+  document.title = t("window.floating");
+  // locale 变化时重建元数据 + 刷新所有卡片名称 + 同步标题
   onLocaleChange(() => {
     PROVIDER_META = buildProviderMeta();
+    document.title = t("window.floating");
     // 刷新已渲染卡片的名称（不触发 full re-render，只更新 .card-name）
     app.querySelectorAll<HTMLElement>(".card[data-provider]").forEach((card) => {
       const id = card.dataset.provider;

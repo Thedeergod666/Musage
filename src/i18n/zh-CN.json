@@ -1,6 +1,7 @@
 {
   "window": {
-    "settings": "Musage · 设置"
+    "settings": "Musage · 设置",
+    "floating": "Musage"
   },
   "_meta": "P0 + P1 + P2 i18n (zh-CN) - 浮窗 + 主面板 + 区域向导。详见 memory/musage-i18n-conventions.md",
   "provider": {

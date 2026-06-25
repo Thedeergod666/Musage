@@ -1,6 +1,7 @@
 {
   "window": {
-    "settings": "Musage · Settings"
+    "settings": "Musage · Settings",
+    "floating": "Musage"
   },
   "_meta": "P0 + P1 + P2 i18n (en) - floating + main panel + region wizard. See memory/musage-i18n-conventions.md",
   "provider": {

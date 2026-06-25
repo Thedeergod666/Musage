@@ -787,16 +787,16 @@ dialog.modal .modal-actions {
   margin-top: var(--sp-3, 12px);
 }
 
-/* ── Custom source form 内部 ──────────────────────────────────── */
+/* ── Extra instance form 内部 (PR 1b: extra-instance-form.ts) ── */
 
-.custom-source-form .field { margin-bottom: var(--sp-3, 10px); }
-.custom-source-form .radio-group {
+.extra-instance-form .field { margin-bottom: var(--sp-3, 10px); }
+.extra-instance-form .radio-group {
   display: flex;
   flex-wrap: wrap;       /* 窄屏允许换行（不会让标签竖排被压窄） */
   gap: var(--sp-3, 12px);
   margin-top: var(--sp-2, 4px);
 }
-.custom-source-form .radio {
+.extra-instance-form .radio {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -804,7 +804,7 @@ dialog.modal .modal-actions {
   white-space: nowrap;   /* 防"New API 系"被竖排 */
   padding: 2px 4px;
 }
-.custom-source-form .radio input[type="radio"] {
+.extra-instance-form .radio input[type="radio"] {
   /* 原生 radio 的 clickable area 包含内圆点，
    * 没这两行会让 input 视觉位置把"GET"中间的"E"遮住变 GOT */
   margin: 0;
@@ -812,7 +812,7 @@ dialog.modal .modal-actions {
   width: 16px;
   height: 16px;
 }
-.custom-source-form .radio .radio-label {
+.extra-instance-form .radio .radio-label {
   user-select: none;
 }
 .accent-palette {

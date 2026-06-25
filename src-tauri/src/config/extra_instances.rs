@@ -21,13 +21,15 @@
 //! `config.json` / `keys.json` 同目录，结构 top-level array（不是 map），方便
 //! git diff + 手编辑。
 //!
-//! ## 文件名 vs custom_sources.json
+//! ## 文件名 vs custom_sources.json（v0.2.1 迁移完成）
 //!
-//! 历史 `custom_sources.json` 文件**保留不动**：迁移期老用户读到该文件时，
-//! [`super::custom_sources::load_custom_sources`] 的迁移 wrapper 会把里面的
-//! `Vec<CustomSourceSpec>` 转成 `Vec<ExtraInstance>` 后写入 `extra_instances.json`，
-//! 然后把老文件 rename 成 `custom_sources.json.migrated`。PR 1b 把 wrapper 跟
-//! 老文件删掉。
+//! 历史 `custom_sources.json` 文件 v0.2.0 → v0.2.1 迁移期处理：v0.2.1 commit 2
+//! (`a968029 chore(refactor): inline custom_sources migration`) 把迁移代码
+//! 内联到本文件 `load_or_migrate()`，`config/custom_sources.rs` wrapper 删了。
+//!
+//! 当前行为：v0.2.1 启动时检查 `extra_instances.json` 是否存在；不存在但
+//! 老 `custom_sources.json` 存在 → 迁：把 spec 转成 ExtraInstance，存
+//! `extra_instances.json`，rename 老文件成 `custom_sources.json.migrated`。
 //!
 //! ## API key 不在这里
 //!
@@ -183,8 +185,7 @@ pub fn load() -> Result<Vec<ExtraInstance>, String> {
 
 /// 原子写：先写 .tmp + 0600，再 rename 覆盖（跟 [`super::write_keys_atomic`] 同款）。
 ///
-/// 跟 [`super::custom_sources::save_custom_sources`] / keys.json 三条写路径
-/// 共享 `save_lock` —— 保证三条写不会并发丢字段。
+/// 跟 keys.json 写路径共享 `save_lock` —— 保证两条写不会并发丢字段。
 pub fn save(instances: &[ExtraInstance]) -> Result<(), String> {
     let _g = super::save_lock().lock().unwrap_or_else(|e| {
         tracing::warn!("save_extra_instances save_lock poisoned, recovering");
@@ -219,11 +220,6 @@ fn extra_instances_path() -> Result<PathBuf, String> {
     Ok(dir.join("com.musage.app").join(EXTRA_INSTANCES_FILE))
 }
 
-/// v0.2.1 commit 2 后,迁移 wrapper 内联到本模块,这个 pub(crate) helper 失去用途 ——
-/// `load_or_migrate` 内部用 `extra_instances_path()` 直接调,不再走 pub(crate) 间接层。
-/// `pub(crate)` 让外部模块 (`super::custom_sources`) 用得到,但模块已删,留 dead。
-/// 删掉,避免 dead_code 警告。
-///
 /// 启动时调一次：读 `extra_instances.json`，不存在则从老 `custom_sources.json` 迁。
 ///
 /// v0.2.1 commit 2 后:从 `config/custom_sources.rs::load_or_migrate` 内联过来,

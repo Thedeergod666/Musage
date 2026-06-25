@@ -666,6 +666,25 @@ pub async fn set_source_credential(
         return Err(t!("commands.credential_empty").into_owned());
     }
     let cred = build_credentials(&src, trimmed, field.as_deref())?;
+    // Bug fix (2026-06-25): 对 ApiKeyOrCookie (Xiaomi)，build_credentials
+    // 在 field=None 时默认只写 api_key、显式设 cookie=None。如果用户之前
+    // 只存了 cookie，这会静默删除已有的 cookie。下面的 merge 在读 keys.json
+    // 之前做一次检查，把旧凭据中未被本次 update 触碰的字段保留。
+    //
+    // merge 策略：build_credentials 返回的 Credentials 中，哪个字段是
+    // Some → 本次有意写入；None → 未指定，应从已有凭据中继承（如果存在）。
+    let cred = if src.auth_kind() == AuthKind::ApiKeyOrCookie && field.is_none() {
+        let existing = config::load_credential_for_id(&id).unwrap_or(None);
+        match existing {
+            Some(old) => Credentials {
+                api_key: cred.api_key.or(old.api_key),
+                cookie: cred.cookie.or(old.cookie),
+            },
+            None => cred,
+        }
+    } else {
+        cred
+    };
     config::save_credential_for_id(&id, &cred)?;
     tracing::debug!(provider = %id, field = ?field, "set_source_credential: saved to keys.json");
     // 关键：用户刚配完 key 浮窗应当立刻看到数据。per-provider 调度最早

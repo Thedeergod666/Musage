@@ -575,6 +575,13 @@ pub fn builtin_sources() -> Vec<Box<dyn QuotaSource>> {
 
 /// 按 id 查 source（**异步**，PR 3 起 —— customs 在 `AppState` 里，需要 await lock）。
 ///
+/// ## 搜索顺序
+///
+/// 先按 base `id()` (如 "minimax") 匹配；找不到再按 `unique_id()` (如 "minimax#2")
+/// 匹配。per-provider poller 走 unique_id 路径刷新副本，必须用 unique_id 才能
+/// 找到正确的实例。Bug fix (2026-06-25): 之前只按 `id()` 匹配，副本的 poller tick
+/// 永远返 "unknown source"。
+///
 /// ## Lock 顺序约定
 ///
 /// 调用方在持 `state.config` 锁的情况下**不能**调本函数（会死锁）——
@@ -582,7 +589,12 @@ pub fn builtin_sources() -> Vec<Box<dyn QuotaSource>> {
 /// 同步版（无锁），不冲突；但拿 `state.config` 后又调本函数会形成
 /// config → custom_sources → ... 的反向锁链。
 pub async fn find_source(state: &crate::AppState, id: &str) -> Option<Box<dyn QuotaSource>> {
-    all_sources(state).await.into_iter().find(|s| s.id() == id)
+    // id() 是 Cow/&str，短路径优先。unique_id() 涉及 String 分配，
+    // 只在 base id 不匹配时才检查（对 copy 路径才触发）。
+    all_sources(state)
+        .await
+        .into_iter()
+        .find(|s| s.id() == id || s.unique_id() == id)
 }
 
 /// 全部 source 的注册表（内置 + 用户自定义 / 副本）。async 是因为 extra instances

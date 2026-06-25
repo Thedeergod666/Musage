@@ -67,12 +67,9 @@ pub struct PickerProvider {
 
 /// 创建副本 / 新 custom 的请求体。
 ///
-/// **PR 1b fix**：加 `#[serde(rename_all = "camelCase")]` —— Tauri 2 默认
-/// outer 走 camelCase (`req: {...}` 没问题) 但 inner struct 字段如果不标
-/// rename_all 会被 strict 模式报缺 `providerId` / `apiKey` (前端报错信息
-/// 原文："command test_extra_instance missing required key providerId")。
+/// 前端传 snake_case（`provider_id`, `api_key`），Serde 默认按 Rust 字段名匹配
+/// 无需 rename_all。
 #[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct AddExtraInstanceRequest {
     pub provider_id: String,
     pub api_key: Option<String>,
@@ -82,9 +79,9 @@ pub struct AddExtraInstanceRequest {
 
 /// 更新副本的请求体（api_key / api_cookie / custom 任一可选）。
 ///
-/// **PR 1b fix**：同上 `rename_all = "camelCase"`。
+/// 前端传 snake_case（`api_key`, `api_cookie`），Serde 默认按 Rust 字段名匹配
+/// 无需 rename_all。
 #[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct UpdateExtraInstanceRequest {
     pub id: uuid::Uuid,
     pub api_key: Option<String>,
@@ -94,10 +91,9 @@ pub struct UpdateExtraInstanceRequest {
 
 /// 测试连接的请求体（不写 state）。
 ///
-/// **Fix（deepseek 添加失败 #X）**：跟 `AddExtraInstanceRequest` 同款 `rename_all`，
-/// 因为前端传的是 `{ providerId, apiKey, ... }`。
+/// 前端传 snake_case（`provider_id`, `api_key`），Serde 默认按 Rust 字段名匹配
+/// 无需 rename_all。
 #[derive(Debug, Clone, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct TestExtraInstanceRequest {
     pub provider_id: String,
     pub api_key: Option<String>,
@@ -136,39 +132,45 @@ pub async fn add_extra_instance(
         return Err(t!("commands.extra.unknown_provider", id = req.provider_id.as_str()).into_owned());
     }
 
-    // 2. 构造新 ExtraInstance
-    let now = chrono::Utc::now().timestamp();
-    let new_instance = if is_custom {
-        let spec = req.custom.unwrap();
-        let api_key_ref = spec.id.clone();
-        ExtraInstance {
-            id: uuid::Uuid::new_v4(),
-            provider_id: "custom".to_string(),
-            instance_index: extra_instances::next_index_for(
-                "custom",
-                &state.extra_instances.read().await,
-            ),
-            api_key_ref,
-            custom: Some(spec),
-            created_at: now,
+    // 2+3+4. 在 write 锁内构造 + 算 index + limit 检查 + push + 落盘。
+    // Bug fix (2026-06-25): 之前先用 read 锁取快照算 next_index_for(), 再
+    // 单独拿 write 锁 push。并发 add 同一 provider_id 时会拿到相同的 max
+    // index → 重复 api_key_ref → keys.json 条目互相覆盖。现在整个 "读现有
+    // 列表→算 index→push→save" 都在一把 write 锁内完成, 原子化。
+    let new_instance = {
+        let now = chrono::Utc::now().timestamp();
+        let mut extras = state.extra_instances.write().await;
+        if extras.len() >= TOTAL_EXTRA_LIMIT {
+            return Err(t!("commands.extra.limit_reached").into_owned());
         }
-    } else {
-        // 内置副本
-        let idx = extra_instances::next_index_for(
-            &req.provider_id,
-            &state.extra_instances.read().await,
-        );
-        ExtraInstance {
-            id: uuid::Uuid::new_v4(),
-            provider_id: req.provider_id.clone(),
-            instance_index: idx,
-            api_key_ref: format!("{}#{}", req.provider_id, idx),
-            custom: None,
-            created_at: now,
-        }
+        let instance = if is_custom {
+            let spec = req.custom.as_ref().unwrap();
+            ExtraInstance {
+                id: uuid::Uuid::new_v4(),
+                provider_id: "custom".to_string(),
+                instance_index: extra_instances::next_index_for("custom", &extras),
+                api_key_ref: spec.id.clone(),
+                custom: Some(spec.clone()),
+                created_at: now,
+            }
+        } else {
+            let idx = extra_instances::next_index_for(&req.provider_id, &extras);
+            ExtraInstance {
+                id: uuid::Uuid::new_v4(),
+                provider_id: req.provider_id.clone(),
+                instance_index: idx,
+                api_key_ref: format!("{}#{}", req.provider_id, idx),
+                custom: None,
+                created_at: now,
+            }
+        };
+        extras.push(instance.clone());
+        extra_instances::save(&extras)?;
+        instance
     };
 
-    // 3. 写 key 到 keys.json
+    // 写 key 到 keys.json（在 write 锁外 —— keys.json 有独立的 save_lock, 不与
+    // extra_instances 锁嵌套）
     if let Some(k) = &req.api_key {
         if !k.trim().is_empty() {
             let cred = Credentials {
@@ -181,7 +183,6 @@ pub async fn add_extra_instance(
     }
     if let Some(c) = &req.api_cookie {
         if !c.trim().is_empty() {
-            // cookie 也存到 keys.json 同一个 file 里（不同 key 段）
             let cred = Credentials {
                 api_key: None,
                 cookie: Some(c.trim().to_string()),
@@ -189,16 +190,6 @@ pub async fn add_extra_instance(
             save_credential_for_id(&new_instance.api_key_ref, &cred)
                 .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
         }
-    }
-
-    // 4. 写 extra_instances.json
-    {
-        let mut extras = state.extra_instances.write().await;
-        if extras.len() >= TOTAL_EXTRA_LIMIT {
-            return Err(t!("commands.extra.limit_reached").into_owned());
-        }
-        extras.push(new_instance.clone());
-        extra_instances::save(&extras)?;
     }
 
     // 5. emit + refresh
@@ -217,48 +208,53 @@ pub async fn update_extra_instance(
     app: AppHandle,
     req: UpdateExtraInstanceRequest,
 ) -> Result<ExtraInstance, String> {
-    let extras_read = state.extra_instances.read().await.clone();
-    let pos = extras_read
-        .iter()
-        .position(|e| e.id == req.id)
-        .ok_or_else(|| t!("commands.extra.not_found", id = req.id.to_string().as_str()).into_owned())?;
-    let mut updated = extras_read[pos].clone();
+    // Bug fix (2026-06-25): 之前先用 read 锁 clone 全量 + 算 pos, 再在
+    // write 锁里直接用这个 pos。如果两次锁之间 delete_extra_instance 删了
+    // 同一位置或之前的条目, pos 会指向错误元素或触发 index out of bounds panic。
+    // 修复: 安全操作 (save_credential / spec 校验) 在 write 锁外先做, 但
+    // "找 pos → 替换 → save" 必须在同一把 write 锁内完成, 且 pos 在锁内重新查。
 
-    // 改 key（如果提供）
-    if let Some(k) = req.api_key {
-        if !k.trim().is_empty() {
-            let cred = Credentials {
-                api_key: Some(k.trim().to_string()),
-                cookie: None,
-            };
-            save_credential_for_id(&updated.api_key_ref, &cred)
-                .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
-        }
+    // 改 key / custom spec（在锁外做 —— 这些不依赖 extras 内存状态;
+    // save_credential_for_id 有独立的 save_lock）
+    let api_key_val = req.api_key.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| s.to_string());
+    let api_cookie_val = req.api_cookie.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| s.to_string());
+    if let Some(k) = &api_key_val {
+        // 先读一次拿到 current api_key_ref（锁外读,用于存 key）
+        let extras_read = state.extra_instances.read().await;
+        let inst = extras_read.iter().find(|e| e.id == req.id)
+            .ok_or_else(|| t!("commands.extra.not_found", id = req.id.to_string().as_str()).into_owned())?;
+        let cred = Credentials { api_key: Some(k.clone()), cookie: None };
+        save_credential_for_id(&inst.api_key_ref, &cred)
+            .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
     }
-    if let Some(c) = req.api_cookie {
-        if !c.trim().is_empty() {
-            let cred = Credentials {
-                api_key: None,
-                cookie: Some(c.trim().to_string()),
-            };
-            save_credential_for_id(&updated.api_key_ref, &cred)
-                .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
-        }
-    }
-
-    // 改 custom spec
-    if let Some(spec) = req.custom {
-        if updated.provider_id != "custom" {
-            return Err(t!("commands.extra.custom_only_for_custom_provider").into_owned());
-        }
-        updated.custom = Some(spec);
+    if let Some(c) = &api_cookie_val {
+        let extras_read = state.extra_instances.read().await;
+        let inst = extras_read.iter().find(|e| e.id == req.id)
+            .ok_or_else(|| t!("commands.extra.not_found", id = req.id.to_string().as_str()).into_owned())?;
+        let cred = Credentials { api_key: None, cookie: Some(c.clone()) };
+        save_credential_for_id(&inst.api_key_ref, &cred)
+            .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
     }
 
-    {
+    // 核心：拿到 write 锁后重新查找 pos, 再更新 + save
+    let updated = {
         let mut extras = state.extra_instances.write().await;
+        let pos = extras.iter().position(|e| e.id == req.id)
+            .ok_or_else(|| t!("commands.extra.not_found", id = req.id.to_string().as_str()).into_owned())?;
+        let mut updated = extras[pos].clone();
+
+        // 改 custom spec
+        if let Some(spec) = req.custom {
+            if updated.provider_id != "custom" {
+                return Err(t!("commands.extra.custom_only_for_custom_provider").into_owned());
+            }
+            updated.custom = Some(spec);
+        }
+
         extras[pos] = updated.clone();
         extra_instances::save(&extras)?;
-    }
+        updated
+    };
 
     let _ = app.emit("musage://config-changed", ());
     let unique = updated.api_key_ref.clone();
@@ -291,28 +287,39 @@ pub async fn delete_extra_instance(
         let pos = extras.iter().position(|e| e.id == id).unwrap();
         extras.remove(pos);
 
+        // 紧凑前先拍下同 provider_id 内剩余实例的 (id, old_api_key_ref) 快照，
+        // compact_indexes_for 会就地重写 api_key_ref（如 "minimax#3"→"minimax#2"）。
+        let old_refs: Vec<(uuid::Uuid, String)> = extras
+            .iter()
+            .filter(|e| e.provider_id == provider_id)
+            .map(|e| (e.id, e.api_key_ref.clone()))
+            .collect();
+
         // 紧凑：同 provider_id 内重排 instance_index + api_key_ref
         extra_instances::compact_indexes_for(&provider_id, &mut extras);
 
-        // 同步 keys.json：把所有被 compact 改名的 key 重命名
-        // —— compact_indexes_for 已经改了 api_key_ref 字段,
-        // 我们要保证 keys.json 里的 key 跟新名字一致。
-        // 简化策略：所有同 provider_id 的 extra instance 都把 key
-        // 从 old_api_key_ref 复制到 new_api_key_ref，删掉 old。
-        // (本步由 extra_instances 触发的 keys.json sync 在 v2 重做;
-        // PR 1b 简化: 删 instance 时同步迁移 keys.json 即可)
-        let new_keys: Vec<(String, String)> = extras
-            .iter()
-            .filter(|e| e.provider_id == provider_id)
-            .map(|e| (e.api_key_ref.clone(), e.id.to_string()))
-            .collect();
-        // 删 target 的旧 key
+        // 同步 keys.json：被 compact 改名的 key 要迁移凭据。
+        // compact_indexes_for 已就地把 e.api_key_ref 改成新值；对比新旧
+        // api_key_ref，把 old → new 的凭据复制过去，再删旧 key。
+        for (inst_id, old_ref) in &old_refs {
+            if let Some(inst) = extras.iter().find(|e| &e.id == inst_id) {
+                if inst.api_key_ref != *old_ref {
+                    if let Ok(Some(cred)) = load_credential_for_id(old_ref) {
+                        if save_credential_for_id(&inst.api_key_ref, &cred).is_err() {
+                            tracing::warn!(
+                                old_key = %old_ref,
+                                new_key = %inst.api_key_ref,
+                                "compact 后复制凭据失败",
+                            );
+                        }
+                    }
+                    delete_credential_for_id(old_ref).ok();
+                }
+            }
+        }
+
+        // 删被删除实例的旧 key
         delete_credential_for_id(&target_api_key_ref).ok();
-        // PR 1b 简化: 不做完整的 key 重命名迁移。删 instance 后同 provider
-        // 其它 instance 的 key 不变 (api_key_ref 字段变了但 keys.json 里的
-        // 实际 key 名还是旧的)。这是 PR 1b 已知限制, v2 重做时通过把
-        // load_credential_for_id 改为"按 instance_index 查"解决。
-        let _ = new_keys;
 
         extra_instances::save(&extras)?;
     }

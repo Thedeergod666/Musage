@@ -74,6 +74,7 @@ export async function renderProvidersSection(container: HTMLElement) {
     auth_kind: "api_key" as const, // 默认，副本通常不需要 cookie
     enabled: cfg.providers?.[e.api_key_ref]?.enabled ?? true,
     is_stub: false,
+    extra_instance_uuid: e.id, // P0-1: UUID 给 delete/update IPC 用
   }));
 
   const customExtrasAsMeta: SourceMeta[] = customExtras.map((e) => ({
@@ -82,6 +83,7 @@ export async function renderProvidersSection(container: HTMLElement) {
     auth_kind: "api_key" as const,
     enabled: cfg.providers?.[e.api_key_ref]?.enabled ?? true,
     is_stub: false,
+    extra_instance_uuid: e.id, // P0-1: UUID 给 delete/update IPC 用
   }));
 
   const allSources: SourceMeta[] = [...sources, ...builtinExtrasAsMeta, ...customExtrasAsMeta];
@@ -333,7 +335,9 @@ function renderDeleteExtraButton(meta: SourceMeta): HTMLElement {
       return;
     }
     try {
-      await deleteExtraInstance(meta.id);
+      // P0-1: 删除必须传 UUID，不是 api_key_ref。meta.id 是 api_key_ref ("minimax#2")，
+      // meta.extra_instance_uuid 才是真正的 UUID。
+      await deleteExtraInstance(meta.extra_instance_uuid ?? meta.id);
       flash(t("settings.providers.delete_extra_done", { name: meta.display_name }));
       // L2 fix: 重置拖拽状态，防止 section 重建后幽灵/placeholder 残留
       resetDragState();

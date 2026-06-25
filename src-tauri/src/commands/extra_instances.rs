@@ -144,13 +144,21 @@ pub async fn add_extra_instance(
             return Err(t!("commands.extra.limit_reached").into_owned());
         }
         let instance = if is_custom {
-            let spec = req.custom.as_ref().unwrap();
+            let mut spec = req.custom.as_ref().unwrap().clone();
+            // P0-3 fix: 前端发 Omit<CustomSourceSpec, "id" | "created_at">，
+            // id/created_at 缺省时自动补。
+            if spec.id.is_empty() {
+                spec.id = format!("custom_{}", uuid::Uuid::new_v4().simple());
+            }
+            if spec.created_at == 0 {
+                spec.created_at = now;
+            }
             ExtraInstance {
                 id: uuid::Uuid::new_v4(),
                 provider_id: "custom".to_string(),
                 instance_index: extra_instances::next_index_for("custom", &extras),
                 api_key_ref: spec.id.clone(),
-                custom: Some(spec.clone()),
+                custom: Some(spec),
                 created_at: now,
             }
         } else {

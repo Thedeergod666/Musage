@@ -56,6 +56,9 @@ export interface SourceMeta {
   /** true = STUB（公开 API 无 quota endpoint，2026-06-17 commit 加）。
    *  UI 加灰显 + "未支持" 角标；老面板忽略该字段不影响渲染。 */
   is_stub?: boolean;
+  /** P0-1 fix: ExtraInstance 的 UUID（仅 extra instance 有值）。
+   *  删除/更新 IPC 需要传 UUID，不能传 api_key_ref。 */
+  extra_instance_uuid?: string;
 }
 
 /// Xiaomi MiMo 浮窗显示模式：

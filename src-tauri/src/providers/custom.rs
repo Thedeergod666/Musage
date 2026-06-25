@@ -101,6 +101,7 @@ pub enum ExtractSpec {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CustomSourceSpec {
     /// `"custom_a1b2c3d4"` —— UUID 后 8 位 hex，由后端在 `add_custom_source` 生成
+    #[serde(default)]
     pub id: String,
     /// 用户起的名字（"DMX API"），设置面板显示 + 删除二次输入用
     pub display_name: String,
@@ -119,6 +120,7 @@ pub struct CustomSourceSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accent: Option<String>,
     /// 创建时间戳（秒）
+    #[serde(default)]
     pub created_at: i64,
 }
 
@@ -654,5 +656,21 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let err = rt.block_on(src.fetch(&creds)).unwrap_err();
         assert_eq!(err.kind, ErrorKind::UnconfiguredKey);
+    }
+
+    /// P0-3 regression: 前端发 Omit<id, created_at> 反序列化不能炸。
+    #[test]
+    fn deserialize_without_id_and_created_at() {
+        let json = r#"{
+            "display_name": "Test API",
+            "base_url": "https://api.test.com",
+            "path": "/api/user/self",
+            "method": "GET",
+            "extract": {"preset": "new_api", "divide": null}
+        }"#;
+        let spec: CustomSourceSpec = serde_json::from_str(json).expect("should deserialize");
+        assert_eq!(spec.display_name, "Test API");
+        assert!(spec.id.is_empty(), "id should default to empty string");
+        assert_eq!(spec.created_at, 0, "created_at should default to 0");
     }
 }

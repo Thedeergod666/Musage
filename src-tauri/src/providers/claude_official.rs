@@ -262,6 +262,7 @@ async fn do_fetch(
     parse(&raw, _source_id, display_name)
 }
 
+
 /// 解析 Claude OAuth usage 响应 → QuotaRow 列表。
 ///
 /// 任意 tier 缺失 → 自然降级（5h 没回就只显示周；反之亦然）。两个都缺 → 报错。

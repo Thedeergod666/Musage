@@ -65,9 +65,11 @@ export async function renderProvidersSection(container: HTMLElement) {
   const customExtras: ExtraInstance[] = extras.filter((e) => e.provider_id === "custom");
 
   // 内置副本：通过 api_key_ref 区分 → 用 "minimax#2" 这种 ID 作 DOM key
+  // display_name：在设置面板渲染时用前端 t() 拿翻译好的基名 + "#N" 后缀，
+  // 跟后端 display_name() 行为严格对齐（后者也用 t!("provider_name.xxx")）。
   const builtinExtrasAsMeta: SourceMeta[] = builtinExtras.map((e) => ({
     id: e.api_key_ref, // "minimax#2"
-    display_name: formatDisplayName(e.provider_id, e.instance_index),
+    display_name: formatDisplayName(t(`provider.${e.provider_id}.name`), e.instance_index),
     auth_kind: "api_key" as const, // 默认，副本通常不需要 cookie
     enabled: cfg.providers?.[e.api_key_ref]?.enabled ?? true,
     is_stub: false,

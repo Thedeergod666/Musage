@@ -1238,6 +1238,22 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
 
     snap.fetched_at = Some(chrono::Utc::now().timestamp_millis());
 
+    // ── post-fill source_display_name（2026-06-25 i18n 修复）──────────────
+    // 12 个 provider 的 do_fetch / parse 各自硬编码 source_display_name 为静态
+    // 字符串（"MiniMax" / "DeepSeek" / ...），跟 QuotaSource::display_name() 脱钩。
+    // 逐遍改 12 个 do_fetch 签名风险高且 future provider 仍会再犯。更好的策略：
+    // refresh_inner 产出所有 snapshot 之后，用 find_source(id) 查 display_name()
+    // 统一填回 source_display_name。
+    // - 副本（"minimax#2"）→ "MiniMax #2"（经 i18n）
+    // - 默认（"minimax"）   → "MiniMax"（经 i18n）
+    // - CustomSource        → 用户的 display_name（"DMX API"）
+    for p in &mut snap.providers {
+        let id = p.unique_id.as_deref().unwrap_or(p.source_id.as_deref().unwrap_or(&p.provider));
+        if let Some(src) = crate::providers::find_source(&state, id).await {
+            p.source_display_name = Some(src.display_name().to_string());
+        }
+    }
+
     // 过滤 + 排序 + 推送
     let state = app.state::<AppState>();
     let cfg_read = state.config.read().await;
@@ -1427,6 +1443,18 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
     let tray_style = cfg2_snapshot.tray_icon_style;
     let emit_snap = snap.clone();
     drop(snap);
+    // ── post-fill source_display_name（2026-06-25 i18n 修复）──────────────
+    // 与 refresh_inner 同策略：fetch 产出的 snapshot 拿 display_name 统一填。
+    let mut emit_snap = emit_snap;
+    {
+        let state = app.state::<AppState>();
+        for p in &mut emit_snap.providers {
+            let pid = p.unique_id.as_deref().unwrap_or(p.source_id.as_deref().unwrap_or(&p.provider));
+            if let Some(src) = crate::providers::find_source(&state, pid).await {
+                p.source_display_name = Some(src.display_name().to_string());
+            }
+        }
+    }
     let _ = app.emit("musage://snapshot", &emit_snap);
     if let Err(e) = crate::tray::update_tray_from_snapshot(app, &emit_snap, tray_style) {
         tracing::warn!(error = %e, "刷新托盘失败 (refresh_single)");

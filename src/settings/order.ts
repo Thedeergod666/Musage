@@ -172,6 +172,19 @@ let dragOffsetY = 0;
 /// 详见 onDragMouseUp 内的 DRAG_THRESHOLD_PX 注释。
 let dragStartY = 0;
 
+/** L2 fix: 重置 drag state,防止 section 重建时幽灵/placeholder 残留。 */
+export function resetDragState(): void {
+  if (dragGhost?.parentNode) dragGhost.parentNode.removeChild(dragGhost);
+  if (dragPlaceholder?.parentNode) dragPlaceholder.parentNode.removeChild(dragPlaceholder);
+  dragging = false;
+  dragSrcId = null;
+  dragSrcIdx = -1;
+  dragGhost = null;
+  dragPlaceholder = null;
+  dragOffsetY = 0;
+  dragStartY = 0;
+}
+
 function onDragMouseDown(e: MouseEvent) {
   // 只在左键点击 <li> 时启动
   if (e.button !== 0) return;

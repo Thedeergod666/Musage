@@ -198,12 +198,17 @@ impl QuotaSource for ZhipuSource {
                 ));
             }
             let region = self.region.read().ok().and_then(|g| *g).unwrap_or_default();
-            do_fetch(api_key, region).await
+            do_fetch(api_key, region, &self.unique_id(), &self.display_name().to_string()).await
         })
     }
 }
 
-async fn do_fetch(api_key: &str, region: ZhipuRegion) -> Result<ProviderSnapshot, FetchError> {
+async fn do_fetch(
+    api_key: &str,
+    region: ZhipuRegion,
+    source_id: &str,
+    display_name: &str,
+) -> Result<ProviderSnapshot, FetchError> {
     let client = shared_client();
     let url = region.url();
 
@@ -319,7 +324,7 @@ fn parse(raw: &Value, region: ZhipuRegion) -> Result<ProviderSnapshot, FetchErro
 
     if rows.is_empty() {
         return Err(FetchError::parse(
-            "智谱响应里没找到任何 TOKENS_LIMIT 条目".to_string(),
+            t!("error.parse.no_rows_found").into_owned(),
         ));
     }
 

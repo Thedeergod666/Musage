@@ -148,12 +148,16 @@ impl QuotaSource for OpenrouterSource {
                     t!("error.provider.unconfigured_key", provider = "OpenRouter").into_owned(),
                 ));
             }
-            do_fetch(api_key).await
+            do_fetch(api_key, &self.unique_id(), &self.display_name().to_string()).await
         })
     }
 }
 
-async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
+async fn do_fetch(
+    api_key: &str,
+    source_id: &str,
+    display_name: &str,
+) -> Result<ProviderSnapshot, FetchError> {
     let client = shared_client();
 
     // ── 第一优先：/api/v1/credits（账户余额，准确） ──

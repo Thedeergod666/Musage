@@ -61,6 +61,9 @@
       "join_task_failed": "任务调度失败: {err}",
       "unknown_source_id": "未知的 source id: {id}"
     },
+    "parse": {
+      "no_rows_found": "响应中未找到任何用量行 —— schema 可能已变更"
+    },
     "provider": {
       "unconfigured_key": "未配置 {provider} 的 API key（设置面板填入）",
       "not_supported": "{provider} 暂未支持：{reason}",

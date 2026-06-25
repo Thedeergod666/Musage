@@ -422,7 +422,7 @@ fn parse_subscription(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
 
     if rows.is_empty() {
         return Err(FetchError::parse(
-            "响应里没找到 quota_5_hour / quota_7_day 字段".to_string(),
+            t!("error.parse.no_rows_found").into_owned(),
         ));
     }
 

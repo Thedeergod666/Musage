@@ -587,7 +587,19 @@ impl AppConfig {
             }
             self.schema_version = next;
         }
-        for p in ["minimax", "deepseek", "xiaomimimo"] {
+        for p in [
+            "minimax",
+            "deepseek",
+            "xiaomimimo",
+            "tavily",
+            "zenmux",
+            "openrouter",
+            "kimi",
+            "zhipu",
+            "stepfun",
+            "siliconflow",
+            "claude_official",
+        ] {
             self.providers
                 .entry(p.to_string())
                 .or_insert_with(|| match p {

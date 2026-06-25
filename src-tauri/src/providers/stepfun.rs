@@ -150,12 +150,16 @@ impl QuotaSource for StepfunSource {
                     t!("error.stepfun.token_unconfigured_hint").into_owned(),
                 ));
             }
-            do_fetch(token).await
+            do_fetch(token, &self.unique_id(), &self.display_name().to_string()).await
         })
     }
 }
 
-async fn do_fetch(oasis_token: &str) -> Result<ProviderSnapshot, FetchError> {
+async fn do_fetch(
+    oasis_token: &str,
+    source_id: &str,
+    display_name: &str,
+) -> Result<ProviderSnapshot, FetchError> {
     // 并行拉 rate limit + plan status（互不依赖）
     let rate = fetch_rate_limit(oasis_token).await?;
     let plan = fetch_plan_status(oasis_token).await.ok().flatten(); // 失败不阻塞
@@ -331,7 +335,7 @@ fn parse(rate_raw: Value, plan_name: Option<String>) -> Result<ProviderSnapshot,
 
     if rows.is_empty() {
         return Err(FetchError::parse(
-            "StepFun 响应里没找到有效的 *_usage_left_rate 字段".to_string(),
+            t!("error.parse.no_rows_found").into_owned(),
         ));
     }
 

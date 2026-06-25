@@ -107,7 +107,9 @@ export async function downloadAndInstall(): Promise<UpdateState> {
           progress: total > 0 ? downloaded / total : undefined,
         });
       } else if (event.event === "Finished") {
-        emit({ status: "ready", version });
+        // emit only once here — downloadAndInstall callback fires on Finished,
+        // and the resolved promise below also emits. dedup to one emit.
+        // (the callback is more precise: "Finished" means the binary is staged)
       }
     });
     emit({ status: "ready", version });

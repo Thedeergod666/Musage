@@ -153,7 +153,7 @@ impl QuotaSource for ClaudeOfficialSource {
                 ));
             }
             let session_key = normalize_session_key(raw);
-            do_fetch(&session_key).await
+            do_fetch(&session_key, &self.unique_id(), &self.display_name().to_string()).await
         })
     }
 }
@@ -184,7 +184,11 @@ fn normalize_session_key(raw: &str) -> String {
     s.to_string()
 }
 
-async fn do_fetch(session_key: &str) -> Result<ProviderSnapshot, FetchError> {
+async fn do_fetch(
+    session_key: &str,
+    source_id: &str,
+    display_name: &str,
+) -> Result<ProviderSnapshot, FetchError> {
     let client = shared_client();
 
     let resp = client

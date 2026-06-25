@@ -121,12 +121,16 @@ impl QuotaSource for SiliconflowSource {
                     t!("error.provider.unconfigured_key", provider = "SiliconFlow").into_owned(),
                 ));
             }
-            do_fetch(api_key).await
+            do_fetch(api_key, &self.unique_id(), &self.display_name().to_string()).await
         })
     }
 }
 
-async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
+async fn do_fetch(
+    api_key: &str,
+    source_id: &str,
+    display_name: &str,
+) -> Result<ProviderSnapshot, FetchError> {
     if api_key.trim().is_empty() {
         return Err(FetchError::unconfigured(
             t!("error.common.api_key_empty").into_owned(),

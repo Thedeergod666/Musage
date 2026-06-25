@@ -125,12 +125,16 @@ impl QuotaSource for KimiSource {
                     t!("error.provider.unconfigured_key", provider = "Kimi").into_owned(),
                 ));
             }
-            do_fetch(api_key).await
+            do_fetch(api_key, &self.unique_id(), &self.display_name().to_string()).await
         })
     }
 }
 
-async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
+async fn do_fetch(
+    api_key: &str,
+    source_id: &str,
+    display_name: &str,
+) -> Result<ProviderSnapshot, FetchError> {
     let client = shared_client();
 
     let resp = client
@@ -175,13 +179,13 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
         FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
     })?;
 
-    parse(&raw)
+    parse(&raw, source_id, display_name)
 }
 
 /// 解析 Kimi Coding usage 响应。
 ///
 /// 解析失败时按 ROADMAP 策略返回 `Err(FetchError::Parse)`。
-fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
+fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
     let mut rows = Vec::new();
@@ -244,7 +248,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
 
     if rows.is_empty() {
         return Err(FetchError::parse(
-            "Kimi 响应里没找到任何 usage/limits 字段".to_string(),
+            t!("error.parse.no_rows_found").into_owned(),
         ));
     }
 
@@ -253,7 +257,7 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         // "minimax" string 占位。前端走 source_id ("kimi") 路由,
         // 这个字段仅给老 JSON 反序列化兜底 (#[serde(default)] 让空 / 缺失
         // 字段不报错)
-        provider: "minimax".to_string(),
+        provider: "kimi".to_string(),
         success: true,
         rows,
         error: None,
@@ -262,9 +266,9 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         next_fetch_at: None,
         raw: Some(raw.clone()),
         is_healthy: true,
-        source_id: Some("kimi".to_string()),
+        source_id: Some(source_id.to_string()),
         unique_id: None,
-        source_display_name: Some("Kimi".to_string()),
+        source_display_name: Some(display_name.to_string()),
         plan_name: Some("Coding Plan".to_string()),
         transient: None,
     })
@@ -324,7 +328,7 @@ mod tests {
                 "resetTime": 1749840000   // epoch 秒
             }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, "kimi", "Kimi").expect("parse");
         assert!(snap.success);
         assert_eq!(snap.source_id.as_deref(), Some("kimi"));
         assert_eq!(snap.plan_name.as_deref(), Some("Coding Plan"));
@@ -356,7 +360,7 @@ mod tests {
                 { "detail": { "limit": 50, "remaining": 50, "resetTime": null } }
             ]
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, "kimi", "Kimi").expect("parse");
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].label, "5h");
         assert_eq!(snap.rows[0].resets_at, None);
@@ -367,7 +371,7 @@ mod tests {
         let raw = json!({
             "usage": { "limit": 500, "remaining": 100, "resetTime": 1749840000000_i64 }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, "kimi", "Kimi").expect("parse");
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].label, t!("row.weekly"));
         assert_eq!(snap.rows[0].resets_at, Some(1749840000000));
@@ -380,7 +384,7 @@ mod tests {
             "limits": [{ "detail": { "limit": 0, "remaining": 0 } }],
             "usage":  { "limit": 100, "remaining": 50 }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, "kimi", "Kimi").expect("parse");
         assert_eq!(snap.rows.len(), 1); // 5h 被跳过
         assert_eq!(snap.rows[0].label, t!("row.weekly"));
     }
@@ -388,7 +392,7 @@ mod tests {
     #[test]
     fn parse_empty_is_error() {
         let raw = json!({});
-        let err = parse(&raw).unwrap_err();
+        let err = parse(&raw, "kimi", "Kimi").unwrap_err();
         assert_eq!(err.kind, FetchError::parse("test").kind);
     }
 
@@ -397,7 +401,7 @@ mod tests {
         let raw = json!({
             "limits": [{ "detail": { "remaining": 50 } }]
         });
-        let err = parse(&raw).unwrap_err();
+        let err = parse(&raw, "kimi", "Kimi").unwrap_err();
         assert_eq!(err.kind, FetchError::parse("test").kind);
     }
 

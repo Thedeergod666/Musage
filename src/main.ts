@@ -832,7 +832,10 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
     bar.className = `bar-fill ${cls}`;
     bar.style.width = `${barWidth(r.utilization)}%`;
     if (r.resets_at) rowEl.dataset.resetsAt = String(r.resets_at);
-    else delete rowEl.dataset.resetsAt;
+    else {
+      delete rowEl.dataset.resetsAt;
+      delete rowEl.dataset.resetsPrefix;
+    }
   } else if (r.remaining != null) {
     const labelSpan = rowEl.querySelector<HTMLElement>(".row-label > span:first-child")!;
     labelSpan.textContent = r.label;

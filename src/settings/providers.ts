@@ -21,10 +21,11 @@ import {
   setProviderEnabled,
   listExtraInstances,
   deleteExtraInstance,
+  saveConfig,
 } from "./api";
 import { el, escapeHtml, setCurrentKnownIds, flash, currentProviderOrder, formatDisplayName } from "./utils";
 import { getProviderExtras } from "./source-extras";
-import { renderOrderSection, withSuppress } from "./order";
+import { renderOrderSection, withSuppress, resetDragState } from "./order";
 import { renderCredentialBlock, loadCredentialStatus, batchPasteKeys } from "./credentials";
 import { getProviderMeta } from "./logos";
 import { getGroupDef, groupKeyFor } from "./groups";
@@ -282,6 +283,22 @@ function renderIntervalOverride(id: string, cfg: AppConfig): HTMLElement {
       { secs: cfg.refresh_interval_secs ?? 60 }),
   }) as HTMLInputElement;
   if (v != null) input.value = String(v);
+
+  // M4 fix: 绑定 change 事件，用户修改轮询间隔后自动保存
+  input.addEventListener("change", async () => {
+    const raw = input.value.trim();
+    const secs = raw ? parseInt(raw, 10) : null;
+    try {
+      const latest = await getConfig();
+      if (!latest.providers) latest.providers = {};
+      if (!latest.providers[id]) latest.providers[id] = { enabled: true };
+      latest.providers[id].refresh_interval_secs = secs;
+      await saveConfig(latest);
+    } catch (e) {
+      flash(t("credentials.flash_save_failed", { err: String(e) }), true);
+    }
+  });
+
   return el(
     "div",
     { class: "field" },
@@ -319,6 +336,8 @@ function renderDeleteExtraButton(meta: SourceMeta): HTMLElement {
     try {
       await deleteExtraInstance(meta.id);
       flash(t("settings.providers.delete_extra_done", { name: meta.display_name }));
+      // L2 fix: 重置拖拽状态，防止 section 重建后幽灵/placeholder 残留
+      resetDragState();
       // 重建整个 providers section
       const container = document.querySelector<HTMLElement>(
         '.section-view[data-section="providers"]',

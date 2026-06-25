@@ -284,7 +284,8 @@ pub async fn delete_extra_instance(
     // 2. 拿 write lock + 删 + 紧凑 + 同步 keys.json
     {
         let mut extras = state.extra_instances.write().await;
-        let pos = extras.iter().position(|e| e.id == id).unwrap();
+        let pos = extras.iter().position(|e| e.id == id)
+            .ok_or_else(|| t!("commands.extra.not_found", id = id.to_string().as_str()).into_owned())?;
         extras.remove(pos);
 
         // 紧凑前先拍下同 provider_id 内剩余实例的 (id, old_api_key_ref) 快照，

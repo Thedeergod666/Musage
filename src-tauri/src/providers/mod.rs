@@ -531,10 +531,21 @@ pub trait QuotaSource: Send + Sync {
     ///
     /// Phase 1 用这个来替代 downcast —— typed dispatch 痛点 + dyn 没法
     /// 装成具体类型，所以用"发 JSON 让 source 自己解析"的折中。
+    ///
+    /// 调用方在调 `set_state()` 之前应检查 [`needs_state_update`](Self::needs_state_update)：
+    /// 返回 false 的 source 没有状态需要同步，可跳过整次 JSON 序列化。
     fn set_state<'a>(
         &'a self,
         cfg: serde_json::Value,
     ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>>;
+    /// 是否需要 `set_state()` 调用。默认 `true`。
+    ///
+    /// DeepSeek / Kimi / Claude 等无 region / mode / overrides 概念的 source
+    /// 应 override 为 `false`，避免 `update_source_state` 每次 poll 都序列化
+    /// 整个 `AppConfig` → JSON → drop —— 约 2KB × 11 provider × 每分钟 = 浪费。
+    fn needs_state_update(&self) -> bool {
+        true
+    }
     /// 拉数据。`credentials` 里能拿到这个 source 需要的凭据（api_key / cookie）。
     fn fetch<'a>(
         &'a self,

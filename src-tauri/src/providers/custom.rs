@@ -200,14 +200,19 @@ impl QuotaSource for CustomSource {
                 ));
             }
             let spec = self.spec.clone(); // 'static lifetime 需要 owned
-            do_fetch(api_key, &spec).await
+            do_fetch(api_key, &spec, &self.unique_id(), &self.display_name().to_string()).await
         })
     }
 }
 
 // ── 内部：HTTP 请求 + 解析 ──────────────────────────────────────────
 
-async fn do_fetch(api_key: &str, spec: &CustomSourceSpec) -> Result<ProviderSnapshot, FetchError> {
+async fn do_fetch(
+    api_key: &str,
+    spec: &CustomSourceSpec,
+    source_id: &str,
+    display_name: &str,
+) -> Result<ProviderSnapshot, FetchError> {
     // L10 fix: path 必须以 / 开头，否则 base_url+path 拼出的 URL 会串 host。
     // 例: base_url="https://api.legit.com" + path="@evil.com/foo" →
     // https://api.legit.com@evil.com/foo (host 变成 evil.com，api key 走 reqwest
@@ -292,9 +297,9 @@ async fn do_fetch(api_key: &str, spec: &CustomSourceSpec) -> Result<ProviderSnap
         next_fetch_at: None,
         raw: Some(raw),
         is_healthy: true,
-        source_id: Some(spec.id.clone()),
+        source_id: Some(source_id.to_string()),
         unique_id: None,
-        source_display_name: Some(spec.display_name.clone()),
+        source_display_name: Some(display_name.to_string()),
         plan_name,
         transient: None,
     })

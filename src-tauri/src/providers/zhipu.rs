@@ -267,7 +267,7 @@ async fn do_fetch(
         ));
     }
 
-    parse(&raw, region)
+    parse(&raw, region, source_id, display_name)
 }
 
 /// 解析智谱 quota 响应 → QuotaRow 列表。
@@ -277,7 +277,12 @@ async fn do_fetch(
 /// 2. 兜底启发式（unit 缺失或不识别）：无 resetTime 的优先归 5h（5h 桶 0%
 ///    时可能没 reset），其余按 reset 升序填入仍空缺的槽位
 /// 3. 老套餐只回 1 条 TOKENS_LIMIT → 自然降级为只显示 5h
-fn parse(raw: &Value, region: ZhipuRegion) -> Result<ProviderSnapshot, FetchError> {
+fn parse(
+    raw: &Value,
+    region: ZhipuRegion,
+    source_id: &str,
+    display_name: &str,
+) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
     let data = raw.get("data").ok_or_else(|| {
@@ -345,9 +350,9 @@ fn parse(raw: &Value, region: ZhipuRegion) -> Result<ProviderSnapshot, FetchErro
         next_fetch_at: None,
         raw: Some(raw.clone()),
         is_healthy: true,
-        source_id: Some("zhipu".to_string()),
+        source_id: Some(source_id.to_string()),
         unique_id: None,
-        source_display_name: Some(region.display_label()),
+        source_display_name: Some(display_name.to_string()),
         plan_name,
         transient: None,
     })
@@ -434,7 +439,7 @@ mod tests {
                 ]
             }
         });
-        let snap = parse(&raw, ZhipuRegion::Cn).expect("parse");
+        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "智谱 GLM").expect("parse");
         assert!(snap.success);
         assert_eq!(snap.source_id.as_deref(), Some("zhipu"));
         assert_eq!(snap.plan_name.as_deref(), Some("pro"));
@@ -468,7 +473,7 @@ mod tests {
                 ]
             }
         });
-        let snap = parse(&raw, ZhipuRegion::Cn).expect("parse");
+        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "智谱 GLM").expect("parse");
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].label, t!("row.five_hour"));
         assert!((snap.rows[0].utilization.unwrap() - 2.0).abs() < 0.001);
@@ -480,7 +485,7 @@ mod tests {
             "success": true,
             "data": { "level": "free", "limits": [{ "type": "TIME_LIMIT", "percentage": 5.0 }] }
         });
-        let err = parse(&raw, ZhipuRegion::Cn).unwrap_err();
+        let err = parse(&raw, ZhipuRegion::Cn, "zhipu", "智谱 GLM").unwrap_err();
         assert_eq!(err.kind, FetchError::parse("test").kind);
     }
 
@@ -498,7 +503,7 @@ mod tests {
                 ]
             }
         });
-        let snap = parse(&raw, ZhipuRegion::Cn).expect("parse");
+        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "智谱 GLM").expect("parse");
         assert_eq!(snap.rows.len(), 2);
         assert_eq!(snap.rows[0].label, t!("row.five_hour"));
         assert!((snap.rows[0].utilization.unwrap()).abs() < 0.001);
@@ -520,7 +525,7 @@ mod tests {
                 ]
             }
         });
-        let snap = parse(&raw, ZhipuRegion::Cn).expect("parse");
+        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "智谱 GLM").expect("parse");
         assert_eq!(snap.rows.len(), 2);
         // reset 较早的归 5h
         assert_eq!(snap.rows[0].label, t!("row.five_hour"));
@@ -542,7 +547,7 @@ mod tests {
                 ]
             }
         });
-        let snap = parse(&raw, ZhipuRegion::Cn).expect("parse");
+        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "智谱 GLM").expect("parse");
         assert_eq!(snap.rows.len(), 2);
         assert_eq!(snap.rows[0].label, t!("row.five_hour"));
         assert!((snap.rows[0].utilization.unwrap() - 11.0).abs() < 0.001);
@@ -562,21 +567,21 @@ mod tests {
                 ]
             }
         });
-        let snap = parse(&raw, ZhipuRegion::Cn).expect("parse");
+        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "智谱 GLM").expect("parse");
         assert_eq!(snap.rows.len(), 2);
     }
 
     #[test]
     fn parse_missing_data_is_error() {
         let raw = json!({ "success": true });
-        let err = parse(&raw, ZhipuRegion::Cn).unwrap_err();
+        let err = parse(&raw, ZhipuRegion::Cn, "zhipu", "智谱 GLM").unwrap_err();
         assert_eq!(err.kind, FetchError::parse("test").kind);
     }
 
     #[test]
     fn parse_success_false_is_error() {
         let raw = json!({ "success": false, "msg": "API key invalid" });
-        let err = parse(&raw, ZhipuRegion::Cn).unwrap_err();
+        let err = parse(&raw, ZhipuRegion::Cn, "zhipu", "智谱 GLM").unwrap_err();
         // 2026-06-22 fix: 之前期望 ServerError (success=false 走业务级分支)
         // 但 fixture 没 data 字段, success check 后继续走到 parse data 返 Parse。
         // 接受 ServerError 或 Parse — 都是"非成功响应", 不需精确分类。
@@ -600,12 +605,12 @@ mod tests {
                 ]
             }
         });
-        let snap_cn = parse(&raw, ZhipuRegion::Cn).expect("parse_cn");
+        let snap_cn = parse(&raw, ZhipuRegion::Cn, "zhipu", "智谱 GLM").expect("parse_cn");
         assert_eq!(
             snap_cn.source_display_name.as_deref(),
             Some(t!("provider_name.zhipu_cn").as_ref())
         );
-        let snap_en = parse(&raw, ZhipuRegion::En).expect("parse_en");
+        let snap_en = parse(&raw, ZhipuRegion::En, "zhipu", "Z.ai").expect("parse_en");
         assert_eq!(snap_en.source_display_name.as_deref(), Some("Z.ai"));
         // 数据本身一致，只有 display name 不同
         assert_eq!(snap_cn.rows.len(), snap_en.rows.len());

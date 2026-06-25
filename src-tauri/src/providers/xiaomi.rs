@@ -202,8 +202,10 @@ impl QuotaSource for XiaomimimoSource {
         Box::pin(async move {
             let state = self.state.read().await.clone();
             let display_mode = state.display_mode;
+            let source_id = self.unique_id();
+            let display_name = self.display_name().to_string();
             let strategy = decide_auth_strategy(credentials);
-            let fetch_result = match strategy {
+            let fetch_result: Result<ProviderSnapshot, FetchError> = match strategy {
                 AuthStrategy::None => Err(FetchError::unconfigured(
                     t!("error.xiaomi.unconfigured_both").into_owned(),
                 )),
@@ -213,7 +215,7 @@ impl QuotaSource for XiaomimimoSource {
                     // 改成 explicit Some/None match，None 走 unconfigured 错误而不是 panic。
                     match credentials.api_key.as_deref() {
                         Some(key) => {
-                            Xiaomimimo::do_fetch_bearer(key, state.region, &state.overrides)
+                            Xiaomimimo::do_fetch_bearer(key, state.region, &state.overrides, &source_id, &display_name)
                                 .await
                                 .map(|(_, snap)| snap)
                         }
@@ -223,7 +225,7 @@ impl QuotaSource for XiaomimimoSource {
                     }
                 }
                 AuthStrategy::CookieOnly => match credentials.cookie.as_deref() {
-                    Some(cookie) => Xiaomimimo::do_fetch(cookie, state.region, &state.overrides)
+                    Some(cookie) => Xiaomimimo::do_fetch(cookie, state.region, &state.overrides, &source_id, &display_name)
                         .await
                         .map(|(_, snap)| snap),
                     None => Err(FetchError::unconfigured(
@@ -249,7 +251,7 @@ impl QuotaSource for XiaomimimoSource {
                         }
                     };
                     // 先 Bearer，401/403 退到 Cookie（其他错误原样返）
-                    match Xiaomimimo::do_fetch_bearer(key, state.region, &state.overrides).await {
+                    match Xiaomimimo::do_fetch_bearer(key, state.region, &state.overrides, &source_id, &display_name).await {
                         Ok((_, snap)) => {
                             tracing::debug!(provider = "xiaomimimo", "Bearer 路径成功");
                             Ok(snap)
@@ -260,7 +262,7 @@ impl QuotaSource for XiaomimimoSource {
                                 "Bearer 鉴权失败 ({}), 退到 Cookie 路径",
                                 e.message
                             );
-                            Xiaomimimo::do_fetch(cookie, state.region, &state.overrides)
+                            Xiaomimimo::do_fetch(cookie, state.region, &state.overrides, &source_id, &display_name)
                                 .await
                                 .map(|(_, snap)| snap)
                         }
@@ -268,7 +270,7 @@ impl QuotaSource for XiaomimimoSource {
                     }
                 }
             };
-            fetch_result.map(|snap| apply_display_mode(snap, display_mode))
+            fetch_result.map(move |snap| apply_display_mode(snap, display_mode, &source_id, &display_name))
         })
     }
 }
@@ -331,6 +333,8 @@ impl Xiaomimimo {
         api_key: &str,
         _region: XiaomiRegion,
         overrides: &ProviderOverrides,
+        source_id: &str,
+        display_name: &str,
     ) -> Result<(serde_json::Value, ProviderSnapshot), FetchError> {
         if api_key.trim().is_empty() {
             return Err(FetchError::unconfigured(
@@ -409,7 +413,7 @@ impl Xiaomimimo {
             _ => serde_json::Value::Null,
         };
         // 先借用 raw 算 snap，再 move raw 进 tuple（顺序很关键）
-        let snap = parse(&raw, &detail_raw, overrides);
+        let snap = parse(&raw, &detail_raw, overrides, source_id, display_name);
         Ok((raw, snap))
     }
 
@@ -417,6 +421,8 @@ impl Xiaomimimo {
         cookie: &str,
         _region: XiaomiRegion,
         overrides: &ProviderOverrides,
+        source_id: &str,
+        display_name: &str,
     ) -> Result<(serde_json::Value, ProviderSnapshot), FetchError> {
         if cookie.trim().is_empty() {
             return Err(FetchError::unconfigured(
@@ -522,7 +528,7 @@ impl Xiaomimimo {
             _ => serde_json::Value::Null,
         };
 
-        let snap = parse(&raw, &detail_raw, overrides);
+        let snap = parse(&raw, &detail_raw, overrides, source_id, display_name);
         Ok((raw, snap))
     }
 }
@@ -557,6 +563,8 @@ fn parse(
     raw_usage: &serde_json::Value,
     raw_detail: &serde_json::Value,
     overrides: &ProviderOverrides,
+    source_id: &str,
+    display_name: &str,
 ) -> ProviderSnapshot {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
@@ -688,9 +696,9 @@ fn parse(
         next_fetch_at: None,
         raw: Some(raw_usage.clone()),
         is_healthy: success,
-        source_id: Some("xiaomimimo".to_string()),
+        source_id: Some(source_id.to_string()),
         unique_id: None,
-        source_display_name: Some("Xiaomi MiMo".to_string()),
+        source_display_name: Some(display_name.to_string()),
         plan_name,
         transient: None,
     }
@@ -733,28 +741,37 @@ fn pick_item_percent(
 ///
 /// 放在 parse() 之后、抛给前端之前的过滤层 —— parse() 保持 pure
 /// 行为（不依赖 state），方便单测。
-fn apply_display_mode(snap: ProviderSnapshot, mode: XiaomiDisplayMode) -> ProviderSnapshot {
+fn apply_display_mode(
+    snap: ProviderSnapshot,
+    mode: XiaomiDisplayMode,
+    source_id: &str,
+    display_name: &str,
+) -> ProviderSnapshot {
+    let mut s = snap;
+    // Patch source_id + display_name to match the actual fetch parameters
+    s.source_id = Some(source_id.to_string());
+    s.source_display_name = Some(display_name.to_string());
     match mode {
-        XiaomiDisplayMode::All => snap,
+        XiaomiDisplayMode::All => s,
         XiaomiDisplayMode::PlanOnly => {
             // 只留套餐行
             // 2026-06-22 fix: 之前 hardcode "套餐" 在 en locale 下永远 filter 空
             // → rows.len() = 0, 浮窗空白。改 t!("row.plan") 跟 locale 解耦。
-            let rows: Vec<QuotaRow> = snap
+            let rows: Vec<QuotaRow> = s
                 .rows
                 .into_iter()
                 .filter(|r| r.label == t!("row.plan"))
                 .collect();
-            ProviderSnapshot { rows, ..snap }
+            ProviderSnapshot { rows, ..s }
         }
         XiaomiDisplayMode::TotalOnly => {
             // 只留总额度行；如果 parse() 没给 resets_at（默认就没给），
             // 复用套餐的月度重置时间（rows[0] 或 fallback 到 detail 里的）——
             // 但 parse() 之后 detail 已不在 snap 里，所以这里用
             // snap.rows 里其他行有 resets_at 的就借过来。
-            let plan_resets_at = snap.rows.iter().find_map(|r| r.resets_at);
+            let plan_resets_at = s.rows.iter().find_map(|r| r.resets_at);
             // 2026-06-22 fix: 同上, hardcode "总额度" 改 t!("row.monthly_total")
-            let rows: Vec<QuotaRow> = snap
+            let rows: Vec<QuotaRow> = s
                 .rows
                 .into_iter()
                 .filter(|r| r.label == t!("row.monthly_total"))
@@ -765,7 +782,7 @@ fn apply_display_mode(snap: ProviderSnapshot, mode: XiaomiDisplayMode) -> Provid
                     r
                 })
                 .collect();
-            ProviderSnapshot { rows, ..snap }
+            ProviderSnapshot { rows, ..s }
         }
     }
 }

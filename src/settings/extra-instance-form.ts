@@ -379,7 +379,7 @@ function radio(name: string, value: string, checked: boolean, label?: string): H
 
 async function submitHandler(body: HTMLElement): Promise<boolean> {
   // 1. 取 provider 类型
-  const providerId = body.querySelector<HTMLSelectElement>("#ei-provider")!.value;
+  const providerId = body.querySelector<HTMLSelectElement>("#ei-provider")?.value ?? "";
   if (!providerId) {
     flash(t("extra.err.provider_required"), true);
     return false;
@@ -427,13 +427,13 @@ async function submitBuiltin(body: HTMLElement, providerId: string): Promise<boo
 
 async function submitCustom(body: HTMLElement): Promise<boolean> {
   // 1. 收集 custom 字段（跟原 custom-source-form.ts 一样）
-  const displayName = (body.querySelector<HTMLInputElement>("#cs-name")!.value ?? "").trim();
-  const baseUrl = (body.querySelector<HTMLInputElement>("#cs-base")!.value ?? "").trim();
-  const path = (body.querySelector<HTMLInputElement>("#cs-path")!.value ?? "").trim();
-  const method = (body.querySelector<HTMLInputElement>('input[name="cs-method"]:checked')!.value ?? "GET");
-  const preset = (body.querySelector<HTMLInputElement>('input[name="cs-preset"]:checked')!.value ?? "new_api");
-  const apiKey = (body.querySelector<HTMLInputElement>("#cs-api-key")!.value ?? "").trim();
-  const planNamePath = (body.querySelector<HTMLInputElement>("#cs-plan")!.value ?? "").trim();
+  const displayName = (body.querySelector<HTMLInputElement>("#cs-name")?.value ?? "").trim();
+  const baseUrl = (body.querySelector<HTMLInputElement>("#cs-base")?.value ?? "").trim();
+  const path = (body.querySelector<HTMLInputElement>("#cs-path")?.value ?? "").trim();
+  const method = (body.querySelector<HTMLInputElement>('input[name="cs-method"]:checked')?.value ?? "GET");
+  const preset = (body.querySelector<HTMLInputElement>('input[name="cs-preset"]:checked')?.value ?? "new_api");
+  const apiKey = (body.querySelector<HTMLInputElement>("#cs-api-key")?.value ?? "").trim();
+  const planNamePath = (body.querySelector<HTMLInputElement>("#cs-plan")?.value ?? "").trim();
   const accentEl = body.querySelector<HTMLElement>(".accent-swatch.selected");
   const accent = accentEl ? accentEl.dataset.color ?? null : null;
 
@@ -456,9 +456,9 @@ async function submitCustom(body: HTMLElement): Promise<boolean> {
   if (preset === "new_api") {
     extract = { preset: "new_api", divide };
   } else if (preset === "balance") {
-    const balancePath = (body.querySelector<HTMLInputElement>("#cs-balance-path")!.value ?? "").trim();
+    const balancePath = (body.querySelector<HTMLInputElement>("#cs-balance-path")?.value ?? "").trim();
     if (!balancePath) { flash(t("custom_source.err.balance_path_required"), true); return false; }
-    const currencyPath = (body.querySelector<HTMLInputElement>("#cs-currency-path")!.value ?? "").trim();
+    const currencyPath = (body.querySelector<HTMLInputElement>("#cs-currency-path")?.value ?? "").trim();
     extract = { preset: "balance", balance_path: balancePath, currency_path: currencyPath || null, divide };
   } else {
     extract = {

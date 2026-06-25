@@ -164,7 +164,7 @@ async fn do_fetch(
     // M15 fix: 最近 5 分钟内 /key 成功过 → 跳过 /credits 探测（避免重复 401 浪费请求）
     let try_credits = !should_skip_endpoint(Endpoint::Credits);
     if try_credits {
-        match fetch_credits(client, api_key).await {
+        match fetch_credits(client, api_key, source_id, display_name).await {
             Ok(snap) => {
                 remember_endpoint(Endpoint::Credits);
                 return Ok(snap);
@@ -183,7 +183,7 @@ async fn do_fetch(
     }
 
     // ── fallback：/api/v1/key（per-key 限额，任何 key 都行） ──
-    match fetch_key(client, api_key).await {
+    match fetch_key(client, api_key, source_id, display_name).await {
         Ok(snap) => {
             remember_endpoint(Endpoint::Key);
             Ok(snap)
@@ -196,6 +196,8 @@ async fn do_fetch(
 async fn fetch_credits(
     client: &reqwest::Client,
     api_key: &str,
+    source_id: &str,
+    display_name: &str,
 ) -> Result<ProviderSnapshot, FetchError> {
     let resp = client
         .get(URL_CREDITS)
@@ -243,13 +245,15 @@ async fn fetch_credits(
         FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
     })?;
 
-    parse_credits(&raw)
+    parse_credits(&raw, source_id, display_name)
 }
 
 /// `GET /api/v1/key` → per-key 限额
 async fn fetch_key(
     client: &reqwest::Client,
     api_key: &str,
+    source_id: &str,
+    display_name: &str,
 ) -> Result<ProviderSnapshot, FetchError> {
     let resp = client
         .get(URL_KEY)
@@ -293,11 +297,15 @@ async fn fetch_key(
         FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
     })?;
 
-    parse_key(&raw)
+    parse_key(&raw, source_id, display_name)
 }
 
 /// 解析 `/api/v1/credits` 响应 → 1 行「余额 $X.XX USD」
-fn parse_credits(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
+fn parse_credits(
+    raw: &Value,
+    source_id: &str,
+    display_name: &str,
+) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
     let data = raw.get("data").ok_or_else(|| {
         FetchError::parse(
@@ -345,16 +353,20 @@ fn parse_credits(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         next_fetch_at: None,
         raw: Some(raw.clone()),
         is_healthy: true,
-        source_id: Some("openrouter".to_string()),
+        source_id: Some(source_id.to_string()),
         unique_id: None,
-        source_display_name: Some("OpenRouter".to_string()),
+        source_display_name: Some(display_name.to_string()),
         plan_name: Some("OpenRouter".to_string()),
         transient: None,
     })
 }
 
 /// 解析 `/api/v1/key` 响应 → 1 行「余额 $X.XX USD」（per-key fallback）
-fn parse_key(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
+fn parse_key(
+    raw: &Value,
+    source_id: &str,
+    display_name: &str,
+) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
     let data = raw.get("data").ok_or_else(|| {
         FetchError::parse(
@@ -411,9 +423,9 @@ fn parse_key(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         next_fetch_at: None,
         raw: Some(raw.clone()),
         is_healthy: true,
-        source_id: Some("openrouter".to_string()),
+        source_id: Some(source_id.to_string()),
         unique_id: None,
-        source_display_name: Some("OpenRouter".to_string()),
+        source_display_name: Some(display_name.to_string()),
         plan_name,
         transient: None,
     })
@@ -441,7 +453,7 @@ mod tests {
         let raw = json!({
             "data": { "total_credits": 100.5, "total_usage": 25.75 }
         });
-        let snap = parse_credits(&raw).expect("parse_credits");
+        let snap = parse_credits(&raw, "openrouter", "OpenRouter").expect("parse_credits");
         assert!(snap.success);
         assert_eq!(snap.rows.len(), 1);
         let row = &snap.rows[0];
@@ -453,14 +465,14 @@ mod tests {
     #[test]
     fn parse_credits_zero_balance() {
         let raw = json!({ "data": { "total_credits": 10.0, "total_usage": 10.0 } });
-        let snap = parse_credits(&raw).expect("parse_credits");
+        let snap = parse_credits(&raw, "openrouter", "OpenRouter").expect("parse_credits");
         assert!((snap.rows[0].remaining.unwrap()).abs() < 0.01);
     }
 
     #[test]
     fn parse_credits_missing_total_credits() {
         let raw = json!({ "data": { "total_usage": 5.0 } });
-        let err = parse_credits(&raw).unwrap_err();
+        let err = parse_credits(&raw, "openrouter", "OpenRouter").unwrap_err();
         assert_eq!(err.kind, ErrorKind::Parse);
     }
 
@@ -476,7 +488,7 @@ mod tests {
                 "is_free_tier": false
             }
         });
-        let snap = parse_key(&raw).expect("parse_key");
+        let snap = parse_key(&raw, "openrouter", "OpenRouter").expect("parse_key");
         assert!(snap.success);
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].remaining, Some(74.25));
@@ -493,14 +505,14 @@ mod tests {
                 "is_free_tier": true
             }
         });
-        let err = parse_key(&raw).unwrap_err();
+        let err = parse_key(&raw, "openrouter", "OpenRouter").unwrap_err();
         assert_eq!(err.kind, ErrorKind::Parse);
     }
 
     #[test]
     fn parse_key_missing_data() {
         let raw = json!({ "error": "bad key" });
-        let err = parse_key(&raw).unwrap_err();
+        let err = parse_key(&raw, "openrouter", "OpenRouter").unwrap_err();
         assert_eq!(err.kind, ErrorKind::Parse);
     }
 }

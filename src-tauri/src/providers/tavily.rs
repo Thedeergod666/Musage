@@ -185,13 +185,13 @@ async fn do_fetch(
         FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
     })?;
 
-    parse(&raw)
+    parse(&raw, source_id, display_name)
 }
 
 /// 解析 Tavily usage 响应。
 ///
 /// 解析失败时按 ROADMAP 策略返回 `Err(FetchError::Parse)`，让前端能正确分类。
-fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
+fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
     let key = raw.get("key").ok_or_else(|| {
@@ -332,9 +332,9 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         next_fetch_at: None,
         raw: Some(raw.clone()),
         is_healthy: success,
-        source_id: Some("tavily".to_string()),
+        source_id: Some(source_id.to_string()),
         unique_id: None,
-        source_display_name: Some("Tavily".to_string()),
+        source_display_name: Some(display_name.to_string()),
         plan_name,
         transient: None,
     })

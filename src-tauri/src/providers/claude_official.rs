@@ -186,8 +186,8 @@ fn normalize_session_key(raw: &str) -> String {
 
 async fn do_fetch(
     session_key: &str,
-    source_id: &str,
-    display_name: &str,
+    _source_id: &str,
+    _display_name: &str,
 ) -> Result<ProviderSnapshot, FetchError> {
     let client = shared_client();
 
@@ -259,13 +259,13 @@ async fn do_fetch(
         FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
     })?;
 
-    parse(&raw)
+    parse(&raw, _source_id, _display_name)
 }
 
 /// 解析 Claude OAuth usage 响应 → QuotaRow 列表。
 ///
 /// 任意 tier 缺失 → 自然降级（5h 没回就只显示周；反之亦然）。两个都缺 → 报错。
-fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
+fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
     let mut rows = Vec::new();
@@ -300,9 +300,9 @@ fn parse(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         next_fetch_at: None,
         raw: Some(raw.clone()),
         is_healthy: true,
-        source_id: Some("claude_official".to_string()),
+        source_id: Some(source_id.to_string()),
         unique_id: None,
-        source_display_name: Some(t!("provider_name.claude_official").into_owned()),
+        source_display_name: Some(display_name.to_string()),
         plan_name: Some("Pro/Max".to_string()),
         transient: None,
     })
@@ -364,7 +364,7 @@ mod tests {
                 "resets_at": "2026-06-19T03:00:00.000Z"
             }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, "claude_official", "Claude").expect("parse");
         assert!(snap.success);
         assert_eq!(snap.source_id.as_deref(), Some("claude_official"));
         assert_eq!(
@@ -396,7 +396,7 @@ mod tests {
                 "resets_at": "2026-06-16T18:30:00.000Z"
             }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, "claude_official", "Claude").expect("parse");
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].label, "5h");
     }
@@ -409,7 +409,7 @@ mod tests {
                 "resets_at": "2026-06-19T03:00:00.000Z"
             }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, "claude_official", "Claude").expect("parse");
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].label, "周");
     }
@@ -417,7 +417,7 @@ mod tests {
     #[test]
     fn parse_no_tiers_is_error() {
         let raw = json!({});
-        let err = parse(&raw).unwrap_err();
+        let err = parse(&raw, "claude_official", "Claude").unwrap_err();
         assert_eq!(err.kind, FetchError::parse("test").kind);
     }
 
@@ -428,7 +428,7 @@ mod tests {
             "five_hour": { "resets_at": "2026-06-16T18:30:00.000Z" },
             "seven_day": { "utilization": 50.0, "resets_at": "2026-06-19T03:00:00.000Z" }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, "claude_official", "Claude").expect("parse");
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].label, "周");
     }
@@ -440,7 +440,7 @@ mod tests {
             "five_hour": { "utilization": 150.0, "resets_at": "2026-06-16T18:30:00.000Z" },
             "seven_day": { "utilization": 20.0, "resets_at": "2026-06-19T03:00:00.000Z" }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, "claude_official", "Claude").expect("parse");
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].label, "周");
     }
@@ -451,7 +451,7 @@ mod tests {
         let raw = json!({
             "five_hour": { "utilization": 5.0, "resets_at": 1_750_000_000_i64 }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, "claude_official", "Claude").expect("parse");
         assert_eq!(snap.rows[0].resets_at, Some(1_750_000_000_000));
     }
 
@@ -460,7 +460,7 @@ mod tests {
         let raw = json!({
             "five_hour": { "utilization": 5.0, "resets_at": 1_750_000_000_000_i64 }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, "claude_official", "Claude").expect("parse");
         assert_eq!(snap.rows[0].resets_at, Some(1_750_000_000_000));
     }
 
@@ -469,7 +469,7 @@ mod tests {
         let raw = json!({
             "five_hour": { "utilization": 5.0, "resets_at": "not a date" }
         });
-        let snap = parse(&raw).expect("parse");
+        let snap = parse(&raw, "claude_official", "Claude").expect("parse");
         // 5h 仍显示，但 resets_at = None
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].resets_at, None);

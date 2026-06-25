@@ -1466,6 +1466,11 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
 ///
 /// 公开给 [`crate::lib::run_dump_subcommand`] 共享。
 pub async fn update_source_state(src: &Box<dyn QuotaSource>, cfg: &AppConfig) {
+    // 跳过无状态 source（deepseek / kimi / claude_official）的 set_state，
+    // 避免每分钟 × 3 provider × ~2KB JSON 序列化 + alloc + drop 的无意义开销。
+    if !src.needs_state_update() {
+        return;
+    }
     // 把整个 cfg 序列化成 JSON，让 source 自己按需取字段
     let cfg_json = match serde_json::to_value(cfg) {
         Ok(v) => v,

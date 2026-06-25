@@ -185,11 +185,15 @@ async fn do_fetch(
         FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
     })?;
 
-    parse(&raw)
+    parse(&raw, source_id, display_name)
 }
 
 /// 解析 SiliconFlow /user/info 响应 → QuotaRow 列表。
-fn parse(raw: &serde_json::Value) -> Result<ProviderSnapshot, FetchError> {
+fn parse(
+    raw: &serde_json::Value,
+    source_id: &str,
+    display_name: &str,
+) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
     // 业务级 status 检查（code != 20000 或 status != true 都视为业务错误）
@@ -266,9 +270,9 @@ fn parse(raw: &serde_json::Value) -> Result<ProviderSnapshot, FetchError> {
         next_fetch_at: None,
         raw: Some(raw.clone()),
         is_healthy,
-        source_id: Some("siliconflow".to_string()),
+        source_id: Some(source_id.to_string()),
         unique_id: None,
-        source_display_name: Some("SiliconFlow".to_string()),
+        source_display_name: Some(display_name.to_string()),
         plan_name: None,
         transient: None,
     })

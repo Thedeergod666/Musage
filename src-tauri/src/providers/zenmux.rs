@@ -189,7 +189,7 @@ impl QuotaSource for ZenmuxSource {
             }
             let mode = self.mode.read().ok().and_then(|g| *g).unwrap_or_default();
             let custom_url = self.base_url.read().ok().and_then(|g| g.clone());
-            do_fetch(api_key, mode, custom_url.as_deref()).await
+            do_fetch(api_key, mode, custom_url.as_deref(), &self.unique_id(), &self.display_name().to_string()).await
         })
     }
 }
@@ -206,6 +206,8 @@ async fn do_fetch(
     api_key: &str,
     mode: ZenmuxMode,
     custom_url: Option<&str>,
+    source_id: &str,
+    display_name: &str,
 ) -> Result<ProviderSnapshot, FetchError> {
     let url = custom_url.unwrap_or_else(|| mode.default_url());
     // H9 fix: 校验 URL scheme —— user-provided base_url 可能来自篡改的 config.json
@@ -262,8 +264,8 @@ async fn do_fetch(
     })?;
 
     match mode {
-        ZenmuxMode::Payg => parse_payg(&raw),
-        ZenmuxMode::Subscription => parse_subscription(&raw),
+        ZenmuxMode::Payg => parse_payg(&raw, source_id, display_name),
+        ZenmuxMode::Subscription => parse_subscription(&raw, source_id, display_name),
     }
 }
 
@@ -275,7 +277,11 @@ async fn do_fetch(
 /// - 主行：`余额` + `total_credits` + `USD`（balance-row 样式，无 bar）
 /// - 细分 1：`充值` + `top_up_credits`（only-used，无 bar）
 /// - 细分 2：`奖励` + `bonus_credits`（only-used，无 bar）
-fn parse_payg(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
+fn parse_payg(
+    raw: &Value,
+    source_id: &str,
+    display_name: &str,
+) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
     if raw.get("success").and_then(|v| v.as_bool()) != Some(true) {
@@ -377,9 +383,9 @@ fn parse_payg(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         next_fetch_at: None,
         raw: Some(raw.clone()),
         is_healthy: true,
-        source_id: Some("zenmux".to_string()),
+        source_id: Some(source_id.to_string()),
         unique_id: None,
-        source_display_name: Some("ZenMux".to_string()),
+        source_display_name: Some(display_name.to_string()),
         plan_name: Some("PAYG".to_string()),
         transient: None,
     })
@@ -391,7 +397,11 @@ fn parse_payg(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
 ///
 /// 5h / 7d 两个滚动窗口有实时 usage → 渲染成 2 行 quota row；
 /// monthly 只有 max 没 usage → 跳过（0% 行没意义）。
-fn parse_subscription(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
+fn parse_subscription(
+    raw: &Value,
+    source_id: &str,
+    display_name: &str,
+) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
     if raw.get("success").and_then(|v| v.as_bool()) != Some(true) {
@@ -454,9 +464,9 @@ fn parse_subscription(raw: &Value) -> Result<ProviderSnapshot, FetchError> {
         next_fetch_at: None,
         raw: Some(raw.clone()),
         is_healthy: true,
-        source_id: Some("zenmux".to_string()),
+        source_id: Some(source_id.to_string()),
         unique_id: None,
-        source_display_name: Some("ZenMux".to_string()),
+        source_display_name: Some(display_name.to_string()),
         plan_name,
         transient: None,
     })
@@ -521,7 +531,7 @@ mod tests {
                 "bonus_credits": 447.74
             }
         });
-        let snap = parse_payg(&raw).expect("parse_payg");
+        let snap = parse_payg(&raw, "zenmux", "ZenMux").expect("parse_payg");
         assert!(snap.success);
         assert_eq!(snap.source_id.as_deref(), Some("zenmux"));
         assert_eq!(snap.plan_name.as_deref(), Some("PAYG"));
@@ -547,7 +557,7 @@ mod tests {
                 "total_credits": 10.5
             }
         });
-        let snap = parse_payg(&raw).expect("parse_payg");
+        let snap = parse_payg(&raw, "zenmux", "ZenMux").expect("parse_payg");
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].label, t!("row.balance"));
         assert_eq!(snap.rows[0].remaining, Some(10.5));
@@ -559,14 +569,14 @@ mod tests {
             "success": true,
             "data": { "currency": "usd", "top_up_credits": 1.0 }
         });
-        let err = parse_payg(&raw).unwrap_err();
+        let err = parse_payg(&raw, "zenmux", "ZenMux").unwrap_err();
         assert_eq!(err.kind, ErrorKind::Parse);
     }
 
     #[test]
     fn parse_payg_success_false_is_error() {
         let raw = json!({ "success": false, "message": "API key invalid" });
-        let err = parse_payg(&raw).unwrap_err();
+        let err = parse_payg(&raw, "zenmux", "ZenMux").unwrap_err();
         assert_eq!(err.kind, ErrorKind::ServerError);
     }
 
@@ -593,7 +603,7 @@ mod tests {
                 "quota_monthly": { "max_flows": 34560 }
             }
         });
-        let snap = parse_subscription(&raw).expect("parse_subscription");
+        let snap = parse_subscription(&raw, "zenmux", "ZenMux").expect("parse_subscription");
         assert!(snap.success);
         assert_eq!(snap.plan_name.as_deref(), Some("ultra (healthy)"));
         assert_eq!(snap.rows.len(), 2); // monthly 跳过
@@ -621,7 +631,7 @@ mod tests {
                                    "resets_at": "2026-06-12T15:00:00.000Z" }
             }
         });
-        let snap = parse_subscription(&raw).expect("parse_subscription");
+        let snap = parse_subscription(&raw, "zenmux", "ZenMux").expect("parse_subscription");
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].label, "5h");
         assert_eq!(snap.plan_name.as_deref(), Some("pro (monitored)"));
@@ -637,7 +647,7 @@ mod tests {
                                    "resets_at": null }
             }
         });
-        let snap = parse_subscription(&raw).expect("parse_subscription");
+        let snap = parse_subscription(&raw, "zenmux", "ZenMux").expect("parse_subscription");
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].resets_at, None);
     }
@@ -652,7 +662,7 @@ mod tests {
                 "quota_5_hour": { "usage_percentage": 1.0, "max_flows": 800, "used_flows": 800 }
             }
         });
-        let snap = parse_subscription(&raw).expect("parse_subscription");
+        let snap = parse_subscription(&raw, "zenmux", "ZenMux").expect("parse_subscription");
         assert_eq!(snap.plan_name.as_deref(), Some("max (suspended)"));
     }
 
@@ -662,7 +672,7 @@ mod tests {
             "success": true,
             "data": { "plan": { "tier": "free" } }
         });
-        let err = parse_subscription(&raw).unwrap_err();
+        let err = parse_subscription(&raw, "zenmux", "ZenMux").unwrap_err();
         assert_eq!(err.kind, ErrorKind::Parse);
     }
 
@@ -675,7 +685,7 @@ mod tests {
                 "quota_5_hour": { "max_flows": 800 } // 缺 usage_percentage
             }
         });
-        let err = parse_subscription(&raw).unwrap_err();
+        let err = parse_subscription(&raw, "zenmux", "ZenMux").unwrap_err();
         assert_eq!(err.kind, ErrorKind::Parse);
     }
 

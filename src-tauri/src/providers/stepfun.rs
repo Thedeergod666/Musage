@@ -164,7 +164,7 @@ async fn do_fetch(
     let rate = fetch_rate_limit(oasis_token).await?;
     let plan = fetch_plan_status(oasis_token).await.ok().flatten(); // 失败不阻塞
 
-    parse(rate, plan)
+    parse(rate, plan, source_id, display_name)
 }
 
 /// POST Step Plan rate limit endpoint。
@@ -279,7 +279,12 @@ async fn fetch_plan_status(token: &str) -> Result<Option<String>, FetchError> {
 /// 解析 rate limit 响应 → QuotaRow 列表。
 ///
 /// `usedPercent = (1.0 - left_rate) * 100`
-fn parse(rate_raw: Value, plan_name: Option<String>) -> Result<ProviderSnapshot, FetchError> {
+fn parse(
+    rate_raw: Value,
+    plan_name: Option<String>,
+    source_id: &str,
+    display_name: &str,
+) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
     let data = rate_raw.get("data").ok_or_else(|| {
@@ -349,9 +354,9 @@ fn parse(rate_raw: Value, plan_name: Option<String>) -> Result<ProviderSnapshot,
         next_fetch_at: None,
         raw: Some(rate_raw),
         is_healthy: true,
-        source_id: Some("stepfun".to_string()),
+        source_id: Some(source_id.to_string()),
         unique_id: None,
-        source_display_name: Some("StepFun".to_string()),
+        source_display_name: Some(display_name.to_string()),
         plan_name,
         transient: None,
     })
@@ -389,7 +394,7 @@ mod tests {
                 "weekly_usage_reset_time": "2026-06-19T03:00:00Z"
             }
         });
-        let snap = parse(raw.clone(), Some("Plus".to_string())).expect("parse");
+        let snap = parse(raw.clone(), Some("Plus".to_string()), "stepfun", "StepFun").expect("parse");
         assert!(snap.success);
         assert_eq!(snap.source_id.as_deref(), Some("stepfun"));
         assert_eq!(snap.plan_name.as_deref(), Some("Plus"));
@@ -417,7 +422,7 @@ mod tests {
                 "five_hour_usage_reset_time": "2026-06-16T18:30:00Z"
             }
         });
-        let snap = parse(raw, None).expect("parse");
+        let snap = parse(raw, None, "stepfun", "StepFun").expect("parse");
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].label, "5h");
         assert!((snap.rows[0].utilization.unwrap() - 10.0).abs() < 0.001);
@@ -434,7 +439,7 @@ mod tests {
                 "weekly_usage_left_rate": 0.0
             }
         });
-        let snap = parse(raw, None).expect("parse");
+        let snap = parse(raw, None, "stepfun", "StepFun").expect("parse");
         for row in &snap.rows {
             assert!((row.utilization.unwrap() - 100.0).abs() < 0.001);
         }
@@ -449,7 +454,7 @@ mod tests {
                 "five_hour_usage_left_rate": 1.0
             }
         });
-        let snap = parse(raw, None).expect("parse");
+        let snap = parse(raw, None, "stepfun", "StepFun").expect("parse");
         assert!((snap.rows[0].utilization.unwrap() - 0.0).abs() < 0.001);
     }
 
@@ -463,7 +468,7 @@ mod tests {
                 "weekly_usage_left_rate": 0.5
             }
         });
-        let snap = parse(raw, None).expect("parse");
+        let snap = parse(raw, None, "stepfun", "StepFun").expect("parse");
         // 5h 跳过，只剩 weekly
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].label, t!("row.weekly"));
@@ -472,7 +477,7 @@ mod tests {
     #[test]
     fn parse_no_data_is_error() {
         let raw = json!({ "code": 0 });
-        let err = parse(raw, None).unwrap_err();
+        let err = parse(raw, None, "stepfun", "StepFun").unwrap_err();
         assert_eq!(err.kind, FetchError::parse("test").kind);
     }
 
@@ -481,7 +486,7 @@ mod tests {
         // 业务级 code != 0 应在 fetch_rate_limit 阶段就报错（这里 raw 直接 parse 不会触发）
         // parse 本身只检查 data 字段
         let raw = json!({ "code": 401, "message": "token expired" });
-        let err = parse(raw, None).unwrap_err();
+        let err = parse(raw, None, "stepfun", "StepFun").unwrap_err();
         assert_eq!(err.kind, FetchError::parse("test").kind); // 缺 data 字段 → parse 错
     }
 

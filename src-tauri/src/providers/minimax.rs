@@ -207,9 +207,15 @@ impl QuotaSource for MinimaxSource {
                 ));
             }
             let state = self.state.read().await.clone();
-            Minimax::do_fetch(api_key, state.region, &state.overrides)
-                .await
-                .map(|(_, snap)| snap)
+            Minimax::do_fetch(
+                api_key,
+                state.region,
+                &state.overrides,
+                &self.unique_id(),
+                &self.display_name().to_string(),
+            )
+            .await
+            .map(|(_, snap)| snap)
         })
     }
 }
@@ -230,6 +236,8 @@ impl Minimax {
         api_key: &str,
         region: Region,
         overrides: &ProviderOverrides,
+        source_id: &str,
+        display_name: &str,
     ) -> Result<(serde_json::Value, ProviderSnapshot), FetchError> {
         if api_key.trim().is_empty() {
             return Err(FetchError::unconfigured(
@@ -292,7 +300,7 @@ impl Minimax {
             FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
         })?;
 
-        let snap = parse(&raw, region, overrides);
+        let snap = parse(&raw, region, overrides, source_id, display_name);
         Ok((raw, snap))
     }
 }
@@ -304,6 +312,8 @@ fn parse(
     raw: &serde_json::Value,
     _region: Region,
     overrides: &ProviderOverrides,
+    source_id: &str,
+    display_name: &str,
 ) -> ProviderSnapshot {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
@@ -485,9 +495,9 @@ fn parse(
         next_fetch_at: None,
         raw: Some(raw.clone()),
         is_healthy,
-        source_id: Some("minimax".to_string()),
+        source_id: Some(source_id.to_string()),
         unique_id: None,
-        source_display_name: Some("MiniMax".to_string()),
+        source_display_name: Some(display_name.to_string()),
         plan_name: None,
         transient: None,
     }
@@ -821,7 +831,7 @@ mod tests {
     #[test]
     fn parse_full_new_schema_snapshot() {
         let raw = minimax_new_schema();
-        let snap = parse(&raw, Region::Cn, &ProviderOverrides::default());
+        let snap = parse(&raw, Region::Cn, &ProviderOverrides::default(), "minimax", "MiniMax");
         assert!(snap.success, "snap.error = {:?}", snap.error);
         assert_eq!(snap.rows.len(), 2);
         assert_eq!(snap.rows[0].label, "5h");
@@ -836,7 +846,7 @@ mod tests {
         let raw = serde_json::json!({
             "base_resp": { "status_code": 1004, "status_msg": "rate limit" }
         });
-        let snap = parse(&raw, Region::Cn, &ProviderOverrides::default());
+        let snap = parse(&raw, Region::Cn, &ProviderOverrides::default(), "minimax", "MiniMax");
         assert!(!snap.success);
         assert_eq!(snap.error_kind, Some(ErrorKind::ServerError));
     }
@@ -846,7 +856,7 @@ mod tests {
         let raw = serde_json::json!({
             "base_resp": { "status_code": 0 }
         });
-        let snap = parse(&raw, Region::Cn, &ProviderOverrides::default());
+        let snap = parse(&raw, Region::Cn, &ProviderOverrides::default(), "minimax", "MiniMax");
         assert!(!snap.success);
         assert_eq!(snap.error_kind, Some(ErrorKind::Parse));
     }

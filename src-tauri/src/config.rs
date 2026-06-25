@@ -42,6 +42,11 @@ const CURRENT_SCHEMA_VERSION: u32 = 2;
 /// （save_api_key_for / save_cookie_for / save_credential_for_id + 各自 delete）
 /// 与 custom_sources.json 写（save_custom_sources）互相竞争 → 丢字段。
 /// 现在所有文件写都过这个锁，单进程内全原子。
+///
+/// ⚠️ **std::sync::Mutex — 不支持 held across .await**。
+/// 临界区内禁止加 .await（如在锁内进行 async 文件 I/O），否则同一线程
+/// 二次 lock 会死锁。当前所有调用方的临界区只有同步文件 I/O（几百 ms），
+/// 安全；但如果未来改 async 文件 I/O，必须先切 tokio::sync::Mutex。
 pub(crate) fn save_lock() -> &'static Mutex<()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     LOCK.get_or_init(|| Mutex::new(()))
@@ -862,6 +867,17 @@ fn read_keys() -> Result<KeysMap, String> {
     let s = std::fs::read_to_string(&path)
         .map_err(|e| t!("commands.read_keys", err = e.to_string()).into_owned())?;
     if s.trim().is_empty() {
+        // 空文件 → 对外返回空 map，但先 backup 原文件。
+        // 极端场景（磁盘坏块写入空文件）下，若直接返回空 map，下一次
+        // save_*_key 会拿空 map 覆盖实体 keys.json → 永久丢失所有 key。
+        // backup 保留 forensic 副本用作恢复。
+        tracing::warn!(path = %path.display(), "keys.json 为空, 备份后返回空 map");
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let backup = path.with_extension(format!("json.bak.{ts}"));
+        let _ = std::fs::copy(&path, &backup);
         return Ok(BTreeMap::new());
     }
     // parse 失败：先备份损坏的 keys.json 到 .bak.<ts>，再返回 Err。

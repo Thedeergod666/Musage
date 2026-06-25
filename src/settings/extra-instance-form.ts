@@ -144,21 +144,64 @@ function renderDynamicFields(
   }
 }
 
-function renderBuiltinFields(host: HTMLElement, _provider: PickerProvider): void {
-  // 内置副本：只填 key（key 类型按 auth_kind 决定，UI 不重复提示）
-  // 简化：auth_kind = cookie 的也用同一 password 框（不区分 cookie / api_key）
-  host.appendChild(
-    el("div", { class: "field" },
-      el("label", { for: "ei-api-key" }, t("extra.form.api_key_label")),
-      el("input", {
-        type: "password",
-        id: "ei-api-key",
-        autocomplete: "off",
-        placeholder: t("extra.form.api_key_placeholder"),
-      }),
-      el("div", { class: "help" }, t("extra.form.api_key_help")),
-    ),
-  );
+function renderBuiltinFields(host: HTMLElement, provider: PickerProvider): void {
+  const kind = provider.auth_kind;
+
+  if (kind === "cookie") {
+    // P1-2: Claude 等 cookie-only provider 显示 cookie 输入框
+    host.appendChild(
+      el("div", { class: "field" },
+        el("label", { for: "ei-api-cookie" }, t("extra.form.cookie_label")),
+        el("input", {
+          type: "password",
+          id: "ei-api-cookie",
+          autocomplete: "off",
+          placeholder: t("extra.form.cookie_placeholder"),
+        }),
+        el("div", { class: "help" }, t("extra.form.cookie_help")),
+      ),
+    );
+  } else if (kind === "api_key_or_cookie") {
+    // Xiaomi 等双鉴权：API key + cookie 两个输入
+    host.appendChild(
+      el("div", { class: "field" },
+        el("label", { for: "ei-api-key" }, t("extra.form.api_key_label")),
+        el("input", {
+          type: "password",
+          id: "ei-api-key",
+          autocomplete: "off",
+          placeholder: t("extra.form.api_key_placeholder"),
+        }),
+        el("div", { class: "help" }, t("extra.form.api_key_help")),
+      ),
+    );
+    host.appendChild(
+      el("div", { class: "field" },
+        el("label", { for: "ei-api-cookie" }, t("extra.form.cookie_label")),
+        el("input", {
+          type: "password",
+          id: "ei-api-cookie",
+          autocomplete: "off",
+          placeholder: t("extra.form.cookie_placeholder"),
+        }),
+        el("div", { class: "help" }, t("extra.form.cookie_help")),
+      ),
+    );
+  } else {
+    // api_key（默认）
+    host.appendChild(
+      el("div", { class: "field" },
+        el("label", { for: "ei-api-key" }, t("extra.form.api_key_label")),
+        el("input", {
+          type: "password",
+          id: "ei-api-key",
+          autocomplete: "off",
+          placeholder: t("extra.form.api_key_placeholder"),
+        }),
+        el("div", { class: "help" }, t("extra.form.api_key_help")),
+      ),
+    );
+  }
 }
 
 function renderCustomFields(host: HTMLElement): void {
@@ -394,15 +437,24 @@ async function submitHandler(body: HTMLElement): Promise<boolean> {
 }
 
 async function submitBuiltin(body: HTMLElement, providerId: string): Promise<boolean> {
-  const apiKey = (body.querySelector<HTMLInputElement>("#ei-api-key")?.value ?? "").trim();
-  if (!apiKey) {
+  // P1-2: 根据 auth_kind 决定从哪里取值
+  const cookieVal = (body.querySelector<HTMLInputElement>("#ei-api-cookie")?.value ?? "").trim();
+  const apiKeyVal = (body.querySelector<HTMLInputElement>("#ei-api-key")?.value ?? "").trim();
+  const hasCookie = cookieVal.length > 0;
+  const hasApiKey = apiKeyVal.length > 0;
+
+  if (!hasApiKey && !hasCookie) {
     flash(t("extra.err.api_key_required"), true);
     return false;
   }
 
   // 测试连接
   try {
-    const snap = await testExtraInstance({ provider_id: providerId, api_key: apiKey });
+    const snap = await testExtraInstance({
+      provider_id: providerId,
+      api_key: hasApiKey ? apiKeyVal : undefined,
+      api_cookie: hasCookie ? cookieVal : undefined,
+    });
     if (!snap.success) {
       flash(t("extra.err.test_failed", { err: snap.error ?? t("floating.error.unknown") }), true);
       return false;
@@ -415,7 +467,11 @@ async function submitBuiltin(body: HTMLElement, providerId: string): Promise<boo
 
   // 保存
   try {
-    const inst = await addExtraInstance({ provider_id: providerId, api_key: apiKey });
+    const inst = await addExtraInstance({
+      provider_id: providerId,
+      api_key: hasApiKey ? apiKeyVal : undefined,
+      api_cookie: hasCookie ? cookieVal : undefined,
+    });
     flash(t("extra.added", { id: inst.api_key_ref }));
     await rebuildProvidersSection();
     return true;

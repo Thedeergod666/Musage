@@ -557,6 +557,9 @@
       "api_key_label": "API key",
       "api_key_placeholder": "sk-...",
       "api_key_help": "内置 provider 副本用各自 key（跟『内置第 1 份』互不影响）",
+      "cookie_label": "Cookie/凭据",
+      "cookie_placeholder": "sessionKey=...",
+      "cookie_help": "Cookie 方式鉴权（如 claude_official 需要 sessionKey）",
       "custom_callout_title": "💡 New API 中转站",
       "custom_callout_body": "适用于 one-api / new-api 等中转站。填中转站的 base_url + path + extract 模板（3 个 preset）。Key 用 id 持久化,跨重启保留。"
     },

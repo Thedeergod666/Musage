@@ -557,6 +557,9 @@
       "api_key_label": "API key",
       "api_key_placeholder": "sk-...",
       "api_key_help": "Built-in provider instances use separate keys (independent from the built-in 1st copy)",
+      "cookie_label": "Cookie / credential",
+      "cookie_placeholder": "sessionKey=...",
+      "cookie_help": "Cookie-based auth (e.g. claude_official needs sessionKey)",
       "custom_callout_title": "💡 New API relay",
       "custom_callout_body": "Use this for one-api / new-api / one-api-type relay stations. Fill in your relay's base URL + path + extract template (3 presets). The same id-based key persists across app restarts."
     },

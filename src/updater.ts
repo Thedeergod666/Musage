@@ -7,6 +7,8 @@
 //
 // 订阅：
 //   onUpdateState(fn) → 返回取消订阅函数
+
+import { t } from "./i18n";
 //
 // 注意事项：
 // - 启动时的"静默检查"由 main.ts 调 checkForUpdate(true)，不打 UI
@@ -87,7 +89,7 @@ export async function checkForUpdate(silent = false): Promise<UpdateState> {
 /** 下载并安装，然后重启 app。需用户显式触发。 */
 export async function downloadAndInstall(): Promise<UpdateState> {
   if (!currentUpdate) {
-    const s: UpdateState = { status: "error", error: "没有可用更新" };
+    const s: UpdateState = { status: "error", error: t("settings.updater.no_update") };
     emit(s);
     return s;
   }

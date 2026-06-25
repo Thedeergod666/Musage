@@ -227,17 +227,16 @@ export function createProviderPanel(meta: SourceMeta, cfg: AppConfig): HTMLEleme
       groupTag,
       // STUB 角标（2026-06-17 commit）：公开 API 无 quota endpoint 的
       // provider 显示"🚧 STUB"小角标，避免用户配 key 后看 30 min 退避风暴。
-      // 用 data-stub-notice 属性挂载文本，CSS ::after 显示，i18n 走属性。
       ...(meta.is_stub
         ? [
             el(
               "span",
               {
                 class: "provider-stub-badge",
-                "data-stub-notice": "STUB",
-                title: "Public API has no quota endpoint",
+                "data-stub-notice": t("provider.stub_badge"),
+                title: t("provider.stub_badge_title"),
               },
-              "STUB",
+              t("provider.stub_badge"),
             ),
           ]
         : []),

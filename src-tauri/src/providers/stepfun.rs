@@ -401,7 +401,7 @@ mod tests {
         assert_eq!(snap.rows.len(), 2);
 
         let five_h = &snap.rows[0];
-        assert_eq!(five_h.label, "5h");
+        assert_eq!(five_h.label, t!("row.five_hour").as_ref());
         // 1.0 - 0.72 = 0.28 → 28%
         assert!((five_h.utilization.unwrap() - 28.0).abs() < 0.001);
         assert_eq!(five_h.unit.as_deref(), Some("%"));
@@ -424,7 +424,7 @@ mod tests {
         });
         let snap = parse(raw, None, "stepfun", "StepFun").expect("parse");
         assert_eq!(snap.rows.len(), 1);
-        assert_eq!(snap.rows[0].label, "5h");
+        assert_eq!(snap.rows[0].label, t!("row.five_hour").as_ref());
         assert!((snap.rows[0].utilization.unwrap() - 10.0).abs() < 0.001);
         assert_eq!(snap.plan_name, None);
     }

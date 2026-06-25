@@ -608,7 +608,7 @@ mod tests {
         assert_eq!(snap.plan_name.as_deref(), Some("ultra (healthy)"));
         assert_eq!(snap.rows.len(), 2); // monthly 跳过
         let five_h = &snap.rows[0];
-        assert_eq!(five_h.label, "5h");
+        assert_eq!(five_h.label, t!("row.five_hour").as_ref());
         assert_eq!(five_h.used, Some(57.2));
         assert_eq!(five_h.total, Some(800.0));
         assert_eq!(five_h.remaining, Some(742.8));
@@ -633,7 +633,7 @@ mod tests {
         });
         let snap = parse_subscription(&raw, "zenmux", "ZenMux").expect("parse_subscription");
         assert_eq!(snap.rows.len(), 1);
-        assert_eq!(snap.rows[0].label, "5h");
+        assert_eq!(snap.rows[0].label, t!("row.five_hour").as_ref());
         assert_eq!(snap.plan_name.as_deref(), Some("pro (monitored)"));
     }
 

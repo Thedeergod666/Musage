@@ -336,7 +336,7 @@ mod tests {
         assert_eq!(snap.rows.len(), 2);
 
         let five_h = &snap.rows[0];
-        assert_eq!(five_h.label, "5h");
+        assert_eq!(five_h.label, t!("row.five_hour").as_ref());
         assert!((five_h.utilization.unwrap() - 28.0).abs() < 0.001);
         assert_eq!(five_h.remaining, Some(72.0));
         assert_eq!(five_h.total, Some(100.0));
@@ -362,7 +362,7 @@ mod tests {
         });
         let snap = parse(&raw, "kimi", "Kimi").expect("parse");
         assert_eq!(snap.rows.len(), 1);
-        assert_eq!(snap.rows[0].label, "5h");
+        assert_eq!(snap.rows[0].label, t!("row.five_hour").as_ref());
         assert_eq!(snap.rows[0].resets_at, None);
     }
 

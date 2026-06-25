@@ -1000,9 +1000,15 @@ async function init() {
     PROVIDER_META = buildProviderMeta();
     document.title = t("window.floating");
     // 刷新已渲染卡片的名称（不触发 full re-render，只更新 .card-name）
+    // extra instance 的 dataset.provider 是 "minimax#2"，需取 base id 查 PROVIDER_META
     app.querySelectorAll<HTMLElement>(".card[data-provider]").forEach((card) => {
-      const id = card.dataset.provider;
+      let id = card.dataset.provider;
       if (!id) return;
+      // 副本 "minimax#2" → "minimax"；"custom_<uuid>" → 保持
+      if (id.includes("#")) {
+        const base = id.split("#")[0];
+        if (PROVIDER_META[base]) id = base;
+      }
       const meta = PROVIDER_META[id];
       if (!meta) return;
       const name = card.querySelector<HTMLElement>(".card-name");

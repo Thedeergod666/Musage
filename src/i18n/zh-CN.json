@@ -44,7 +44,9 @@
     "suffix": {
       "dup": " #{}"
     },
-    "custom": "New API 中转站"
+    "custom": "New API 中转站",
+    "stub_badge": "STUB",
+    "stub_badge_title": "公开 API 无 quota endpoint"
   },
   "floating": {
     "loading_error_title": "错误",
@@ -304,6 +306,7 @@
       "check_update": "检查更新",
       "download_install": "下载并安装",
       "relaunch": "立即重启",
+      "no_update": "没有可用更新",
       "checking": "检查中…",
       "up_to_date": "已是最新",
       "available": "发现新版本 v{version}",
@@ -392,6 +395,8 @@
   "credentials": {
     "api_key_placeholder": "粘贴 API key...",
     "cookie_placeholder": "Cookie header 值",
+    "cookie_value_hint": "sessionKey=...（或纯 value）",
+    "hint_label": "提示：",
     "cookie_textarea_placeholder": "api-platform_serviceToken=\"...\"; userId=...; api-platform_slh=\"...\"; api-platform_ph=\"...\"",
     "login_xiaomi": "登录小米账号",
     "clear_cookie": "清除 Cookie",

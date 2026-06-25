@@ -187,7 +187,7 @@ fn normalize_session_key(raw: &str) -> String {
 async fn do_fetch(
     session_key: &str,
     _source_id: &str,
-    _display_name: &str,
+    display_name: &str,
 ) -> Result<ProviderSnapshot, FetchError> {
     let client = shared_client();
 
@@ -234,11 +234,11 @@ async fn do_fetch(
         let msg = match retry_secs {
             Some(s) => t!(
                 "error.common.rate_limited_with_retry",
-                provider = "Claude",
+                provider = display_name,
                 retry_secs = s
             )
             .into_owned(),
-            None => t!("error.common.rate_limited", provider = "Claude").into_owned(),
+            None => t!("error.common.rate_limited", provider = display_name).into_owned(),
         };
         return Err(FetchError::new(ErrorKind::RateLimited, msg));
     }
@@ -247,7 +247,7 @@ async fn do_fetch(
         return Err(FetchError::server(
             t!(
                 "error.common.http_error",
-                provider = "Claude",
+                provider = display_name,
                 status = status.as_u16(),
                 body = body.chars().take(200).collect::<String>()
             )
@@ -259,7 +259,7 @@ async fn do_fetch(
         FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
     })?;
 
-    parse(&raw, _source_id, _display_name)
+    parse(&raw, _source_id, display_name)
 }
 
 /// 解析 Claude OAuth usage 响应 → QuotaRow 列表。
@@ -375,7 +375,7 @@ mod tests {
         assert_eq!(snap.rows.len(), 2);
 
         let five_h = &snap.rows[0];
-        assert_eq!(five_h.label, "5h");
+        assert_eq!(five_h.label, t!("row.five_hour").as_ref());
         assert!((five_h.utilization.unwrap() - 72.0).abs() < 0.001);
         assert_eq!(five_h.unit.as_deref(), Some("%"));
         // ISO 8601 → 2026-06-16T18:30:00.000Z 是 1781253000000 ms（近似）
@@ -383,7 +383,7 @@ mod tests {
         assert!(five_h.resets_at.unwrap() > 1_780_000_000_000);
 
         let weekly = &snap.rows[1];
-        assert_eq!(weekly.label, "周");
+        assert_eq!(weekly.label, t!("row.weekly").as_ref());
         assert!((weekly.utilization.unwrap() - 45.0).abs() < 0.001);
     }
 
@@ -398,7 +398,7 @@ mod tests {
         });
         let snap = parse(&raw, "claude_official", "Claude").expect("parse");
         assert_eq!(snap.rows.len(), 1);
-        assert_eq!(snap.rows[0].label, "5h");
+        assert_eq!(snap.rows[0].label, t!("row.five_hour").as_ref());
     }
 
     #[test]
@@ -411,7 +411,7 @@ mod tests {
         });
         let snap = parse(&raw, "claude_official", "Claude").expect("parse");
         assert_eq!(snap.rows.len(), 1);
-        assert_eq!(snap.rows[0].label, "周");
+        assert_eq!(snap.rows[0].label, t!("row.weekly").as_ref());
     }
 
     #[test]
@@ -430,7 +430,7 @@ mod tests {
         });
         let snap = parse(&raw, "claude_official", "Claude").expect("parse");
         assert_eq!(snap.rows.len(), 1);
-        assert_eq!(snap.rows[0].label, "周");
+        assert_eq!(snap.rows[0].label, t!("row.weekly").as_ref());
     }
 
     #[test]
@@ -442,7 +442,7 @@ mod tests {
         });
         let snap = parse(&raw, "claude_official", "Claude").expect("parse");
         assert_eq!(snap.rows.len(), 1);
-        assert_eq!(snap.rows[0].label, "周");
+        assert_eq!(snap.rows[0].label, t!("row.weekly").as_ref());
     }
 
     #[test]

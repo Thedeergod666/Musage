@@ -304,7 +304,7 @@ function renderMultiAuthBlock(meta: SourceMeta): HTMLElement {
         el("div", { class: "help" },
           apiKeyHelpNode(meta.id),
           el("br"),
-          el("strong", {}, "提示："),
+          el("strong", {}, t("credentials.hint_label")),
           t("credentials.xiaomi_api_key_hint_extra"),
         ),
       ),
@@ -384,7 +384,7 @@ export function apiKeyPlaceholder(id: string): string {
     // 2026-06-16 新增（PR 2）
     case "stepfun":    return "Oasis-Token...";
     case "siliconflow":return "sk-...";
-    case "claude_official": return "sessionKey=...（或纯 value）";
+    case "claude_official": return t("credentials.cookie_value_hint");
     default:           return "...";
   }
 }

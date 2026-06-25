@@ -44,7 +44,9 @@
     "suffix": {
       "dup": " #{}"
     },
-    "custom": "New API relay"
+    "custom": "New API relay",
+    "stub_badge": "STUB",
+    "stub_badge_title": "Public API has no quota endpoint"
   },
   "floating": {
     "loading_error_title": "Error",
@@ -304,6 +306,7 @@
       "check_update": "Check for updates",
       "download_install": "Download and install",
       "relaunch": "Relaunch now",
+      "no_update": "No update available",
       "checking": "Checking...",
       "up_to_date": "Already up to date",
       "available": "New version v{version} available",
@@ -392,6 +395,8 @@
   "credentials": {
     "api_key_placeholder": "Paste API key...",
     "cookie_placeholder": "Cookie header value",
+    "cookie_value_hint": "sessionKey=... (or raw value)",
+    "hint_label": "Hint:",
     "cookie_textarea_placeholder": "api-platform_serviceToken=\"...\"; userId=...; api-platform_slh=\"...\"; api-platform_ph=\"...\"",
     "login_xiaomi": "Login Xiaomi account",
     "clear_cookie": "Clear Cookie",

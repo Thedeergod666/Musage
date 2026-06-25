@@ -289,7 +289,7 @@ fn parse(
         FetchError::parse(
             t!(
                 "error.common.missing_field",
-                provider = "智谱 GLM",
+                provider = display_name,
                 field = "data"
             )
             .into_owned(),
@@ -450,7 +450,7 @@ mod tests {
         assert_eq!(snap.rows.len(), 2);
 
         let five_h = &snap.rows[0];
-        assert_eq!(five_h.label, "5h");
+        assert_eq!(five_h.label, t!("row.five_hour").as_ref());
         assert!((five_h.utilization.unwrap() - 44.0).abs() < 0.001);
         assert_eq!(five_h.resets_at, Some(1_000_000_000_000));
 

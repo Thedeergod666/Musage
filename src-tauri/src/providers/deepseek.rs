@@ -101,19 +101,25 @@ impl QuotaSource for DeepseekSource {
         credentials: &'a Credentials,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>>
     {
+        let api_key = credentials.api_key.as_deref().unwrap_or("").trim().to_string();
+        let unique_id = self.unique_id();
+        let display_name = self.display_name().to_string();
         Box::pin(async move {
-            let api_key = credentials.api_key.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
                 return Err(FetchError::unconfigured(
                     t!("error.provider.unconfigured_key", provider = "DeepSeek").into_owned(),
                 ));
             }
-            do_fetch(api_key).await
+            do_fetch(&api_key, &unique_id, &display_name).await
         })
     }
 }
 
-async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
+async fn do_fetch(
+    api_key: &str,
+    source_id: &str,
+    display_name: &str,
+) -> Result<ProviderSnapshot, FetchError> {
     if api_key.trim().is_empty() {
         return Err(FetchError::unconfigured(
             t!("error.common.api_key_empty").into_owned(),
@@ -233,9 +239,15 @@ async fn do_fetch(api_key: &str) -> Result<ProviderSnapshot, FetchError> {
         next_fetch_at: None,
         raw: Some(raw),
         is_healthy: is_available,
-        source_id: Some("deepseek".to_string()),
+        // source_id 用传入的 unique_id 而不是硬编码 "deepseek"：
+        // instance_index=1 → "deepseek"，2 → "deepseek#2"。
+        // 否则 deepseek#2.fetch() 清一色返回 source_id="deepseek" →
+        // refresh_single_inner 按 source_id 做 in-memory snapshot 替换时
+        // 会把 deepseek#2 的结果写入到 deepseek#1 的位置 → 浮窗出现
+        // 两个 deepseek（一条真实 + 一条覆盖了内置）且余额显示原实例余额。
+        source_id: Some(source_id.to_string()),
         unique_id: None,
-        source_display_name: Some("DeepSeek".to_string()),
+        source_display_name: Some(display_name.to_string()),
         plan_name: None,
         transient: None,
     })

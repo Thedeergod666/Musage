@@ -1094,30 +1094,35 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
     )> = Vec::new();
 
     for src in &sources {
-        let id = src.id();
-        let id_str = id.as_ref(); // Cow<'_, str> → &str，避免在循环里反复 .as_ref()
-                                  // 跳过未启用的
+        let id = src.unique_id(); // extra instance fix：必须用 unique_id() 而不是 id()
+        let id_str = id.as_str(); // "deepseek#2" 而非 "deepseek"
+        // id() 仍用在 enabled / credential 查找前做 enabled check ——
+        // enabled 状态按 api_key_ref("deepseek#2") 查 config。
         if !cfg.is_enabled_id(id_str) {
             continue;
         }
         // STUB 默认 disabled: 公开 API 无 quota endpoint 的 provider
         // 用户没显式启用 → 跳过,避免 30 min 退避风暴。
         // 用户可在设置面板手动勾选启用,显式覆盖默认值。
-        if !src.default_enabled() && !cfg.providers.contains_key(id_str) {
+        let base_id = src.id(); // Cow<'_, str>
+        if !src.default_enabled() && !cfg.providers.contains_key(id_str) && !cfg.providers.contains_key(base_id.as_ref()) {
             continue;
         }
 
-        // 默认间隔（per-provider override 优先）—— backoff 写入时用
+        // 默认间隔（per-provider override 优先）—— backoff 写入时用。
+        // extra instance 优先按 unique_id 查，否则 fallback 到 base id。
         let default_interval_secs = cfg
             .providers
             .get(id_str)
+            .or_else(|| cfg.providers.get(base_id.as_ref()))
             .and_then(|p| p.refresh_interval_secs)
             .unwrap_or(cfg.refresh_interval_secs)
             .max(10);
 
-        // 1. 同步加载凭据（避免在 tokio::spawn 里 await I/O）
+        // 1. 同步加载凭据（避免在 tokio::spawn 里 await I/O）。
+        // extra instance 按 unique_id 查 credential（"deepseek#2" → keys.json 里的 key）。
         let creds_res = config::load_credential_for_id(id_str);
-        tracing::trace!(provider = %id, has_creds = creds_res.as_ref().ok().and_then(|c| c.as_ref()).is_some(), "refresh_inner load_credential");
+        tracing::trace!(provider = %id_str, has_creds = creds_res.as_ref().ok().and_then(|c| c.as_ref()).is_some(), "refresh_inner load_credential");
 
         match creds_res {
             Ok(Some(creds)) => {
@@ -1237,7 +1242,8 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
     let state = app.state::<AppState>();
     let cfg_read = state.config.read().await;
     snap.providers.retain(|p| {
-        let id = p.source_id.as_deref().unwrap_or(&p.provider);
+        // extra instance fix：用 source_id(现在是 unique_id) 查 enabled
+        let id = p.source_id.as_deref().or(p.unique_id.as_deref()).unwrap_or(&p.provider);
         cfg_read.is_enabled_id(id)
     });
     apply_provider_order(&mut snap, &cfg_read);
@@ -1263,26 +1269,29 @@ fn apply_provider_order(snap: &mut QuotaSnapshot, cfg: &AppConfig) {
     if cfg.provider_order.is_empty() {
         return;
     }
-    // **B-NEW-4（2026-06-19 audit）**：之前 sort_by_key + usize::MAX fallback
-    // 让所有"未在 cfg.provider_order 里列出"的 provider 拿到同样的 sort key，
-    // 而 sort_by_key 不是 stable 的 → 这些 provider 的相对顺序每次刷新都可能
-    // 重排（视觉上看就是浮窗卡片随机闪烁）。
-    //
-    // 修法：把 enumerate 索引和 sort key 绑在一起 —— `sort_by` 是 stable 的，
-    // 复合 key `(pos, orig_idx)` 在 pos 相同时回退到 orig_idx，保持原 Vec
-    // 相对顺序。
+    // B-NEW-4（2026-06-19 audit）+ extra instance fix（2026-06-25）：
+    // 之前只按 source_id 匹配 provider_order，但 extra instance（如
+    // "deepseek#2"）的 source_id 现在 = unique_id() → 需同时用 unique_id
+    // 匹配。匹配优先级：unique_id → source_id → provider（保证副本和
+    // 内置实例都在 provider_order 里找到位置）。
     let mut indexed: Vec<(usize, crate::providers::ProviderSnapshot)> =
         snap.providers.drain(..).enumerate().collect();
     indexed.sort_by(|(ai, a), (bi, b)| {
+        let a_order_key = a.unique_id.as_deref()
+            .or(a.source_id.as_deref())
+            .unwrap_or(&a.provider);
+        let b_order_key = b.unique_id.as_deref()
+            .or(b.source_id.as_deref())
+            .unwrap_or(&b.provider);
         let apos = cfg
             .provider_order
             .iter()
-            .position(|o| o == a.source_id.as_deref().unwrap_or(&a.provider))
+            .position(|o| o == a_order_key || o == a.source_id.as_deref().unwrap_or(&a.provider))
             .unwrap_or(usize::MAX);
         let bpos = cfg
             .provider_order
             .iter()
-            .position(|o| o == b.source_id.as_deref().unwrap_or(&b.provider))
+            .position(|o| o == b_order_key || o == b.source_id.as_deref().unwrap_or(&b.provider))
             .unwrap_or(usize::MAX);
         apos.cmp(&bpos).then(ai.cmp(bi))
     });
@@ -1369,23 +1378,27 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
     // 填 next_fetch_at(同 refresh_inner 的 fill_next_fetch_at,逻辑共享)
     fill_next_fetch_at(app, id, default_interval_secs, &mut provider_snap).await;
 
-    // 替换 in-memory snapshot 里对应那条
+    // 替换 in-memory snapshot 里对应那条。
+    // 匹配策略（2026-06-25 fix）：优先按 unique_id 匹配，再 fallback 到
+    // source_id。extra instance 的 source_id 现在 = unique_id() = "deepseek#2"，
+    // 直接按 source_id 匹配也正确；但要兼容老 snapshot（unique_id 存在但
+    // source_id 仍是 "deepseek"）需要把 unique_id 作为首要匹配键。
     let state = app.state::<AppState>();
     let mut snap = state.snapshot.write().await;
-    let source_id = provider_snap
-        .source_id
-        .clone()
-        .unwrap_or_else(|| id.to_string());
-    // H10 修复：只按 source_id 匹配 —— v0.2 删 enum 前, 旧实现 fallback
-    // 到 provider.id_str() 会跟 Tavily / ZenMux / Kimi 等「provider 字段
-    // 全是 Provider::Minimax 占位」的 source 撞：per-provider poller 跟
-    // 全量 refresh_inner 并发时，Tavily 的 fetch 找到 minimax 位置替换，
-    // 全量后又加一个新 Tavily → 浮窗两个 Tavily 卡片。v0.2 删 enum 后
-    // provider 字段保留但内容是 source id 本身, 仍按 source_id 匹配最安全。
+    let match_key = provider_snap.unique_id.as_deref()
+        .or(provider_snap.source_id.as_deref())
+        .unwrap_or(id);
+    let fallback_key = provider_snap.source_id.as_deref()
+        .unwrap_or(id);
     if let Some(idx) = snap
         .providers
         .iter()
-        .position(|p| p.source_id.as_deref() == Some(source_id.as_str()))
+        .position(|p| {
+            p.unique_id.as_deref() == Some(match_key)
+                || p.source_id.as_deref() == Some(match_key)
+                || p.unique_id.as_deref() == Some(fallback_key)
+                || p.source_id.as_deref() == Some(fallback_key)
+        })
     {
         snap.providers[idx] = provider_snap;
     } else {
@@ -1402,7 +1415,10 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
     drop(cfg2);
     let mut snap = state.snapshot.write().await;
     snap.providers.retain(|p| {
-        let id = p.source_id.as_deref().unwrap_or(&p.provider);
+        // extra instance fix（2026-06-25）：
+        // p.source_id 现在是 unique_id("deepseek#2")，优先用它查 enabled；
+        // 再 fallback 到 p.provider（老兼容）。
+        let id = p.source_id.as_deref().or(p.unique_id.as_deref()).unwrap_or(&p.provider);
         cfg2_snapshot.is_enabled_id(id)
     });
     apply_provider_order(&mut snap, &cfg2_snapshot);

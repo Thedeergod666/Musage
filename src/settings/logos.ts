@@ -88,7 +88,15 @@ onLocaleChange(() => {
 
 export function getProviderMeta(id: string): ProviderMeta | undefined {
   ensureProviderMetaReady();
-  return _providerMeta[id];
+  // 直接命中：deepseek / minimax 等 base id
+  if (_providerMeta[id]) return _providerMeta[id];
+  // extra instance (deepseek#2 → deepseek)：去掉 #N 后缀后查 base id
+  const hashPos = id.indexOf('#');
+  if (hashPos > 0) {
+    const baseId = id.slice(0, hashPos);
+    return _providerMeta[baseId];
+  }
+  return undefined;
 }
 
 /// 解析 meta：有 logo 直接用，没 logo 走首字母 fallback。

@@ -132,7 +132,42 @@ pub async fn add_extra_instance(
         return Err(t!("commands.extra.unknown_provider", id = req.provider_id.as_str()).into_owned());
     }
 
-    // 2+3+4. 在 write 锁内构造 + 算 index + limit 检查 + push + 落盘。
+    // 2. 先保存 key/kookie 到 keys.json（在 write 锁外 — keys.json 有独立的
+    //    save_lock，不与 extra_instances 锁嵌套）。
+    //    P1-4 fix: 先写 key 再 push extras，这样 key 保存失败时 extras 里没有
+    //    对应记录（不会留下"无 key"的孤儿 instance）。如果 save extras 失败，
+    //    尝试回滚刚写的 key（best-effort）。
+    //
+    //    注意：因为还没拿 write 锁，instance_index 还没正式算 —— 先构造临时
+    //    api_key_ref 用于写 key，等确定了 index 后再 rename key。
+    let temp_api_key_ref = if is_custom {
+        let spec = req.custom.as_ref().unwrap();
+        if spec.id.is_empty() {
+            format!("custom_{}", uuid::Uuid::new_v4().simple())
+        } else {
+            spec.id.clone()
+        }
+    } else {
+        // 先读一次拿 next index（只是为了算 api_key_ref，真正的 push 在锁内重算）
+        let extras_read = state.extra_instances.read().await;
+        let tentative_idx = extra_instances::next_index_for(&req.provider_id, &extras_read);
+        drop(extras_read);
+        format!("{}#{}", req.provider_id, tentative_idx)
+    };
+    let api_key_val = req.api_key.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let api_cookie_val = req.api_cookie.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    if let Some(k) = api_key_val {
+        let cred = Credentials { api_key: Some(k.to_string()), cookie: None };
+        save_credential_for_id(&temp_api_key_ref, &cred)
+            .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
+    }
+    if let Some(c) = api_cookie_val {
+        let cred = Credentials { api_key: None, cookie: Some(c.to_string()) };
+        save_credential_for_id(&temp_api_key_ref, &cred)
+            .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
+    }
+
+    // 3+4. 在 write 锁内构造 + 算 index + limit 检查 + push + 落盘。
     // Bug fix (2026-06-25): 之前先用 read 锁取快照算 next_index_for(), 再
     // 单独拿 write 锁 push。并发 add 同一 provider_id 时会拿到相同的 max
     // index → 重复 api_key_ref → keys.json 条目互相覆盖。现在整个 "读现有
@@ -141,6 +176,8 @@ pub async fn add_extra_instance(
         let now = chrono::Utc::now().timestamp();
         let mut extras = state.extra_instances.write().await;
         if extras.len() >= TOTAL_EXTRA_LIMIT {
+            // limit 检查失败 → 回滚刚写的 key
+            delete_credential_for_id(&temp_api_key_ref).ok();
             return Err(t!("commands.extra.limit_reached").into_owned());
         }
         let instance = if is_custom {
@@ -148,7 +185,7 @@ pub async fn add_extra_instance(
             // P0-3 fix: 前端发 Omit<CustomSourceSpec, "id" | "created_at">，
             // id/created_at 缺省时自动补。
             if spec.id.is_empty() {
-                spec.id = format!("custom_{}", uuid::Uuid::new_v4().simple());
+                spec.id = temp_api_key_ref.clone();
             }
             if spec.created_at == 0 {
                 spec.created_at = now;
@@ -163,42 +200,34 @@ pub async fn add_extra_instance(
             }
         } else {
             let idx = extra_instances::next_index_for(&req.provider_id, &extras);
+            let final_api_key_ref = format!("{}#{}", req.provider_id, idx);
+            // 如果 tentative index 跟实际 index 不一致（并发 add），rename key
+            if final_api_key_ref != temp_api_key_ref {
+                if let Ok(Some(cred)) = load_credential_for_id(&temp_api_key_ref) {
+                    save_credential_for_id(&final_api_key_ref, &cred).ok();
+                    delete_credential_for_id(&temp_api_key_ref).ok();
+                }
+            }
             ExtraInstance {
                 id: uuid::Uuid::new_v4(),
                 provider_id: req.provider_id.clone(),
                 instance_index: idx,
-                api_key_ref: format!("{}#{}", req.provider_id, idx),
+                api_key_ref: final_api_key_ref,
                 custom: None,
                 created_at: now,
             }
         };
         extras.push(instance.clone());
-        extra_instances::save(&extras)?;
+        if let Err(e) = extra_instances::save(&extras) {
+            // P1-4 fix: save extras 失败 → 回滚 key
+            delete_credential_for_id(&instance.api_key_ref).ok();
+            if instance.api_key_ref != temp_api_key_ref {
+                delete_credential_for_id(&temp_api_key_ref).ok();
+            }
+            return Err(e);
+        }
         instance
     };
-
-    // 写 key 到 keys.json（在 write 锁外 —— keys.json 有独立的 save_lock, 不与
-    // extra_instances 锁嵌套）
-    if let Some(k) = &req.api_key {
-        if !k.trim().is_empty() {
-            let cred = Credentials {
-                api_key: Some(k.trim().to_string()),
-                cookie: None,
-            };
-            save_credential_for_id(&new_instance.api_key_ref, &cred)
-                .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
-        }
-    }
-    if let Some(c) = &req.api_cookie {
-        if !c.trim().is_empty() {
-            let cred = Credentials {
-                api_key: None,
-                cookie: Some(c.trim().to_string()),
-            };
-            save_credential_for_id(&new_instance.api_key_ref, &cred)
-                .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
-        }
-    }
 
     // 5. emit + refresh
     let _ = app.emit("musage://config-changed", ());

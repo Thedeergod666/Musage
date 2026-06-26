@@ -537,13 +537,16 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
   const title = card.querySelector<HTMLElement>(".card-title")!;
   // Phase 1：用 source_id 路由（registry-driven），provider 字段保兼容
   const id = p.unique_id ?? p.source_id ?? p.provider;
+  // 副本的 unique_id 带 #N 后缀（"deepseek#2"），PROVIDER_META 只按
+  // base id（"deepseek"）索引。剥离 #N 后缀再查 logo/name/accent。
+  const baseId = id.replace(/#\d+$/, "");
   // 智谱 GLM 用 source_display_name 二次路由：CN="智谱 GLM" / EN="Z.ai"
   // 让两张 logo（紫色渐变 vs z.ai 官方）按区域切换。
   // 智谱 GLM 两个区域共用 source_id "zhipu"；只有 EN 区（Z.ai）
   // 需要切换到 zhipuEnLogo，CN 区直接用 "zhipu" key。
-  const regionKey = (id === "zhipu" && p.source_display_name === "Z.ai")
+  const regionKey = (baseId === "zhipu" && p.source_display_name === "Z.ai")
     ? "Z.ai"
-    : id;
+    : baseId;
   // PR 3：CustomSource 透传 display_name / accent。优先级：
   // 1. PROVIDER_META（内置 source 有固定 logo）
   // 2. snapshot 的 display_name / accent（CustomSource 后端透传）

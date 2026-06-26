@@ -3,7 +3,6 @@
     "settings": "Musage · 设置",
     "floating": "Musage"
   },
-  "_meta": "P0 + P1 + P2 i18n (zh-CN) - 浮窗 + 主面板 + 区域向导。详见 memory/musage-i18n-conventions.md",
   "provider": {
     "minimax": {
       "name": "MiniMax"
@@ -79,17 +78,6 @@
     "err_btn_logs": "📋 日志",
     "err_btn_copied": "错误已复制到剪贴板"
   },
-  "row": {
-    "five_hour": "5h",
-    "weekly": "周",
-    "balance": "余额",
-    "topup": "充值",
-    "bonus": "奖励",
-    "plan": "套餐",
-    "compensation": "补偿",
-    "monthly_total": "总额度",
-    "free_tier": "免费版"
-  },
   "settings": {
     "init_failed": "初始化失败: {err}",
     "nav": {
@@ -100,37 +88,20 @@
       "logs": "日志",
       "about": "关于"
     },
-    "title": "设置",
     "common": {
       "save": "保存",
       "delete": "删除",
       "cancel": "取消",
-      "confirm": "确认",
-      "add": "添加",
-      "edit": "编辑",
       "copy": "复制",
-      "paste": "粘贴",
       "refresh": "刷新",
       "test": "测试",
-      "close": "关闭",
-      "back": "返回",
-      "punctuation_period": "。",
-      "yes": "是",
-      "no": "否",
-      "ok": "好",
-      "loading": "加载中…",
-      "saved": "已保存到本机",
-      "not_set": "未设置",
-      "please_paste": "请先粘贴...",
-      "copy_failed": "复制失败: {err}"
+      "punctuation_period": "。"
     },
     "providers": {
-      "section_title": "数据源",
       "show_in_floating": "在浮窗显示",
       "search_placeholder": "搜索 provider (id 或名字)...",
       "count_label": "启用 {enabled} / 共 {total}",
       "add_custom": "+ 添加新来源",
-      "add_custom_title": "添加新来源",
       "add_source": "添加新来源",
       "add_load_picker_failed": "加载 provider 列表失败: {err}",
       "refresh_interval_override": "轮询间隔（覆盖）",
@@ -172,8 +143,7 @@
       "tray_style_failed": "切换失败: {err}",
       "config_saved": "配置已保存",
       "config_save_failed": "保存失败: {err}",
-      "switch_failed": "切换显示失败: {err}",
-      "interval_default_placeholder": "默认 {secs} 秒（顶部\"轮询间隔\"）"
+      "switch_failed": "切换显示失败: {err}"
     },
     "floating": {
       "section_title": "浮窗",
@@ -234,7 +204,6 @@
       "threshold_arrow": "→ "
     },
     "advanced": {
-      "schema_overrides": "Schema overrides",
       "schema_help_1": "只在",
       "schema_help_2": "解析失败 / 显示 \"Schema 未知\"",
       "schema_help_3": "时用。每行一个 JSON 对象，",
@@ -276,7 +245,6 @@
       "clear_all": "清空",
       "confirm_clear": "确认清空所有日志？",
       "no_logs_filtered": "— 当前筛选下暂无日志 —",
-      "no_logs_to_copy": "当前筛选下没有日志可复制",
       "count_all": "{count} 条",
       "count_filtered": "{filtered} / {total} 条",
       "load_failed": "加载失败: {err}",
@@ -317,14 +285,12 @@
     },
     "order": {
       "section_title": "浮窗卡片顺序",
-      "drag_hint": "按住拖动可调整浮窗显示数量",
       "panels_follow_hint": "下方套餐区按此顺序排列",
       "move_up_title": "上移",
       "move_down_title": "下移",
       "divider_grip": "⋮⋮",
       "divider_label": "已隐藏",
       "divider_title": "按住拖动可调整浮窗显示数量",
-      "divider_label_full": "已隐藏（拖到上方即可在浮窗显示）",
       "flash_moved_to_floating": "{id} 已移到浮窗显示区",
       "flash_hidden": "{id} 已隐藏（拖回上方可恢复）",
       "flash_cards_added": "已新增 {delta} 张卡片到浮窗",
@@ -353,11 +319,6 @@
       "generic_ok": "{id} OK",
       "failed": "失败: {err}",
       "app_help": "拉所有 source 一次 + 显示摘要"
-    },
-    "dialog": {
-      "delete_api_key": "确认删除 {provider} 的 API key？",
-      "delete_cookie": "确认删除 {provider} 的 Cookie？",
-      "clear_cookie": "确认清除已保存的 Xiaomi Cookie？\n清除后需要重新登录。"
     },
     "config": {
       "schema_parse_failed": "Schema overrides JSON 解析失败: {err}"
@@ -501,7 +462,6 @@
     "misc_title": "其他"
   },
   "custom_source": {
-    "title": "添加自定义 New API 来源",
     "field": {
       "display_name": "名称",
       "display_name_placeholder": "DMX API",

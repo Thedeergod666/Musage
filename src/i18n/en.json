@@ -3,7 +3,6 @@
     "settings": "Musage · Settings",
     "floating": "Musage"
   },
-  "_meta": "P0 + P1 + P2 i18n (en) - floating + main panel + region wizard. See memory/musage-i18n-conventions.md",
   "provider": {
     "minimax": {
       "name": "MiniMax"
@@ -79,17 +78,6 @@
     "err_btn_logs": "📋 Logs",
     "err_btn_copied": "Error copied to clipboard"
   },
-  "row": {
-    "five_hour": "5h",
-    "weekly": "Weekly",
-    "balance": "Balance",
-    "topup": "Top-up",
-    "bonus": "Bonus",
-    "plan": "Plan",
-    "compensation": "Compensation",
-    "monthly_total": "Monthly total",
-    "free_tier": "Free tier"
-  },
   "settings": {
     "init_failed": "Init failed: {err}",
     "nav": {
@@ -100,37 +88,20 @@
       "logs": "Logs",
       "about": "About"
     },
-    "title": "Settings",
     "common": {
       "save": "Save",
       "delete": "Delete",
       "cancel": "Cancel",
-      "confirm": "Confirm",
-      "add": "Add",
-      "edit": "Edit",
       "copy": "Copy",
-      "paste": "Paste",
       "refresh": "Refresh",
       "test": "Test",
-      "close": "Close",
-      "back": "Back",
-      "punctuation_period": ".",
-      "yes": "Yes",
-      "no": "No",
-      "ok": "OK",
-      "loading": "Loading...",
-      "saved": "Saved to local",
-      "not_set": "Not set",
-      "please_paste": "Please paste first...",
-      "copy_failed": "Copy failed: {err}"
+      "punctuation_period": "."
     },
     "providers": {
-      "section_title": "Data sources",
       "show_in_floating": "Show in floating window",
       "search_placeholder": "Search provider (id or name)...",
       "count_label": "{enabled} enabled / {total} total",
       "add_custom": "+ Add new source",
-      "add_custom_title": "Add new source",
       "add_source": "Add new source",
       "add_load_picker_failed": "Failed to load provider list: {err}",
       "refresh_interval_override": "Refresh interval (override)",
@@ -172,8 +143,7 @@
       "tray_style_failed": "Switch failed: {err}",
       "config_saved": "Config saved",
       "config_save_failed": "Save failed: {err}",
-      "switch_failed": "Toggle failed: {err}",
-      "interval_default_placeholder": "Default {secs}s (top \"Refresh interval\")"
+      "switch_failed": "Toggle failed: {err}"
     },
     "floating": {
       "section_title": "Floating window",
@@ -234,7 +204,6 @@
       "threshold_arrow": "→ "
     },
     "advanced": {
-      "schema_overrides": "Schema overrides",
       "schema_help_1": "Only when",
       "schema_help_2": "parse fails / shows 'Schema unknown'",
       "schema_help_3": "Use. One JSON object per line, ",
@@ -276,7 +245,6 @@
       "clear_all": "Clear",
       "confirm_clear": "Confirm clearing all logs?",
       "no_logs_filtered": "— No logs under current filter —",
-      "no_logs_to_copy": "No logs under current filter to copy",
       "count_all": "{count} entries",
       "count_filtered": "{filtered} / {total} entries",
       "load_failed": "Load failed: {err}",
@@ -317,14 +285,12 @@
     },
     "order": {
       "section_title": "Floating card order",
-      "drag_hint": "Hold and drag to adjust floating display count",
       "panels_follow_hint": "Provider panels below follow this order",
       "move_up_title": "Move up",
       "move_down_title": "Move down",
       "divider_grip": "⋮⋮",
       "divider_label": "Hidden",
       "divider_title": "Hold and drag to adjust floating display count",
-      "divider_label_full": "Hidden (drag above to show in floating)",
       "flash_moved_to_floating": "{id} moved to floating display",
       "flash_hidden": "{id} hidden (drag back up to restore)",
       "flash_cards_added": "Added {delta} cards to floating",
@@ -353,11 +319,6 @@
       "generic_ok": "{id} OK",
       "failed": "Failed: {err}",
       "app_help": "Pull all sources once + show summary"
-    },
-    "dialog": {
-      "delete_api_key": "Confirm delete {provider} API key?",
-      "delete_cookie": "Confirm delete {provider} Cookie?",
-      "clear_cookie": "Confirm clearing saved Xiaomi Cookie?\nAfter clearing, you need to re-login."
     },
     "config": {
       "schema_parse_failed": "Schema overrides JSON parse failed: {err}"
@@ -501,7 +462,6 @@
     "misc_title": "Misc"
   },
   "custom_source": {
-    "title": "Add custom New API source",
     "field": {
       "display_name": "Name",
       "display_name_placeholder": "DMX API",

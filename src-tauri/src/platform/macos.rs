@@ -27,7 +27,7 @@
 //!   `set_always_on_top(true)`。PinTop 模式用它，hover 临时置顶也用它。
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
@@ -345,24 +345,58 @@ pub fn start_fullscreen_watcher<R: Runtime>(app: AppHandle<R>) {
 
 /// 探测 macOS 菜单栏是否被隐藏。隐藏 → 大概率正在全屏。
 /// 主线程同步调用（NSMenu 类方法需要 main thread）。
+///
+/// L17 fix（2026-06-26 audit）: 旧实现每次调用创建新的 mpsc::channel。
+/// 改为全局复用 Condvar + Mutex 单槽位，与 is_floating_topmost_at 同款模式。
+/// fullscreen watcher 0.5Hz × 86,400s ≈ 43K 次/24h，不如 hover emitter 的
+/// 1.7M/24h 严重，但风格一致，避免给后续维护者两种实现去理解。
 fn is_menubar_hidden<R: Runtime>(app: &AppHandle<R>) -> bool {
-    let (tx, rx) = mpsc::channel::<bool>();
+    use std::sync::{Arc, Condvar, Mutex};
+
+    struct OneSlot {
+        slot: Mutex<Option<bool>>,
+        cvar: Condvar,
+    }
+    static SLOT: OnceLock<Arc<OneSlot>> = OnceLock::new();
+    let slot = SLOT.get_or_init(|| {
+        Arc::new(OneSlot {
+            slot: Mutex::new(None),
+            cvar: Condvar::new(),
+        })
+    });
+
+    let app2 = app.clone();
+    let slot2 = slot.clone();
     let _ = app.run_on_main_thread(move || {
-        // **2026-06-20 audit**：MainThreadMarker 拿不到时（理论进程 teardown 时），
-        // 之前 .expect() 直接 panic（hover emitter / watcher 都永久跑，这个 panic
-        // 等于停掉整个 tray）。改 match —— 拿不到就 send false 兜底，下一 tick 重试。
         let mtm = match MainThreadMarker::new() {
             Some(m) => m,
             None => {
                 tracing::warn!("MainThreadMarker 不可用，is_menubar_hidden 跳过本 tick");
-                let _ = tx.send(false);
+                let mut g = slot2.slot.lock().unwrap_or_else(|e| e.into_inner());
+                *g = Some(false);
+                slot2.cvar.notify_all();
                 return;
             }
         };
         let visible = NSMenu::menuBarVisible(mtm);
-        let _ = tx.send(!visible);
+        let mut g = slot2.slot.lock().unwrap_or_else(|e| e.into_inner());
+        *g = Some(!visible);
+        slot2.cvar.notify_all();
     });
-    rx.recv_timeout(Duration::from_millis(200)).unwrap_or(false)
+
+    let started = std::time::Instant::now();
+    loop {
+        let mut g = slot.slot.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(v) = g.take() {
+            return v;
+        }
+        let elapsed = started.elapsed();
+        if elapsed >= Duration::from_millis(200) {
+            return false;
+        }
+        let remaining = Duration::from_millis(200) - elapsed;
+        let _ = slot.cvar.wait_timeout(g, remaining);
+    }
 }
 
 fn hide_floating<R: Runtime>(app: &AppHandle<R>) {

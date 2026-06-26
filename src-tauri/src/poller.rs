@@ -44,18 +44,22 @@ pub fn start(app: AppHandle) {
         let cfg0 = state.config.read().await.clone();
         let mut next_fetch: HashMap<String, Instant> = HashMap::new();
         for src in all_sources(&state).await {
-            let interval_secs = cfg0
+            // PR 1a：用 unique_id() 而不是 id()，否则 minimax #2 跟 minimax
+            // 共享 map entry（id() 都返 "minimax"），#2 的 interval 会覆盖
+            // 内置那一份。config/enabled/interval/backoff 也用同一套 key。
+            let unique = src.unique_id();
+            let id_str = unique.as_str();
+            let base_id = src.id().into_owned();
+            let fallback_interval = cfg0
                 .providers
-                .get(src.id().as_ref())
+                .get(id_str)
+                .or_else(|| cfg0.providers.get(&base_id))
                 .and_then(|p| p.refresh_interval_secs)
                 .unwrap_or(cfg0.refresh_interval_secs)
                 .max(10);
-            // PR 1a：用 unique_id() 而不是 id()，否则 minimax #2 跟 minimax
-            // 会共享 map entry（id() 都返 "minimax"），#2 的 interval 会覆盖
-            // 内置那一份。
             next_fetch.insert(
-                src.unique_id(),
-                Instant::now() + Duration::from_secs(interval_secs),
+                unique,
+                Instant::now() + Duration::from_secs(fallback_interval),
             );
         }
 

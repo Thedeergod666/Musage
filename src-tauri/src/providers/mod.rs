@@ -54,14 +54,6 @@ pub struct Credentials {
     pub cookie: Option<String>,
 }
 
-impl Credentials {
-    #[allow(dead_code)] // 预留 v2 凭据校验 helper（前端 settings 面板 v2 要做"未设置任何凭据"的提示时启用）
-    pub fn has_any(&self) -> bool {
-        self.api_key.as_deref().map(str::trim).map(str::is_empty) == Some(false)
-            || self.cookie.as_deref().map(str::trim).map(str::is_empty) == Some(false)
-    }
-}
-
 /// 鉴权方式（前端 UI 用，决定显示"API Key"输入框还是"Cookie"输入框）。
 ///
 /// 实际拼 header 的逻辑在 [`crate::http::apply_auth`]（下一阶段）里；

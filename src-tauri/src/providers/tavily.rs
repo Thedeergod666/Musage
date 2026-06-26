@@ -321,9 +321,8 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
 
     let success = !rows.is_empty();
     Ok(ProviderSnapshot {
-        // provider 字段写 "minimax" 是 v0.2 前的 enum 占位残留 —— 现在前端
-        // 走 source_id ("tavily") 路由, 这个字段只是老 JSON 反序列化兜底
-        provider: "minimax".to_string(),
+        // v0.3: 用 source_id ("tavily") 替代旧 "minimax" 占位
+        provider: "tavily".to_string(),
         success,
         rows,
         error: None,

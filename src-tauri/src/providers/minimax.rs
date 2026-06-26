@@ -329,6 +329,7 @@ fn parse(
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             return ProviderSnapshot {
+                // v0.3: 用 source_id ("minimax") 替代旧 enum 占位
                 provider: "minimax".to_string(),
                 success: false,
                 rows: vec![],

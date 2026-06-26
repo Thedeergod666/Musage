@@ -259,9 +259,8 @@ fn parse(
     }];
 
     Ok(ProviderSnapshot {
-        // provider 字段写 "minimax" 是 v0.2 前的 enum 占位残留 —— 前端
-        // 走 source_id ("siliconflow") 路由, 这个字段只是老 JSON 反序列化兜底
-        provider: "minimax".to_string(),
+        // v0.3: 用 source_id ("siliconflow") 替代旧 "minimax" 占位
+        provider: "siliconflow".to_string(),
         success: true,
         rows,
         error: None,

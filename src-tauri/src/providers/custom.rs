@@ -289,8 +289,8 @@ async fn do_fetch(
         parse_with_extract(&raw, &spec.extract, spec.plan_name_path.as_deref())?;
 
     Ok(ProviderSnapshot {
-        // v0.2: provider 字段是 String, 写 "minimax" 占位（前端走 source_id）
-        provider: "minimax".to_string(),
+        // v0.3: 用 source_id (=spec.id，如 "custom_<uuid>") 替代旧 "minimax" 占位
+        provider: spec.id.clone(),
         success: true,
         rows,
         error: None,

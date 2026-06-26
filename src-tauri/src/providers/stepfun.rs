@@ -345,7 +345,8 @@ fn parse(
     }
 
     Ok(ProviderSnapshot {
-        provider: "minimax".to_string(),
+        // v0.3: 用 source_id ("stepfun") 替代旧 "minimax" 占位
+        provider: "stepfun".to_string(),
         success: true,
         rows,
         error: None,

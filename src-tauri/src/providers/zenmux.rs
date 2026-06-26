@@ -374,7 +374,8 @@ fn parse_payg(
     }
 
     Ok(ProviderSnapshot {
-        provider: "minimax".to_string(), // v0.2: 沿用历史 "minimax" 占位（前端走 source_id）
+        // v0.3: 用 source_id ("zenmux") 替代旧 "minimax" 占位
+        provider: "zenmux".to_string(),
         success: true,
         rows,
         error: None,
@@ -455,7 +456,7 @@ fn parse_subscription(
     };
 
     Ok(ProviderSnapshot {
-        provider: "minimax".to_string(),
+        provider: "zenmux".to_string(),
         success: true,
         rows,
         error: None,

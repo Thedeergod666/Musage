@@ -339,9 +339,8 @@ fn parse(
         .map(|s| s.to_string());
 
     Ok(ProviderSnapshot {
-        // provider 字段写 "minimax" 是 v0.2 前的 enum 占位残留 —— 现在前端
-        // 走 source_id ("zhipu") 路由, 这个字段只是老 JSON 反序列化兜底
-        provider: "minimax".to_string(),
+        // v0.3: 用 source_id ("zhipu") 替代旧 "minimax" 占位
+        provider: "zhipu".to_string(),
         success: true,
         rows,
         error: None,

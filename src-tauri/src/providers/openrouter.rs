@@ -344,7 +344,8 @@ fn parse_credits(
     }];
 
     Ok(ProviderSnapshot {
-        provider: "minimax".to_string(),
+        // v0.3: 用 source_id ("openrouter") 替代旧 "minimax" 占位
+        provider: "openrouter".to_string(),
         success: true,
         rows,
         error: None,
@@ -414,7 +415,8 @@ fn parse_key(
     }
 
     Ok(ProviderSnapshot {
-        provider: "minimax".to_string(),
+        // v0.3: 用 source_id ("openrouter") 替代旧 "minimax" 占位
+        provider: "openrouter".to_string(),
         success: true,
         rows,
         error: None,

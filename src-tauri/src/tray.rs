@@ -864,10 +864,10 @@ fn tooltip(snap: &QuotaSnapshot) -> String {
         parts.push(format!("{dot} {body}{suffix}"));
     }
     if let Some(ms) = snap.fetched_at {
-        let dt = chrono::DateTime::from_timestamp_millis(ms)
+        let time_str = chrono::DateTime::from_timestamp_millis(ms)
             .map(|d| d.format("%H:%M:%S").to_string())
-            .unwrap_or_default();
-        parts.push(t!("tray.tooltip.updated_at", time = dt).to_string());
+            .unwrap_or_else(|| "?".to_string());
+        parts.push(t!("tray.tooltip.updated_at", time = time_str).to_string());
     }
     parts.join(" · ")
 }

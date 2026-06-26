@@ -1,6 +1,4 @@
 {
-  "_meta": "P0 + P1 backend 字符串。中文原文保留。",
-
   "tray": {
     "menu": {
       "toggle": "切换悬浮窗",
@@ -13,14 +11,12 @@
       "loading": "Musage - 加载中…",
       "title": "Musage",
       "updated_at": "更新于 {time}",
-      "error_unknown": "未知错误",
       "provider_error": "{provider}: {error}",
       "row_pct": "{label} {pct}%",
       "provider_rows": "{provider} {rows}",
       "provider_balance": "{provider} {amount}{unit}"
     }
   },
-
   "row": {
     "five_hour": "5h",
     "weekly": "周",
@@ -32,14 +28,8 @@
     "credits": "credits",
     "calls": "calls",
     "topup": "充值",
-    "bonus": "奖励",
-    "endpoint_search": "search",
-    "endpoint_extract": "extract",
-    "endpoint_crawl": "crawl",
-    "endpoint_map": "map",
-    "endpoint_research": "research"
+    "bonus": "奖励"
   },
-
   "error": {
     "common": {
       "api_key_empty": "API key 为空",
@@ -66,7 +56,6 @@
     },
     "provider": {
       "unconfigured_key": "未配置 {provider} 的 API key（设置面板填入）",
-      "not_supported": "{provider} 暂未支持：{reason}",
       "schema_unknown_hint": "未识别 schema — 去设置面板 Schema overrides 加候选字段名",
       "minimax_403": "无权限访问 MiniMax 用量接口（HTTP 403）"
     },
@@ -110,21 +99,18 @@
       "path_must_start_with_slash": "自定义来源的 path 必须以 '/' 开头（防止 URL 混淆攻击）"
     }
   },
-
   "notification": {
     "xiaomi_cookie_expired_title": "Xiaomi MiMo cookie 已失效",
     "xiaomi_cookie_expired_body": "你的 Xiaomi MiMo cookie 已失效（约 8h）。点浮窗错误卡可重新登录。",
     "claude_session_expired_title": "Claude sessionKey 已失效",
     "claude_session_expired_body": "你的 Claude sessionKey 已失效。打开设置 → claude_official → 粘贴新 sessionKey。"
   },
-
   "commands": {
     "region_invalid": "未知的 region: {other}（必须为 cn / global / custom）",
     "source_unknown": "未知的 source id: {id}",
     "field_unknown": "未知的 field 标识: {other}（应为 api_key 或 cookie）",
     "credential_empty": "凭据不能为空",
     "api_key_empty": "key 不能为空",
-    "cookie_empty": "cookie 不能为空",
     "display_mode_unknown_xiaomi": "未知的 Xiaomi 显示模式: {other}（应为 all / plan_only / total_only）",
     "region_unknown": "未知的区域: {other}（应为 cn / en）",
     "xiaomi_region_unknown": "未知的 Xiaomi 区域: {other}（应为 cn / sgp / ams）",
@@ -136,14 +122,10 @@
     "wallet_threshold_negative": "钱包告警阈值必须 ≥ 0（实际 {n}）",
     "color_key_unknown": "未知的色档 key: {other}（仅支持 ok / cyan / warn / alert）",
     "color_value_invalid": "{k} 的颜色值必须是 #RGB / #RRGGBB 形式（实际 {v}）",
-    "autostart_enable": "autostart enable: {err}",
-    "autostart_disable": "autostart disable: {err}",
     "create_settings": "create settings: {err}",
     "floating_not_found": "找不到浮窗",
     "center_failed": "center: {err}",
     "size_failed": "size: {err}",
-    "read_config": "read config: {err}",
-    "config_unrecognized": "config.json 格式无法识别（既不是新格式也不是旧格式）：{path}",
     "config_mkdir": "mkdir: {err}",
     "config_serialize": "serialize: {err}",
     "config_write": "write config: {err}",
@@ -152,14 +134,7 @@
     "parse_keys": "parse keys.json: {err}",
     "keys_io": "{op} keys: {err}",
     "schema_override_empty_field": "{id}.{tier}[{idx}]: total / remaining 不能为空字符串",
-    "custom_name_empty": "display_name 不能为空",
-    "custom_url_invalid": "base_url 必须以 http:// 或 https:// 开头",
-    "custom_path_invalid": "path 必须以 / 开头",
     "custom_method_invalid": "method 必须是 GET 或 POST，当前: {method}",
-    "custom_limit_reached": "已达自定义来源上限 (50)",
-    "custom_duplicate": "display_name '{name}' 已被其他自定义来源占用",
-    "custom_not_found": "custom source '{id}' 不存在",
-    "custom_path_must_start_with_slash": "自定义来源的 path 必须以 '/' 开头（防止 URL 混淆攻击）",
     "extra": {
       "provider_id_empty": "provider_id 不能为空",
       "custom_spec_required": "provider_id == 'custom' 时必须填 custom 字段",
@@ -170,7 +145,6 @@
       "custom_only_for_custom_provider": "custom 字段只能在 provider_id == 'custom' 的 instance 上修改"
     }
   },
-
   "cli": {
     "dump_unknown_source": "[dump] 未知 source id: {id}（可用: {known}）",
     "dump_no_enabled": "[dump] 没有启用的 source",
@@ -181,7 +155,6 @@
     "dump_parsed_result": "\n--- 解析结果 ---",
     "dump_fetch_failed": "[dump] 拉取失败: {err}"
   },
-
   "window": {
     "settings": "Musage · 设置",
     "xiaomi_login": "登录小米账号 - Musage",
@@ -201,20 +174,16 @@
     "siliconflow": "SiliconFlow",
     "claude_official": "Claude 官方"
   },
-
   "provider": {
     "suffix": {
       "dup": " #{}"
-    },
-    "custom": "New API 中转站"
+    }
   },
-
   "extra": {
     "provider": {
       "custom": "New API 中转站"
     }
   },
-
   "xiaomi_login": {
     "parse_login_url": "parse LOGIN_URL: {err}",
     "build_webview": "build webview: {err}",

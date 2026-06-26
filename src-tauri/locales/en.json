@@ -1,6 +1,4 @@
 {
-  "_meta": "P0 + P1 backend strings. Translations by Thedeergod — Chinglish OK for v1, will be proofread later.",
-
   "tray": {
     "menu": {
       "toggle": "Toggle floating window",
@@ -13,14 +11,12 @@
       "loading": "Musage - loading...",
       "title": "Musage",
       "updated_at": "Updated at {time}",
-      "error_unknown": "Unknown error",
       "provider_error": "{provider}: {error}",
       "row_pct": "{label} {pct}%",
       "provider_rows": "{provider} {rows}",
       "provider_balance": "{provider} {amount}{unit}"
     }
   },
-
   "row": {
     "five_hour": "5h",
     "weekly": "Weekly",
@@ -32,14 +28,8 @@
     "credits": "credits",
     "calls": "calls",
     "topup": "Topup",
-    "bonus": "Bonus",
-    "endpoint_search": "search",
-    "endpoint_extract": "extract",
-    "endpoint_crawl": "crawl",
-    "endpoint_map": "map",
-    "endpoint_research": "research"
+    "bonus": "Bonus"
   },
-
   "error": {
     "common": {
       "api_key_empty": "API key is empty",
@@ -66,7 +56,6 @@
     },
     "provider": {
       "unconfigured_key": "API key not configured for {provider} (set in Settings)",
-      "not_supported": "{provider} not yet supported: {reason}",
       "schema_unknown_hint": "Schema not recognized — add candidate field names in Settings → Schema overrides",
       "minimax_403": "No permission to access MiniMax usage API (HTTP 403)"
     },
@@ -110,21 +99,18 @@
       "path_must_start_with_slash": "Custom source path must start with '/' (prevents URL confusion)"
     }
   },
-
   "notification": {
     "xiaomi_cookie_expired_title": "Xiaomi MiMo cookie expired",
     "xiaomi_cookie_expired_body": "Your Xiaomi MiMo cookie has expired (~8h). Click the floating window to re-login.",
     "claude_session_expired_title": "Claude sessionKey expired",
     "claude_session_expired_body": "Your Claude sessionKey has expired. Open Settings → claude_official → paste new sessionKey."
   },
-
   "commands": {
     "region_invalid": "Invalid region: {other} (must be cn / global / custom)",
     "source_unknown": "Unknown source id: {id}",
     "field_unknown": "Unknown field identifier: {other} (expected api_key or cookie)",
     "credential_empty": "Credential cannot be empty",
     "api_key_empty": "API key cannot be empty",
-    "cookie_empty": "Cookie cannot be empty",
     "display_mode_unknown_xiaomi": "Unknown Xiaomi display mode: {other} (expected all / plan_only / total_only)",
     "region_unknown": "Unknown region: {other} (expected cn / en)",
     "xiaomi_region_unknown": "Unknown Xiaomi region: {other} (expected cn / sgp / ams)",
@@ -136,14 +122,10 @@
     "wallet_threshold_negative": "Wallet alert threshold must be >= 0 (actual {n})",
     "color_key_unknown": "Unknown color tier key: {other} (only ok / cyan / warn / alert supported)",
     "color_value_invalid": "{k} color value must be #RGB / #RRGGBB format (actual {v})",
-    "autostart_enable": "autostart enable: {err}",
-    "autostart_disable": "autostart disable: {err}",
     "create_settings": "create settings: {err}",
     "floating_not_found": "Floating window not found",
     "center_failed": "center: {err}",
     "size_failed": "size: {err}",
-    "read_config": "read config: {err}",
-    "config_unrecognized": "config.json format unrecognized (neither new nor legacy format): {path}",
     "config_mkdir": "mkdir: {err}",
     "config_serialize": "serialize: {err}",
     "config_write": "write config: {err}",
@@ -152,14 +134,7 @@
     "parse_keys": "parse keys.json: {err}",
     "keys_io": "{op} keys: {err}",
     "schema_override_empty_field": "{id}.{tier}[{idx}]: total/remaining must be non-empty strings",
-    "custom_name_empty": "display_name cannot be empty",
-    "custom_url_invalid": "base_url must start with http:// or https://",
-    "custom_path_invalid": "path must start with /",
     "custom_method_invalid": "method must be GET or POST, current: {method}",
-    "custom_limit_reached": "Custom source limit reached (50)",
-    "custom_duplicate": "display_name '{name}' already used by another custom source",
-    "custom_not_found": "custom source '{id}' does not exist",
-    "custom_path_must_start_with_slash": "Custom source path must start with '/' (prevents URL confusion)",
     "extra": {
       "provider_id_empty": "provider_id must not be empty",
       "custom_spec_required": "When provider_id == 'custom', the custom field is required",
@@ -170,7 +145,6 @@
       "custom_only_for_custom_provider": "custom field can only be modified on provider_id == 'custom' instances"
     }
   },
-
   "cli": {
     "dump_unknown_source": "[dump] Unknown source id: {id} (available: {known})",
     "dump_no_enabled": "[dump] No enabled sources",
@@ -181,7 +155,6 @@
     "dump_parsed_result": "\n--- Parsed result ---",
     "dump_fetch_failed": "[dump] Fetch failed: {err}"
   },
-
   "window": {
     "settings": "Musage · Settings",
     "xiaomi_login": "Login Xiaomi — Musage",
@@ -201,20 +174,16 @@
     "siliconflow": "SiliconFlow",
     "claude_official": "Claude"
   },
-
   "provider": {
     "suffix": {
       "dup": " #{}"
-    },
-    "custom": "New API relay"
+    }
   },
-
   "extra": {
     "provider": {
       "custom": "New API relay"
     }
   },
-
   "xiaomi_login": {
     "parse_login_url": "parse LOGIN_URL: {err}",
     "build_webview": "build webview: {err}",

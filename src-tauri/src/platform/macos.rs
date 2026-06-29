@@ -27,8 +27,8 @@
 //!   `set_always_on_top(true)`。PinTop 模式用它，hover 临时置顶也用它。
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
 use std::sync::OnceLock;
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
 

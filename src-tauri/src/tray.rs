@@ -894,7 +894,11 @@ fn instance_suffix(p: &ProviderSnapshot) -> String {
 fn provider_short_body(p: &ProviderSnapshot) -> String {
     // v0.2: provider 字段改 String, display_name() 不存在; 改读 source_display_name
     // 字段 (ProviderSnapshot 构造时已经 fill_source_display_name 填好)。
-    let display = || p.source_display_name.clone().unwrap_or_else(|| p.provider.clone());
+    let display = || {
+        p.source_display_name
+            .clone()
+            .unwrap_or_else(|| p.provider.clone())
+    };
     if !p.success {
         let err = p.error.as_deref().unwrap_or("?");
         // 截短避免 tooltip 太长

@@ -30,8 +30,8 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::config::{
-    delete_credential_for_id, extra_instances,
-    load_credential_for_id, save_credential_for_id, ExtraInstance,
+    delete_credential_for_id, extra_instances, load_credential_for_id, save_credential_for_id,
+    ExtraInstance,
 };
 use crate::providers::{
     instantiate_builtin_with_index, Credentials, CustomSource, CustomSourceSpec, ProviderSnapshot,
@@ -129,7 +129,11 @@ pub async fn add_extra_instance(
         return Err(t!("commands.extra.custom_spec_required").into_owned());
     }
     if !is_custom && instantiate_builtin_with_index(&req.provider_id, 1).is_none() {
-        return Err(t!("commands.extra.unknown_provider", id = req.provider_id.as_str()).into_owned());
+        return Err(t!(
+            "commands.extra.unknown_provider",
+            id = req.provider_id.as_str()
+        )
+        .into_owned());
     }
 
     // 2. 先保存 key/kookie 到 keys.json（在 write 锁外 — keys.json 有独立的
@@ -154,15 +158,29 @@ pub async fn add_extra_instance(
         drop(extras_read);
         format!("{}#{}", req.provider_id, tentative_idx)
     };
-    let api_key_val = req.api_key.as_deref().map(str::trim).filter(|s| !s.is_empty());
-    let api_cookie_val = req.api_cookie.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let api_key_val = req
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let api_cookie_val = req
+        .api_cookie
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     if let Some(k) = api_key_val {
-        let cred = Credentials { api_key: Some(k.to_string()), cookie: None };
+        let cred = Credentials {
+            api_key: Some(k.to_string()),
+            cookie: None,
+        };
         save_credential_for_id(&temp_api_key_ref, &cred)
             .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
     }
     if let Some(c) = api_cookie_val {
-        let cred = Credentials { api_key: None, cookie: Some(c.to_string()) };
+        let cred = Credentials {
+            api_key: None,
+            cookie: Some(c.to_string()),
+        };
         save_credential_for_id(&temp_api_key_ref, &cred)
             .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
     }
@@ -257,8 +275,9 @@ pub async fn update_extra_instance(
     // 第一步：write 锁内读 api_key_ref + 更新 spec + save extras
     let (updated, api_key_ref) = {
         let mut extras = state.extra_instances.write().await;
-        let pos = extras.iter().position(|e| e.id == req.id)
-            .ok_or_else(|| t!("commands.extra.not_found", id = req.id.to_string().as_str()).into_owned())?;
+        let pos = extras.iter().position(|e| e.id == req.id).ok_or_else(|| {
+            t!("commands.extra.not_found", id = req.id.to_string().as_str()).into_owned()
+        })?;
         let mut updated = extras[pos].clone();
         let api_key_ref = updated.api_key_ref.clone();
 
@@ -276,15 +295,31 @@ pub async fn update_extra_instance(
     };
 
     // 第二步：锁外保存 key（save_credential_for_id 有独立 save_lock）
-    let api_key_val = req.api_key.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| s.to_string());
-    let api_cookie_val = req.api_cookie.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(|s| s.to_string());
+    let api_key_val = req
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let api_cookie_val = req
+        .api_cookie
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
     if let Some(k) = &api_key_val {
-        let cred = Credentials { api_key: Some(k.clone()), cookie: None };
+        let cred = Credentials {
+            api_key: Some(k.clone()),
+            cookie: None,
+        };
         save_credential_for_id(&api_key_ref, &cred)
             .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
     }
     if let Some(c) = &api_cookie_val {
-        let cred = Credentials { api_key: None, cookie: Some(c.clone()) };
+        let cred = Credentials {
+            api_key: None,
+            cookie: Some(c.clone()),
+        };
         save_credential_for_id(&api_key_ref, &cred)
             .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
     }
@@ -307,18 +342,18 @@ pub async fn delete_extra_instance(
     // 1. 找 target + 拿到 provider_id（决定 compact 范围）
     let (provider_id, target_api_key_ref) = {
         let extras_read = state.extra_instances.read().await;
-        let target = extras_read
-            .iter()
-            .find(|e| e.id == id)
-            .ok_or_else(|| t!("commands.extra.not_found", id = id.to_string().as_str()).into_owned())?;
+        let target = extras_read.iter().find(|e| e.id == id).ok_or_else(|| {
+            t!("commands.extra.not_found", id = id.to_string().as_str()).into_owned()
+        })?;
         (target.provider_id.clone(), target.api_key_ref.clone())
     };
 
     // 2. 拿 write lock + 删 + 紧凑 + 同步 keys.json
     {
         let mut extras = state.extra_instances.write().await;
-        let pos = extras.iter().position(|e| e.id == id)
-            .ok_or_else(|| t!("commands.extra.not_found", id = id.to_string().as_str()).into_owned())?;
+        let pos = extras.iter().position(|e| e.id == id).ok_or_else(|| {
+            t!("commands.extra.not_found", id = id.to_string().as_str()).into_owned()
+        })?;
         extras.remove(pos);
 
         // 紧凑前先拍下同 provider_id 内剩余实例的 (id, old_api_key_ref) 快照，
@@ -516,14 +551,23 @@ pub async fn test_extra_instance(
     };
 
     if req.provider_id == "custom" {
-        let spec = req.custom.ok_or_else(|| t!("commands.extra.custom_spec_required").into_owned())?;
+        let spec = req
+            .custom
+            .ok_or_else(|| t!("commands.extra.custom_spec_required").into_owned())?;
         let temp = CustomSource::new(spec);
         temp.fetch(&creds).await.map_err(|e| e.message)
     } else {
-        let src = instantiate_builtin_with_index(&req.provider_id, 1)
-            .ok_or_else(|| t!("commands.extra.unknown_provider", id = req.provider_id.as_str()).into_owned())?;
+        let src = instantiate_builtin_with_index(&req.provider_id, 1).ok_or_else(|| {
+            t!(
+                "commands.extra.unknown_provider",
+                id = req.provider_id.as_str()
+            )
+            .into_owned()
+        })?;
         // 校验 key 跟 provider 是否能拉到
-        let _ = load_credential_for_id(&format!("{}#1", req.provider_id)).ok().flatten();
+        let _ = load_credential_for_id(&format!("{}#1", req.provider_id))
+            .ok()
+            .flatten();
         src.fetch(&creds).await.map_err(|e| e.message)
     }
 }
@@ -538,8 +582,18 @@ mod tests {
     fn picker_providers_includes_all_11_builtin_and_custom() {
         // 同步测试：list_picker_providers 是 async，简化测 build 函数本身
         let ids: Vec<&str> = vec![
-            "minimax", "deepseek", "xiaomimimo", "tavily", "zenmux", "openrouter",
-            "kimi", "zhipu", "stepfun", "siliconflow", "claude_official", "custom",
+            "minimax",
+            "deepseek",
+            "xiaomimimo",
+            "tavily",
+            "zenmux",
+            "openrouter",
+            "kimi",
+            "zhipu",
+            "stepfun",
+            "siliconflow",
+            "claude_official",
+            "custom",
         ];
         assert_eq!(ids.len(), 12);
     }

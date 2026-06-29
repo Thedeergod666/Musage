@@ -27,8 +27,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use super::{
-    shared_client, AuthKind, Credentials, ErrorKind, FetchError,
-    ProviderSnapshot, QuotaRow, QuotaSource, RowKind,
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
+    QuotaSource, RowKind,
 };
 
 use crate::config::ProviderOverrides;
@@ -214,20 +214,30 @@ impl QuotaSource for XiaomimimoSource {
                     // 若 decide 逻辑改了（比如新增 Unknown 变体），这里会 panic。
                     // 改成 explicit Some/None match，None 走 unconfigured 错误而不是 panic。
                     match credentials.api_key.as_deref() {
-                        Some(key) => {
-                            Xiaomimimo::do_fetch_bearer(key, state.region, &state.overrides, &source_id, &display_name)
-                                .await
-                                .map(|(_, snap)| snap)
-                        }
+                        Some(key) => Xiaomimimo::do_fetch_bearer(
+                            key,
+                            state.region,
+                            &state.overrides,
+                            &source_id,
+                            &display_name,
+                        )
+                        .await
+                        .map(|(_, snap)| snap),
                         None => Err(FetchError::unconfigured(
                             t!("error.xiaomi.unconfigured_key").into_owned(),
                         )),
                     }
                 }
                 AuthStrategy::CookieOnly => match credentials.cookie.as_deref() {
-                    Some(cookie) => Xiaomimimo::do_fetch(cookie, state.region, &state.overrides, &source_id, &display_name)
-                        .await
-                        .map(|(_, snap)| snap),
+                    Some(cookie) => Xiaomimimo::do_fetch(
+                        cookie,
+                        state.region,
+                        &state.overrides,
+                        &source_id,
+                        &display_name,
+                    )
+                    .await
+                    .map(|(_, snap)| snap),
                     None => Err(FetchError::unconfigured(
                         t!("error.xiaomi.unconfigured_cookie").into_owned(),
                     )),
@@ -251,7 +261,15 @@ impl QuotaSource for XiaomimimoSource {
                         }
                     };
                     // 先 Bearer，401/403 退到 Cookie（其他错误原样返）
-                    match Xiaomimimo::do_fetch_bearer(key, state.region, &state.overrides, &source_id, &display_name).await {
+                    match Xiaomimimo::do_fetch_bearer(
+                        key,
+                        state.region,
+                        &state.overrides,
+                        &source_id,
+                        &display_name,
+                    )
+                    .await
+                    {
                         Ok((_, snap)) => {
                             tracing::debug!(provider = "xiaomimimo", "Bearer 路径成功");
                             Ok(snap)
@@ -262,15 +280,22 @@ impl QuotaSource for XiaomimimoSource {
                                 "Bearer 鉴权失败 ({}), 退到 Cookie 路径",
                                 e.message
                             );
-                            Xiaomimimo::do_fetch(cookie, state.region, &state.overrides, &source_id, &display_name)
-                                .await
-                                .map(|(_, snap)| snap)
+                            Xiaomimimo::do_fetch(
+                                cookie,
+                                state.region,
+                                &state.overrides,
+                                &source_id,
+                                &display_name,
+                            )
+                            .await
+                            .map(|(_, snap)| snap)
                         }
                         Err(e) => Err(e),
                     }
                 }
             };
-            fetch_result.map(move |snap| apply_display_mode(snap, display_mode, &source_id, &display_name))
+            fetch_result
+                .map(move |snap| apply_display_mode(snap, display_mode, &source_id, &display_name))
         })
     }
 }
@@ -693,8 +718,12 @@ fn parse(
             let plan_label = plan_name.clone().unwrap_or_default();
             let end_label = format_end_utc(resets_at);
             Some(
-                t!("error.xiaomi.plan_expired_hint", plan = plan_label, end = end_label)
-                    .into_owned(),
+                t!(
+                    "error.xiaomi.plan_expired_hint",
+                    plan = plan_label,
+                    end = end_label
+                )
+                .into_owned(),
             )
         } else {
             // 0 rows 根因分两种：有 /data 但 item 名称全不认 → schema 改名；没
@@ -917,7 +946,13 @@ mod tests {
                 "expired": false
             }
         });
-        let snap = parse(&raw, &detail, &ProviderOverrides::default(), "xiaomimimo", "Xiaomi MiMo");
+        let snap = parse(
+            &raw,
+            &detail,
+            &ProviderOverrides::default(),
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
         assert!(snap.success, "snap.error = {:?}", snap.error);
         assert_eq!(snap.plan_name.as_deref(), Some("Standard"));
         assert_eq!(snap.rows.len(), 3);
@@ -948,7 +983,13 @@ mod tests {
                 ]}
             }
         });
-        let snap = parse(&raw, &json!({}), &ProviderOverrides::default(), "xiaomimimo", "Xiaomi MiMo");
+        let snap = parse(
+            &raw,
+            &json!({}),
+            &ProviderOverrides::default(),
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
         assert!(snap.success, "snap.error = {:?}", snap.error);
         assert_eq!(snap.rows.len(), 1, "套餐和总额度相等 → 只显示套餐 1 行");
         assert_eq!(snap.rows[0].label, t!("row.plan"));
@@ -970,7 +1011,13 @@ mod tests {
                 ]}
             }
         });
-        let snap = parse(&raw, &json!({}), &ProviderOverrides::default(), "xiaomimimo", "Xiaomi MiMo");
+        let snap = parse(
+            &raw,
+            &json!({}),
+            &ProviderOverrides::default(),
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
         assert!(snap.success);
         assert_eq!(snap.rows.len(), 1, "差 0.01% < 0.5% 阈值 → 总额度 skip");
     }
@@ -989,7 +1036,13 @@ mod tests {
                 ]}
             }
         });
-        let snap = parse(&raw, &json!({}), &ProviderOverrides::default(), "xiaomimimo", "Xiaomi MiMo");
+        let snap = parse(
+            &raw,
+            &json!({}),
+            &ProviderOverrides::default(),
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
         assert!(snap.success);
         assert_eq!(snap.rows.len(), 2, "差 0.6% >= 0.5% 阈值 → 两行都显示");
         assert_eq!(snap.rows[0].label, t!("row.plan"));
@@ -1008,7 +1061,13 @@ mod tests {
                 "usage": {"items":[]}
             }
         });
-        let snap = parse(&raw, &json!({}), &ProviderOverrides::default(), "xiaomimimo", "Xiaomi MiMo");
+        let snap = parse(
+            &raw,
+            &json!({}),
+            &ProviderOverrides::default(),
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
         assert!(snap.success);
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].label, t!("row.monthly_total"));
@@ -1027,7 +1086,13 @@ mod tests {
                 // monthUsage 整个缺失
             }
         });
-        let snap = parse(&raw, &json!({}), &ProviderOverrides::default(), "xiaomimimo", "Xiaomi MiMo");
+        let snap = parse(
+            &raw,
+            &json!({}),
+            &ProviderOverrides::default(),
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
         assert!(snap.success);
         assert_eq!(snap.rows.len(), 2);
         assert_eq!(snap.rows[0].label, t!("row.plan"));
@@ -1046,7 +1111,13 @@ mod tests {
             }
         });
         let detail = json!({});
-        let snap = parse(&raw, &detail, &ProviderOverrides::default(), "xiaomimimo", "Xiaomi MiMo");
+        let snap = parse(
+            &raw,
+            &detail,
+            &ProviderOverrides::default(),
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
         assert!(snap.success);
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].label, t!("row.plan"));
@@ -1063,7 +1134,13 @@ mod tests {
             }
         });
         let detail = json!({});
-        let snap = parse(&raw, &detail, &ProviderOverrides::default(), "xiaomimimo", "Xiaomi MiMo");
+        let snap = parse(
+            &raw,
+            &detail,
+            &ProviderOverrides::default(),
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
         assert!(!snap.success);
         assert_eq!(snap.error_kind, Some(ErrorKind::SchemaUnknown));
         assert!(snap.error.unwrap().contains("schema_overrides"));
@@ -1074,7 +1151,13 @@ mod tests {
         // 响应结构彻底变了，连 /data 都没有
         let raw = json!({"code": 0, "result": "ok"});
         let detail = json!({});
-        let snap = parse(&raw, &detail, &ProviderOverrides::default(), "xiaomimimo", "Xiaomi MiMo");
+        let snap = parse(
+            &raw,
+            &detail,
+            &ProviderOverrides::default(),
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
         assert!(!snap.success);
         assert_eq!(snap.error_kind, Some(ErrorKind::Parse));
         assert!(snap.error.unwrap().contains("data"));
@@ -1083,7 +1166,13 @@ mod tests {
     #[test]
     fn parse_business_error_code() {
         let raw = json!({"code": 1001, "message": "rate limit"});
-        let snap = parse(&raw, &json!({}), &ProviderOverrides::default(), "xiaomimimo", "Xiaomi MiMo");
+        let snap = parse(
+            &raw,
+            &json!({}),
+            &ProviderOverrides::default(),
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
         assert!(!snap.success);
         // NOTE: xiaomi 的 do_fetch 在 code != 0 时已经返回 Err 走 FetchError 路径，
         // 所以 parse() 本身不会见到业务级 code。这里模拟的是"parse 兜底"——就算
@@ -1155,7 +1244,13 @@ mod tests {
             "data": {"usage":{"items":[{"name":"plan_total_token","percent":0.1}]}}
         });
         let detail = json!({"data":{"currentPeriodEnd":"2026-06-27 23:59:59"}});
-        let snap = parse(&raw, &detail, &ProviderOverrides::default(), "xiaomimimo", "Xiaomi MiMo");
+        let snap = parse(
+            &raw,
+            &detail,
+            &ProviderOverrides::default(),
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
         assert!(snap.success);
         let resets = snap.rows[0].resets_at.unwrap();
         // 2026-06-22 fix: 放宽 epoch range (timezone drift ±1 天)
@@ -1263,7 +1358,12 @@ mod tests {
     #[test]
     fn display_mode_plan_only_keeps_only_plan() {
         let snap = snap_with_3_rows();
-        let out = apply_display_mode(snap, XiaomiDisplayMode::PlanOnly, "xiaomimimo", "Xiaomi MiMo");
+        let out = apply_display_mode(
+            snap,
+            XiaomiDisplayMode::PlanOnly,
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
         assert_eq!(out.rows.len(), 1);
         assert_eq!(out.rows[0].label, t!("row.plan"));
         assert!((out.rows[0].utilization.unwrap() - 13.0).abs() < 0.001);
@@ -1275,7 +1375,12 @@ mod tests {
     fn display_mode_total_only_keeps_only_total_with_plan_resets_at() {
         // TotalOnly 模式：总额度本来没 resets_at → 借套餐的月度重置时间
         let snap = snap_with_3_rows();
-        let out = apply_display_mode(snap, XiaomiDisplayMode::TotalOnly, "xiaomimimo", "Xiaomi MiMo");
+        let out = apply_display_mode(
+            snap,
+            XiaomiDisplayMode::TotalOnly,
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
         assert_eq!(out.rows.len(), 1);
         assert_eq!(out.rows[0].label, t!("row.monthly_total"));
         assert!((out.rows[0].utilization.unwrap() - 42.0).abs() < 0.001);
@@ -1288,7 +1393,12 @@ mod tests {
         // 极端：所有行都没 resets_at（detail 缺失）→ 总额度这行也别伪造
         let mut snap = snap_with_3_rows();
         snap.rows[0].resets_at = None; // 套餐也没
-        let out = apply_display_mode(snap, XiaomiDisplayMode::TotalOnly, "xiaomimimo", "Xiaomi MiMo");
+        let out = apply_display_mode(
+            snap,
+            XiaomiDisplayMode::TotalOnly,
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
         assert_eq!(out.rows.len(), 1);
         assert_eq!(
             out.rows[0].resets_at, None,
@@ -1300,7 +1410,12 @@ mod tests {
     fn display_mode_preserves_other_fields() {
         // 过滤不能改 snap 的其他字段（provider / source_id / plan_name / error 等）
         let snap = snap_with_3_rows();
-        let out = apply_display_mode(snap, XiaomiDisplayMode::PlanOnly, "xiaomimimo", "Xiaomi MiMo");
+        let out = apply_display_mode(
+            snap,
+            XiaomiDisplayMode::PlanOnly,
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
         assert_eq!(out.provider, "xiaomimimo");
         assert_eq!(out.source_id.as_deref(), Some("xiaomimimo"));
         assert!(out.is_healthy);
@@ -1311,7 +1426,12 @@ mod tests {
         // 极端：套餐缺失（schema 变了）→ 留个空 snapshot（success=true 但 0 行）
         let mut snap = snap_with_3_rows();
         snap.rows.retain(|r| r.label != t!("row.plan"));
-        let out = apply_display_mode(snap, XiaomiDisplayMode::PlanOnly, "xiaomimimo", "Xiaomi MiMo");
+        let out = apply_display_mode(
+            snap,
+            XiaomiDisplayMode::PlanOnly,
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
         assert_eq!(out.rows.len(), 0);
         // 仍然算 success（parse 没报错，filter 不会改 success 标志）
         assert!(out.success);
@@ -1412,7 +1532,11 @@ mod tests {
         // 1. i18n key 被命中 (不是空字符串、不是 key 名字符串)
         // 2. 含 "platform.xiaomimimo.com" 引导用户去续费
         // 3. **不该**含 schema_overrides 误导 (回归保护)
-        assert!(err.contains("platform.xiaomimimo.com"), "error 应引导去续费: {}", err);
+        assert!(
+            err.contains("platform.xiaomimimo.com"),
+            "error 应引导去续费: {}",
+            err
+        );
         assert!(
             !err.contains("schema_overrides"),
             "套餐过期场景不该走 schema_overrides 引导：{}",

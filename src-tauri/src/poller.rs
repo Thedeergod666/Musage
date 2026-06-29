@@ -173,10 +173,7 @@ pub async fn tick(app: &AppHandle) -> Result<(), String> {
         let state = app.state::<AppState>();
         let mut guard = state.snapshot.write().await;
         for new_p in &new_snap.providers {
-            let new_id = new_p
-                .source_id
-                .as_deref()
-                .unwrap_or(&new_p.provider);
+            let new_id = new_p.source_id.as_deref().unwrap_or(&new_p.provider);
             if let Some(idx) = guard
                 .providers
                 .iter()

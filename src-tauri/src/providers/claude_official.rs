@@ -153,7 +153,12 @@ impl QuotaSource for ClaudeOfficialSource {
                 ));
             }
             let session_key = normalize_session_key(raw);
-            do_fetch(&session_key, &self.unique_id(), &self.display_name().to_string()).await
+            do_fetch(
+                &session_key,
+                &self.unique_id(),
+                &self.display_name().to_string(),
+            )
+            .await
         })
     }
 }
@@ -261,7 +266,6 @@ async fn do_fetch(
 
     parse(&raw, _source_id, display_name)
 }
-
 
 /// 解析 Claude OAuth usage 响应 → QuotaRow 列表。
 ///

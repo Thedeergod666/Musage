@@ -395,7 +395,8 @@ mod tests {
                 "weekly_usage_reset_time": "2026-06-19T03:00:00Z"
             }
         });
-        let snap = parse(raw.clone(), Some("Plus".to_string()), "stepfun", "StepFun").expect("parse");
+        let snap =
+            parse(raw.clone(), Some("Plus".to_string()), "stepfun", "StepFun").expect("parse");
         assert!(snap.success);
         assert_eq!(snap.source_id.as_deref(), Some("stepfun"));
         assert_eq!(snap.plan_name.as_deref(), Some("Plus"));

@@ -149,8 +149,8 @@ pub fn load() -> Result<Vec<ExtraInstance>, String> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let s = std::fs::read_to_string(&path)
-        .map_err(|e| format!("read extra_instances.json: {e}"))?;
+    let s =
+        std::fs::read_to_string(&path).map_err(|e| format!("read extra_instances.json: {e}"))?;
     if s.trim().is_empty() {
         return Ok(Vec::new());
     }
@@ -299,9 +299,7 @@ pub fn load_or_migrate() -> Result<Vec<ExtraInstance>, String> {
 }
 
 fn extra_instances_path_exists() -> bool {
-    extra_instances_path()
-        .map(|p| p.exists())
-        .unwrap_or(false)
+    extra_instances_path().map(|p| p.exists()).unwrap_or(false)
 }
 
 const CUSTOM_SOURCES_LEGACY_FILE: &str = "custom_sources.json";
@@ -322,8 +320,7 @@ fn load_custom_sources_for_migration() -> Result<Vec<crate::providers::CustomSou
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let s = std::fs::read_to_string(&path)
-        .map_err(|e| format!("read custom_sources.json: {e}"))?;
+    let s = std::fs::read_to_string(&path).map_err(|e| format!("read custom_sources.json: {e}"))?;
     if s.trim().is_empty() {
         return Ok(Vec::new());
     }

@@ -198,7 +198,13 @@ impl QuotaSource for ZhipuSource {
                 ));
             }
             let region = self.region.read().ok().and_then(|g| *g).unwrap_or_default();
-            do_fetch(api_key, region, &self.unique_id(), &self.display_name().to_string()).await
+            do_fetch(
+                api_key,
+                region,
+                &self.unique_id(),
+                &self.display_name().to_string(),
+            )
+            .await
         })
     }
 }

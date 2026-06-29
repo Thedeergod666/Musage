@@ -637,10 +637,7 @@ impl AppConfig {
 
     /// 取某个 provider 的 enabled 状态（缺省视为 true）
     pub fn is_enabled(&self, id: &str) -> bool {
-        self.providers
-            .get(id)
-            .map(|c| c.enabled)
-            .unwrap_or(true)
+        self.providers.get(id).map(|c| c.enabled).unwrap_or(true)
     }
 
     /// 取 MiniMax 的 region（其他 provider 返回默认 CN）

@@ -28,8 +28,8 @@ use std::borrow::Cow;
 use std::pin::Pin;
 
 use super::{
-    shared_client, AuthKind, Credentials, ErrorKind, FetchError,
-    ProviderSnapshot, QuotaRow, QuotaSource,
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
+    QuotaSource,
 };
 
 use crate::t;
@@ -101,7 +101,12 @@ impl QuotaSource for DeepseekSource {
         credentials: &'a Credentials,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>>
     {
-        let api_key = credentials.api_key.as_deref().unwrap_or("").trim().to_string();
+        let api_key = credentials
+            .api_key
+            .as_deref()
+            .unwrap_or("")
+            .trim()
+            .to_string();
         let unique_id = self.unique_id();
         let display_name = self.display_name().to_string();
         Box::pin(async move {

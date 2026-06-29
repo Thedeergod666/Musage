@@ -475,10 +475,7 @@ pub async fn refresh_now(
     {
         let mut guard = state.snapshot.write().await;
         for new_p in &snap.providers {
-            let new_id = new_p
-                .source_id
-                .as_deref()
-                .unwrap_or(&new_p.provider);
+            let new_id = new_p.source_id.as_deref().unwrap_or(&new_p.provider);
             if let Some(idx) = guard
                 .providers
                 .iter()
@@ -809,10 +806,7 @@ pub(crate) fn build_settings_window(app: &AppHandle) -> tauri::Result<tauri::Web
 }
 
 #[tauri::command]
-pub async fn open_settings_window(
-    app: AppHandle,
-    section: Option<String>,
-) -> Result<(), String> {
+pub async fn open_settings_window(app: AppHandle, section: Option<String>) -> Result<(), String> {
     // v0.2.1 commit 8: section 参数取值 "providers" / "floating" / "app" /
     // "advanced" / "logs" / "about" / "region"。
     // 修复之前 P1 commit `5b976e2` 留的隐藏 bug:前端 \`data-section="advanced"\`
@@ -1096,8 +1090,8 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
     for src in &sources {
         let id = src.unique_id(); // extra instance fix：必须用 unique_id() 而不是 id()
         let id_str = id.as_str(); // "deepseek#2" 而非 "deepseek"
-        // id() 仍用在 enabled / credential 查找前做 enabled check ——
-        // enabled 状态按 api_key_ref("deepseek#2") 查 config。
+                                  // id() 仍用在 enabled / credential 查找前做 enabled check ——
+                                  // enabled 状态按 api_key_ref("deepseek#2") 查 config。
         if !cfg.is_enabled_id(id_str) {
             continue;
         }
@@ -1105,7 +1099,10 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
         // 用户没显式启用 → 跳过,避免 30 min 退避风暴。
         // 用户可在设置面板手动勾选启用,显式覆盖默认值。
         let base_id = src.id(); // Cow<'_, str>
-        if !src.default_enabled() && !cfg.providers.contains_key(id_str) && !cfg.providers.contains_key(base_id.as_ref()) {
+        if !src.default_enabled()
+            && !cfg.providers.contains_key(id_str)
+            && !cfg.providers.contains_key(base_id.as_ref())
+        {
             continue;
         }
 
@@ -1248,7 +1245,10 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
     // - 默认（"minimax"）   → "MiniMax"（经 i18n）
     // - CustomSource        → 用户的 display_name（"DMX API"）
     for p in &mut snap.providers {
-        let id = p.unique_id.as_deref().unwrap_or(p.source_id.as_deref().unwrap_or(&p.provider));
+        let id = p
+            .unique_id
+            .as_deref()
+            .unwrap_or(p.source_id.as_deref().unwrap_or(&p.provider));
         if let Some(src) = crate::providers::find_source(&state, id).await {
             p.source_display_name = Some(src.display_name().to_string());
         }
@@ -1259,7 +1259,11 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
     let cfg_read = state.config.read().await;
     snap.providers.retain(|p| {
         // extra instance fix：用 source_id(现在是 unique_id) 查 enabled
-        let id = p.source_id.as_deref().or(p.unique_id.as_deref()).unwrap_or(&p.provider);
+        let id = p
+            .source_id
+            .as_deref()
+            .or(p.unique_id.as_deref())
+            .unwrap_or(&p.provider);
         cfg_read.is_enabled_id(id)
     });
     apply_provider_order(&mut snap, &cfg_read);
@@ -1293,10 +1297,14 @@ fn apply_provider_order(snap: &mut QuotaSnapshot, cfg: &AppConfig) {
     let mut indexed: Vec<(usize, crate::providers::ProviderSnapshot)> =
         snap.providers.drain(..).enumerate().collect();
     indexed.sort_by(|(ai, a), (bi, b)| {
-        let a_order_key = a.unique_id.as_deref()
+        let a_order_key = a
+            .unique_id
+            .as_deref()
             .or(a.source_id.as_deref())
             .unwrap_or(&a.provider);
-        let b_order_key = b.unique_id.as_deref()
+        let b_order_key = b
+            .unique_id
+            .as_deref()
             .or(b.source_id.as_deref())
             .unwrap_or(&b.provider);
         let apos = cfg
@@ -1401,21 +1409,18 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
     // source_id 仍是 "deepseek"）需要把 unique_id 作为首要匹配键。
     let state = app.state::<AppState>();
     let mut snap = state.snapshot.write().await;
-    let match_key = provider_snap.unique_id.as_deref()
+    let match_key = provider_snap
+        .unique_id
+        .as_deref()
         .or(provider_snap.source_id.as_deref())
         .unwrap_or(id);
-    let fallback_key = provider_snap.source_id.as_deref()
-        .unwrap_or(id);
-    if let Some(idx) = snap
-        .providers
-        .iter()
-        .position(|p| {
-            p.unique_id.as_deref() == Some(match_key)
-                || p.source_id.as_deref() == Some(match_key)
-                || p.unique_id.as_deref() == Some(fallback_key)
-                || p.source_id.as_deref() == Some(fallback_key)
-        })
-    {
+    let fallback_key = provider_snap.source_id.as_deref().unwrap_or(id);
+    if let Some(idx) = snap.providers.iter().position(|p| {
+        p.unique_id.as_deref() == Some(match_key)
+            || p.source_id.as_deref() == Some(match_key)
+            || p.unique_id.as_deref() == Some(fallback_key)
+            || p.source_id.as_deref() == Some(fallback_key)
+    }) {
         snap.providers[idx] = provider_snap;
     } else {
         snap.providers.push(provider_snap);
@@ -1434,7 +1439,11 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
         // extra instance fix（2026-06-25）：
         // p.source_id 现在是 unique_id("deepseek#2")，优先用它查 enabled；
         // 再 fallback 到 p.provider（老兼容）。
-        let id = p.source_id.as_deref().or(p.unique_id.as_deref()).unwrap_or(&p.provider);
+        let id = p
+            .source_id
+            .as_deref()
+            .or(p.unique_id.as_deref())
+            .unwrap_or(&p.provider);
         cfg2_snapshot.is_enabled_id(id)
     });
     apply_provider_order(&mut snap, &cfg2_snapshot);
@@ -1449,7 +1458,10 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
     {
         let state = app.state::<AppState>();
         for p in &mut emit_snap.providers {
-            let pid = p.unique_id.as_deref().unwrap_or(p.source_id.as_deref().unwrap_or(&p.provider));
+            let pid = p
+                .unique_id
+                .as_deref()
+                .unwrap_or(p.source_id.as_deref().unwrap_or(&p.provider));
             if let Some(src) = crate::providers::find_source(&state, pid).await {
                 p.source_display_name = Some(src.display_name().to_string());
             }
@@ -1559,9 +1571,15 @@ fn log_provider_error(app: &AppHandle, provider_id: &str, kind: ErrorKind, messa
         && matches!(provider_id, "xiaomimimo" | "claude_official")
     {
         let (title_key, body_key) = if provider_id == "xiaomimimo" {
-            ("notification.xiaomi_cookie_expired_title", "notification.xiaomi_cookie_expired_body")
+            (
+                "notification.xiaomi_cookie_expired_title",
+                "notification.xiaomi_cookie_expired_body",
+            )
         } else {
-            ("notification.claude_session_expired_title", "notification.claude_session_expired_body")
+            (
+                "notification.claude_session_expired_title",
+                "notification.claude_session_expired_body",
+            )
         };
         let title = t!(title_key).to_string();
         let body = t!(body_key, provider = provider_id).to_string();

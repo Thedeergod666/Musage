@@ -43,8 +43,8 @@ use serde_json::Value;
 
 use super::parse::{num_f64, read_path};
 use super::{
-    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot,
-    QuotaRow, QuotaSource,
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
+    QuotaSource,
 };
 use crate::t;
 
@@ -202,7 +202,13 @@ impl QuotaSource for CustomSource {
                 ));
             }
             let spec = self.spec.clone(); // 'static lifetime 需要 owned
-            do_fetch(api_key, &spec, &self.unique_id(), &self.display_name().to_string()).await
+            do_fetch(
+                api_key,
+                &spec,
+                &self.unique_id(),
+                &self.display_name().to_string(),
+            )
+            .await
         })
     }
 }

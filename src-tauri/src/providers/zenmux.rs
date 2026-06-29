@@ -189,7 +189,14 @@ impl QuotaSource for ZenmuxSource {
             }
             let mode = self.mode.read().ok().and_then(|g| *g).unwrap_or_default();
             let custom_url = self.base_url.read().ok().and_then(|g| g.clone());
-            do_fetch(api_key, mode, custom_url.as_deref(), &self.unique_id(), &self.display_name().to_string()).await
+            do_fetch(
+                api_key,
+                mode,
+                custom_url.as_deref(),
+                &self.unique_id(),
+                &self.display_name().to_string(),
+            )
+            .await
         })
     }
 }

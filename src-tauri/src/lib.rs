@@ -186,9 +186,7 @@ pub fn run() {
                 // 在多屏场景下不靠谱 —— 用户拖到 (300, -200) 也 > 50，但
                 // 副屏拔了之后 (300, -200) 不在任何 monitor 内,启动后窗口
                 // 飞出去看不见。改成走 `available_monitors()` 几何检查。
-                let monitors: Vec<tauri::Monitor> = win
-                    .available_monitors()
-                    .unwrap_or_default();
+                let monitors: Vec<tauri::Monitor> = win.available_monitors().unwrap_or_default();
                 let saved_pos_valid = if monitors.is_empty() {
                     // 兜底:拿不到 monitor 列表时,沿用老的 >50 启发式判断。
                     matches!(
@@ -442,10 +440,7 @@ fn position_is_visible(x: i32, y: i32, monitors: &[tauri::Monitor]) -> bool {
     monitors.iter().any(|m| {
         let pos = m.position();
         let size = m.size();
-        x >= pos.x
-            && x < pos.x + size.width as i32
-            && y >= pos.y
-            && y < pos.y + size.height as i32
+        x >= pos.x && x < pos.x + size.width as i32 && y >= pos.y && y < pos.y + size.height as i32
     })
 }
 

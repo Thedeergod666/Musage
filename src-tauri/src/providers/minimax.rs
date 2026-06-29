@@ -36,8 +36,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use super::{
-    shared_client, AuthKind, Credentials, ErrorKind, FetchError,
-    ProviderSnapshot, QuotaRow, QuotaSource,
+    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
+    QuotaSource,
 };
 
 use crate::config::ProviderOverrides;
@@ -832,7 +832,13 @@ mod tests {
     #[test]
     fn parse_full_new_schema_snapshot() {
         let raw = minimax_new_schema();
-        let snap = parse(&raw, Region::Cn, &ProviderOverrides::default(), "minimax", "MiniMax");
+        let snap = parse(
+            &raw,
+            Region::Cn,
+            &ProviderOverrides::default(),
+            "minimax",
+            "MiniMax",
+        );
         assert!(snap.success, "snap.error = {:?}", snap.error);
         assert_eq!(snap.rows.len(), 2);
         assert_eq!(snap.rows[0].label, t!("row.five_hour"));
@@ -847,7 +853,13 @@ mod tests {
         let raw = serde_json::json!({
             "base_resp": { "status_code": 1004, "status_msg": "rate limit" }
         });
-        let snap = parse(&raw, Region::Cn, &ProviderOverrides::default(), "minimax", "MiniMax");
+        let snap = parse(
+            &raw,
+            Region::Cn,
+            &ProviderOverrides::default(),
+            "minimax",
+            "MiniMax",
+        );
         assert!(!snap.success);
         assert_eq!(snap.error_kind, Some(ErrorKind::ServerError));
     }
@@ -857,7 +869,13 @@ mod tests {
         let raw = serde_json::json!({
             "base_resp": { "status_code": 0 }
         });
-        let snap = parse(&raw, Region::Cn, &ProviderOverrides::default(), "minimax", "MiniMax");
+        let snap = parse(
+            &raw,
+            Region::Cn,
+            &ProviderOverrides::default(),
+            "minimax",
+            "MiniMax",
+        );
         assert!(!snap.success);
         assert_eq!(snap.error_kind, Some(ErrorKind::Parse));
     }

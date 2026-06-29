@@ -1,14 +1,15 @@
 # Musage 项目说明
 
-> 任何新打开此项目的 Codex 会话应先读这个文件。这是当前对话的精炼版。
+> 任何新打开此项目的 AI 会话应先读这个文件。这是当前对话的精炼版（v0.2.0 / 2026-06-29 快照）。
 
 ## 这是什么
 
-**Musage** = **My** + **Usage**（"我的用量"），MiniMax Token Plan 实时用量监控的桌面应用。
+**Musage** = **My** + **Usage**（"我的用量"），多 provider AI 套餐实时用量监控的桌面应用。
 
 - 形态：**小悬浮窗 + 系统托盘**（始终置顶、可拖动、双行数据：5h 限额 / 周限额 + 重置时间）
-- 鉴权：仅需 API Key（Bearer Token），不依赖浏览器 session
-- 关键 schema 见下方"关键 API"章节（2026-06-01 MiniMax 改 schema，PR 已实现兼容）
+- 鉴权：仅需 API Key / Cookie（Bearer Token），不依赖浏览器 session
+- **11 内置 provider + 任意 New API 中转站 (custom_<uuid>) + 同 provider 多实例副本**
+- 关键 schema 见下方"关键 API"章节（2026-06-01 MiniMax 改 schema，v0.2.0 已实现兼容）
 
 ## 技术栈（已拍板）
 
@@ -26,15 +27,25 @@
 | 前端类型 | `@types/node` 20.x（vite.config.ts 用 `node:url`） |
 | Providers | minimax / deepseek / xiaomimimo / tavily / zenmux / openrouter / kimi / zhipu / stepfun / siliconflow / claude_official + **用户自定义 New API 中转站 (custom_<uuid>)**（11 内置 + N 动态） |
 
-## 环境与工具链（2026-06-13 实测，跑 `pnpm tauri build` 必看）
+## 环境与工具链
 
-机器上各工具的真实位置，**新会话别再花时间找**：
+### macOS（维护者本地，2026-06-29 实测）
+
+| 工具 | 路径 | 备注 |
+|---|---|---|
+| Node.js | `node --version` ≥ 20 | pnpm 9.15.4 (packageManager 钉死) |
+| pnpm | `pnpm --version` 9.15.4 | |
+| cargo / rustc | `~/.cargo/bin/` | rustc 1.96+ (rustup default stable) |
+| Xcode CLT | `xcode-select --install` | 提供 clang 链接器 + macOS SDK |
+| `MACOSX_DEPLOYMENT_TARGET` | 11.0 | CI 注入 + 本地 objc2 build 也需要 |
+
+### Windows（开发 + 打包 target，2026-06-13 实测）
 
 | 工具 | 路径 | 备注 |
 |---|---|---|
 | Node.js | `D:\Develop\node20\` | npm 10.8.2 |
 | pnpm | `D:\Develop\node20\node_modules\pnpm\` | **没有 `pnpm.cmd` shim**，已通过 `C:\Users\33348\.cargo\bin\pnpm.cmd` shim 解决（内容 1 行：`"D:\Develop\node20\node.exe" "D:\Develop\node20\node_modules\pnpm\bin\pnpm.cjs" %*`）|
-| cargo / rustc | `C:\Users\33348\.cargo\bin\`（`%USERPROFILE%\.cargo\bin`）| GNU 工具链，rustc 1.96 |
+| cargo / rustc | `C:\Users\33348\.cargo\bin\` | GNU 工具链，rustc 1.96 |
 | MinGW | `D:\Develop\mingw64\bin\` | 提供 `dlltool.exe`，**GNU 工具链下 Rust 链接时必须**，否则 `error calling dlltool 'dlltool.exe': program not found` |
 | 镜像 | `registry.npmmirror.com`（npm）/ `rsproxy.cn`（crates）| 已在 `~/.cargo/config.toml` + `dev-env.bat` 配好 |
 
@@ -47,7 +58,7 @@
 cmd /c "dev-env.bat && pnpm tauri:dev"    # 开发
 cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 ```
-> ⚠ **从 MSYS bash / Claude Code shell 调 cmd 时**：`%PATH%` 会被 MSYS 翻译成 `C;D:\...` 这种坏值传给 cmd，cmd 找不到 `where`/`pnpm` 任何命令。**绕开**：`MSYS_NO_PATHCONV=1 cmd /c "..."` + 在 bat 里**硬编码**所有路径，**完全不碰 `%PATH%`**（参考 [musage-build-quirks](memory/musage-build-quirks.md) 第 6/7 条）
+> ⚠ **从 MSYS bash / Claude Code shell 调 cmd 时**：`%PATH%` 会被 MSYS 翻译成 `C;D;\...` 这种坏值传给 cmd，cmd 找不到 `where`/`pnpm` 任何命令。**绕开**：`MSYS_NO_PATHCONV=1 cmd /c "..."` + 在 bat 里**硬编码**所有路径，**完全不碰 `%PATH%`**（参考 [musage-build-quirks](memory/musage-build-quirks.md) 第 6/7 条）
 
 ## 2026-06-20 全量代码审查修复 (10 个 commit)
 
@@ -118,23 +129,32 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 - `*_remaining_percent=100` 不代表"还有 100%"，可能是 `status=2/3`（不在套餐内）
 - 旧字段对 Plus 订阅者全为 0
 
-## 当前进度
+## 当前进度（2026-06-29 v0.2.0 快照）
 
-✅ 项目骨架完整（D:\Codes\Musage\）
-✅ Rust 核心代码：main/lib/api/poller/tray/config/commands/icon
-✅ 前端：main.ts / styles.css / settings.ts / settings.html
-✅ 托盘图标动态绘制（颜色 + 百分比文字）
-✅ 本地 `keys.json`（0600）存 key，macOS 启动零弹窗
-✅ 后台 tokio 轮询
+✅ **v0.2.0 已发布**（tag 落在 main HEAD 上，version 字段 0.2.0）
+   - 累计 35 个 commit 在原 v0.2.0 清理点（`8b988a5`, 2026-06-22）之后，CHANGELOG 全部合并到 v0.2.0 段
+   - 真实发布版本号 = 0.2.0；CHANGELOG 已合并原 v0.2.1 段 + Unreleased 段到 v0.2.0 段
+
+✅ 项目骨架完整
+✅ 12 个 provider 全实装（11 内置 + custom），全部加 `instance_index` + `unique_id()` + `with_instance_index()`
+✅ 12 个 provider 全部支持**多实例**（`minimax#2` / `minimax#3` 共存）
+✅ Rust 核心代码：main / lib / api / poller / poller_backoff / tray / config / commands / icon / xiaomi_login / logstore
+✅ 前端：main.ts / settings.ts + settings/ 21 个子模块（PR 1b 后）
+✅ 托盘图标动态绘制（颜色 + 百分比文字 + 多实例 `#N` 后缀）
+✅ 本地 `keys.json`（0600）存 key + cookie，macOS 启动零弹窗
+✅ 后台 tokio 轮询 + per-provider 指数退避（30min 上限）
 ✅ CLI `musage dump` 子命令
-✅ Rust GNU 工具链已装
-✅ Pillow 已装（用于生成占位 icons）
-✅ **`cargo check` 0 错 20 警告**（dead code: 11 个 `set_state` 未被 caller 调用 + 1 个 `region` field 未读 + 8 个其它；2026-06-17 review 标记为 tech debt,等 P2-C PR 集中清理）
-✅ **`cargo build` 通过**（修了一个 MinGW 16-bit ordinal 限制坑——见下）
-✅ 占位 icons 已生成（32/128/ico/icns/128@2x/tray-base）
-✅ **首次 `pnpm tauri build` 通过**（2026-06-13，NSIS 安装包 2.5 MB）
-   - 路径：`src-tauri/target/release/bundle/nsis/Musage_0.1.0_x64-setup.exe`
-   - 裸 exe：`src-tauri/target/release/musage.exe`（6.7 MB）
+✅ i18n P0-P3 完整（rust-i18n 后端 + 自写 helper 前端，en + zh-CN，运行时切换）
+✅ 设置面板重构（6 组分组 + 搜索 + 两段式 picker modal）
+✅ Extra Instance（PR 1b）：内置 provider 副本 + 统一 `extra_instances.json` 持久化
+✅ 13 内置 + N 动态架构：`QuotaSource` trait + `builtin_sources()` + `CustomSource`
+✅ Xiaomi 一键登录 WebView + 系统通知 cookie 失效
+✅ import/export 配置（无 keys）
+✅ 自动更新：tauri-plugin-updater + GitHub release 签名 manifest
+✅ **`cargo check` 0 错**（v0.2 cleanup 砍 dead code + Provider enum，剩 `#[allow(dead_code)]` 2 处是 v2 预留）
+✅ **`cargo test --lib` 196 passed**（v0.2.0 follow-up 修 10 broken test + 23 i18n assertion + 1 production i18n bug）
+✅ **`pnpm tsc --noEmit` 0 errors**
+✅ **`pnpm tauri build` 通过**（macOS dmg + Windows NSIS）
 
 ⚠️ **坑：MinGW 工具链 16-bit 导出表上限**
 - 现象：`cdylib` 链接时 `ld.exe: error: export ordinal too large: 141874`
@@ -143,11 +163,16 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 - 依据：Tauri 2 在 Windows 上只用 staticlib 就够，cdylib 是为 iOS/Android 准备的
 - **别再用 RUSTFLAGS 全局加 `-Wl,--no-export-all-symbols`**：会污染 build script exe
 
-⏳ **待做**：
-- README + 启动文档
-- 联调真实 API（M1 验证，跑 `pnpm tauri dev` 后通过 dump 子命令探新 schema）
-- 设置面板对接真实 key
-- 选填 `assets/font.ttf`（目前托盘图标无百分比文字）
+⏳ **v0.3 待做**（tech debt 收尾 + 新需求）：
+- Claude cookie 一键重登（小米已做，Claude cookie 抓取要研究）
+- monitor hotplug 监听（拔插副屏时实时重新判定浮窗位置）
+- 错误卡"忽略本次错误"按钮
+- Frontend 单元测试 4 核心函数（contentFingerprint / render / updateCard / autoResizeWindow）
+- `http_status_to_error_kind` helper 统一 12 provider 错误分类
+- `refresh_inner` 每次 `Box::new` 12 个 source 优化（按 Arc 缓存）
+- Backoff 状态持久化到 disk
+- Per-provider poller task shutdown signal（App 退出时不泄漏）
+- `delete_extra_instance` v2（重命名 keys.json + spec）
 
 ## 构建与打包（2026-06-13 实测）
 
@@ -264,79 +289,87 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 
 **建议**：如果将来想再压榨 hover-raise 成功率，唯一剩下的 user space 路径是 **WndProc subclass**（拦截 `WM_WINDOWPOSCHANGING` 在 OS 端把 demote 改回 HWND_TOPMOST），但侵入性大、可能跟 Tauri/tao 自己的 WndProc 打架，得严格测。**先 ship 上面那个能用的版本**。
 
-## 文件结构（2026-06-13 实测，反映当前状态）
+## 文件结构（v0.2.0 / 2026-06-29 快照）
 
 ```
-D:\Project\Musage\
+~/Project/Musage/                  ← 当前在 macOS 上,Win 路径 D:\Codes\Musage\
 ├── AGENTS.md                 ← 本文件（项目 handoff 文档）
-├── README.md                 ← 暂无，待写
+├── README.md                 ← GitHub 访客入口,11 内置 + N 动态 + 多实例介绍
+├── CHANGELOG.md              ← 版本变更日志
+├── ROADMAP.md                ← 当前路线图
+├── FUTURE.md                 ← 暂缓 / 砍掉的想法
+├── RELEASING.md              ← 维护者发版 cheat sheet
 ├── package.json
 ├── pnpm-lock.yaml
 ├── tsconfig.json
 ├── vite.config.ts            ← build.assetsInlineLimit: 0（防 CSP 挡 data:）
-├── dev-env.bat               ← 加载 Node/cargo/MinGW + 中国镜像
+├── dev-env.bat               ← 加载 Node/cargo/MinGW + 中国镜像 (Win 专用)
 ├── index.html                ← 悬浮窗入口
 ├── settings.html             ← 设置面板入口
 ├── src/                      ← 前端（vanilla TS）
-│   ├── main.ts               ← 悬浮窗逻辑（拖动、订阅、渲染）
+│   ├── main.ts               ← 悬浮窗逻辑（拖动、订阅、渲染、i18n）
+│   ├── settings.ts           ← 设置面板入口
 │   ├── updater.ts            ← 应用自动更新
 │   ├── assets.d.ts           ← *.png/svg/?url 模块声明
-│   ├── styles.css
-│   ├── assets/               ← provider logo 资源
-│   │   ├── minimax-logo.png
-│   │   ├── deepseek-icon.png
-│   │   ├── deepseek-logo.png
-│   │   ├── xiaomimimo-logo.png
-│   │   ├── openrouter-logo.png
-│   │   ├── tavily-logo.svg   ← 配合 ?url + assetsInlineLimit: 0
-│   │   └── zenmux-logo.svg   ← 同上
-│   └── settings/             ← 设置面板子模块 (PR 1b: extra-instance-form.ts 替 custom-source-form.ts)
-│       ├── main.ts / app.ts / config.ts / api.ts
-│       ├── credentials.ts / providers.ts / floating.ts
-│       ├── order.ts / logs.ts / test.ts / about.ts
-│       ├── updater.ts / advanced.ts / types.ts / utils.ts
-│       ├── logos.ts / source-extras.ts
-│       ├── groups.ts           ← PR 3: 6 组分组（token_plan/balance/official/xiaomi/custom/misc）
-│       ├── modal.ts            ← PR 3: 原生 <dialog> 包装
-│       ├── region-wizard.ts    ← P2: set_region command UI（多 region provider 区域选择向导）
-│       ├── test.ts             ← dev-only probe 入口（生产构建排除）
-│       └── extra-instance-form.ts  ← PR 1b: 「+ 添加新来源」两段式表单（picker 12 选项 + 内置/custom 切换；PR 1b 替 PR 3 的 custom-source-form.ts）
-└── src-tauri/                ← Rust 后端
-    ├── Cargo.toml            ← crate-type = ["staticlib", "rlib"]（不用 cdylib）
-    ├── tauri.conf.json       ← bundle targets: "all"（建议改 "nsis"）
-    ├── build.rs
-    ├── capabilities/default.json
-    ├── icons/                ← 32/128/ico/icns/128@2x/tray-base 占位图标
-    ├── assets/               ← font.ttf 待选填（无则托盘无百分比文字）
-    └── src/
-        ├── main.rs           ← Windows 入口
-        ├── lib.rs            ← Tauri Builder + CLI 分流
-        ├── poller.rs         ← tokio interval
-        ├── tray.rs           ← 托盘菜单 + 动态图标（合并了原 icon.rs）
-        ├── config.rs         ← AppConfig + keys.json 文件存储
-        ├── commands/         ← tauri::command 暴露给前端（PR 1b: extra_instances.rs 替 custom_sources.rs）
-        ├── providers/        ← 11 个 provider 实现（PR 1b: 全部加 instance_index + unique_id）
-        │   ├── mod.rs / minimax.rs / deepseek.rs / xiaomi.rs
-        │   ├── tavily.rs / zenmux.rs / openrouter.rs
-        │   ├── kimi.rs / zhipu.rs
-        │   ├── stepfun.rs / siliconflow.rs / claude_official.rs
-        │   ├── parse.rs             ← PR 3: JSON path + num_f64 helpers (14 单测)
-        │   └── custom.rs            ← PR 3: CustomSourceSpec + ExtractSpec + CustomSource impl (14 单测)
-        ├── config/                  ← PR 3: 拆出子模块
-        │   ├── mod.rs (= config.rs)
-        │   ├── custom_sources.rs    ← PR 1b: 缩成 load_or_migrate 迁移 wrapper（PR 3 老 custom_sources.json 一次性迁 extra_instances.json）
-        │   └── extra_instances.rs   ← PR 1b: ExtraInstance + load/save/next_index_for/compact_indexes_for (9 单测)
-        ├── commands/                ← PR 3: 拆出子模块 (commands.rs → mod.rs)
-        │   ├── mod.rs (= commands.rs)
-        │   └── extra_instances.rs   ← PR 1b: 6 IPC commands (list/add/update/delete/list_picker/test) + DTOs
-        └── platform/         ← 平台特定代码（仅 macOS 有非 stub 实现）
-            ├── mod.rs
-            └── macos.rs
+│   ├── styles.css / tokens.css
+│   ├── assets/               ← provider logo 资源（11 内置 + 部分 SVG）
+│   └── settings/             ← 设置面板 21 个子模块
+│       ├── main.ts / app.ts / config.ts / api.ts / types.ts / utils.ts
+│       ├── credentials.ts / providers.ts / floating.ts / order.ts
+│       ├── logs.ts / test.ts / about.ts / updater.ts / advanced.ts
+│       ├── extra-instance-form.ts  ← + 添加新来源（PR 1b 两段式 picker）
+│       ├── source-extras.ts        ← per-provider 渲染 region/mode/extras
+│       ├── groups.ts                ← 6 组分组
+│       ├── modal.ts                 ← 原生 <dialog> 包装
+│       ├── region-wizard.ts         ← set_region command UI（多 region provider）
+│       ├── logos.ts                 ← logo 路径映射
+│       ├── icons.ts                 ← 首字母 fallback logo
+│       └── order.test.ts            ← vitest 单元测试（前端首批）
+├── src-tauri/                ← Rust 后端
+│   ├── Cargo.toml            ← crate-type = ["staticlib", "rlib"]（不用 cdylib）
+│   ├── tauri.conf.json       ← bundle targets: nsis + dmg,version 0.2.0
+│   ├── entitlements.plist    ← macOS Hardened Runtime entitlement
+│   ├── build.rs
+│   ├── capabilities/default.json
+│   ├── icons/                ← 32/128/ico/icns/128@2x/tray-base
+│   ├── locales/              ← 后端 i18n (en.json + zh-CN.json)
+│   ├── assets/               ← font.ttf 待选填（无则托盘无百分比文字）
+│   └── src/
+│       ├── main.rs           ← Windows / Linux 入口
+│       ├── lib.rs            ← Tauri Builder + CLI 分流 + load_or_migrate
+│       ├── poller.rs         ← tokio interval + per-provider 调度
+│       ├── poller_backoff.rs ← 指数退避 (429/5xx 翻倍,30min 上限)
+│       ├── tray.rs           ← 托盘菜单 + 动态图标 + 多实例 #N tooltip
+│       ├── config.rs         ← AppConfig + keys.json 文件存储
+│       ├── logstore.rs       ← 内存日志环形缓冲（设置面板 logs section）
+│       ├── xiaomi_login.rs   ← Xiaomi 一键登录 WebView
+│       ├── commands/         ← tauri::command 暴露给前端
+│       │   ├── mod.rs            ← 30+ IPC
+│       │   ├── extra_instances.rs ← 6 IPC (list/add/update/delete/list_picker/test)
+│       │   └── i18n.rs           ← set_app_locale + locale 切换
+│       ├── config/            ← 持久化子模块
+│       │   └── extra_instances.rs ← ExtraInstance + load/save/compact_indexes (9 单测)
+│       ├── providers/         ← 12 provider (11 内置 + custom)
+│       │   ├── mod.rs             ← QuotaSource trait + builtin_sources 注册表
+│       │   ├── parse.rs           ← JSONPath + num_f64 helpers
+│       │   ├── custom.rs          ← CustomSource + CustomSourceSpec + ExtractSpec
+│       │   ├── minimax.rs         ← 2026-06-01 前后双 schema
+│       │   ├── deepseek.rs / xiaomi.rs / tavily.rs / zenmux.rs
+│       │   ├── openrouter.rs / kimi.rs / zhipu.rs
+│       │   ├── stepfun.rs / siliconflow.rs / claude_official.rs
+│       └── platform/         ← 平台特定代码（仅 macOS 有非 stub 实现）
+│           ├── mod.rs
+│           └── macos.rs      ← PinBottom 走 NSWindow.setLevel(-1)
+└── docs/
+    ├── codeplan/             ← 历史 plan / review notes
+    │   └── 2026-06-15-extend-providers.md
+    └── research/             ← 调研报告
 ```
 
 构建产物：
-- 裸 exe：`src-tauri/target/release/musage.exe`（6.7 MB）
-- NSIS 安装包：`src-tauri/target/release/bundle/nsis/Musage_0.1.0_x64-setup.exe`（2.5 MB）
+- macOS dmg：`src-tauri/target/release/bundle/dmg/Musage_0.2.0_*.dmg`（aarch64 + x64 两个）
+- Windows NSIS：`src-tauri/target/release/bundle/nsis/Musage_0.2.0_x64-setup.exe`
+- 裸 exe：`src-tauri/target/release/musage.exe`（仅 Windows）
 
 ## 已确立的设计决策
 
@@ -394,13 +427,13 @@ D:\Project\Musage\
   - 前端 `extra.*` modal / err / added 段
   - 前端 `delete_extra.*` 6 个 key（替 PR 3 的 `delete_custom.*`）
   - 前端 `add_source` 段（替 PR 3 的 `add_custom`）
-  - **前端 i18n 独立维护 `provider_name.*` 11 项**(后端 `src-tauri/locales/` 也有;v0.2.1 commit 4 后端 `list_picker_providers` 直接返翻译好的 `display_name` 字符串,前端 `provider_name.*` 镜像已删,单一来源 = 后端 `src-tauri/locales/{en,zh-CN}.json`)
+  - **前端 i18n 独立维护 `provider_name.*` 11 项**(后端 `src-tauri/locales/` 也有;v0.2.0 follow-up commit 4 后端 `list_picker_providers` 直接返翻译好的 `display_name` 字符串,前端 `provider_name.*` 镜像已删,单一来源 = 后端 `src-tauri/locales/{en,zh-CN}.json`)
 - **迁移 + 兼容**：
   - PR 1a：老 `custom_sources.json` 启动自动迁移到 `extra_instances.json`
   - PR 1b：5 个老 IPC 删除，**前端必须**用新 6 个 IPC（前端 `src/settings/api.ts` 已同步）
-  - **v0.2.1 commit 2**:`load_or_migrate` 从 `config/custom_sources.rs` 内联到 `src-tauri/src/lib.rs`,wrapper 文件删除（v0.2.0 release 2 天后老用户的 `custom_sources.json` 已被启动 rename 成 `.migrated`,wrapper 已无 active caller）
+  - **v0.2.0 follow-up commit 2**:`load_or_migrate` 从 `config/custom_sources.rs` 内联到 `src-tauri/src/lib.rs`,wrapper 文件删除（v0.2.0 清理点 2 天后老用户的 `custom_sources.json` 已被启动 rename 成 `.migrated`,wrapper 已无 active caller）
 - **PR 1b 后 12 provider 全实装**:`minimax` / `deepseek` / `xiaomimimo` / `tavily` / `zenmux` / `openrouter` / `kimi` / `zhipu` / `stepfun` / `siliconflow` / `claude_official` / `custom` 全部加了 `instance_index: u32` 字段 + `with_instance_index(idx)` 方法 + `unique_id()` 返回 `"<base>#N"` 格式(PR 1b 落地,2026-06-24 验证无遗漏)
-- **多 instance 一致识别**:`unique_id()` 在 poller next_fetch map key / 浮窗 DOM `data-unique-id`(v0.2.1 commit 3 把原 `data-source-id` 改过来)/ 托盘 tooltip `#N` 后缀(commit 5)/ 后端 ProviderSnapshot 字段都共用,做到"一份字符串单一来源"
+- **多 instance 一致识别**:`unique_id()` 在 poller next_fetch map key / 浮窗 DOM `data-unique-id`(v0.2.0 follow-up commit 3 把原 `data-source-id` 改过来)/ 托盘 tooltip `#N` 后缀(commit 5)/ 后端 ProviderSnapshot 字段都共用,做到"一份字符串单一来源"
 
 ## 已知风险
 
@@ -408,14 +441,18 @@ D:\Project\Musage\
 - 🟡 GNU 工具链 + Tauri 2 在 Windows 的稳定性需要实战验证
 - 🟡 托盘图标的字体加载需要 `assets/font.ttf`，缺了就只有色块
 
-## 下一步建议
+## 下一步建议（v0.3 候选）
 
-1. **README 启动文档**：朋友拿到 exe 怎么装、怎么填 API Key、托盘交互说明
-2. **`cargo run -- dump` 真实 schema 探针**：跑通后端独立 CLI 子命令，验证 [关键 API](#关键-api来自-ccswitch-源码逆向) 文档的 percent-based 解析对真实返回有效
-3. **设置面板对接真实 key**：填入 API Key → 联调 minimax + 其他 5 个 provider
-4. **（可选）固化 NSIS-only**：`tauri.conf.json` 的 `bundle.targets` 改成 `"nsis"`，免得未来会话又撞 WiX timeout
-5. **（可选）`assets/font.ttf`**：托盘图标想画百分比文字时再补
-6. **i18n 收尾（v2）**：`apiKeyHelpNodes` 13 provider help text + flash() 里硬编码中文 + confirm() dialog 文本全走 t()。P0-P2 把架构铺好但留了 ~20% strings 未 i18n
+1. **Claude cookie 一键重登**：仿 Xiaomi 一键登录的 WebView 方案，研究 Claude 官方 cookie 抓取路径
+2. **monitor hotplug 监听**：拔插副屏时实时重新判定浮窗位置
+3. **错误卡"忽略本次错误"按钮**：P2-A-7 增量 2/3
+4. **Frontend 单元测试 4 核心函数**：contentFingerprint / render / updateCard / autoResizeWindow
+5. **`http_status_to_error_kind` helper 统一 12 provider 错误分类**：现在 401/403/429 各自映射不同，缺一个统一映射 helper
+6. **`refresh_inner` 每次 `Box::new` 12 个 source 优化**：按 `Arc<dyn QuotaSource>` 缓存避免每 tick 重建（参考 [memory/source-instance-rebuild-footgun](memory/source-instance-rebuild-footgun.md)）
+7. **Backoff 状态持久化到 disk**：重启后 30min 退避归零是用户痛点
+8. **Per-provider poller task shutdown signal**：App 退出时不泄漏 task
+9. **`delete_extra_instance` v2**：改 instance_index 时同步重命名 keys.json 里的 key
+10. **i18n 收尾**：`types.ts` 6 行 / `credentials.ts:307/387` / `updater.ts:90` 等 <5% 残留硬编码中文
 
 ## i18n 约定（P0-P2 已铺好，详见 `memory/musage-i18n-conventions.md`）
 
@@ -432,7 +469,7 @@ D:\Project\Musage\
 - ~~`src/settings/utils.ts:providerDisplay`~~ — 删
 - 单一来源：[`src/main.ts:37`](src/main.ts#L37) + 共享 [`src/i18n/{en,zh-CN}.json`](src/i18n/) 的 `provider.<id>.name`
 - 加新 provider 改 3 处（后端 `providers/<id>.rs` + `providers/mod.rs::builtin_sources()` 注册 + `i18n.json` 的 `provider.<id>.name`）。**注**:settings 面板主结构是动态的（PR 3 改完），但 `src/settings/source-extras.ts` 里的 7 个 `renderXxx` 函数（每个有 region/mode/extras 字段的 provider 1 个）+ `EXTRAS` 表注册**不**是零行 — 真正零行修改的场景是"无 region/mode/extras 字段的纯 Bearer provider"
-- **PR 1b 偏离**：picker modal 走 `name_key` 字符串路径，前端 `src/i18n/*.json` 的 `provider_name.*` 11 项是**镜像**（跟后端 `src-tauri/locales/*.json` 同步）。理想方案是后端 `list_picker_providers` 直接返翻译好的 display_name 字符串，PR 3 收尾
+- **PR 1b 偏离 → v0.2.0 follow-up commit 4 解决**：picker modal 走后端返 display_name 字符串,前端 `src/i18n/*.json` 的 `provider_name.*` 11 项镜像删除。单一来源 = 后端 `src-tauri/locales/{en,zh-CN}.json`
 
 **Locale 切换链路**：
 1. 前端 `setLocale(locale)` → 调 `set_app_locale` Tauri command

@@ -69,6 +69,7 @@
       "cookie_format_invalid": "Cookie format invalid (contains illegal character {ch}). Please re-copy from browser DevTools Application → Cookies (no line breaks)",
       "http_error": "Xiaomi dashboard API error (HTTP {status}): {body}",
       "business_code": "Xiaomi dashboard API code {code}: {msg}",
+      "plan_expired_hint": "Plan expired ({plan} · until {end}). Renew at platform.xiaomimimo.com → Subscription. The floating window will recover on next poll (≤60s)",
       "schema_unknown_hint": "Response missing plan_total_token / compensation_total_token / month_total_token (schema changed? Add new names in Settings → schema_overrides)",
       "data_field_missing": "Response missing data field"
     },

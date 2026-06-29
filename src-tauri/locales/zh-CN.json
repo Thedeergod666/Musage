@@ -69,6 +69,7 @@
       "cookie_format_invalid": "Cookie 格式无效（包含非法字符 {ch}）。请重新从浏览器 DevTools Application → Cookies 复制整段 Cookie 字符串（不要带换行）",
       "http_error": "Xiaomi dashboard API 异常 (HTTP {status}): {body}",
       "business_code": "Xiaomi dashboard API code {code}: {msg}",
+      "plan_expired_hint": "套餐已过期（{plan} · 至 {end}）。请到 platform.xiaomimimo.com → 订阅管理 续费，续费后浮窗会在下次轮询（≤60s）恢复",
       "schema_unknown_hint": "响应里找不到 plan_total_token / compensation_total_token / month_total_token 任何一项（schema 改名？去设置面板 schema_overrides 配新名）",
       "data_field_missing": "响应缺少 data 字段"
     },

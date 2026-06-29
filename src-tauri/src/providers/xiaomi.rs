@@ -580,6 +580,17 @@ fn parse(
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
+    // 套餐是否已过期（detail.data.expired，例 true/false）
+    // 套餐过期是套餐过期场景的根因信号：dashboard 的 `/api/v1/tokenPlan/usage`
+    // 此时通常返 `data.usage.items = []`（配额停发），导致 rows 全部凑不出来。
+    // 之前 parse 完全忽略这个信号，统一归到 SchemaUnknown 错误，提示用户去
+    // 改 schema_overrides——误导。改为：expired=true 单独走 plan_expired_hint
+    // 文案，让用户去 Xiaomi 控制台续费，而不是改 app 高级设置。
+    let detail_expired = raw_detail
+        .pointer("/data/expired")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
     // 用户自定义字段名：用 monthly tier 的 count_candidates[].total 当作
     // "item.name 候选"（FieldTriple 的 remaining/end 对 Xiaomi 没用，忽略）。
     // 不引入新结构，复用 minimax 已有的 ProviderOverrides 路径。
@@ -667,17 +678,27 @@ fn parse(
         }
     }
 
-    let success = !rows.is_empty();
+    // 套餐过期 = 强制走 error card（即便 usage 残留了周期内的数据），
+    // 浮窗"绿点 + 13%"会让用户以为套餐正常，掩盖"已过期"这个关键信息。
+    let success = !rows.is_empty() && !detail_expired;
     ProviderSnapshot {
         provider: "xiaomimimo".to_string(),
         success,
         rows,
         error: if success {
             None
+        } else if detail_expired {
+            // 套餐过期：error_kind=Other（前端 main.ts 走「只显示错、无按钮」分支），
+            // 文案明确引导用户去 platform.xiaomimimo.com 续费。
+            let plan_label = plan_name.clone().unwrap_or_default();
+            let end_label = format_end_utc(resets_at);
+            Some(
+                t!("error.xiaomi.plan_expired_hint", plan = plan_label, end = end_label)
+                    .into_owned(),
+            )
         } else {
-            // empty rows 的根因可能不一样：raw 里有没有 data 字段？有 data 但
-            // 没有任何已知 item 名称 → schema 改名了，提示用户去 schema_overrides
-            // 配新名；没 data → 响应结构变了，归 Parse。
+            // 0 rows 根因分两种：有 /data 但 item 名称全不认 → schema 改名；没
+            // /data → 响应结构彻底变了。
             let has_data = raw_usage.pointer("/data").is_some();
             if has_data {
                 Some(t!("error.xiaomi.schema_unknown_hint").into_owned())
@@ -687,6 +708,10 @@ fn parse(
         },
         error_kind: if success {
             None
+        } else if detail_expired {
+            // 走 Other = 前端 main.ts:618-619 fallback（"只显示错,无按钮"），
+            // 不引导用户去改 schema_overrides（套餐过期改 schema 没用）
+            Some(ErrorKind::Other)
         } else if raw_usage.pointer("/data").is_some() {
             Some(ErrorKind::SchemaUnknown)
         } else {
@@ -791,6 +816,19 @@ fn apply_display_mode(
 fn parse_datetime_utc_ms(s: &str) -> Option<i64> {
     let dt = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok()?;
     Some(dt.and_utc().timestamp_millis())
+}
+
+/// epoch ms → "2026-06-27 23:59 (UTC)" 给 plan_expired_hint 文案用。
+///
+/// detail 里的 currentPeriodEnd 在 dashboard 文档里标的是 UTC，所以格式化
+/// 必须固定 UTC，不走本地时区（用户系统如果是 UTC+8，to_local 会把 23:59
+/// 显示成次日 07:59，跟 dashboard 上看到的时间不一致，调试时很迷）。
+/// None 时降级显示"(到期时间未知)"。
+fn format_end_utc(ms: Option<i64>) -> String {
+    match ms.and_then(|m| chrono::DateTime::<chrono::Utc>::from_timestamp_millis(m)) {
+        Some(dt) => dt.format("%Y-%m-%d %H:%M (UTC)").to_string(),
+        None => "(到期时间未知)".to_string(),
+    }
 }
 
 // ── 单元测试 ─────────────────────────────────────────────────────
@@ -1335,5 +1373,164 @@ mod tests {
         QuotaSource::set_state(&src, cfg).await;
         let mode = src.state.read().await.display_mode;
         assert_eq!(mode, XiaomiDisplayMode::TotalOnly);
+    }
+
+    // ── 套餐过期错误归类（避免误导用户去改 schema_overrides）──
+
+    /// 套餐过期 + usage 返空 items（典型场景：配额停发，dashboard 不再返回任何 item）
+    /// → 走 plan_expired_hint 文案 + error_kind=Other（前端 main.ts:618 走「无按钮」分支）
+    #[test]
+    fn parse_plan_expired_uses_plan_expired_hint() {
+        let raw = json!({
+            "code": 0,
+            "data": {
+                "usage": {"items":[]},       // 过期后 items 为空
+                "monthUsage": {"items":[]}
+            }
+        });
+        let detail = json!({
+            "code": 0,
+            "data": {
+                "planName": "Standard",
+                "currentPeriodEnd": "2026-06-27 23:59:59",
+                "expired": true
+            }
+        });
+        let snap = parse(
+            &raw,
+            &detail,
+            &ProviderOverrides::default(),
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
+        assert!(!snap.success, "套餐过期必须 success=false（走 error card）");
+        assert_eq!(snap.error_kind, Some(ErrorKind::Other));
+        let err = snap.error.expect("error 应该有文案");
+        // i18n 测试: 模板里含 "{plan}" "{end}" 占位符 (rust-i18n 在 test 环境
+        // 不会做 placeholder 替换,运行时才替换;详见 memory musage-i18n-conventions)
+        // → 不能直接断言 contains("Standard"),改断言:
+        // 1. i18n key 被命中 (不是空字符串、不是 key 名字符串)
+        // 2. 含 "platform.xiaomimimo.com" 引导用户去续费
+        // 3. **不该**含 schema_overrides 误导 (回归保护)
+        assert!(err.contains("platform.xiaomimimo.com"), "error 应引导去续费: {}", err);
+        assert!(
+            !err.contains("schema_overrides"),
+            "套餐过期场景不该走 schema_overrides 引导：{}",
+            err
+        );
+        // 结构: plan_name 透传出去,前端需要它
+        assert_eq!(snap.plan_name.as_deref(), Some("Standard"));
+    }
+
+    /// 套餐过期 + usage 仍残留周期内数据（边界：dashboard 没清理老数据）→
+    /// 仍然 success=false（不让浮窗用过期数据假装"正常"）
+    #[test]
+    fn parse_plan_expired_with_usage_rows_still_marks_expired() {
+        let raw = json!({
+            "code": 0,
+            "data": {
+                "usage": {"items":[
+                    {"name":"plan_total_token","percent":0.13}
+                ]}
+            }
+        });
+        let detail = json!({
+            "code": 0,
+            "data": {
+                "planName": "Plus",
+                "currentPeriodEnd": "2026-06-27 23:59:59",
+                "expired": true
+            }
+        });
+        let snap = parse(
+            &raw,
+            &detail,
+            &ProviderOverrides::default(),
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
+        assert!(
+            !snap.success,
+            "expired=true 必须覆盖 success，即便 rows 非空"
+        );
+        assert_eq!(snap.error_kind, Some(ErrorKind::Other));
+        // 结构: plan_name 透传出去
+        assert_eq!(snap.plan_name.as_deref(), Some("Plus"));
+    }
+
+    /// 回归保护：expired=false 走原行为，0 rows 仍归 SchemaUnknown
+    /// （防止"expired 信号"误伤真 schema 改名场景）
+    #[test]
+    fn parse_plan_not_expired_keeps_existing_schema_unknown() {
+        let raw = json!({
+            "code": 0,
+            "data": {
+                "usage": {"items":[{"name":"some_other_token","percent":0.5}]}
+            }
+        });
+        let detail = json!({
+            "code": 0,
+            "data": {
+                "planName": "Standard",
+                "currentPeriodEnd": "2026-07-27 23:59:59",
+                "expired": false   // ← 关键：false
+            }
+        });
+        let snap = parse(
+            &raw,
+            &detail,
+            &ProviderOverrides::default(),
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
+        assert!(!snap.success);
+        assert_eq!(
+            snap.error_kind,
+            Some(ErrorKind::SchemaUnknown),
+            "expired=false 时 0 rows 仍归 SchemaUnknown（schema 改名场景）"
+        );
+        assert!(snap.error.unwrap().contains("schema_overrides"));
+    }
+
+    /// 边界：detail 完全缺失（cookie 401 fallback 到 Null）→ expired 走 false，
+    /// 0 rows 走原 SchemaUnknown 路径，行为不变
+    #[test]
+    fn parse_plan_expired_missing_detail_falls_back_to_schema_unknown() {
+        let raw = json!({
+            "code": 0,
+            "data": {
+                "usage": {"items":[]}
+            }
+        });
+        let detail = json!({}); // detail 端没拿到（401 fallback）
+        let snap = parse(
+            &raw,
+            &detail,
+            &ProviderOverrides::default(),
+            "xiaomimimo",
+            "Xiaomi MiMo",
+        );
+        assert!(!snap.success);
+        assert_eq!(
+            snap.error_kind,
+            Some(ErrorKind::SchemaUnknown),
+            "detail 缺失时拿不到 expired 信号，应走原 SchemaUnknown"
+        );
+    }
+
+    /// helper 单测：format_end_utc 把 epoch ms → "YYYY-MM-DD HH:MM (UTC)"
+    #[test]
+    fn format_end_utc_formats_as_utc() {
+        // 2026-06-27 23:59:59 UTC = 1785033599000 ms
+        let ms = parse_datetime_utc_ms("2026-06-27 23:59:59").unwrap();
+        let s = format_end_utc(Some(ms));
+        assert!(s.contains("2026-06-27 23:59"), "got: {}", s);
+        assert!(s.contains("UTC"), "must mark timezone: {}", s);
+    }
+
+    #[test]
+    fn format_end_utc_none_returns_fallback() {
+        let s = format_end_utc(None);
+        assert!(s.contains("未知") || s.contains("unknown") || s.contains("到期"));
     }
 }

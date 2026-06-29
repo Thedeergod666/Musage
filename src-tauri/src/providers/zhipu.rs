@@ -279,7 +279,7 @@ async fn do_fetch(
 /// 3. 老套餐只回 1 条 TOKENS_LIMIT → 自然降级为只显示 5h
 fn parse(
     raw: &Value,
-    region: ZhipuRegion,
+    _region: ZhipuRegion,
     source_id: &str,
     display_name: &str,
 ) -> Result<ProviderSnapshot, FetchError> {

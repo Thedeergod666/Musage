@@ -7,7 +7,7 @@
 //! **Auth 不是 Bearer 也不是 api-key header，是 Cookie**：需要把浏览器登录后
 //! DevTools 里那个请求的完整 Cookie header 值贴到 Musage 设置面板。
 //! Cookie 内容：
-//! ```
+//! ```text
 //! api-platform_serviceToken="..."; userId=...; api-platform_slh="..."; api-platform_ph="..."
 //! ```
 //!

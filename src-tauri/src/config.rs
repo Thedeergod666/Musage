@@ -848,7 +848,7 @@ fn write_keys_atomic(map: &KeysMap) -> Result<(), String> {
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| t!("commands.keys_io", op = "chmod 0600").into_owned())?;
+            .map_err(|_e| t!("commands.keys_io", op = "chmod 0600").into_owned())?;
     }
 
     if let Err(e) = std::fs::rename(&tmp, &path) {

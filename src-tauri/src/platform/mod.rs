@@ -35,12 +35,14 @@ pub use self::windows::*;
 // 这里只留 Linux 作为最后兜底。
 #[cfg(target_os = "linux")]
 pub fn set_window_pin_bottom<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    use tauri::Manager;
     if let Some(win) = app.get_webview_window("floating") {
         let _ = win.set_always_on_top(false);
     }
 }
 #[cfg(target_os = "linux")]
 pub fn set_window_pin_top<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    use tauri::Manager;
     if let Some(win) = app.get_webview_window("floating") {
         let _ = win.set_always_on_top(true);
     }
@@ -61,12 +63,14 @@ pub fn set_window_pin_top<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 /// 设计层面接受这个差异 —— 主动选择 macOS UX 妥协，避免状态栏被覆盖。
 #[cfg(target_os = "linux")]
 pub fn set_window_normal<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    use tauri::Manager;
     if let Some(win) = app.get_webview_window("floating") {
         let _ = win.set_always_on_top(false);
     }
 }
 #[cfg(target_os = "linux")]
 pub fn set_window_hover_raise<R: tauri::Runtime>(app: &tauri::AppHandle<R>, hovering: bool) {
+    use tauri::Manager;
     if let Some(win) = app.get_webview_window("floating") {
         let _ = win.set_always_on_top(hovering);
     }

@@ -30,7 +30,7 @@ use serde_json::Value;
 ///
 /// ## Examples
 ///
-/// ```
+/// ```ignore
 /// use serde_json::json;
 /// let v = json!({"data": {"quota": 100, "tags": ["a", "b"]}});
 /// assert_eq!(crate::providers::parse::read_path(&v, "data.quota"), Some(&json!(100)));

@@ -14,7 +14,7 @@ import { renderAppSection } from "./app";
 import { renderAdvancedSection } from "./advanced";
 import { renderLogsSection, loadLogs } from "./logs";
 import { renderAboutSection } from "./about";
-import { setupUpdaterSection } from "./updater";
+// v0.2.0 不再自动检查更新 —— 升级走"用户手动下 dmg/nsis 装"路径
 import { renderRegionSection } from "./region-wizard";
 import { bindCredentialButtonsGlobal, bindXiaomiLoginEvents, loadXiaomiDisplayMode } from "./credentials";
 import { bindOrderButtonsGlobal, updateOrderConfig, isSuppressingConfigRebuild } from "./order";
@@ -164,12 +164,11 @@ async function init() {
       await renderRegionSection(containers.app);
     }
 
-    // 拉每个 source 的 key 状态 + 日志 + 注入 updater
+    // 拉每个 source 的 key 状态 + 日志
     // （cfg 初值已经在 render*Section 里用上了；不用再调 loadConfig）
     await loadAllCredentialStatus(sources);
     await loadXiaomiDisplayMode();
     await loadLogs();
-    setupUpdaterSection();
 
     // 订阅后端 config-changed：用户改了「在浮窗显示」或调整了 provider
     // 顺序时，Rust 会 emit 这个事件；设置面板需要重渲浮窗卡片顺序区域

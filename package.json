@@ -24,7 +24,6 @@
     "@tauri-apps/plugin-autostart": "^2.0.0",
     "@tauri-apps/plugin-os": "^2.0.0",
     "@tauri-apps/plugin-process": "^2.0.0",
-    "@tauri-apps/plugin-updater": "^2.0.0",
     "lucide-static": "^0.469.0"
   },
   "devDependencies": {

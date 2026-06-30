@@ -592,38 +592,6 @@ button.order-down {
 #enabled-xiaomimimo + label,
 #enabled-tavily + label { margin: 0; }
 
-/* 自动更新区块（settings.ts 模板字符串注入） */
-.updater-section h3 {
-  margin: 0 0 8px 0;
-  font-size: 14px;
-}
-.updater-section .updater-meta {
-  font-size: 12px;
-  opacity: 0.7;
-  margin-bottom: 8px;
-}
-.updater-section .updater-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-.updater-section .updater-actions button { flex: 0 0 auto; }
-.updater-section #updater-status {
-  font-size: 12px;
-  opacity: 0.8;
-}
-.updater-section .updater-notes {
-  display: none;
-  margin-top: 8px;
-  font-size: 12px;
-  padding: 8px;
-  background: rgba(255, 255, 255, 0.05);
-  border-radius: 4px;
-  white-space: pre-wrap;
-}
-/* `hidden` 属性优先级高于上面 display: none，JS 用 el.hidden 切换即可 */
-
 /* ── PR 3: 工具栏 / 分组 / Modal / 调色板 ─────────────────────── */
 
 .provider-toolbar {

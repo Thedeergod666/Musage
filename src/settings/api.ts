@@ -1,7 +1,7 @@
 // 设置面板 IPC 集中层
 //
-// **唯一** 接触 @tauri-apps/api/core::invoke 的地方（除 updater.ts 自己用的
-// listen），方便单点替换 / mock 测试。settings 的所有功能都走这些 typed wrappers。
+// **唯一** 接触 @tauri-apps/api/core::invoke 的地方，方便单点替换 / mock 测试。
+// settings 的所有功能都走这些 typed wrappers。
 
 import { invoke } from "@tauri-apps/api/core";
 import type {
@@ -181,7 +181,7 @@ export async function clearLogs(): Promise<void> {
   await invoke("clear_logs");
 }
 
-// ── App 元信息（updater 用）────────────────────────────────────
+// ── App 元信息（设置面板「关于」section 用） ───────────────────
 
 export async function getAppVersion(): Promise<string> {
   return invoke<string>("get_app_version");

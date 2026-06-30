@@ -259,6 +259,8 @@
       "section_prefix": "ℹ ",
       "description": "多 Provider 实时用量监控悬浮窗。",
       "current_version": "当前版本：",
+      "upgrade": "升级",
+      "upgrade_hint": "v0.2.0 起不内置自动更新，请到 GitHub releases 手动下载最新版覆盖安装：",
       "links": "链接",
       "source": "源码：",
       "feedback": "问题反馈：同上 GitHub issues"
@@ -268,20 +270,6 @@
       "bottom": "已设为：置底（hover 置顶）",
       "normal": "已设为：普通窗口",
       "failed": "切换置顶模式失败: {err}"
-    },
-    "updater": {
-      "section_title": "自动更新",
-      "check_update": "检查更新",
-      "download_install": "下载并安装",
-      "relaunch": "立即重启",
-      "no_update": "没有可用更新",
-      "checking": "检查中…",
-      "up_to_date": "已是最新",
-      "available": "发现新版本 v{version}",
-      "downloading": "下载中… {pct}%",
-      "ready": "已下载完成，点击重启生效",
-      "failed": "{err}",
-      "fallback_error": "更新失败"
     },
     "order": {
       "section_title": "浮窗卡片顺序",

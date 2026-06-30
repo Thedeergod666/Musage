@@ -27,11 +27,10 @@ jobs:
   # 平台构建 + 发布矩阵
   #
   # 每个 target 跑一次 tauri build，tauri-action 负责：
-  #   - 拿 TAURI_SIGNING_PRIVATE_KEY 自动签 bundle
+  #   - 拿对应 secret 走 mac/win 平台签名
   #   - 产物落到 target/<target>/release/bundle/
   #   - 在第一个跑完的 job 里创建 GitHub Release
-  #   - 把所有 bundle + latest.json 上传成 release assets
-  #     (latest.json 里的 url 字段会被填成真实 asset 地址)
+  #   - 把所有 bundle 上传成 release assets
   # ────────────────────────────────────────────────────────
   build:
     name: build (${{ matrix.label }})
@@ -114,23 +113,20 @@ jobs:
       # tauri-action 会：
       #   1) 调 `tauri build --target ${{ matrix.target }}`
       #   2) 第一个完成 build 的 job 创建 GitHub Release
-      #   3) 所有 job 完成后把 bundles + latest.json 上传到 release
+      #   3) 所有 job 完成后把 bundles 上传到 release
       #
       # 关键 env：
-      #   - TAURI_SIGNING_PRIVATE_KEY    : 私钥（base64 编码），用于签 manifest
-      #   - TAURI_SIGNING_PRIVATE_KEY_PASSWORD : 私钥密码（无密码留空）
       #   - APPLE_*  : macOS 签名 + 公证
       #   - WINDOWS_CERTIFICATE_*        : Windows EV 签名
       #
       # 没配对应 secret 就跳过对应平台签名，bundle 仍能出来
+      #
+      # v0.2.0 不走 tauri-plugin-updater (本期) — 升级走"用户手动下 dmg/nsis 装"。
+      # 见 RELEASING.md 第 6 章。
       - name: Tauri build & release
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0 (latest v0.X)
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # ── Tauri updater 签名（生成 latest.json 的 signature 字段）──
-          # 没配 TAURI_SIGNING_PRIVATE_KEY → latest.json 不带 signature，updater 跳过签名校验
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # ── macOS 签名 + 公证（可选）──
           # 没配有效证书就不要传 APPLE_*，否则 tauri-cli 会尝试 import 空证书到 keychain 报错
           # 需要签名时：在 GitHub repo Settings → Secrets 配好 6 个 APPLE_* 再取消下面注释
@@ -149,9 +145,10 @@ jobs:
           releaseName: "Musage ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', inputs.version) }}"
           releaseDraft: true
           releaseBody: .github/RELEASE_TEMPLATE.md
-          # 强制更新器：每个 target 跑 tauri build 时自动生成 latest.json（默认 true）
-          # tauri CLI 内部产出,action 原样上传为 release asset,这里不用也不能传模板
-          includeUpdaterJson: true
+          # v0.2.0 不带 updater: tauri.conf.json 删了 createUpdaterArtifacts 后
+          # tauri CLI 本身不会再生成 latest.json。这里 uploadUpdaterJson: false 是
+          # defense-in-depth,如果某天 tauri CLI 又自动生成,也不会被上传
+          uploadUpdaterJson: false
           args: --target ${{ matrix.target }}
 
   # ────────────────────────────────────────────────────────
@@ -167,13 +164,12 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
       - name: Wait a moment for release
         run: sleep 15
-      - name: Verify latest.json
+      - name: Verify release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', inputs.version) }}"
-          echo "验证 release $TAG 是否包含 latest.json + 三个平台的 bundle"
+          echo "验证 release $TAG 三个平台的 bundle 都齐了"
           gh release view "$TAG" --json assets --jq '.assets[].name' | sort
-          gh release view "$TAG" --json assets --jq '.assets[].name' | grep -q "latest.json" \
-            || (echo "::error::latest.json 没找到"; exit 1)
-          echo "✓ latest.json 已上传"
+          # v0.2.0 不带 updater,不要求 latest.json
+          echo "✓ 三个平台 bundle 已上传"

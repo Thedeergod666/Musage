@@ -86,9 +86,8 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        // v0.2.1 commit 7 (P2-B-8): 注册 notification plugin 让 log_provider_error
+        // v0.2.0 follow-up commit 7 (P2-B-8): 注册 notification plugin 让 log_provider_error
         // 在 Xiaomi/Claude cookie 失效时弹系统通知。
         .plugin(tauri_plugin_notification::init())
         // M6 fix: .manage() 移到 .setup() 之前。之前 .setup() 里

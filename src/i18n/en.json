@@ -259,6 +259,8 @@
       "section_prefix": "ℹ ",
       "description": "Multi-provider real-time usage monitoring floating window.",
       "current_version": "Current version:",
+      "upgrade": "Upgrade",
+      "upgrade_hint": "v0.2.0+ no longer ships auto-updates. Download the latest release from GitHub and install over the existing one:",
       "links": "Links",
       "source": "Source code:",
       "feedback": "Feedback: same GitHub issues"
@@ -268,20 +270,6 @@
       "bottom": "Set to: bottom (hover to top)",
       "normal": "Set to: normal window",
       "failed": "Switch pin mode failed: {err}"
-    },
-    "updater": {
-      "section_title": "Auto update",
-      "check_update": "Check for updates",
-      "download_install": "Download and install",
-      "relaunch": "Relaunch now",
-      "no_update": "No update available",
-      "checking": "Checking...",
-      "up_to_date": "Already up to date",
-      "available": "New version v{version} available",
-      "downloading": "Downloading... {pct}%",
-      "ready": "Downloaded, click Relaunch to apply",
-      "failed": "{err}",
-      "fallback_error": "Update failed"
     },
     "order": {
       "section_title": "Floating card order",

@@ -1,7 +1,7 @@
-// "关于" section —— 版本 + 仓库链接 + updater 注入点
+// "关于" section —— 版本 + 仓库链接
 //
-// v0.6+ 起 updater section 跟着 about section 走，不再插在「保存配置」按钮前。
-// setupUpdaterSection() 在 main.ts init 末尾调一次（DOM 元素已经存在）。
+// v0.2.0 起不再有 updater section —— 升级走"用户手动下 dmg/nsis 装"路径。
+// 详细见 RELEASING.md 第 6 章。
 
 import { el } from "./utils";
 import { getAppVersion } from "./api";
@@ -23,11 +23,17 @@ export async function renderAboutSection(container: HTMLElement) {
         el("div", { class: "help" },
           t("settings.about.description"),
           t("settings.about.current_version"),
-          el("strong", { id: "updater-current-version" }, `v${version}`),
+          el("strong", {}, `v${version}`),
         ),
       ),
-      // updater section 由 setupUpdaterSection() 注入到这里
-      el("div", { id: "updater-section" }),
+      // 升级提示 —— 走 GitHub releases 页手动下新版
+      el("div", { class: "field" },
+        el("label", {}, t("settings.about.upgrade")),
+        el("div", { class: "help" },
+          t("settings.about.upgrade_hint"),
+          el("a", { href: "https://github.com/Thedeergod666/Musage/releases/latest", target: "_blank", class: "link-ext" }, "github.com/Thedeergod666/Musage/releases/latest"),
+        ),
+      ),
       el("div", { class: "field" },
         el("label", {}, t("settings.about.links")),
         el("div", { class: "help" },

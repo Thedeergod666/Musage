@@ -11,7 +11,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { checkForUpdate, onUpdateState } from "./updater";
 import minimaxLogo from "./assets/minimax-logo.png";
 import deepseekLogo from "./assets/deepseek-icon.png";
 import xiaomimimoLogo from "./assets/xiaomimimo-logo.png";
@@ -1181,28 +1180,7 @@ async function init() {
     }
   });
 
-  // ── 启动 5s 后静默检查更新（不弹窗、不抢焦点） ──
-  // 延迟是为了让首屏数据先到位，不要跟初始拉取抢资源
-  // M6 fix: 存 handle 到 module-scope，beforeunload 清理。dev hot-reload 之前会泄漏。
-  const updateTimer = window.setTimeout(() => {
-    checkForUpdate(/* silent */ true)
-      .then((s) => {
-        if (s.status === "available" && s.version) {
-          console.info(`[updater] 新版本 v${s.version} 可用，请到设置面板查看`);
-        } else if (s.status === "error") {
-          // 静默检查时错误只 log，不打扰用户（离线/没配 pubkey 都会触发）
-          console.debug(`[updater] 静默检查失败: ${s.error}`);
-        }
-      })
-      .catch((e) => console.debug("[updater] 静默检查异常", e));
-  }, 5000);
-
-  // ── 订阅 updater 状态：托盘气泡 / 设置面板 banner 可以挂这里 ──
-  onUpdateState((s) => {
-    if (s.status === "error") {
-      console.warn(`[updater] ${s.error}`);
-    }
-  });
+  // ── v0.2.0 不再自动检查更新 —— 升级走"用户手动下 dmg/nsis 装"路径 ──
 
   // 读取用户选的置顶/置底模式 + 省电模式初始状态。
   // PinBottom 模式下，监听 mouseenter/mouseleave 让后端临时切到 always-on-top。
@@ -1294,7 +1272,6 @@ async function init() {
     if (unlistenCfg) unlistenCfg();
     if (unlistenPinMode) unlistenPinMode();
     if (countdownTimer !== null) clearInterval(countdownTimer);
-    window.clearTimeout(updateTimer);  // M6 fix
     // 2026-06-20 audit: 配对 remove body mouseenter/mouseleave
     document.body.removeEventListener("mouseenter", onBodyMouseEnter);
     document.body.removeEventListener("mouseleave", onBodyMouseLeave);

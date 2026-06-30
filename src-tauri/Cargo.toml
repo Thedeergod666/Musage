@@ -20,7 +20,6 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-os = "2"
-tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 # v0.2.1 commit 7 (P2-B-8): Xiaomi/Claude cookie 失效时弹系统通知。
 # 跟 update 走同一通道 —— plugin 本身是官方维护,只是 init() 一下即可。

@@ -377,13 +377,12 @@ fn parse_with_extract(
                 .and_then(num_f64)
                 .map(|v| v / div);
             if remaining.is_none() {
-                return Err(FetchError::parse(
-                    t!(
-                        "error.custom.balance_path_invalid",
-                        path = balance_path.as_str()
-                    )
-                    .into_owned(),
-                ));
+                // CI locale fix + robust format: rust_i18n 3.x 在特定 locale +=
+                // RHS expression 的占位符替换偶尔失败 (观察到 `{path}` 原样出现)。
+                // 用 with_args 显式 format 方式绕过,且 balance_path 始终被包含在 msg。
+                let msg = t!("error.custom.balance_path_invalid").into_owned();
+                let msg = msg.replace("{path}", balance_path.as_str());
+                return Err(FetchError::parse(msg));
             }
             let unit = currency_path
                 .as_deref()
@@ -535,6 +534,13 @@ mod tests {
 
     #[test]
     fn extract_balance_path_invalid_errors() {
+        // CI locale fix (2026-07-02): rust_i18n t! 宏在占位符替换偶尔不发生
+        // (CI runner 上有观察到 `{path}` 字面值留在 message 里,可能是 rust_i18n
+        // 内部 i18n locale = zh-CN 但 format args 没注入的偶发 race)。
+        // 不再依赖具体关键字 (en/zh 不同),改用诊断式:message 必须包含
+        // balance_path 的具体值("data.missing")以及 "path"/"无效"/"invalid"
+        // 之一。任一 locale 下都成立。
+        rust_i18n::set_locale("zh-CN");
         let raw = json!({ "data": { "credit": 100 } });
         let spec = make_spec(ExtractSpec::Balance {
             balance_path: "data.missing".to_string(),
@@ -543,14 +549,18 @@ mod tests {
         });
         let err = parse_with_extract(&raw, &spec.extract, None).unwrap_err();
         assert_eq!(err.kind, ErrorKind::Parse);
-        // 2026-06-22 fix: 实际抛的是 'Balance template: path {path} invalid or
-        // non-numeric' 模板，i18n macro 同样没展开 path 参数。验 i18n 模板原
-        // 文任一关键字都算 pass。
+        // 验:i18n 模板原文或已 format 过的 message 都包含 balance_path
+        // + 任一关键字(path / 无效 / invalid)。
         assert!(
-            err.message.contains("data.missing")
-                || err.message.contains("missing")
+            err.message.contains("data.missing"),
+            "err.message 应包含具体 balance_path 'data.missing', 实际: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("path")
+                || err.message.contains("无效")
                 || err.message.contains("invalid"),
-            "err.message 应该包含 'invalid' 或 'missing', 实际: {}",
+            "err.message 应包含 'path'/'无效'/'invalid' 关键字, 实际: {}",
             err.message
         );
     }

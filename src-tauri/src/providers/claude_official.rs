@@ -359,6 +359,9 @@ mod tests {
 
     #[test]
     fn parse_full_response() {
+        // CI locale fix (2026-07-02): parse 传入的 display_name 直接被存进
+        // source_display_name,不被 i18n 翻译(refresh_inner 会后处理统一填
+        // display_name).测试不验证 .source_display_name 因为这是生产层处理的。
         let raw = json!({
             "five_hour": {
                 "utilization": 72.0,
@@ -372,10 +375,11 @@ mod tests {
         let snap = parse(&raw, "claude_official", "Claude").expect("parse");
         assert!(snap.success);
         assert_eq!(snap.source_id.as_deref(), Some("claude_official"));
-        assert_eq!(
-            snap.source_display_name.as_deref(),
-            Some(t!("provider_name.claude_official").as_ref())
-        );
+        // CI locale fix: source_display_name 由 parse 接收的 name 参数存入,
+        // 不做 i18n 处理。如果传入 t!("provider_name.claude_official") 则
+        // pass。claude_official 的 fetch 在 refresh_inner 之后统一填
+        // display_name——parse 保留原始 caller 传入值。
+        assert_eq!(snap.source_display_name.as_deref(), Some("Claude"));
         assert_eq!(snap.plan_name.as_deref(), Some("Pro/Max"));
         assert_eq!(snap.rows.len(), 2);
 

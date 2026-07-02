@@ -433,6 +433,13 @@ mod tests {
 
     #[test]
     fn parse_new_plan_two_tiers() {
+        // CI locale fix (2026-07-02): rust_i18n 默认 locale = en,所以 parse 传
+        // 入的 display_name 直接存到 source_display_name 不做 i18n 翻译。测试
+        // 期望 parse 传 t!("provider_name.zhipu_cn") (即调用 print) 但现传
+        // "Zhipu GLM" (硬编码) → 比较时用硬编码值。
+        // 未来可以把测试改成 set_locale("zh-CN") + 传 t!(...) 两路对等核对,
+        // 目前改 assert 用 caller 传的原始值以匹配 parse 的语义。
+        rust_i18n::set_locale("zh-CN");
         let raw = json!({
             "success": true,
             "data": {
@@ -448,10 +455,9 @@ mod tests {
         assert!(snap.success);
         assert_eq!(snap.source_id.as_deref(), Some("zhipu"));
         assert_eq!(snap.plan_name.as_deref(), Some("pro"));
-        assert_eq!(
-            snap.source_display_name.as_deref(),
-            Some(t!("provider_name.zhipu_cn").as_ref())
-        );
+        // CI locale fix: parse 不接受 i18n,传什么就存什么。
+        // 传入 "Zhipu GLM" 比较 "Zhipu GLM"。
+        assert_eq!(snap.source_display_name.as_deref(), Some("Zhipu GLM"));
         assert_eq!(snap.rows.len(), 2);
 
         let five_h = &snap.rows[0];
@@ -600,7 +606,9 @@ mod tests {
 
     #[test]
     fn parse_region_en_uses_international_label() {
-        // 验证 region 切换影响 source_display_name（CN = "智谱 GLM", EN = "Z.ai"）
+        // CI locale fix (2026-07-02): parse 传 display_name 存原文不翻译。
+        // 测试验证 parse 传什么→存什么,用值 const val 而非 t!(...) i18n hash。
+        // 验证 region 切换影响 source_display_name（CN = "Zhipu GLM", EN = "Z.ai"）
         let raw = json!({
             "success": true,
             "data": {
@@ -611,10 +619,8 @@ mod tests {
             }
         });
         let snap_cn = parse(&raw, ZhipuRegion::Cn, "zhipu", "Zhipu GLM").expect("parse_cn");
-        assert_eq!(
-            snap_cn.source_display_name.as_deref(),
-            Some(t!("provider_name.zhipu_cn").as_ref())
-        );
+        // CI locale fix: parse 传 display_name 存原文—— "Zhipu GLM" 不翻译
+        assert_eq!(snap_cn.source_display_name.as_deref(), Some("Zhipu GLM"));
         let snap_en = parse(&raw, ZhipuRegion::En, "zhipu", "Z.ai").expect("parse_en");
         assert_eq!(snap_en.source_display_name.as_deref(), Some("Z.ai"));
         // 数据本身一致，只有 display name 不同

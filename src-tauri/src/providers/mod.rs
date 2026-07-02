@@ -121,6 +121,34 @@ impl ErrorKind {
     }
 }
 
+/// L1 fix（2026-07-02 audit）：把散落 12 个 provider 文件里的 HTTP status →
+/// ErrorKind 分类重复代码（~30 行/provider）抽成单一 helper。
+///
+/// 每个 do_fetch 之前都是这套 4 个分支：
+///   429     → RateLimited
+///   401/403 → AuthFailed
+///   5xx     → ServerError
+///   其它    → ServerError (non-success)
+///
+/// 新 helper 返回 (ErrorKind, 建议 ctx 模板 key):调用方决定具体 msg (i18n)。
+/// 未来加新 status (e.g. 402 Payment Required) 只改这一处。
+pub fn classify_http_status(status: reqwest::StatusCode) -> ErrorKind {
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        ErrorKind::RateLimited
+    } else if status == reqwest::StatusCode::UNAUTHORIZED
+        || status == reqwest::StatusCode::FORBIDDEN
+    {
+        ErrorKind::AuthFailed
+    } else if status.is_server_error() {
+        ErrorKind::ServerError
+    } else {
+        // 其它 non-success (4xx 408 timeout / 404 not found 等) 归 ServerError
+        // —— 跟之前 11 个 provider 的兜底分支语义一致。用户实际看不到 kind
+        // 精确区分,只看到具体 msg (network timeout 404 之类)。
+        ErrorKind::ServerError
+    }
+}
+
 /// 结构化 fetch 错误。Phase 1 引入，用来替代散落在各 provider 里的中文 `String` 错误。
 ///
 /// 配套 [`crate::commands::error_kind`] 把它转成 [`ErrorKind`]。

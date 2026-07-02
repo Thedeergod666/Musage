@@ -79,22 +79,56 @@ pub fn start(app: AppHandle) {
             // 清理已完成/panic 的 task —— JoinSet 拿掉 finished task，panic 也
             // 算 finished（await JoinHandle 会返 Err）。2026-06-20 audit：
             // 之前完全 fire-and-forget 累积 panic task。
+            //
+            // L2 fix（2026-07-02 audit）：之前用 `while let Some(res) = set.try_join_next()`
+            // 连续消费所有完成 task,极端场景(网络恢复后 12 provider 同时完成)
+            // 持锁时间随 task 数线性增长。改为:每次循环最多 batch_size 个,
+            // drop 锁让其它 spawn 路径(spawn 本身也要拿 in_flight 锁)有机会执行。
+            // 5 是一个保守上限:典型 0-3 task/s 完成,大部分 tick 一次 try_join_next
+            // 就只清 0-1 task。
+            let batch_size: usize = 5;
             {
                 let mut set = in_flight().lock().unwrap_or_else(|e| {
                     tracing::warn!("poller IN_FLIGHT mutex poisoned, recovering");
                     e.into_inner()
                 });
-                while let Some(res) = set.try_join_next() {
-                    if let Err(e) = res {
-                        if e.is_panic() {
-                            tracing::error!(panic = ?e.into_panic(), "poller spawned task panic（已清理）");
+                for _ in 0..batch_size {
+                    match set.try_join_next() {
+                        Some(Ok(())) => {}
+                        Some(Err(e)) if e.is_panic() => {
+                            tracing::error!(
+                                panic = ?e.into_panic(),
+                                "poller spawned task panic（已清理）"
+                            );
                         }
+                        Some(Err(_)) => {}
+                        None => break,
                     }
                 }
             }
             let now = Instant::now();
 
             // H1: 同上,改用 all_sources(&state)——custom source 必须能被轮询
+            //
+            // H2 fix: 清理 next_fetch 里已不存在的 source 条目。
+            // delete_extra_instance 后 extras 列表少了条目,poller 不再调度
+            // 它,但 next_fetch HashMap 里仍有该 unique_id 的 entry 只增不删,
+            // 长时间频繁 add/delete 会泄漏。每次 tick 先算当前所有 unique_id,
+            // 把不在 set 里的 entry 从 next_fetch 删掉 (用 retain 一次完成)。
+            let live_sources: std::collections::HashSet<String> = {
+                let mut set = std::collections::HashSet::new();
+                for src in all_sources(&state).await {
+                    set.insert(src.unique_id());
+                }
+                set
+            };
+            // L2 fix: 跟 try_join_next 的 lock 处理对称 ——
+            // 单次 batch 删除所有 stale entries 后立刻 drop 锁,避免保留锁进
+            // 长 for 循环(下面 for src 是大批量 source)。
+            if next_fetch.len() > live_sources.len() {
+                next_fetch.retain(|k, _| live_sources.contains(k));
+            }
+
             for src in all_sources(&state).await {
                 // PR 1a：用 unique_id() 做 map key（决策 1：id() 共享 base）
                 let unique = src.unique_id();

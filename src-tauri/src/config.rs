@@ -350,6 +350,95 @@ const fn default_show_in_tray_on_close() -> bool {
     true
 }
 
+/// 给定 provider id 返回一份"最小合理的" ProviderConfig 兜底。
+///
+/// C1 fix: 之前 `migrated()` 对非 minimax/deepseek/xiaomimimo 的 id 走
+/// `unreachable!()`，老 config.json 升级 v0.2.0 第一次 load 会 panic。改用
+/// helper 一次性给所有 builtin id 兜底：
+/// - `minimax`     —— 保留 `region = Some(Cn)`（首次默认国内）
+/// - `xiaomimimo`  —— 保留 `xiaomi_region = Some(Cn)`
+/// - 其它          —— 默认值即可，endpoint 等顶层字段由各自 provider 的
+///                    默认值兜底（zenmux → Payg / zhipu → Cn 等）
+fn default_provider_config(id: &str) -> ProviderConfig {
+    match id {
+        "minimax" => ProviderConfig {
+            enabled: true,
+            region: Some(Region::Cn),
+            xiaomi_region: None,
+            refresh_interval_secs: None,
+            xiaomi_display_mode: None,
+        },
+        "xiaomimimo" => ProviderConfig {
+            enabled: true,
+            region: None,
+            xiaomi_region: Some(XiaomiRegion::Cn),
+            refresh_interval_secs: None,
+            xiaomi_display_mode: None,
+        },
+        _ => ProviderConfig {
+            enabled: true,
+            region: None,
+            xiaomi_region: None,
+            refresh_interval_secs: None,
+            xiaomi_display_mode: None,
+        },
+    }
+}
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        let mut providers = BTreeMap::new();
+        // 11 个 builtin id 全部走 helper —— 跟 migrated() 保持单一来源。
+        for id in [
+            "minimax",
+            "deepseek",
+            "xiaomimimo",
+            "tavily",
+            "zenmux",
+            "openrouter",
+            "kimi",
+            "zhipu",
+            "stepfun",
+            "siliconflow",
+            "claude_official",
+        ] {
+            providers.insert(id.to_string(), default_provider_config(id));
+        }
+        Self {
+            schema_version: CURRENT_SCHEMA_VERSION,
+            providers,
+            refresh_interval_secs: 60,
+            floating_x: None,
+            floating_y: None,
+            floating_w: None,
+            floating_h: None,
+            floating_pin_mode: FloatingPinMode::default(),
+            autostart: false,
+            show_in_tray_on_close: true,
+            low_power_mode: false,
+            auto_hide_in_fullscreen: false,
+            tavily_concise_mode: true,
+            show_footer_hint: false,
+            provider_order: Vec::new(),
+            schema_overrides: BTreeMap::new(),
+            // 4 个 source-specific 设置：None 让 source 内部用各自的默认值
+            // (zenmux → Payg / zhipu → Cn / zenmux_payg_concise → true / base_url → 内置 URL)
+            zenmux_base_url: None,
+            zenmux_mode: None,
+            zenmux_payg_concise_mode: None,
+            zhipu_region: None,
+            tray_icon_style: TrayIconStyle::default(),
+            color_thresholds: default_color_thresholds(),
+            wallet_alert_threshold: None,
+            color_overrides: BTreeMap::new(),
+            // P0 老用户走 zh-CN，海外用户通过 P2 向导切到 en
+            locale: default_locale(),
+            // P2 首次启动默认 Cn（保持现有用户体验），用户主动切区域后变 Custom
+            user_region: UserRegion::default(),
+        }
+    }
+}
+
 /// 单个 tier（5h / 周 / 月等）的字段名 overrides
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TierOverrides {
@@ -386,87 +475,6 @@ pub struct ProviderOverrides {
     #[serde(default)]
     pub monthly: TierOverrides,
 }
-
-impl Default for AppConfig {
-    fn default() -> Self {
-        let mut providers = BTreeMap::new();
-        providers.insert(
-            "minimax".to_string(),
-            ProviderConfig {
-                enabled: true,
-                region: Some(Region::Cn),
-                xiaomi_region: None,
-                refresh_interval_secs: None,
-                xiaomi_display_mode: None,
-            },
-        );
-        providers.insert(
-            "deepseek".to_string(),
-            ProviderConfig {
-                enabled: true,
-                region: None,
-                xiaomi_region: None,
-                refresh_interval_secs: None,
-                xiaomi_display_mode: None,
-            },
-        );
-        providers.insert(
-            "xiaomimimo".to_string(),
-            ProviderConfig {
-                enabled: true,
-                region: None,
-                xiaomi_region: Some(XiaomiRegion::Cn),
-                refresh_interval_secs: None,
-                xiaomi_display_mode: None,
-            },
-        );
-        // Phase 1: Tavily 作为第一个非 AI provider，默认 enabled。
-        // 没有 region 概念，所以 region/xiaomi_region 都 None。
-        providers.insert(
-            "tavily".to_string(),
-            ProviderConfig {
-                enabled: true,
-                region: None,
-                xiaomi_region: None,
-                refresh_interval_secs: None,
-                xiaomi_display_mode: None,
-            },
-        );
-        Self {
-            schema_version: CURRENT_SCHEMA_VERSION,
-            providers,
-            refresh_interval_secs: 60,
-            floating_x: None,
-            floating_y: None,
-            floating_w: None,
-            floating_h: None,
-            floating_pin_mode: FloatingPinMode::default(),
-            autostart: false,
-            show_in_tray_on_close: true,
-            low_power_mode: false,
-            auto_hide_in_fullscreen: false,
-            tavily_concise_mode: true,
-            show_footer_hint: false,
-            provider_order: Vec::new(),
-            schema_overrides: BTreeMap::new(),
-            // 4 个 source-specific 设置：None 让 source 内部用各自的默认值
-            // (zenmux → Payg / zhipu → Cn / zenmux_payg_concise → true / base_url → 内置 URL)
-            zenmux_base_url: None,
-            zenmux_mode: None,
-            zenmux_payg_concise_mode: None,
-            zhipu_region: None,
-            tray_icon_style: TrayIconStyle::default(),
-            color_thresholds: default_color_thresholds(),
-            wallet_alert_threshold: None,
-            color_overrides: BTreeMap::new(),
-            // P0 老用户走 zh-CN，海外用户通过 P2 向导切到 en
-            locale: default_locale(),
-            // P2 首次启动默认 Cn（保持现有用户体验），用户主动切区域后变 Custom
-            user_region: UserRegion::default(),
-        }
-    }
-}
-
 impl AppConfig {
     /// 从磁盘加载；不存在或损坏则返回默认
     /// 损坏时：**先备份**原文件到 `config.json.bak.<ts>` 再返回 Ok(default)，
@@ -605,32 +613,15 @@ impl AppConfig {
             "siliconflow",
             "claude_official",
         ] {
+            // C1 fix: 之前的 match 只对 3 个内置 provider 加 ProviderConfig,
+            // 其它 8 个走 `_ => unreachable!()`。老 config.json 升级到 v0.2.0
+            // 第一次 load 时, migrated() 遍历到 tavily/zenmux/openrouter/
+            // kimi/zhipu/stepfun/siliconflow/claude_official 就会 panic,
+            // 把整个进程带走。改为对所有内置 id 提供最小 ProviderConfig
+            // 兜底(minimax 保留 region 字段).
             self.providers
                 .entry(p.to_string())
-                .or_insert_with(|| match p {
-                    "minimax" => ProviderConfig {
-                        enabled: true,
-                        region: Some(Region::Cn),
-                        xiaomi_region: None,
-                        refresh_interval_secs: None,
-                        xiaomi_display_mode: None,
-                    },
-                    "deepseek" => ProviderConfig {
-                        enabled: true,
-                        region: None,
-                        xiaomi_region: None,
-                        refresh_interval_secs: None,
-                        xiaomi_display_mode: None,
-                    },
-                    "xiaomimimo" => ProviderConfig {
-                        enabled: true,
-                        region: None,
-                        xiaomi_region: Some(XiaomiRegion::Cn),
-                        refresh_interval_secs: None,
-                        xiaomi_display_mode: None,
-                    },
-                    _ => unreachable!(),
-                });
+                .or_insert_with(|| default_provider_config(p));
         }
         self
     }
@@ -770,9 +761,12 @@ impl AppConfig {
 }
 
 /// 启动时清理上次崩溃留下的孤儿 .tmp 文件（在 cfg_dir 下扫 `*.tmp`）。
-/// 不阻塞启动；最佳努力。覆盖 keys.json / custom_sources.json / app_log.jsonl
-/// 三种 atomic-write 副产物。**2026-06-20 audit**：之前只匹配 `*.json.tmp`，
-/// logstore 的 `app_log.jsonl.tmp` 孤儿永远不被清理。
+/// 不阻塞启动；最佳努力。
+///
+/// L3 fix（2026-07-02 audit）: 之前只匹配 `*.json.tmp` / `*.jsonl.tmp`,新增
+/// 文件类型(例如未来加 .toml.tmp)孤儿不会被清理。改为:任何 extension 的
+/// `*.tmp` 文件都清。误删概率极低(cfg 目录下不应该有真用户 `.tmp` 文件)
+/// 但万一有的话,会一并删掉 —— 这是 bug 修法而不是 cleanup 收紧。
 pub fn cleanup_orphan_tmp_files() {
     let Ok(dir) = config_dir() else { return };
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -780,12 +774,8 @@ pub fn cleanup_orphan_tmp_files() {
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        let is_tmp = path.extension().and_then(|e| e.to_str()) == Some("tmp");
-        let is_known_orphan = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.ends_with(".json.tmp") || n.ends_with(".jsonl.tmp"));
-        if is_tmp && is_known_orphan {
+        // L3 fix: 改成"任何 .tmp"扩展名,不再硬编码 .json.tmp / .jsonl.tmp
+        if path.extension().and_then(|e| e.to_str()) == Some("tmp") {
             tracing::info!(path = %path.display(), "清理孤儿 .tmp");
             let _ = std::fs::remove_file(&path);
         }

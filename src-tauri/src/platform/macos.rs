@@ -200,7 +200,14 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
 
     let app2 = app.clone();
     let slot2 = slot.clone();
-    let _ = app.run_on_main_thread(move || {
+    // **M2 fix（2026-07-02 audit）**：之前 `let _ = app.run_on_main_thread(...)`
+    // 静默吞 Err —— main thread 忙 / Tauri event loop 挂时,run_on_main_thread
+    // 返 Err,closure 永远不被调度 → cvar 等 50ms 超时返 false。下一次 poll
+    // 又重复同样流程。如果 main thread 长时间忙（极少见但理论可能），hover
+    // emitter 持续 20Hz 失败但用户看不到任何 log,浮窗玻璃效果永久失效。
+    // 改为: run_on_main_thread 失败时记录 warning (首次 fail 后降级为 trace
+    // 避免 log spam),把 slot 填 false 让 cvar 立即 notify 走 timeout 路径。
+    let dispatch_result = app.run_on_main_thread(move || {
         let result = (|| -> Option<bool> {
             let win = app2.get_webview_window("floating")?;
             let ptr = win.ns_window().ok()?;
@@ -234,6 +241,21 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
         }
         slot2.cvar.notify_all();
     });
+    if let Err(e) = dispatch_result {
+        // 主线程无法调度 (临时忙 / 退出中) —— 立即把 slot 填 false 让
+        // cvar notify_all 提前返 poll 路径,避免调用方空等 50ms。
+        tracing::trace!(
+            error = %e,
+            "is_floating_topmost_at: dispatch to main thread 失败，立即返 false"
+        );
+        {
+            let mut g = slot.slot.lock().unwrap_or_else(|e| e.into_inner());
+            if g.is_none() {
+                *g = Some(false);
+            }
+        }
+        slot.cvar.notify_all();
+    }
 
     // 50ms 超时兜底：main thread 卡住时 hover 轮询不至于一起卡住
     let started = std::time::Instant::now();

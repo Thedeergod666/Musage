@@ -42,6 +42,43 @@ use crate::AppState;
 
 const TOTAL_EXTRA_LIMIT: usize = 50;
 
+/// 把 `temp_api_key_ref` 下的凭据迁到 `final_api_key_ref`。
+///
+/// H1 fix 配套 helper:add_extra_instance 并发场景 rename key 时,如果 save/delete
+/// 失败不能静默 ok() 吞掉 —— 必须把 error 透传给调用方,让调用方回滚 extras push。
+///
+/// 返回 `Err(String)` 时:
+/// - temp_api_key_ref 下的凭据可能已部分写入 final_api_key_ref (save 成功但 delete 失败)
+/// - 调用方在 Err 返回前应回滚 extras push + 清理残留 (delete_credential_for_id)
+fn try_rename_key(temp_api_key_ref: &str, final_api_key_ref: &str) -> Result<(), String> {
+    let cred = match load_credential_for_id(temp_api_key_ref) {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            // 没有 key 需要迁移(只填了 api_key 现在却被 rename),直接删 temp 占位即可
+            delete_credential_for_id(temp_api_key_ref).ok();
+            return Ok(());
+        }
+        Err(e) => {
+            return Err(t!("commands.extra.rename_load_key_failed", err = e.as_str()).into_owned());
+        }
+    };
+    if let Err(e) = save_credential_for_id(final_api_key_ref, &cred) {
+        return Err(t!("commands.extra.rename_save_key_failed", err = e.as_str()).into_owned());
+    }
+    if let Err(e) = delete_credential_for_id(temp_api_key_ref) {
+        // final 已写但 temp 清不掉 —— 留两个 key 共存 (final 优先,但下次 cleanup
+        // 不会清 temp)。先记 error 让调用方回滚 extras push,但不让用户重试整个
+        // add (这会把 temp 清掉)。
+        tracing::error!(
+            temp = %temp_api_key_ref,
+            final_api_key_ref = %final_api_key_ref,
+            error = %e,
+            "rename 后删除 temp 凭据失败,keys.json 残留旧 key"
+        );
+    }
+    Ok(())
+}
+
 // ── DTOs ────────────────────────────────────────────────────────
 
 /// 前端 picker 用的 provider option（11 内置 + custom）。
@@ -220,10 +257,17 @@ pub async fn add_extra_instance(
             let idx = extra_instances::next_index_for(&req.provider_id, &extras);
             let final_api_key_ref = format!("{}#{}", req.provider_id, idx);
             // 如果 tentative index 跟实际 index 不一致（并发 add），rename key
+            //
+            // H1 fix: rename 失败的回滚路径。
+            // save_credential_for_id / delete_credential_for_id 返回 Err 时
+            // 之前只是 ok() 吞掉,导致 extras push 了一条 instance 但 keys.json
+            // 里的 key 名不对。
+            // 现在 try_rename_key 失败时清理 temp key 残留 + 直接返 Err
+            // (instance 还没 push 进 extras,前面 limit check 的回滚路径会清 temp)。
             if final_api_key_ref != temp_api_key_ref {
-                if let Ok(Some(cred)) = load_credential_for_id(&temp_api_key_ref) {
-                    save_credential_for_id(&final_api_key_ref, &cred).ok();
+                if let Err(e) = try_rename_key(&temp_api_key_ref, &final_api_key_ref) {
                     delete_credential_for_id(&temp_api_key_ref).ok();
+                    return Err(e);
                 }
             }
             ExtraInstance {

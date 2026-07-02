@@ -45,6 +45,7 @@
       "rate_limited_with_retry": "{provider} 请求过于频繁，约 {retry_secs} 秒后可重试",
       "url_scheme_invalid": "URL 必须以 https:// 开头（拒绝明文 / file:// / javascript: 等）。当前值：{url}",
       "no_credential": "未配置凭据（设置面板填入）",
+      "no_credential_with_provider": "未配置 {provider} 凭据（设置面板填入）",
       "missing_data_field": "{provider} 响应缺少 data 字段",
       "missing_field_generic": "响应缺少 {field} 字段",
       "read_keys_failed": "读 keys.json 失败: {err}",

@@ -27,6 +27,11 @@
 //! 一个提取任务在运行，后续触发直接跳过，避免多任务竞争同一个 webview
 //! 窗口导致 "failed to receive message from webview" 错误。
 //!
+//! H3 fix: 任务 panic 时 EXTRACTING 永久留在 true → 用户再点登录按钮后
+//! compare_exchange 永远失败 → 登录永远卡住。修法:用 RAII `ExtractingGuard`
+//! 在 future 末尾 Drop 时无条件 reset EXTRACTING。tokio task panic 时 local
+//! variables 仍然被 Drop(run by panic unwinding) → guard 兜底。
+//!
 //! ## Cookie 白名单
 //!
 //! 不在白名单里的 cookie 一律丢弃（最小权限）。
@@ -53,6 +58,21 @@ static EXTRACTING: AtomicBool = AtomicBool::new(false);
 /// "failed to receive message from webview" 错误——窗口被第一个成功
 /// 任务关闭后，后续回调不再尝试操作已销毁的 webview。
 static DONE: AtomicBool = AtomicBool::new(false);
+
+/// RAII guard: Drop 时无条件 reset `EXTRACTING`。
+///
+/// H3 fix: tokio spawn 的 task panic 时,虽然 tokio 自己会打印 panic 信息 +
+/// propagate 给 spawn handle,但我们 spawn 时没 await handle → panic 后
+/// task 内部的局部变量仍被 Drop (Rust unwinding 时跑 Drop glue)。把
+/// EXTRACTING reset 放在 Drop 里 —— 任意路径退出(正常返回/Err/panic)
+/// 都会清掉锁,保证下次用户点登录能 compare_exchange 成功。
+struct ExtractingGuard;
+
+impl Drop for ExtractingGuard {
+    fn drop(&mut self) {
+        EXTRACTING.store(false, Ordering::SeqCst);
+    }
+}
 
 /// 登录入口 URL。直接定位到 dashboard 的"订阅管理"页。
 const LOGIN_URL: &str = "https://platform.xiaomimimo.com/console/plan-manage";
@@ -144,7 +164,14 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
             let app2 = app_for_callback.clone();
             let window_clone = window.clone();
             tauri::async_runtime::spawn(async move {
+                // H3 fix: 用 RAII guard 兜底 —— spawn 的 task panic 时
+                // Rust 仍会跑局部变量的 Drop glue (除非 panic = abort 但
+                // tokio 默认 unwind)。guard 在任意路径退出(正常返回/Err/panic)
+                // 都会被 Drop,强制 reset EXTRACTING,保证下次用户点登录
+                // compare_exchange 永远能成功。
+                let _extracting_guard = ExtractingGuard;
                 let result = extract_with_retry(&window_clone, &app2).await;
+                // 显式 store 保留显式锁语义给阅读者,guard 是 panic 兜底。
                 EXTRACTING.store(false, Ordering::SeqCst);
 
                 match result {

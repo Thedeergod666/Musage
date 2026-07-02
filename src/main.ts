@@ -289,6 +289,25 @@ function contentFingerprint(snap: QuotaSnapshot): string {
 const LAST_GOOD_TTL_MS = 5 * 60 * 1000;
 const lastGoodSnap = new Map<string, { snap: ProviderSnapshot; at: number }>();
 
+/// **M5 fix（2026-07-02 audit）**：保留前的清理逻辑只在 render() 里跑 —— 用户
+/// 关掉某 provider 且浮窗 30min 没 render（poller 退避回退期间），TTL 过期
+/// 的 entry 永久占用内存。改为：每 60s 主动扫一遍,删掉所有 TTL 过期的 entry。
+/// 与 render() 里的 presentKeys 清理互补 —— 那条 cover "已被关掉的 provider 的 stale"，
+/// 本 setInterval cover "TTL 过期但 provider 还在跑的 stale"。
+function purgeStaleLastGoodSnap(): void {
+  const now = Date.now();
+  let removed = 0;
+  for (const [k, entry] of lastGoodSnap) {
+    if (now - entry.at >= LAST_GOOD_TTL_MS) {
+      lastGoodSnap.delete(k);
+      removed++;
+    }
+  }
+  if (removed > 0 && typeof console !== "undefined") {
+    console.debug(`purged ${removed} stale lastGoodSnap entries`);
+  }
+}
+
 /// 上一次 fit-to-content 时的"可见结构"指纹。
 /// 内容数据刷新（utilization / countdown）不改变这个值 → auto-resize 跳过，
 /// 保留用户手动改的窗口高度。结构变化（卡片增删 / 新错误 / 行数变化）才
@@ -893,6 +912,11 @@ function updateFoot(snap: QuotaSnapshot) {
 function startCountdown() {
   if (countdownTimer !== null) clearInterval(countdownTimer);
   countdownTimer = window.setInterval(updateCountdowns, 1000);
+  // M5 fix: 周期性清理 lastGoodSnap 里 TTL 过期的 stale entries。
+  // 与 render() 的 presentKeys 删除互补 —— setInterval 跑在没 render() 的
+  // 退避期间也工作。60s 间隔,典型 lastGoodSnap < 12 provider,
+  // 每次扫 ~微秒级。
+  setInterval(purgeStaleLastGoodSnap, 60_000);
 }
 
 function updateCountdowns() {
@@ -971,7 +995,12 @@ function formatResetWithCountdown(ms: number, prefix: string): string {
   }
   const hours = Math.floor(minutes / 60);
   const mins = minutes % 60;
-  return `${prefix} ${time}${t("floating.countdown.hours_minutes", { hours, minutes: pad2(mins) })}`;
+  // L4 fix: 之前传 pad2(mins) 字符串,模板里 "{minutes}" 当字符串拼接用没差,
+  // 但如果未来有 locale 需要数字格式化(阿拉伯数字 / 泰语 digit shaping 等)
+  // 字符串插值就会失效。传 number 让 i18n 库(i18next)按 locale 的 numberFormat
+  // 规则自己格式化 — 模板里写 {minutes, number} 也行(number formatter),
+  // 但默认 {{minutes}} 也接受 number。
+  return `${prefix} ${time}${t("floating.countdown.hours_minutes", { hours, minutes: mins })}`;
 }
 
 function pad2(n: number): string {

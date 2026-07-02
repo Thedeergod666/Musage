@@ -141,10 +141,27 @@ pub async fn set_provider_enabled(
             if !already_present {
                 let mut placeholder = ProviderSnapshot::placeholder(&state_arc, &id).await;
                 // **B-NEW-10（2026-06-19 audit）**：placeholder 默认 next_fetch_at=None，
-                // 浮窗错误卡片显示"未知"倒计时。填上 ~5s 默认值（典型 HTTP fetch
-                // 耗时），让用户看到"~5s 后取数"的进度。fetch 完成后 refresh_single_inner
-                // 自己会 emit 真 snapshot 替换 placeholder。
-                placeholder.next_fetch_at = Some(chrono::Utc::now().timestamp_millis() + 5_000);
+                // 浮窗错误卡片显示"未知"倒计时。
+                //
+                // H4 fix: 填的 5s 默认值在 backoff 持续 30min 时会让浮窗显示
+                // "5s 后取数"但实际要等 30min (退避窗口) → UI 不一致。
+                // 改为: 先查 backoff 拿真实 next_interval; 无 backoff 用 cfg
+                // 默认 refresh_interval (跟 refresh_single_inner 同款策略)。
+                let default_secs = {
+                    let cfg_read = state_arc.config.read().await;
+                    cfg_read
+                        .providers
+                        .get(&id)
+                        .and_then(|p| p.refresh_interval_secs)
+                        .unwrap_or(cfg_read.refresh_interval_secs)
+                        .max(10)
+                };
+                let interval_secs = {
+                    let backoff = state_arc.backoff.read().await;
+                    backoff.next_interval_secs(&id, default_secs)
+                };
+                placeholder.next_fetch_at =
+                    Some(chrono::Utc::now().timestamp_millis() + (interval_secs as i64) * 1000);
                 snap.providers.push(placeholder);
             }
             let cfg2 = state_arc.config.read().await;
@@ -1371,9 +1388,10 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
         },
         None => {
             let kind = ErrorKind::UnconfiguredKey;
-            // H12 fix: 之前硬编码中文。其它错误消息都走 tr!()，这个漏了。
-            // 用 error.common.no_credential 模板（Provider 行追加 "{provider}" 上下文）。
-            let msg = t!("error.common.no_credential").into_owned();
+            // M6 fix: 把 provider id 拼进错误消息,日志/通知里能一眼看到是
+            // 哪个 source 缺 key。之前 t!("error.common.no_credential") 没有
+            // {provider} 占位符,用户看到 "未配置凭据" 不知道是哪个 source。
+            let msg = t!("error.common.no_credential_with_provider", provider = id).into_owned();
             log_provider_error(app, id, kind, &msg);
             ProviderSnapshot::empty_error(
                 &app.state::<AppState>(),

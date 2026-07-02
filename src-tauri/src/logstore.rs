@@ -15,16 +15,20 @@
 //! - 写新条目时 append 文件 + push 到 ring；超 cap 时弹出最旧的（不删除文件旧行，
 //!   下次启动会被 cap 重新截断）
 //!
-//! ## 线程模型
+//! ## 线程模型（M1 fix 2026-07-02）
 //!
-//! 用 `parking_lot::Mutex<VecDeque<...>>` 同步锁（不在 hot path，错误事件频率低）。
-//! 避免与 `tokio::sync::RwLock` 混用产生潜在的死锁。
+//! 把 `inner` 从 `Mutex<VecDeque>` 改成 `Arc<Mutex<VecDeque>>`,允许 background
+//! worker 线程拿一份共享引用(避免 Mutex 跨线程 Send 问题)。所有磁盘 I/O
+//! (append + truncate + clear 时删文件) 通过持久 worker 线程串行处理,
+//! 不阻塞调用方的 ring update。这样极慢盘(NAS / 网盘)也不会让 recent()
+//! 和 clear() 数百 ms 卡顿。
 
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::thread;
 
 use serde::{Deserialize, Serialize};
 
@@ -71,17 +75,19 @@ pub struct LogEntry {
     pub message: String,
 }
 
-/// 进程内全局单例。包成 Mutex<VecDeque<...>> + 文件句柄
-/// （File 不在 Mutex 里 —— 每次写单独 open 即可，简化并发模型）。
+/// 进程内全局单例。`Arc<Mutex<VecDeque>>` 是 M1 fix 的核心 —— 让
+/// background worker 能 clone 一份共享引用做 disk I/O,主线程 push 的
+/// 锁段只覆盖 ring buffer 的内存更新,不阻塞任何 I/O。
+#[derive(Clone)]
 pub struct LogStore {
-    inner: Mutex<VecDeque<LogEntry>>,
+    inner: Arc<Mutex<VecDeque<LogEntry>>>,
 }
 
 impl LogStore {
     /// 新建空 store（不读盘）。
     pub fn new() -> Self {
         Self {
-            inner: Mutex::new(VecDeque::with_capacity(MAX_ENTRIES)),
+            inner: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_ENTRIES))),
         }
     }
 
@@ -107,7 +113,7 @@ impl LogStore {
             }
         }
         Self {
-            inner: Mutex::new(buf),
+            inner: Arc::new(Mutex::new(buf)),
         }
     }
 
@@ -119,55 +125,27 @@ impl LogStore {
     /// 现在 push 达到 cap 时用 ring buffer 内容重写文件（写 tmp + rename，
     /// 原子替换，避免 half-written 坏文件）。
     ///
-    /// **L2 fix（2026-06-19）**：之前文件 IO 在锁外、ring 操作在锁内，
-    /// 与 `clear()`（锁内清 ring + 锁外删文件）形成一个文件-内存不一致窗口：
-    /// push 写完文件后被抢断 → clear 清 ring 并删文件 → push 继续把 entry
-    /// 推进 ring → 文件没了但内存还有一条 → 下次 push 重建文件，孤儿 entry
-    /// 永远不会被序列化。修法：把整个 push（包括文件 IO + ring 更新 + 可选
-    /// truncate）放进同一个锁段。clear 也同样。
+    /// **M1 fix（2026-07-02 audit）**：之前整个 file I/O (OpenOptions::open +
+    /// writeln + 可选 truncate_file 全文件重写) 都在锁内 ——
+    /// 极慢盘(NAS / 网盘 / 机械盘满载)上数百 ms 阻塞,期间 recent() 和
+    /// clear() 全部卡住。改为:锁内只更新 ring (push_back + 可选 pop_front),
+    /// 之后把 entry + needs_truncate flag 一并派到 background worker,
+    /// worker clone 一份 store 引用做磁盘操作。
+    ///
+    /// **L2 fix（2026-06-19）**：append / clear 走同一 channel —— 避免
+    /// clear 删文件 + append 重建文件的"死而复生"竞态。
     pub fn push(&self, entry: LogEntry) {
         let mut g = self.inner.lock().unwrap_or_else(|e| {
             tracing::warn!("logstore mutex poisoned，自动恢复");
             e.into_inner()
         });
-        // 1. 写文件（best-effort，IO 失败不阻塞业务流程）
-        if let Ok(path) = log_path() {
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
-                if let Ok(s) = serde_json::to_string(&entry) {
-                    let _ = writeln!(f, "{}", s);
-                }
-            }
-        }
-
-        // 2. 更新 ring
-        g.push_back(entry);
-        if g.len() > MAX_ENTRIES {
+        g.push_back(entry.clone());
+        let needs_truncate = g.len() > MAX_ENTRIES;
+        if needs_truncate {
             g.pop_front();
-            // H6 fix: 磁盘文件也要同步截断，否则 .jsonl 无限增长。
-            // 用 ring buffer 当前内容重写整个文件（写 tmp + rename 原子替换）。
-            // 锁内调用 truncate_file：失败只 log，不影响内存状态。
-            if let Err(e) = self.truncate_file(&g) {
-                tracing::warn!(error = %e, "logstore truncate_file 失败");
-            }
         }
-    }
-
-    /// 把 ring buffer 内容重写到磁盘（覆盖整个 .jsonl 文件）。
-    /// push 里超过 MAX_ENTRIES 时调用，用 tmp + rename 保证原子。
-    fn truncate_file(&self, ring: &VecDeque<LogEntry>) -> Result<(), String> {
-        let path = log_path()?;
-        let tmp = path.with_extension("jsonl.tmp");
-        let mut f =
-            std::fs::File::create(&tmp).map_err(|e| format!("logstore truncate tmp: {e}"))?;
-        for entry in ring {
-            if let Ok(s) = serde_json::to_string(entry) {
-                let _ = writeln!(f, "{}", s);
-            }
-        }
-        std::fs::rename(&tmp, &path).map_err(|e| format!("logstore truncate rename: {e}"))
+        drop(g);
+        spawn_append_job(self.clone(), AppendJob::Append(entry, needs_truncate));
     }
 
     /// 快照：返回最近 n 条（按时间正序）。n == None → 全部。
@@ -192,18 +170,102 @@ impl LogStore {
 
     /// 清空内存 + 删文件。
     ///
-    /// **L2 fix（2026-06-19）**：和 push 一起放进同一个锁段，避免 push 写文件
+    /// **L2 fix（2026-06-19）**：跟 push 共用同一 channel —— 避免 push 写文件
     /// 后被抢断 + clear 删文件造成的文件-内存不一致窗口。
     pub fn clear(&self) {
-        let mut g = self.inner.lock().unwrap_or_else(|e| {
-            tracing::warn!("logstore mutex poisoned，自动恢复");
-            e.into_inner()
-        });
-        g.clear();
-        if let Ok(path) = log_path() {
-            let _ = std::fs::remove_file(&path);
+        {
+            let mut g = self.inner.lock().unwrap_or_else(|e| {
+                tracing::warn!("logstore mutex poisoned，自动恢复");
+                e.into_inner()
+            });
+            g.clear();
+        }
+        spawn_append_job(self.clone(), AppendJob::ClearMarker);
+    }
+}
+
+// ── Background worker（M1 fix 取代锁内 I/O）────────────────────────
+//
+// 一条持久 std::thread 串行处理 push/clear 的磁盘工作。任意磁盘故障
+// (worst case 几百 ms) 只影响这条后台线程,不阻塞 hot path 的 ring
+// buffer 更新 —— 调用方的 recent() 和 clear() 不再因为磁盘慢而 hang。
+
+#[derive(Debug)]
+enum AppendJob {
+    Append(LogEntry, bool), // entry, needs_truncate
+    ClearMarker,
+}
+
+static APPEND_JOB_TX: OnceLock<std::sync::mpsc::Sender<(LogStore, AppendJob)>> = OnceLock::new();
+
+fn spawn_append_job(store: LogStore, job: AppendJob) {
+    let tx = APPEND_JOB_TX.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<(LogStore, AppendJob)>();
+        thread::Builder::new()
+            .name("musage-logstore-append".into())
+            .spawn(move || {
+                tracing::debug!("logstore 后台 append 线程启动");
+                while let Ok((store, job)) = rx.recv() {
+                    match job {
+                        AppendJob::Append(entry, needs_truncate) => {
+                            if let Err(e) = append_entry(&entry) {
+                                tracing::warn!(error = %e, "logstore 后台 append 失败");
+                            }
+                            if needs_truncate {
+                                // truncate:从 store clone 整份 ring,tmp + rename 重写
+                                let ring = {
+                                    let g = store.inner.lock().unwrap_or_else(|e| {
+                                        tracing::warn!(
+                                            "logstore mutex poisoned (truncate)，自动恢复"
+                                        );
+                                        e.into_inner()
+                                    });
+                                    g.iter().cloned().collect::<Vec<_>>()
+                                };
+                                if let Err(e) = truncate_file_from_ring(&ring) {
+                                    tracing::warn!(error = %e, "logstore 后台 truncate 失败");
+                                }
+                            }
+                        }
+                        AppendJob::ClearMarker => {
+                            if let Ok(path) = log_path() {
+                                let _ = std::fs::remove_file(&path);
+                            }
+                        }
+                    }
+                }
+                tracing::debug!("logstore 后台 append 线程退出");
+            })
+            .expect("启动 logstore 后台 append 线程");
+        tx
+    });
+    let _ = tx.send((store, job));
+}
+
+/// 后台线程实际写的 append 实现。
+fn append_entry(entry: &LogEntry) -> std::io::Result<()> {
+    let path = log_path().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut f = OpenOptions::new().create(true).append(true).open(&path)?;
+    let s = serde_json::to_string(entry)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    writeln!(f, "{}", s)
+}
+
+/// 把 ring buffer 内容重写到磁盘（覆盖整个 .jsonl 文件）。
+/// 后台 truncate 用,频率 ~1/200 pushes,可接受作"次优同步"。
+fn truncate_file_from_ring(ring: &[LogEntry]) -> Result<(), String> {
+    let path = log_path()?;
+    let tmp = path.with_extension("jsonl.tmp");
+    let mut f = std::fs::File::create(&tmp).map_err(|e| format!("logstore truncate tmp: {e}"))?;
+    for entry in ring {
+        if let Ok(s) = serde_json::to_string(entry) {
+            let _ = writeln!(f, "{}", s);
         }
     }
+    std::fs::rename(&tmp, &path).map_err(|e| format!("logstore truncate rename: {e}"))
 }
 
 fn log_path() -> Result<PathBuf, String> {

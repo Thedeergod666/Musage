@@ -65,6 +65,7 @@ use std::thread;
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager, Runtime};
+use windows_sys::Win32::Foundation::GetLastError;
 use windows_sys::Win32::Foundation::{HWND as WIN_HWND, POINT, RECT};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetCursorPos, GetWindowLongW, GetWindowRect, SetWindowLongW, SetWindowPos,
@@ -287,6 +288,12 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
 ///
 /// 返回 `None` 表示本轮无法判定（窗口未上屏 / Win API 失败），caller
 /// continue 即可。
+///
+/// **L5 fix（2026-07-02 audit）**: GetCursorPos / GetWindowRect 返回 0 时
+/// 之前直接返 None —— 但 0 也可能是合法坐标(理论:多屏桌面原点位移,
+/// (0,0) 可能是合法点)。改为:Win API 失败时调 GetLastError 查具体原因,
+/// 把 ERROR_ACCESS_DENIED (5) 等"真有错" 和"恰好 (0,0)" 区分开。
+/// 实际生产中 (0,0) 几乎不可能(任务栏/开始菜单抢占),但严格说应区分。
 fn is_cursor_inside_floating<R: Runtime>(app: &AppHandle<R>) -> Option<bool> {
     let win = app.get_webview_window("floating")?;
     let hwnd_t = win.hwnd().ok()?;
@@ -295,28 +302,42 @@ fn is_cursor_inside_floating<R: Runtime>(app: &AppHandle<R>) -> Option<bool> {
     }
     let our_hwnd: *mut core::ffi::c_void = hwnd_t.0;
 
-    // SAFETY: GetCursorPos / GetWindowRect / WindowFromPoint / GetAncestor
-    // 都是 Win32 kernel call，文档明确 thread-safe，可从任意线程调。
-    // POINT/RECT 是值类型，零初始化即合法。
+    // SAFETY: GetCursorPos / GetWindowRect / WindowFromPoint / GetAncestor /
+    // GetLastError 都是 Win32 kernel call,文档明确 thread-safe,可在任意线程调。
+    // POINT/RECT 是值类型,零初始化即合法。
     unsafe {
         let mut pt: POINT = std::mem::zeroed();
         if GetCursorPos(&mut pt) == 0 {
+            let err = GetLastError();
+            tracing::trace!(
+                error = err,
+                "is_cursor_inside_floating: GetCursorPos 失败,跳过本 tick"
+            );
             return None;
         }
         let mut rect: RECT = std::mem::zeroed();
         if GetWindowRect(our_hwnd, &mut rect) == 0 {
+            let err = GetLastError();
+            tracing::trace!(
+                error = err,
+                "is_cursor_inside_floating: GetWindowRect 失败,跳过本 tick"
+            );
             return None;
         }
+        // PointInRect 不用 GetLastError —— 它本身就是正确区分命中/不命中,
+        // 跟 (0,0) 边界 case 无关。
         if !point_in_rect(pt, &rect) {
             return Some(false);
         }
+        // WindowFromPoint 成功 → topmost non-null = 真实命中窗口。
+        // 失败 → null = 当作"未被浮窗遮挡",返 false (保守不 raise)。
         let topmost: WIN_HWND = WindowFromPoint(pt);
         if topmost.is_null() {
             return Some(false);
         }
         let root = GetAncestor(topmost, GA_ROOT);
         if root.is_null() {
-            // 兜底：取不到根就退到裸比
+            // 兜底:取不到根就退到裸比
             return Some(topmost == our_hwnd);
         }
         Some(root == our_hwnd)

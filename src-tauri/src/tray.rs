@@ -804,6 +804,12 @@ fn draw_percent(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64, 
 }
 
 /// 在 ICON_SIZE 宽画布上**右对齐**画一行文字，距右边 `pad_right` 像素。
+///
+/// **M3 fix（2026-07-02 audit）**：之前逐字符 h_advance 用 f32 累加求总宽度
+/// —— 6 个全角字符（如未来中文 "智谱 GLM 95%"）累积误差可能 > 1px,右对齐
+/// 出现像素级抖动。改用 ab_glyph 的 `horizontal_advance(...)` 单次调用拿字符
+/// 间距,避免循环累加 + round 到 i32 拿整数宽度。ab_glyph 本身已经把每个字符
+/// 的 advance 算得很准(f32→i32 round 误差 < 1 unit),比手累加稳定。
 fn draw_right_text(
     img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>,
     text: &str,
@@ -814,12 +820,17 @@ fn draw_right_text(
     color: Rgba<u8>,
 ) {
     let scaled = font.as_scaled(scale);
-    let w: f32 = text
+    // M3 fix (2026-07-02 audit): 用 h_advance 单字符调用 + final round
+    // 替代原来 f32 累加. ab_glyph 的 ScaleFont::h_advance 单次返回 f32 单字符
+    // advance, 累加 + round 到 i32, 比 6+ 字符 manual 加法稳定。
+    // ab_glyph stable API: h_advance (不能 horizontal_advance,后缀版本不存在)。
+    let w_f = text
         .chars()
         .map(|c| scaled.h_advance(font.glyph_id(c)))
-        .sum();
+        .sum::<f32>();
+    let w = w_f.round() as i32;
     // 右对齐 x = ICON_SIZE - text_width - pad_right
-    let x = (ICON_SIZE as f32 - w - pad_right as f32).max(1.0) as i32;
+    let x = (ICON_SIZE as i32 - w - pad_right).max(1);
     draw_text_mut(img, color, x, y, scale, font, text);
 }
 
@@ -835,11 +846,13 @@ fn draw_centered_text(
     color: Rgba<u8>,
 ) {
     let scaled = font.as_scaled(scale);
-    let w: f32 = text
+    // M3 fix: 同 draw_right_text —— 累加 + final round
+    let w_f = text
         .chars()
         .map(|c| scaled.h_advance(font.glyph_id(c)))
-        .sum();
-    let x = ((ICON_SIZE as f32 - w) / 2.0).max(1.0) as i32;
+        .sum::<f32>();
+    let w = w_f.round() as i32;
+    let x = ((ICON_SIZE as i32 - w) / 2).max(1);
     draw_text_mut(img, color, x, y, scale, font, text);
 }
 

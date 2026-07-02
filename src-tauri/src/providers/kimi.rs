@@ -150,14 +150,19 @@ async fn do_fetch(
         })?;
 
     let status = resp.status();
-    // H6 fix: 429 显式 → RateLimited
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+    // H6 fix + L1 fix：429 显式 → RateLimited
+    // helper 复用(L1):其它 provider 的 HTTP status → ErrorKind 分类统一走
+    // `classify_http_status`,本文件保留对它的快速短路以便让具体 message
+    // 走 rate_limited 模板(其它 status 走 http_error 模板),但 kind 计算
+    // 复用 helper —— 加 402 Payment Required 时 11 处自动跟上。
+    let kind = crate::providers::classify_http_status(status);
+    if kind == ErrorKind::RateLimited {
         return Err(FetchError::new(
             ErrorKind::RateLimited,
             t!("error.common.rate_limited", provider = "Kimi").into_owned(),
         ));
     }
-    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+    if kind == ErrorKind::AuthFailed {
         return Err(FetchError::auth(
             t!("error.common.auth_failed", provider = "Kimi").into_owned(),
         ));

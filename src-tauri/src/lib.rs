@@ -119,6 +119,36 @@ pub fn run() {
             // 必须在 .setup 里最早做（之后 tr!() 才会拿到正确 locale）。
             rust_i18n::set_locale(&config.locale);
 
+            // v0.2.1 fix（Windows NSIS i18n regression guard）：
+            // rust-i18n 3.x 把 locale 数据存进一个 `Lazy<Box<dyn Backend>>`，
+            // initializer 里塞的是 HashMap 字面量。Windows MSVC + lto + strip
+            // 组合会把 HashMap 的 backing 数据段当 unreferenced 丢掉，
+            // 导致 release binary 的 backend 是空的 —— t!() 全部回退成
+            // "locale.key" 字面量。upstream longbridge/rust-i18n #115 在
+            // Windows 上踩过同样的坑。
+            //
+            // 这里 probe 一下："known good" key 必须能翻成非 key 字符串，
+            // 不然直接 panic，让失败模式从"用户看到 provider_name.xiaomimimo"
+            // 变成"启动时立刻崩 + 明确错误信息"。
+            {
+                let probe_en =
+                    rust_i18n::t!("provider_name.xiaomimimo", locale = "en").into_owned();
+                if probe_en == "provider_name.xiaomimimo" {
+                    panic!(
+                        "i18n backend returned raw key for `provider_name.xiaomimimo`. \
+                         This is the known Windows + LTO + strip interaction with \
+                         rust-i18n 3.x HashMap storage — see [profile.release] in \
+                         src-tauri/Cargo.toml. Available locales: {:?}",
+                        rust_i18n::available_locales!()
+                    );
+                }
+                tracing::info!(
+                    locales = ?rust_i18n::available_locales!(),
+                    probe_en = %probe_en,
+                    "rust_i18n backend ready"
+                );
+            }
+
             let cfg_handle = app.state::<AppState>();
 
             // 写入初始状态
@@ -583,4 +613,66 @@ async fn update_source_state_for_dump(
     cfg: &AppConfig,
 ) {
     crate::commands::update_source_state(src, cfg).await;
+}
+
+// ── i18n regression guard ────────────────────────────────────────
+//
+// 在 `cargo test --locked` 阶段捕获 Windows NSIS LTO+strip 与 rust-i18n 3.x
+// HashMap 存储的交互 bug，避免再次出 release 后才发现 locale 全部回退到
+// "locale.key" 字面量。runtime 端的 probe 在 setup() 里（启动即崩，给出
+// 明确错误信息），test 端在这里（CI 守门，任何平台跑 test 都能发现）。
+//
+// 跟 main 流程的 t!() 调用同一个 macro path —— 如果哪天有人把
+// `rust_i18n::i18n!("locales")` 那行改坏 / locales/*.json 写错格式 /
+// release profile 又启用了某种 strip 变体，这些 test 会立刻 panic。
+#[cfg(test)]
+mod i18n_guard_tests {
+    use super::t;
+
+    #[test]
+    fn available_locales_has_en_and_zh_cn() {
+        let locales: Vec<&'static str> = rust_i18n::available_locales!();
+        assert!(
+            locales.contains(&"en"),
+            "rust-i18n 没有 en locale —— locales/en.json 可能没被 macro 编译进 binary。locales: {locales:?}"
+        );
+        assert!(
+            locales.contains(&"zh-CN"),
+            "rust-i18n 没有 zh-CN locale —— locales/zh-CN.json 可能没被 macro 编译进 binary。locales: {locales:?}"
+        );
+    }
+
+    #[test]
+    fn en_provider_names_resolve_to_non_key_strings() {
+        rust_i18n::set_locale("en");
+        for key in [
+            "provider_name.xiaomimimo",
+            "provider_name.deepseek",
+            "row.five_hour",
+        ] {
+            let v = t!(key).into_owned();
+            assert_ne!(
+                v, key,
+                "rust-i18n returned raw key for `{key}` in en — locale HashMap not loaded \
+                 (likely Cargo.toml [profile.release] strip + lto interaction, \
+                 see lib.rs setup probe)"
+            );
+        }
+    }
+
+    #[test]
+    fn zh_cn_provider_names_resolve_to_non_key_strings() {
+        rust_i18n::set_locale("zh-CN");
+        for key in [
+            "provider_name.xiaomimimo",
+            "provider_name.deepseek",
+            "row.five_hour",
+        ] {
+            let v = t!(key).into_owned();
+            assert_ne!(
+                v, key,
+                "rust-i18n returned raw key for `{key}` in zh-CN — locale HashMap not loaded"
+            );
+        }
+    }
 }

@@ -74,4 +74,9 @@ panic = "abort"
 codegen-units = 1
 lto = true
 opt-level = "s"
-strip = true
+# v0.2.1: strip = true removed.
+# 与 rust-i18n 3.x 的 Lazy<HashMap> 存储冲突 —— Windows MSVC 链接器在 strip
+# 阶段会把 HashMap 字面量的 backing 数据段当作 unreferenced 丢掉，导致 release
+# binary 里 backend 是空的，t!() 全部回退到 "locale.key" 字面量。
+# 见 longbridge/rust-i18n #115 (upstream 在 Windows 上踩过同样的坑)。
+# 代价:Windows NSIS 体积 +~50 KB（12 MB → ~12.05 MB），不影响功能。

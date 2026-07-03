@@ -28,7 +28,6 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
-use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -387,9 +386,8 @@ fn is_menubar_hidden<R: Runtime>(app: &AppHandle<R>) -> bool {
         })
     });
 
-    let app2 = app.clone();
     let slot2 = slot.clone();
-    let _ = app.run_on_main_thread(move || {
+    let dispatch_result = app.run_on_main_thread(move || {
         let mtm = match MainThreadMarker::new() {
             Some(m) => m,
             None => {

@@ -89,6 +89,24 @@ pub fn set_window_hover_raise<R: Runtime>(_app: &AppHandle<R>, _hovering: bool) 
 /// 由 lib.rs setup() 调一次即可。
 ///
 /// 启动后整个 app 生命周期不停。20Hz 轮询，单次 ~微秒级开销。
+///
+/// **2026-07-03 fix（v0.2.x 闪烁修复 — 后端层）**：挂后台时浮窗毛玻璃效果
+/// 偶发闪一下。根因是 macOS 上多个 transparent + always-on-top 窗口
+/// （例如同层另一个项目也开了 transparent 浮窗）共存时，光标静止在某像素
+/// 边缘，`windowNumberAtPoint` 返回值在两个 window number 之间抖；
+/// `is_floating_topmost_at` 20Hz tick 里 inside 持续翻转 → 每次翻转
+/// emit 一次 → 前端每次都 toggle body[data-hover] → 0.28s spring 动画
+/// 反复起头又被瞬间打断 → 肉眼看到持续 / 偶发闪一下。
+///
+/// 修复：在 hover emitter 加 dwell-time hysteresis：
+/// - **enter**：inside=true 必须连续 ≥3 个 tick（150ms）才采纳，
+///   抖动短脉冲被吞。
+/// - **exit**：inside=false 必须连续 ≥2 个 tick（100ms）才采纳，略快
+///   因为用户离开时希望玻璃及时撤销（vs enter 多 1 tick 防误触发）。
+/// - **enter→exit 切换瞬间 reset 计数器**：避免在过渡中误累计。
+///
+/// 浮窗前端的 `body[data-hover]` CSS spring 动画不会被反复重置，
+/// 闪烁消失。
 pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
     if TRACKER_RUNNING.swap(true, Ordering::SeqCst) {
         return; // 已在跑
@@ -98,6 +116,11 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
         .spawn(move || {
             tracing::debug!("hover emitter 启动");
             let mut last_inside = false;
+            // pending_ticks：当前观察到的 inside 与 last_inside 不同的累计 tick 数。
+            // 当达到对应阈值（enter 3 / exit 2）才采纳新状态 + emit。
+            let mut pending_ticks: u8 = 0;
+            // pending_value：累计观察到的"候选新值"。
+            let mut pending_value = false;
             loop {
                 thread::sleep(Duration::from_millis(50));
 
@@ -110,25 +133,50 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
                 // 会在被遮挡区域也误触发置顶（用户其实在操作遮挡它的那个 app）。
                 let inside = is_floating_topmost_at(&app, mouse);
 
-                if inside != last_inside {
-                    last_inside = inside;
+                if inside == last_inside {
+                    pending_ticks = 0;
+                    continue;
+                }
 
-                    // (1) 永远 emit —— 驱动前端 body[data-hover]，让 CSS hover 生效
-                    //     不依赖 WKWebView 的 mouseMoved 事件流（macOS 非 key window 不分发）
-                    if let Err(e) = app.emit("musage://floating-hover", inside) {
-                        tracing::trace!(error = %e, "emit hover 失败");
-                    }
+                // inside 与 last_inside 不同 —— 是真切换还是抖动？
+                // 进入累计阶段。每次观察同值则递增；中途翻回 old 值则重置。
+                if pending_value != inside {
+                    pending_value = inside;
+                    pending_ticks = 1;
+                } else {
+                    pending_ticks = pending_ticks.saturating_add(1);
+                }
 
-                    // (2) PinBottom 模式：同步切 NSWindow level
-                    if LEVEL_SWITCHING_ACTIVE.load(Ordering::SeqCst) {
-                        let level = if inside {
-                            LEVEL_FLOATING
-                        } else {
-                            LEVEL_BELOW_NORMAL
-                        };
-                        tracing::trace!(?level, inside, "PinBottom hover 切 level");
-                        set_window_level(&app, level, true); // M3 fix: true = PinBottom 模式内
-                    }
+                // enter 阈值 (3) > exit 阈值 (2) —— 用户离开时希望玻璃及时撤销，
+                // 进入时多 1 tick 防边界抖动（特别是 transparent 多窗口共存场景）。
+                const ENTER_THRESHOLD: u8 = 3;
+                const EXIT_THRESHOLD: u8 = 2;
+                let threshold = if pending_value { ENTER_THRESHOLD } else { EXIT_THRESHOLD };
+
+                if pending_ticks < threshold {
+                    continue;
+                }
+
+                // 阈值达成 —— 采纳新状态，emit + 切 level
+                last_inside = inside;
+                pending_ticks = 0;
+                tracing::trace!(inside, "hover 采纳新状态（dwell-time 达阈值）");
+
+                // (1) 永远 emit —— 驱动前端 body[data-hover]，让 CSS hover 生效
+                //     不依赖 WKWebView 的 mouseMoved 事件流（macOS 非 key window 不分发）
+                if let Err(e) = app.emit("musage://floating-hover", inside) {
+                    tracing::trace!(error = %e, "emit hover 失败");
+                }
+
+                // (2) PinBottom 模式：同步切 NSWindow level
+                if LEVEL_SWITCHING_ACTIVE.load(Ordering::SeqCst) {
+                    let level = if inside {
+                        LEVEL_FLOATING
+                    } else {
+                        LEVEL_BELOW_NORMAL
+                    };
+                    tracing::trace!(?level, inside, "PinBottom hover 切 level");
+                    set_window_level(&app, level, true); // M3 fix: true = PinBottom 模式内
                 }
             }
         });

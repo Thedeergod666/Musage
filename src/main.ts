@@ -1112,15 +1112,21 @@ async function init() {
   // 跟原有 PinBottom mode 的 setupHoverRaise(level 切换 IPC) 并行存在，
   // 关注点不同：这里只管 CSS attribute，不动 always-on-top。
   //
-  // **2026-07-03 fix（v0.2.x 闪烁修复）**：app 挂后台时浮窗会时不时闪一下
-  // （毛玻璃效果消失又出现）。根因是 macOS deactivate→reactivate 切换瞬间，
-  // WKWebView 会向 transparent 窗口派发一次 spurious mouseenter（AppKit 历史
-  // 行为），紧接着 mouseleave 撤销；加上 NSWindow deactivation 动画触发
-  // backdrop-filter compositor 重置，看到中间帧。修复：
-  //   (a) 只在浮窗 focused + visible 时把 body mouseenter 视为有效 hover
-  //       —— 失焦态下收到的 mouseenter 是 spurious，忽略
-  //   (b) hover 状态需持续 ≥40ms 才显形玻璃，过短 enter→leave 抖动被吞掉
-  //       —— 防止 50ms 边界帧把 0.28s spring 动画起头又打断
+  // **2026-07-03 fix（v0.2.x 闪烁修复 — 前端层）**：挂后台时浮窗毛玻璃
+  // 偶发闪一下。**根因（macOS）**：多个 transparent + always-on-top 窗口
+  // 共存时（例如同层另一个项目也开了 transparent 浮窗），光标静止在某
+  // 像素边缘，`windowNumberAtPoint` 返回值在两个 window number 之间抖；
+  // Rust hover emitter 20Hz tick 里 inside 持续翻转 → 每次翻转 emit 一次
+  // → 前端每次都 toggle body[data-hover] → 0.28s spring 反复起头又被瞬间
+  // 打断 → 肉眼看到闪。Rust 端已加 dwell-time hysteresis（enter 3 ticks /
+  // exit 2 ticks），前端再加 3 道保险：
+  //   (a) 失焦 / 页面隐藏时把 body mouseenter 视为 spurious 忽略；
+  //       顺手挡住 deactivate→reactivate 切换瞬间 WKWebView 的 spurious
+  //       mouseenter 路径。
+  //   (b) hover 显形 40ms debounce —— enter→leave 抖动被吞；正常 hover
+  //       仅延后 40ms 不可察觉。Rust 路径不 debounce（已有 150ms hysteresis）。
+  //   (c) Rust emit 同值去重 —— hover emitter 内部已有 `inside != last_inside`
+  //       去重；这里再做一层保险避免 CSS spring 动画进行中反复重置起始点。
   //
   // **2026-06-20 audit**：body mouseenter/mouseleave 之前是匿名 arrow，
   // beforeunload 没办法 remove。改成 named fn 配对 remove。

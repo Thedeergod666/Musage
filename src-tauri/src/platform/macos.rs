@@ -387,7 +387,7 @@ fn is_menubar_hidden<R: Runtime>(app: &AppHandle<R>) -> bool {
     });
 
     let slot2 = slot.clone();
-    let dispatch_result = app.run_on_main_thread(move || {
+    let _ = app.run_on_main_thread(move || {
         let mtm = match MainThreadMarker::new() {
             Some(m) => m,
             None => {

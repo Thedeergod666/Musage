@@ -24,6 +24,12 @@ fn in_flight() -> &'static std::sync::Mutex<JoinSet<()>> {
     IN_FLIGHT.get_or_init(|| std::sync::Mutex::new(JoinSet::new()))
 }
 
+/// M7 fix (2026-07-03 audit): tick() 并发去重。用户在 poller 自动 tick 期间
+/// 点"立即刷新",两个 tick() 并发跑 → 2N 次网络请求 + backoff 记录竞争。
+/// 正在跑时直接返回 Ok,避免重复 fetch。
+static TICK_RUNNING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 pub fn start(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         // 启动后立即拉一次（全量）
@@ -128,30 +134,57 @@ pub fn start(app: AppHandle) {
             if next_fetch.len() > live_sources.len() {
                 next_fetch.retain(|k, _| live_sources.contains(k));
             }
+            // M6 fix: 同步清理 backoff 里已删除 source 的 entry,
+            // 避免 HashMap 长期膨胀(每删一个 extra instance 留一条永久残留)。
+            {
+                let mut backoff_guard = state.backoff.write().await;
+                backoff_guard.retain_live(&live_sources);
+            }
 
             for src in all_sources(&state).await {
                 // PR 1a：用 unique_id() 做 map key（决策 1：id() 共享 base）
+                //
+                // C1 fix (2026-07-03 audit): 之前 L137/L143/L146/L153 用 id_str
+                // (= src.id() = base id "minimax"),而 refresh_single_inner 写 backoff
+                // 时用 unique_id ("minimax#2")。读写键不一致 → extra instance 永不退避、
+                // per-instance interval 失效、禁用后仍 spawn task。改为 unique_id 优先,
+                // base_id fallback(共享 base instance 的配置)。
                 let unique = src.unique_id();
-                let id_owned = src.id().into_owned(); // Cow::Owned 解引用，避开临时 lifetime
-                let id_str: &str = &id_owned;
-                if !cfg.is_enabled_id(id_str) {
+                let base_id = src.id().into_owned(); // Cow::Owned 解引用，避开临时 lifetime
+                let unique_str: &str = &unique;
+                let base_str: &str = &base_id;
+                // enabled: 优先查 instance 自己的 entry,没配置则 fallback 到 base
+                // (用户关 base 时 extra 也跟着关,除非显式启用 extra)
+                let enabled = cfg
+                    .providers
+                    .get(unique_str)
+                    .map(|c| c.enabled)
+                    .or_else(|| cfg.providers.get(base_str).map(|c| c.enabled))
+                    .unwrap_or(true);
+                if !enabled {
                     continue; // 用户关了，不拉
                 }
                 // STUB 默认 disabled: 公开 API 无 quota endpoint 的 provider
                 // 拉一次就是 30 min 退避。用户没显式
-                // 启用 = 跳过,避免浮窗假死。
-                if !src.default_enabled() && !cfg.providers.contains_key(id_str) {
+                // 启用 = 跳过,避免浮窗假死。extra instance 视为"用户显式启用"。
+                if !src.default_enabled()
+                    && !(cfg.providers.contains_key(unique_str)
+                        || cfg.providers.contains_key(base_str))
+                {
                     continue;
                 }
                 let cfg_interval_secs = cfg
                     .providers
-                    .get(id_str)
+                    .get(unique_str)
+                    .or_else(|| cfg.providers.get(base_str))
                     .and_then(|p| p.refresh_interval_secs)
                     .unwrap_or(cfg.refresh_interval_secs)
                     .max(10);
-                // 退避后的实际间隔：优先用 backoff 的，没退避用 cfg 默认
+                // 退避后的实际间隔：backoff 用 unique_id 写(见 refresh_single_inner),
+                // 这里也必须用 unique_id 读。base instance 的 unique_id == base_id,
+                // 自动兼容。
                 let interval_secs = backoff_snapshot
-                    .get(id_str)
+                    .get(unique_str)
                     .copied()
                     .unwrap_or(cfg_interval_secs)
                     .max(10);
@@ -187,6 +220,25 @@ pub async fn tick_now(app: &AppHandle) -> Result<(), String> {
 }
 
 pub async fn tick(app: &AppHandle) -> Result<(), String> {
+    // M7 fix: 并发去重。CAS swap false→true 失败说明已有 tick 在跑,直接返回。
+    if TICK_RUNNING.compare_exchange(
+        false,
+        true,
+        std::sync::atomic::Ordering::SeqCst,
+        std::sync::atomic::Ordering::SeqCst,
+    ).is_err() {
+        tracing::debug!("tick() 已有实例在跑,跳过本次并发触发");
+        return Ok(());
+    }
+    // 无论成功失败都要释放 flag(scope guard pattern)
+    struct FlagGuard;
+    impl Drop for FlagGuard {
+        fn drop(&mut self) {
+            TICK_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    let _guard = FlagGuard;
+
     let cfg = {
         let state = app.state::<AppState>();
         let cfg = state.config.read().await.clone();

@@ -102,6 +102,13 @@ impl BackoffState {
             entry.current_interval_secs = None;
         }
     }
+
+    /// M6 fix (2026-07-03 audit): 清理已删除 source 的 backoff entry。
+    /// poller 已对 next_fetch 做 retain,但 backoff.per_source 没有,
+    /// 用户频繁 add/delete extra instance 时 entry 永久残留 → HashMap 缓慢膨胀。
+    pub fn retain_live(&mut self, live: &std::collections::HashSet<String>) {
+        self.per_source.retain(|k, _| live.contains(k));
+    }
 }
 
 // ── 单元测试 ─────────────────────────────────────────────────────

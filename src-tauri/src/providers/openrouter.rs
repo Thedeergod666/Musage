@@ -46,39 +46,46 @@ pub struct OpenrouterSource {
 // M15 fix: fallback 缓存 —— /credits 和 /key 两个端点都可能被 401 / 5xx 拒绝。
 // 之前每次 fetch 都要先试 /credits（失败）再试 /key，浪费 50% 请求。
 // 缓存最近 5 分钟内成功的端点；TTL 过后重新探测（应对 endpoint 状态变化）。
+//
+// C2 fix (2026-07-03 audit): 之前缓存是进程级全局 static,不绑 instance_index。
+// 多实例(普通 key + Management key)共享同一槽位 → 实例 1 写入 Credits 后,
+// 实例 2 fetch 时 should_skip_endpoint(Key) 返 true 跳过 /key,永远拉不到数据。
+// 改为 HashMap<unique_id, (Instant, Endpoint)> 按 instance 分桶。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Endpoint {
     Credits,
     Key,
 }
 static LAST_SUCCESSFUL: std::sync::OnceLock<
-    std::sync::Mutex<Option<(std::time::Instant, Endpoint)>>,
+    std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, Endpoint)>>,
 > = std::sync::OnceLock::new();
 
-fn last_successful() -> &'static std::sync::Mutex<Option<(std::time::Instant, Endpoint)>> {
-    LAST_SUCCESSFUL.get_or_init(|| std::sync::Mutex::new(None))
+fn last_successful(
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, Endpoint)>>
+{
+    LAST_SUCCESSFUL.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
-fn remember_endpoint(ep: Endpoint) {
+fn remember_endpoint(source_id: &str, ep: Endpoint) {
     if let Ok(mut g) = last_successful().lock() {
-        *g = Some((std::time::Instant::now(), ep));
+        g.insert(source_id.to_string(), (std::time::Instant::now(), ep));
     }
 }
 
 /// M12 fix: AuthFailed 时清缓存 —— 用户可能换了 key 类型（普通 → Management），
 /// 下次 fetch 需要重新探测 /credits 和 /key，不能继续用 5 分钟前的成功记录。
-fn clear_endpoint_cache() {
+fn clear_endpoint_cache(source_id: &str) {
     if let Ok(mut g) = last_successful().lock() {
-        *g = None;
+        g.remove(source_id);
     }
 }
 
-fn should_skip_endpoint(ep: Endpoint) -> bool {
+fn should_skip_endpoint(source_id: &str, ep: Endpoint) -> bool {
     // 如果最近 5 分钟内有别的 endpoint 成功，跳过这个
     let Ok(g) = last_successful().lock() else {
         return false;
     };
-    match g.as_ref() {
+    match g.get(source_id) {
         Some((ts, last)) if ts.elapsed() < std::time::Duration::from_secs(300) => last != &ep,
         _ => false,
     }
@@ -162,18 +169,18 @@ async fn do_fetch(
 
     // ── 第一优先：/api/v1/credits（账户余额，准确） ──
     // M15 fix: 最近 5 分钟内 /key 成功过 → 跳过 /credits 探测（避免重复 401 浪费请求）
-    let try_credits = !should_skip_endpoint(Endpoint::Credits);
+    let try_credits = !should_skip_endpoint(source_id, Endpoint::Credits);
     if try_credits {
         match fetch_credits(client, api_key, source_id, display_name).await {
             Ok(snap) => {
-                remember_endpoint(Endpoint::Credits);
+                remember_endpoint(source_id, Endpoint::Credits);
                 return Ok(snap);
             }
             Err(e) if matches!(e.kind, ErrorKind::AuthFailed | ErrorKind::ServerError) => {
                 // M12 fix: AuthFailed 时清缓存，下次重新探测两个端点
                 // (用户可能换了 key 类型：普通 → Management，/credits 应重试)
                 if e.kind == ErrorKind::AuthFailed {
-                    clear_endpoint_cache();
+                    clear_endpoint_cache(source_id);
                 }
                 // Management key 被拒 / 5xx → fallback 到 /api/v1/key
                 tracing::debug!(error = %e, "openrouter /credits 失败，fallback 到 /key");
@@ -185,7 +192,7 @@ async fn do_fetch(
     // ── fallback：/api/v1/key（per-key 限额，任何 key 都行） ──
     match fetch_key(client, api_key, source_id, display_name).await {
         Ok(snap) => {
-            remember_endpoint(Endpoint::Key);
+            remember_endpoint(source_id, Endpoint::Key);
             Ok(snap)
         }
         Err(e) => Err(e),
@@ -404,6 +411,23 @@ fn parse_key(
         });
     }
 
+    // H8 fix (2026-07-03 audit): free_tier 用户 API 可能不返回 limit_remaining
+    // (无限额度)。之前 rows 为空 → 报 Parse 错。改为 free_tier + 无 remaining
+    // 时显示"Free tier"行,而非报错。
+    if rows.is_empty() && is_free_tier {
+        rows.push(QuotaRow {
+            label: t!("row.free_tier").to_string(),
+            utilization: Some(0.0),
+            remaining: None,
+            used: None,
+            total: None,
+            resets_at: None,
+            unit: None,
+            extra: None,
+            kind: None,
+        });
+    }
+
     if rows.is_empty() {
         return Err(FetchError::parse(
             t!(
@@ -499,6 +523,9 @@ mod tests {
 
     #[test]
     fn parse_key_free_tier_no_limit() {
+        // H8 fix (2026-07-03 audit): 之前 free_tier + limit=null + limit_remaining=null
+        // 报 Parse 错。但 OpenRouter free tier 用户没配额限制是合法状态 →
+        // 应该返一行 "Free tier" 提示(utilization=0), 不报错。
         let raw = json!({
             "data": {
                 "label": "free",
@@ -507,8 +534,10 @@ mod tests {
                 "is_free_tier": true
             }
         });
-        let err = parse_key(&raw, "openrouter", "OpenRouter").unwrap_err();
-        assert_eq!(err.kind, ErrorKind::Parse);
+        let snap = parse_key(&raw, "openrouter", "OpenRouter").unwrap();
+        assert_eq!(snap.rows.len(), 1);
+        assert_eq!(snap.rows[0].label, t!("row.free_tier").to_string());
+        assert_eq!(snap.rows[0].utilization, Some(0.0));
     }
 
     #[test]

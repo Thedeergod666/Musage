@@ -225,6 +225,14 @@ async fn do_fetch(
             t!("error.common.url_scheme_invalid", url = url).into_owned(),
         ));
     }
+    // H7 fix (2026-07-03 audit): 同 custom.rs 的 SSRF 防护。
+    if let Some(host) = super::extract_host(url) {
+        if super::is_ssrf_blocked(&host) {
+            return Err(FetchError::auth(
+                t!("error.common.ssrf_blocked", host = host.as_str()).into_owned(),
+            ));
+        }
+    }
     let client = shared_client();
 
     let resp = client
@@ -482,15 +490,26 @@ fn parse_subscription(
 
 /// 解析单个 quota window → QuotaRow。`usage_percentage` 缺失则整行 None。
 fn parse_subscription_window(q: &Value, label: &str) -> Option<QuotaRow> {
-    let usage_ratio = num_f64(q, "usage_percentage")?;
+    let usage_pct_raw = num_f64(q, "usage_percentage")?;
     let used = num_f64(q, "used_flows");
     let max = num_f64(q, "max_flows");
     let remaining = num_f64(q, "remaining_flows");
     let resets_at = parse_iso8601_ms(q.get("resets_at").and_then(|v| v.as_str()));
 
+    // H9 fix (2026-07-03 audit): 字段名 "usage_percentage" 暗示已是 0-100 百分比,
+    // 但原代码 * 100.0 当 ratio 处理。API 返 72(已是百分比)时输出 7200%。
+    // 启发式:值 > 1.0 视为已是百分比(0-100),否则视为 ratio(0-1) 乘 100。
+    // 最后 clamp 到 [0, 100] 防止越界。
+    let utilization = if usage_pct_raw > 1.0 {
+        usage_pct_raw
+    } else {
+        usage_pct_raw * 100.0
+    };
+    let utilization = utilization.clamp(0.0, 100.0);
+
     Some(QuotaRow {
         label: label.to_string(),
-        utilization: Some(usage_ratio * 100.0),
+        utilization: Some(utilization),
         remaining,
         used,
         total: max,

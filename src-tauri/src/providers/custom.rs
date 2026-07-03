@@ -240,6 +240,18 @@ async fn do_fetch(
             t!("error.common.url_scheme_invalid", url = url).into_owned(),
         ));
     }
+    // H7 fix (2026-07-03 audit): SSRF 防护 —— 拦截 loopback / link-local(云元数据端点)。
+    // 用户分享 config 时可被恶意 URL 投毒,后端会代发请求 + 带 Bearer key。
+    // 169.254.169.254 是 AWS/GCP/Azure 元数据端点,可泄露实例凭据。
+    // 127.x / ::1 是本机,可访问本地管理接口。
+    // 不拦 192.168.x / 10.x / 172.16-31.x —— 用户可能有合法的自建中转站。
+    if let Some(host) = super::extract_host(&url) {
+        if super::is_ssrf_blocked(&host) {
+            return Err(FetchError::auth(
+                t!("error.common.ssrf_blocked", host = host.as_str()).into_owned(),
+            ));
+        }
+    }
 
     let client = shared_client();
     let mut req = match spec.method.to_uppercase().as_str() {

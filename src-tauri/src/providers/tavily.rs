@@ -246,7 +246,9 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
         if l > 0.0 {
             rows.push(QuotaRow {
                 label: t!("row.free_tier").to_string(),
-                utilization: Some((u / l) * 100.0),
+                // H4 fix (2026-07-03 audit): u > l (超用) 时 utilization > 100,
+                // 浮窗进度条越界。clamp 到 [0, 100]。
+                utilization: Some(((u / l) * 100.0).clamp(0.0, 100.0)),
                 remaining: Some((l - u).max(0.0)),
                 used: Some(u),
                 total: Some(l),

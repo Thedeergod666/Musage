@@ -199,11 +199,10 @@ async fn do_fetch(
                 .or_else(|| {
                     let g = parse_f64(info, "granted_balance").unwrap_or(0.0);
                     let t = parse_f64(info, "topped_up_balance").unwrap_or(0.0);
-                    if g + t > 0.0 {
-                        Some(g + t)
-                    } else {
-                        None
-                    }
+                    // H5 fix (2026-07-03 audit): 之前 g+t>0.0 才返 Some,
+                    // 余额真为 0 时返 None → 浮窗空白行。改为返 Some(0.0)
+                    // 让用户看到"余额:0.00"而非"字段缺失"。
+                    Some(g + t)
                 });
             rows.push(QuotaRow {
                 label: t!("row.balance").to_string(),

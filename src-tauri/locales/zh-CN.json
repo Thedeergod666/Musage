@@ -44,6 +44,7 @@
       "rate_limited": "{provider} 请求过于频繁，请稍后再试",
       "rate_limited_with_retry": "{provider} 请求过于频繁，约 {retry_secs} 秒后可重试",
       "url_scheme_invalid": "URL 必须以 https:// 开头（拒绝明文 / file:// / javascript: 等）。当前值：{url}",
+      "ssrf_blocked": "URL 主机 '{host}' 被拦截（不允许 loopback / link-local / 云元数据端点，防止通过分享的配置泄露凭据）",
       "no_credential": "未配置凭据（设置面板填入）",
       "no_credential_with_provider": "未配置 {provider} 凭据（设置面板填入）",
       "missing_data_field": "{provider} 响应缺少 data 字段",

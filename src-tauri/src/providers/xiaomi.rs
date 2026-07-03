@@ -809,12 +809,14 @@ fn apply_display_mode(
         XiaomiDisplayMode::All => s,
         XiaomiDisplayMode::PlanOnly => {
             // 只留套餐行
-            // 2026-06-22 fix: 之前 hardcode "套餐" 在 en locale 下永远 filter 空
-            // → rows.len() = 0, 浮窗空白。改 t!("row.plan") 跟 locale 解耦。
+            // H6 fix (2026-07-03 audit): 之前用 r.label == t!("row.plan") 过滤,
+            // 但 label 在 parse() 时已按当时 locale 固化。运行时切 locale 后
+            // t!("row.plan") 返回新语言字符串,label 仍是旧的 → filter 空 → 浮窗空白。
+            // 改用 RowKind::Plan(语义分类,跨 locale 稳定)过滤。
             let rows: Vec<QuotaRow> = s
                 .rows
                 .into_iter()
-                .filter(|r| r.label == t!("row.plan"))
+                .filter(|r| r.kind == Some(RowKind::Plan))
                 .collect();
             ProviderSnapshot { rows, ..s }
         }
@@ -824,11 +826,11 @@ fn apply_display_mode(
             // 但 parse() 之后 detail 已不在 snap 里，所以这里用
             // snap.rows 里其他行有 resets_at 的就借过来。
             let plan_resets_at = s.rows.iter().find_map(|r| r.resets_at);
-            // 2026-06-22 fix: 同上, hardcode "总额度" 改 t!("row.monthly_total")
+            // H6 fix: 同上,改用 RowKind::MonthlyTotal 过滤(跨 locale 稳定)。
             let rows: Vec<QuotaRow> = s
                 .rows
                 .into_iter()
-                .filter(|r| r.label == t!("row.monthly_total"))
+                .filter(|r| r.kind == Some(RowKind::MonthlyTotal))
                 .map(|mut r| {
                     if r.resets_at.is_none() {
                         r.resets_at = plan_resets_at;
@@ -1310,6 +1312,8 @@ mod tests {
 
     /// 构造一个测试用的 3 行 snapshot（套餐 + 补偿 + 总额度，套餐带 resets_at）
     fn snap_with_3_rows() -> ProviderSnapshot {
+        // H6 fix (2026-07-03 audit): apply_display_mode 改用 RowKind 过滤,
+        // 测试 fixture 必须给每行设 kind 字段, 否则 filter 全空 → 测试失败。
         ProviderSnapshot {
             provider: "xiaomimimo".to_string(),
             success: true,
@@ -1319,18 +1323,21 @@ mod tests {
                     utilization: Some(13.0),
                     resets_at: Some(1785024000000), // 2026-06-28 07:20 UTC
                     unit: Some("%".to_string()),
+                    kind: Some(RowKind::Plan),
                     ..Default::default()
                 },
                 QuotaRow {
                     label: t!("row.compensation").to_string(),
                     utilization: Some(100.0),
                     unit: Some("%".to_string()),
+                    kind: Some(RowKind::Compensation),
                     ..Default::default()
                 },
                 QuotaRow {
                     label: t!("row.monthly_total").to_string(),
                     utilization: Some(42.0),
                     unit: Some("%".to_string()),
+                    kind: Some(RowKind::MonthlyTotal),
                     ..Default::default()
                 },
             ],
@@ -1425,7 +1432,7 @@ mod tests {
     fn display_mode_plan_only_with_no_plan_row() {
         // 极端：套餐缺失（schema 变了）→ 留个空 snapshot（success=true 但 0 行）
         let mut snap = snap_with_3_rows();
-        snap.rows.retain(|r| r.label != t!("row.plan"));
+        snap.rows.retain(|r| r.kind != Some(RowKind::Plan));
         let out = apply_display_mode(
             snap,
             XiaomiDisplayMode::PlanOnly,

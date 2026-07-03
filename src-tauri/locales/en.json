@@ -44,6 +44,7 @@
       "rate_limited": "{provider} rate limited, please try again later",
       "rate_limited_with_retry": "{provider} rate limited, retry in about {retry_secs} seconds",
       "url_scheme_invalid": "URL must start with https:// (rejects http://, file://, javascript:, etc). Current value: {url}",
+      "ssrf_blocked": "URL host '{host}' is blocked (loopback / link-local / cloud metadata endpoint not allowed to prevent credential leakage via shared config)",
       "no_credential": "No credentials configured (set in Settings panel)",
       "no_credential_with_provider": "{provider} credentials not configured (set in Settings panel)",
       "missing_data_field": "{provider} response missing 'data' field",

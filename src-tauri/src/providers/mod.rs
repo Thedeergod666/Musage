@@ -149,6 +149,47 @@ pub fn classify_http_status(status: reqwest::StatusCode) -> ErrorKind {
     }
 }
 
+// ── SSRF 防护 (H7 fix, 2026-07-03 audit) ────────────────────────
+//
+// 用户可配置 base_url 的 provider (custom / zenmux) 必须 fetch 前校验 host,
+// 拦截 loopback (127.x / localhost / ::1) 和 link-local (169.254.x / fe80::)。
+// 这些地址可访问本机管理接口或云元数据端点,config 投毒(分享配置)时可泄露 Bearer key。
+
+/// 从 `https://host[:port]/path` 中提取 host(含 IPv6 方括号内内容)。
+/// 解析失败返 None(调用方视为不拦截,保守放行)。
+pub fn extract_host(url: &str) -> Option<String> {
+    let after_scheme = url.strip_prefix("https://")?;
+    let authority = after_scheme.split('/').next()?;
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    let host = if host.starts_with('[') {
+        host.split(']').next().unwrap_or(host)
+    } else {
+        host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host)
+    };
+    Some(host.to_lowercase())
+}
+
+/// 拦截 loopback (127.x / localhost / ::1) 和 link-local (169.254.x / fe80::)。
+/// 不拦 private LAN (192.168.x / 10.x / 172.16-31.x) —— 用户可能有合法的自建中转站。
+pub fn is_ssrf_blocked(host: &str) -> bool {
+    if host == "localhost" {
+        return true;
+    }
+    if host == "[::1]" || host == "::1" {
+        return true;
+    }
+    if host.strip_prefix("127.").is_some() {
+        return true;
+    }
+    if host.starts_with("169.254.") {
+        return true;
+    }
+    if host.starts_with("[fe80") || host.starts_with("fe80:") {
+        return true;
+    }
+    false
+}
+
 /// 结构化 fetch 错误。Phase 1 引入，用来替代散落在各 provider 里的中文 `String` 错误。
 ///
 /// 配套 [`crate::commands::error_kind`] 把它转成 [`ErrorKind`]。

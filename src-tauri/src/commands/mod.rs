@@ -984,6 +984,13 @@ pub async fn resize_floating_window(app: AppHandle, height: f64) -> Result<(), S
             .map_err(|e| t!("commands.size_failed", err = e.to_string()).into_owned())?
             .to_logical(w.scale_factor().unwrap_or(1.0));
         let width = cur_logical.width;
+        // H16 fix (2026-07-03 audit): NaN.clamp(100.0, 2400.0) 返 NaN(Rust 文档明确),
+        // set_size 收到 NaN 行为未定义可能 panic。前端 scrollHeight 在 DOM 未渲染 /
+        // display:none 时可能传 NaN。±Infinity 会被 clamp 正确处理,但 NaN 不会。
+        if !height.is_finite() {
+            tracing::warn!(height, "resize_floating_window 收到非有限值,跳过");
+            return Ok(());
+        }
         // 限高 —— 必须与 tauri.conf.json 的 minHeight/maxHeight 同步，否则
         // Tauri 会把后端 set_size 拽回 conf 设的范围 → "前端给 1500 但窗口还是 800"。
         // 真正"别超出 monitor 工作区"由前端 `screen.availHeight` 兜底。

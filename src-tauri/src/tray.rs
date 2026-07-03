@@ -608,10 +608,19 @@ fn render_icon(snap: &QuotaSnapshot, style: TrayIconStyle) -> Image<'static> {
 /// 失败/无数据时 fallback 到任意一份成功的。进度条小图标只画 1 份,
 /// tooltip 列出所有 instance 拼 #N 后缀(由 tooltip() 统一处理)。
 fn pick_minimax_rows(snap: &QuotaSnapshot) -> Option<(f64, f64)> {
+    // H1 fix (2026-07-03 audit): 之前精确匹配 "minimax",extra instance 的 source_id
+    // 是 "minimax#2" 被过滤掉,托盘图标不显示副本数据。改为按 base id 匹配
+    // (split('#')[0] == "minimax")。
     let minimaxes: Vec<&ProviderSnapshot> = snap
         .providers
         .iter()
-        .filter(|p| p.source_id.as_deref() == Some("minimax") && p.success)
+        .filter(|p| {
+            p.success
+                && p.source_id
+                    .as_deref()
+                    .map(|s| s.split('#').next().unwrap_or(s) == "minimax")
+                    .unwrap_or(false)
+        })
         .collect();
     if minimaxes.is_empty() {
         return None;

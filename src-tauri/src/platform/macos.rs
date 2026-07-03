@@ -203,10 +203,13 @@ pub fn set_window_level<R: Runtime>(app: &AppHandle<R>, level: CGWindowLevel, is
                     // SAFETY: `ptr` 来自 webview_window 的 NSWindow，整个 app 生命周期有效。
                     let window: &NSWindow = unsafe { &*ptr.cast::<NSWindow>() };
                     window.setLevel(level as _);
-                    // M3 fix: 只 PinBottom 模式设 false，PinTop/Normal 走默认(true)。
-                    // 之前无条件 false 导致 Normal 模式失焦后窗口仍保持可见，
-                    // 行为跟 PinBottom 一致，违反 "Normal = 跟普通窗口一样" 语义。
-                    window.setHidesOnDeactivate(!is_pin_bottom);
+                    // H15 fix (2026-07-03 audit): 之前 setHidesOnDeactivate(!is_pin_bottom),
+                    // Normal/PinTop 模式下设 true → app 失焦时浮窗完全 hide()(不是"被
+                    // 遮盖"而是"消失"),违反"始终可见的用量悬浮窗"产品定义。
+                    // macOS 普通窗口失焦只是被其他 app 遮盖(level=0 已实现该语义),
+                    // 不是 hide()。所有模式都设 false,让浮窗始终可见。
+                    let _ = is_pin_bottom; // 保留参数兼容现有调用,语义不再依赖
+                    window.setHidesOnDeactivate(false);
                 }
             }
         }

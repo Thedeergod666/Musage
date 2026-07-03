@@ -942,7 +942,17 @@ pub fn delete_credential_for_id(id: &str) -> Result<(), String> {
     if map.is_empty() {
         let path = keys_path()?;
         if path.exists() {
-            std::fs::remove_file(&path).map_err(|e| format!("remove empty keys: {e}"))?;
+            // H2 fix (2026-07-03 audit): remove_file 失败时返回 Err,但文件没改写
+            // → 下次 load 读到旧 key,"复活"被删的凭据,且前端已更新为"已删除"状态,
+            // 内存与磁盘不一致。改为 fallback 到 write_keys_atomic(写空 map,文件变 {}),
+            // 让文件内容与内存一致。只有 write_keys_atomic 也失败时才返 Err。
+            if let Err(e) = std::fs::remove_file(&path) {
+                tracing::warn!(
+                    error = %e,
+                    "remove empty keys.json 失败, fallback 到写空 map"
+                );
+                write_keys_atomic(&map)?;
+            }
         }
     } else {
         write_keys_atomic(&map)?;

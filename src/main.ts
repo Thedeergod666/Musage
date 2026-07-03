@@ -1112,17 +1112,83 @@ async function init() {
   // 跟原有 PinBottom mode 的 setupHoverRaise(level 切换 IPC) 并行存在，
   // 关注点不同：这里只管 CSS attribute，不动 always-on-top。
   //
+  // **2026-07-03 fix（v0.2.x 闪烁修复）**：app 挂后台时浮窗会时不时闪一下
+  // （毛玻璃效果消失又出现）。根因是 macOS deactivate→reactivate 切换瞬间，
+  // WKWebView 会向 transparent 窗口派发一次 spurious mouseenter（AppKit 历史
+  // 行为），紧接着 mouseleave 撤销；加上 NSWindow deactivation 动画触发
+  // backdrop-filter compositor 重置，看到中间帧。修复：
+  //   (a) 只在浮窗 focused + visible 时把 body mouseenter 视为有效 hover
+  //       —— 失焦态下收到的 mouseenter 是 spurious，忽略
+  //   (b) hover 状态需持续 ≥40ms 才显形玻璃，过短 enter→leave 抖动被吞掉
+  //       —— 防止 50ms 边界帧把 0.28s spring 动画起头又打断
+  //
   // **2026-06-20 audit**：body mouseenter/mouseleave 之前是匿名 arrow，
   // beforeunload 没办法 remove。改成 named fn 配对 remove。
   const setHoverAttr = (on: boolean) => {
     if (on) document.body.dataset.hover = "1";
     else delete document.body.dataset.hover;
   };
-  const onBodyMouseEnter = () => setHoverAttr(true);
-  const onBodyMouseLeave = () => setHoverAttr(false);
+  // (a) 失焦时把 body mouseenter 视为无效：app 切换瞬间 WKWebView 派发的
+  //     spurious enter 不应该让玻璃显形。Rust hover emitter 已经在跑（macOS
+  //     必需），focus 回来后第一个真正的 enter 由 Rust 兜底（`inside` 为 true
+  //     时 emit true），不会丢首次 hover 体验。
+  let focused = true;
+  let pageVisible = true;
+  const wForFocus = getCurrentWindow();
+  // 用 Promise.then 链挂 focus 监听；不 await —— 失败也只丢信号。
+  wForFocus
+    .onFocusChanged(({ payload: f }) => {
+      focused = f;
+      if (!f) setHoverAttr(false);
+    })
+    .catch(() => {});
+  // 页面级 visibility —— 覆盖 fullscreen watcher 隐藏浮窗的场景（macOS 探测
+  // 菜单栏不可见后调 hide_floating，WKWebView 此时触发 visibilitychange）。
+  document.addEventListener("visibilitychange", () => {
+    pageVisible = document.visibilityState === "visible";
+    if (!pageVisible) setHoverAttr(false);
+  });
+  // (b) 显形 debounce：enter→leave < 40ms 视为抖动，不切 data-hover。
+  //     显形方向 debounce（enter 后等 40ms 才设 hover），撤销方向照常。
+  //     这样 WKWebView spurious enter（瞬时）被吞掉；正常 hover 体验仅延后
+  //     40ms（不可察觉）。
+  let hoverEnterTimer: ReturnType<typeof setTimeout> | null = null;
+  const HOVER_DEBOUNCE_MS = 40;
+  const onBodyMouseEnter = () => {
+    if (!focused || !pageVisible) return; // 失焦 / 隐藏态 → spurious 忽略
+    if (hoverEnterTimer !== null) clearTimeout(hoverEnterTimer);
+    hoverEnterTimer = setTimeout(() => {
+      hoverEnterTimer = null;
+      setHoverAttr(true);
+    }, HOVER_DEBOUNCE_MS);
+  };
+  const onBodyMouseLeave = () => {
+    if (hoverEnterTimer !== null) {
+      clearTimeout(hoverEnterTimer);
+      hoverEnterTimer = null;
+    }
+    setHoverAttr(false);
+  };
   document.body.addEventListener("mouseenter", onBodyMouseEnter);
   document.body.addEventListener("mouseleave", onBodyMouseLeave);
+  let lastHoverPayload: boolean | null = null;
   listen<boolean>("musage://floating-hover", (e) => {
+    // Rust 端在窗口 deactive 时也会跑 hover emitter；如果当前 window 已失焦，
+    // 把 inside=true 的 emit 也吞掉（避免和 (a) 的 spurious enter 一样的闪烁）。
+    // 注意：(a) 的 listener 失焦时会主动 setHoverAttr(false)，但 Rust 可能在
+    // 失焦后的 50ms tick 里仍 emit true —— 这里再挡一层保险。
+    if (e.payload && (!focused || !pageVisible)) return;
+    // 防 Rust 端 spurious emit（同值重复 emit 不重复切）：hover emitter 内部
+    // 已有 `inside != last_inside` 去重；这里再做一层保险避免连续同值 emit
+    // 在 CSS spring 动画进行中反复重置起始点（视觉抖动）。
+    if (lastHoverPayload === e.payload) return;
+    lastHoverPayload = e.payload;
+    // Rust 路径直接同步切（已经过 50ms tick 去抖）；cancel pending enter
+    // timer（如果用户从 enter 进入但 40ms 内 Rust 也 emit true，按 Rust 为准）
+    if (hoverEnterTimer !== null) {
+      clearTimeout(hoverEnterTimer);
+      hoverEnterTimer = null;
+    }
     setHoverAttr(e.payload);
   })
     .then((fn) => (unlistenHover = fn))
@@ -1301,6 +1367,11 @@ async function init() {
     if (unlistenCfg) unlistenCfg();
     if (unlistenPinMode) unlistenPinMode();
     if (countdownTimer !== null) clearInterval(countdownTimer);
+    // 2026-07-03 fix: 配对清理 hover debounce timer（避免 unhandled timer）
+    if (hoverEnterTimer !== null) {
+      clearTimeout(hoverEnterTimer);
+      hoverEnterTimer = null;
+    }
     // 2026-06-20 audit: 配对 remove body mouseenter/mouseleave
     document.body.removeEventListener("mouseenter", onBodyMouseEnter);
     document.body.removeEventListener("mouseleave", onBodyMouseLeave);

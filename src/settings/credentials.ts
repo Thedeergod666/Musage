@@ -429,10 +429,23 @@ export async function saveCredentialAction(id: string, action: "key" | "cookie",
   const inputId = advInputId ?? (action === "key" ? `api-key-${id}` : `cookie-${id}`);
   const input = document.getElementById(inputId) as HTMLInputElement | HTMLTextAreaElement | null;
   if (!input) return;
-  const value = input.value.trim();
-  if (!value) {
+  // H17/H21 fix (2026-07-03 audit): 之前 input.value.trim() 把整段 textarea
+  // 当一个值传后端。cookie textarea 多行粘贴(浏览器 Copy → Copy headers
+  // 通常带多行) 时, 后端收到含 \n 的字符串大概率被服务器拒。
+  // 改: cookie 多行时取第一行非空 + flash 提示用户已取首行;
+  // api_key 走 <input type="password"> 浏览器自动去换行, 但保险也 strip。
+  const rawValue = input.value.trim();
+  if (!rawValue) {
     flash(t("credentials.flash_paste"), true);
     return;
+  }
+  let value = rawValue;
+  if (action === "cookie" && rawValue.includes("\n")) {
+    const firstLine = rawValue.split(/\r?\n/).map((s) => s.trim()).find((s) => s.length > 0);
+    if (firstLine && firstLine !== rawValue) {
+      value = firstLine;
+      flash(t("credentials.flash_multiline_first_line"), true);
+    }
   }
   try {
     // 多鉴权 source 必传 field hint，否则两个输入都落 api_key。

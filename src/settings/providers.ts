@@ -337,7 +337,15 @@ function renderDeleteExtraButton(meta: SourceMeta): HTMLElement {
     try {
       // P0-1: 删除必须传 UUID，不是 api_key_ref。meta.id 是 api_key_ref ("minimax#2")，
       // meta.extra_instance_uuid 才是真正的 UUID。
-      await deleteExtraInstance(meta.extra_instance_uuid ?? meta.id);
+      // H22 fix (2026-07-03 audit): 之前 `?? meta.id` fallback 在数据不一致
+      // (extra_instance_uuid 缺失) 时会把 "minimax#2" / "custom_<uuid>" 当 UUID
+      // 传后端, 后端 uuid::Uuid 反序列化直接报错且错误信息难懂。改成显式
+      // 拦截: uuid 缺失直接 flash 报错 "数据不一致, 请重启设置面板", 不调 IPC。
+      if (!meta.extra_instance_uuid) {
+        flash(t("settings.providers.delete_extra_no_uuid"), true);
+        return;
+      }
+      await deleteExtraInstance(meta.extra_instance_uuid);
       flash(t("settings.providers.delete_extra_done", { name: meta.display_name }));
       // L2 fix: 重置拖拽状态，防止 section 重建后幽灵/placeholder 残留
       resetDragState();

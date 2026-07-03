@@ -231,6 +231,13 @@ function renderDisplayThresholdsFields(cfg: AppConfig) {
       flash(t("settings.floating.threshold_must_be_number"), true);
       return;
     }
+    // M33 fix (2026-07-03 audit): 之前只校验是数字, 用户设 t0=80 t1=50 t2=88
+    // (黄起点 > 红起点) 也能通过前端校验, 要等 IPC 往返后端拒绝才知道错。
+    // 加客户端即时校验 t0 < t1 < t2, 错误立刻 flash 拦下。
+    if (!(v0 < v1 && v1 < v2)) {
+      flash(t("settings.floating.threshold_order_invalid"), true);
+      return;
+    }
     const wallet = walletCb.checked ? parseFloat(walletInput.value) : null;
     if (walletCb.checked && !Number.isFinite(wallet)) {
       flash(t("settings.floating.wallet_must_be_number"), true);

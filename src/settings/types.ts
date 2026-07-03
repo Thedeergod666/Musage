@@ -20,28 +20,6 @@ export interface ProviderConfig {
   xiaomi_display_mode?: "all" | "plan_only" | "total_only" | null;
 }
 
-/// 4 个 provider 面板的 id 列表。决定 #3/#4 UI 循环读哪些元素。
-///
-/// **PR 3 起废弃** —— 改用 `getCurrentKnownIds()` 动态从 `listSources()`
-/// 拿。`loadConfig()` 里 SPEC 化的 SPEC 化读 cfg.providers[id] 用 dynamic
-/// id 路径。保留 const 是给少数需要"内置 13 个 id 字面量"的地方做兜底
-/// （如 fallback 默认 region）。
-/// 已迁移到 `getCurrentKnownIds()`。
-export const PROVIDER_IDS = [
-  "minimax",
-  "deepseek",
-  "xiaomimimo",
-  "tavily",
-  "zenmux",
-  "openrouter",
-  "kimi",
-  "zhipu",
-  // 2026-06-16 新增（PR 2）
-  "stepfun",
-  "siliconflow",
-  "claude_official",
-] as const;
-
 /// Phase 1 起新 source 的元信息（后端 list_sources 返回）。
 /// 当前 settings.ts 直接用 list_sources 返回 SourceMeta[] 来构建面板，
 /// 这里的接口保留给未来的动态渲染。
@@ -60,32 +38,6 @@ export interface SourceMeta {
    *  删除/更新 IPC 需要传 UUID，不能传 api_key_ref。 */
   extra_instance_uuid?: string;
 }
-
-/// Xiaomi MiMo 浮窗显示模式：
-/// - `all`：完整（3 行，套餐和总额度数字一致时自动合并）
-/// - `plan_only`：只显示套餐 1 行
-/// - `total_only`：只显示总额度 1 行（带重置日期）
-/// 默认 `all`
-export type XiaomiDisplayMode = "all" | "plan_only" | "total_only";
-
-/** 设置面板的"显示模式"选择项配置（label + 描述，给 UI 用） */
-export const XIAOMI_DISPLAY_MODE_OPTIONS: Record<
-  XiaomiDisplayMode,
-  { label: string; description: string }
-> = {
-  all: {
-    label: "完整显示",
-    description: "3 行（套餐 / 补偿 / 总额度），数字一致时自动合并",
-  },
-  plan_only: {
-    label: "只看套餐",
-    description: "只显示套餐用量 + 重置时间，不显示补偿和总额度",
-  },
-  total_only: {
-    label: "只看总额度",
-    description: "只显示本月总消耗 + 重置时间，适合有补偿积分的用户",
-  },
-};
 
 export interface FieldTriple {
   total: string;

@@ -240,6 +240,19 @@ body[data-hover] #app {
                   box-shadow: 0 0 8px var(--c-data-ok); }
 .card-dot.alert { background: var(--c-data-alert);
                   box-shadow: 0 0 8px var(--c-data-alert); }
+/* H20 fix (2026-07-03 audit): main.ts 双击刷新失败时给 .card-dot 加
+ * .card-dot-error class 临时闪红 1.5s。之前 CSS 没定义这个 class →
+ * JS 加 class 是空操作, 用户看不到任何视觉反馈, 与注释承诺的 UX 不符。
+ * 复用 alert 色 + 0.5s 脉冲动画 3 次 = 1.5s 总时长对齐 setTimeout。 */
+.card-dot.card-dot-error {
+  background: var(--c-data-alert);
+  box-shadow: 0 0 12px var(--c-data-alert);
+  animation: card-dot-error-pulse 0.5s ease-in-out 3;
+}
+@keyframes card-dot-error-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.4; transform: scale(1.4); }
+}
 
 /* ── Bar：双层 —— 底层白色 idle 可见，::after 渐变彩条 hover fade-in ── */
 

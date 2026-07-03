@@ -25,6 +25,20 @@ const listeners = new Set<(l: Locale) => void>();
 // dev-only missing-key 警告。生产 build 关闭（Vite 替换 import.meta.env.DEV = false）。
 const dev = (typeof import.meta !== "undefined" && (import.meta as any).env?.DEV) === true;
 
+// H18 fix (2026-07-03 audit): 之前 t() 找不到 key 时直接 return key,
+// UI 上暴露 raw key 字符串("settings.floating.xxx")。dev 模式只有
+// console.warn 单条日志, 开发者不主动看 console 就漏掉。
+// 改: 收集所有 missing key 到全局 Set, 在 dev 模式下提供 dumpMissingKeys()
+// 让开发者一次性看到所有缺失 key 列表(可手动 console 调用, 也可在
+// settings 面板 dev menu 调)。生产模式不收集(零开销)。
+const missingKeys: Set<string> = new Set();
+export function dumpMissingKeys(): string[] {
+  return Array.from(missingKeys).sort();
+}
+export function _resetMissingKeysForTest(): void {
+  missingKeys.clear();
+}
+
 /**
  * 取翻译字符串。找不到 key 时回退到 en dict，再找不到回退到 key 本身。
  * `params` 里的 `{name}` 占位符被替换。
@@ -50,12 +64,19 @@ export const t = (key: string, params?: Record<string, string | number>): string
     const enFallback = lookupInDict(dicts.en, key) ?? lookupInDict(dicts.en, effectiveKey);
     if (enFallback != null) s = enFallback;
     else {
-      if (dev) console.warn(`[i18n] missing key '${key}' in locale '${current}'`);
+      // H18 fix: 收集 missing key (dev 模式才填, 生产模式 Set 始终空 = 零开销)
+      if (dev) {
+        missingKeys.add(key);
+        console.warn(`[i18n] missing key '${key}' in locale '${current}'`);
+      }
       return key;
     }
   }
   if (typeof s !== "string") {
-    if (dev) console.warn(`[i18n] key '${key}' is not a string in locale '${current}'`);
+    if (dev) {
+      missingKeys.add(`${key}#non-string`);
+      console.warn(`[i18n] key '${key}' is not a string in locale '${current}'`);
+    }
     return key;
   }
   if (!params) return s;

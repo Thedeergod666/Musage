@@ -286,6 +286,9 @@ pub async fn add_extra_instance(
             if instance.api_key_ref != temp_api_key_ref {
                 delete_credential_for_id(&temp_api_key_ref).ok();
             }
+            // H11 fix (2026-07-03 audit): 之前 push 后 save 失败只删 key,
+            // 没有从 extras Vec 里 pop 掉,内存残留孤儿 instance(无对应 key)。
+            extras.pop();
             return Err(e);
         }
         instance
@@ -333,8 +336,14 @@ pub async fn update_extra_instance(
             updated.custom = Some(spec);
         }
 
+        // H12 fix (2026-07-03 audit): save 失败时回滚 extras[pos] 到旧值,
+        // 避免内存与磁盘不一致(之前 ? 直接返回,extras[pos] 已被替换成新 spec)。
+        let old_instance = extras[pos].clone();
         extras[pos] = updated.clone();
-        extra_instances::save(&extras)?;
+        if let Err(e) = extra_instances::save(&extras) {
+            extras[pos] = old_instance;
+            return Err(e);
+        }
         (updated, api_key_ref)
     };
 
@@ -383,21 +392,29 @@ pub async fn delete_extra_instance(
     app: AppHandle,
     id: uuid::Uuid,
 ) -> Result<(), String> {
-    // 1. 找 target + 拿到 provider_id（决定 compact 范围）
-    let (provider_id, target_api_key_ref) = {
-        let extras_read = state.extra_instances.read().await;
-        let target = extras_read.iter().find(|e| e.id == id).ok_or_else(|| {
-            t!("commands.extra.not_found", id = id.to_string().as_str()).into_owned()
-        })?;
-        (target.provider_id.clone(), target.api_key_ref.clone())
-    };
-
-    // 2. 拿 write lock + 删 + 紧凑 + 同步 keys.json
+    // C3 fix (2026-07-03 audit): 之前 target_api_key_ref 在 read lock 阶段读取,
+    // 但实际删除在 write lock 内。两锁之间另一并发 delete 可能先执行并触发
+    // compact_indexes_for 把目标 key 重命名(minimax#3→minimax#2),此时用陈旧值
+    // 删 → 误删其他实例的 key。改为:整个查找/删除/compact 都在 write lock 内,
+    // target_api_key_ref 从锁内当前状态读取。
+    //
+    // H13 fix: save 失败时回滚 extras 到删除前快照,避免内存与磁盘不一致。
+    // H14 fix: compact 后 key 迁移失败时,回滚 instance 的 api_key_ref 到旧值,
+    // 让它继续指向有凭据的旧 key(而非指向不存在的新 key)。
+    let provider_id;
+    let target_api_key_ref;
+    let extras_snapshot: Vec<ExtraInstance>;
     {
         let mut extras = state.extra_instances.write().await;
         let pos = extras.iter().position(|e| e.id == id).ok_or_else(|| {
             t!("commands.extra.not_found", id = id.to_string().as_str()).into_owned()
         })?;
+        // 在 remove 前读取 target 的当前 api_key_ref(可能是另一并发 delete
+        // compact 后的新值),避免用 read lock 阶段的陈旧值。
+        provider_id = extras[pos].provider_id.clone();
+        target_api_key_ref = extras[pos].api_key_ref.clone();
+        // H13: 拍快照用于 save 失败回滚
+        extras_snapshot = extras.clone();
         extras.remove(pos);
 
         // 紧凑前先拍下同 provider_id 内剩余实例的 (id, old_api_key_ref) 快照，
@@ -417,8 +434,12 @@ pub async fn delete_extra_instance(
         //
         // P1-3 fix: save_credential_for_id 失败时跳过 delete_credential_for_id，
         // 保留旧 key 作为 fallback，避免凭据静默丢失。
+        // H14 fix: save 失败时回滚该 instance 的 api_key_ref 到 old_ref,
+        // 让它继续指向有凭据的旧 key(否则 instance 指向新 key 但新 key 无凭据,
+        // fetch 永远报"未配置")。
+        let mut migration_failures: Vec<(uuid::Uuid, String)> = Vec::new();
         for (inst_id, old_ref) in &old_refs {
-            if let Some(inst) = extras.iter().find(|e| &e.id == inst_id) {
+            if let Some(inst) = extras.iter_mut().find(|e| &e.id == inst_id) {
                 if inst.api_key_ref != *old_ref {
                     match load_credential_for_id(old_ref) {
                         Ok(Some(cred)) => match save_credential_for_id(&inst.api_key_ref, &cred) {
@@ -430,10 +451,10 @@ pub async fn delete_extra_instance(
                                     old_key = %old_ref,
                                     new_key = %inst.api_key_ref,
                                     error = %e,
-                                    "compact 后复制凭据失败，保留旧 key 不删",
+                                    "compact 后复制凭据失败，回滚 api_key_ref 到旧值",
                                 );
-                                // 不回滚 api_key_ref 重命名（compact_indexes_for 已就地改），
-                                // 但保留旧 key 在 keys.json 中 → 数据不丢但需手动恢复。
+                                // H14: 回滚 api_key_ref,让 instance 继续指向旧 key
+                                migration_failures.push((*inst_id, old_ref.clone()));
                             }
                         },
                         Ok(None) => {
@@ -446,16 +467,28 @@ pub async fn delete_extra_instance(
                                 error = %e,
                                 "compact 时读旧凭据失败，跳过迁移",
                             );
+                            // 读旧凭据失败也回滚 api_key_ref(保留旧 key 引用)
+                            migration_failures.push((*inst_id, old_ref.clone()));
                         }
                     }
                 }
             }
         }
+        // 应用 migration 失败的回滚
+        for (inst_id, old_ref) in &migration_failures {
+            if let Some(inst) = extras.iter_mut().find(|e| &e.id == inst_id) {
+                inst.api_key_ref = old_ref.clone();
+            }
+        }
 
-        // 删被删除实例的旧 key
+        // 删被删除实例的旧 key(target_api_key_ref 是锁内读取的当前值)
         delete_credential_for_id(&target_api_key_ref).ok();
 
-        extra_instances::save(&extras)?;
+        // H13: save 失败时回滚 extras 到删除前快照
+        if let Err(e) = extra_instances::save(&extras) {
+            *extras = extras_snapshot;
+            return Err(e);
+        }
     }
 
     let _ = app.emit("musage://config-changed", ());
@@ -608,10 +641,8 @@ pub async fn test_extra_instance(
             )
             .into_owned()
         })?;
-        // 校验 key 跟 provider 是否能拉到
-        let _ = load_credential_for_id(&format!("{}#1", req.provider_id))
-            .ok()
-            .flatten();
+        // M22 fix (2026-07-03 audit): 之前这里有死代码 load_credential_for_id
+        // 然后 let _ 丢弃结果,没有任何校验动作。已删除。
         src.fetch(&creds).await.map_err(|e| e.message)
     }
 }

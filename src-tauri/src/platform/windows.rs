@@ -346,10 +346,14 @@ fn is_cursor_inside_floating<R: Runtime>(app: &AppHandle<R>) -> Option<bool> {
             return Some(false);
         }
         // WindowFromPoint 成功 → topmost non-null = 真实命中窗口。
-        // 失败 → null = 当作"未被浮窗遮挡",返 false (保守不 raise)。
+        // 失败 → null = 未知状态(UAC 同意框 / 锁屏 / 不同 desktop)，
+        // M17 fix (2026-07-06 全量审查): 之前 `return Some(false)` 会
+        // 经 IPC 发给前端 → CSS glass hover 状态闪烁。改为返 `None` 让
+        // 调用方完全跳过这一 tick,无 emit、无 z-order 切换,前端 CSS
+        // 状态保持不变,下一 tick 自然恢复。
         let topmost: WIN_HWND = WindowFromPoint(pt);
         if topmost.is_null() {
-            return Some(false);
+            return None;
         }
         let root = GetAncestor(topmost, GA_ROOT);
         if root.is_null() {

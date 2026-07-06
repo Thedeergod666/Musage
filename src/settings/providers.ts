@@ -286,9 +286,20 @@ function renderIntervalOverride(id: string, cfg: AppConfig): HTMLElement {
   if (v != null) input.value = String(v);
 
   // M4 fix: 绑定 change 事件，用户修改轮询间隔后自动保存
+  // M9 fix (2026-07-06 全量审查): parseInt 不处理 "abc"/"99999999"。负值 / NaN
+  // / 过大 值传播到后端会静默接受,变成垃圾配置。10s 是 poller tick 下限
+  // (commands/mod.rs refresh tick 校验),按这个兜底。
   input.addEventListener("change", async () => {
     const raw = input.value.trim();
-    const secs = raw ? parseInt(raw, 10) : null;
+    let secs: number | null = null;
+    if (raw) {
+      const n = parseInt(raw, 10);
+      if (!Number.isFinite(n) || n < 10 || n > 86400) {
+        flash(t("settings.providers.invalid_interval", { val: raw }), true);
+        return;
+      }
+      secs = n;
+    }
     try {
       const latest = await getConfig();
       if (!latest.providers) latest.providers = {};

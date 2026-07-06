@@ -131,16 +131,22 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
 
   // 顶部 help：拆为多段（en/zh 不需要 1:1 翻，但 help 5 段更模块化）
   const help = el("div", { class: "help" });
-  help.innerHTML = t("settings.advanced.xiaomi_credentials_help");
+  help.textContent = t("settings.advanced.xiaomi_credentials_help");
 
+  // M5 fix (2026-07-06 全量审查): 之前 innerHTML = t(...) 把翻译字符串当 HTML
+  // 直接写入 DOM。t("..._help") 当前值是文本含 "<a>" / "<code>" 硬编码 anchor,
+  // 用户可控。i18n 翻译者误闭合属性、JSON 文件被供应链污染、locale 缺失时
+  // fallback 到字面 key 字符串,都会爆 XSS(<img onerror> 在 strict CSP 下仍
+  // 可触发)。textContent 把整块当纯文本显示(等同于无链接的纯说明),留给
+  // 后续 commits 切换到 DOMPurify + 白名单 HTML 路径。
   const cookieHelp = el("div", { class: "help" });
-  cookieHelp.innerHTML =
-    t("settings.advanced.xiaomi_cookie_help") + "<br>" +
+  cookieHelp.textContent =
+    t("settings.advanced.xiaomi_cookie_help") + "\n" +
     t("settings.advanced.xiaomi_cookie_help_2") +
-    `<a href="https://platform.xiaomimimo.com" target="_blank">platform.xiaomimimo.com</a>` +
+    "  https://platform.xiaomimimo.com  " +
     t("settings.advanced.xiaomi_cookie_help_3") +
-    `<code>cookie:</code>` +
-    t("settings.advanced.xiaomi_cookie_help_4") + "<br>" +
+    " cookie: " +
+    t("settings.advanced.xiaomi_cookie_help_4") + "\n" +
     t("settings.advanced.xiaomi_cookie_help_5");
 
   const xmSection = el("section", { class: "section-card" },

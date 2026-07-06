@@ -374,7 +374,14 @@ pub fn run() {
             }
         })
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        // L1 fix (2026-07-06 全量审查): 把入口 panic 改成可读 stderr + 非零退出。
+        // 之前 .expect() 在 Win 缺 WebView2 / tauri dev 端口被占时静默崩,用户
+        // 只看到托盘图标消失。给运维一个明确的失败原因(从 stderr / 日志抓取)。
+        .unwrap_or_else(|e| {
+            eprintln!("[musage] tauri::Builder::run 失败: {e}");
+            tracing::error!(error = %e, "tauri::Builder::run 失败,进程退出");
+            std::process::exit(1);
+        });
 }
 
 /// 启动一个后台任务，把浮窗的"位置/大小"事件 debounce 到 500ms 再写 config.json。

@@ -438,7 +438,13 @@ fn is_menubar_hidden<R: Runtime>(app: &AppHandle<R>) -> bool {
     });
 
     let slot2 = slot.clone();
-    let _ = app.run_on_main_thread(move || {
+    // L7 fix (2026-07-06 全量审查): `let _ = app.run_on_main_thread(...)`
+    // 静默吞 Err —— main thread 挂 / NSOpenPanel modal / 关闭期间,dispatch
+    // closure 永不跑,slot 永远 None,cvar 等到 200ms timeout 进入下一轮,本
+    // tick 拿不到正确状态。改为:Err 时主动 fill slot = Some(false) +
+    // notify,caller 拿到 unwrapped false 立即返回(假设没全屏),不让循环
+    // 永久空转。
+    let dispatch_result = app.run_on_main_thread(move || {
         let mtm = match MainThreadMarker::new() {
             Some(m) => m,
             None => {
@@ -454,6 +460,13 @@ fn is_menubar_hidden<R: Runtime>(app: &AppHandle<R>) -> bool {
         *g = Some(!visible);
         slot2.cvar.notify_all();
     });
+    if let Err(e) = dispatch_result {
+        tracing::warn!(error = ?e, "is_menubar_hidden: run_on_main_thread 失败,fallback false");
+        if let Ok(mut g) = slot.slot.lock() {
+            *g = Some(false);
+            slot.cvar.notify_all();
+        }
+    }
 
     let started = std::time::Instant::now();
     loop {

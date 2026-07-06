@@ -493,6 +493,27 @@ async function submitCustom(body: HTMLElement): Promise<boolean> {
   const accentEl = body.querySelector<HTMLElement>(".accent-swatch.selected");
   const accent = accentEl ? accentEl.dataset.color ?? null : null;
 
+  // M11 fix (2026-07-06 全量审查): displayName / baseUrl / path 无长度上限 +
+  // 无 bidi 控制字符过滤。用户可粘贴 10MB 字符串撑大 keys.json,或带 RTL
+  // override 让相邻 UI 标签视觉倒置(homograph spoof)。统一 max 512 字符 +
+  // 拒绝 ASCII 控制字符(RTL override 通常在 U+202E 等)。
+  const MAX_FIELD_LEN = 512;
+  function sanitizeField(s: string): string | null {
+    if (s.length > MAX_FIELD_LEN) return null;
+    for (const ch of s) {
+      const code = ch.codePointAt(0) ?? 0;
+      if (code < 0x20 || code === 0x7f || code === 0x202e || code === 0x202d) {
+        return null;
+      }
+    }
+    return s;
+  }
+  const dn = sanitizeField(displayName);
+  if (dn === null) {
+    flash(t("custom_source.err.field_too_long", { field: "name" }), true);
+    return false;
+  }
+
   // 2. 前端基本校验
   if (!displayName) { flash(t("custom_source.err.name_required"), true); return false; }
   if (!baseUrl.startsWith("http://") && !baseUrl.startsWith("https://")) {
@@ -507,7 +528,17 @@ async function submitCustom(body: HTMLElement): Promise<boolean> {
 
   // 3. 构造 ExtractSpec
   const divideRaw = (body.querySelector<HTMLInputElement>("#cs-divide")?.value ?? "").trim();
-  const divide = divideRaw === "" ? null : Number(divideRaw);
+  // M10 fix (2026-07-06 全量审查): Number(divideRaw) 接受 NaN / -1 / Infinity。
+  // 负 divide 把 remaining 反转显示 - 浮窗完全错乱。明确只接受 1..=1e6。
+  let divide: number | null = null;
+  if (divideRaw !== "") {
+    const n = Number(divideRaw);
+    if (!Number.isFinite(n) || n < 1 || n > 1e6) {
+      flash(t("custom_source.err.divide_invalid", { val: divideRaw }), true);
+      return false;
+    }
+    divide = n;
+  }
   let extract: ExtractSpec;
   if (preset === "new_api") {
     extract = { preset: "new_api", divide };

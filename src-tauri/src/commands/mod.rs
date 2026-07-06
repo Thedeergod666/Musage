@@ -1604,7 +1604,22 @@ fn log_provider_error(app: &AppHandle, provider_id: &str, kind: ErrorKind, messa
             Err(poisoned) => poisoned.into_inner(), // 中毒也继续，日志比强一致重要
         };
         if let Some(&last_ts) = g.get(&key) {
-            if now - last_ts < LOG_DEDUP_WINDOW_MS {
+            // L13 fix (2026-07-06 全量审查): NTP 倒退 / OS 挂起后时钟跳回时,
+            // 签名减法 underflow 成大负数,< 比较仍 true → 同一 provider 后
+            // 续所有失败永久 dedup。改用 saturating_sub + 单调性 guard:
+            // t > now(时钟倒回)时,把 last_ts 视为"很久以前",允许继续记录。
+            let delta_ms = if now >= last_ts {
+                now - last_ts
+            } else {
+                tracing::warn!(
+                    now,
+                    last_ts,
+                    key = %format!("{}/{}", provider_id, kind.as_str()),
+                    "clock rollback detected, resetting dedup ts"
+                );
+                i64::MAX
+            };
+            if delta_ms < LOG_DEDUP_WINDOW_MS {
                 return;
             }
         }
@@ -1853,8 +1868,14 @@ pub(crate) fn is_in_clear_grace(now_ms: i64) -> bool {
         Err(_) => return false,
     };
     match *g {
-        Some(t) if now_ms - t < LOG_CLEAR_GRACE_MS => true,
-        _ => false,
+        // L14 fix (2026-07-06 全量审查): clock rollback → now_ms - t 负数,
+        // < LOG_CLEAR_GRACE_MS 永远 true, grace 卡死后续 error 全被吞。
+        // 改为 saturating + 单调性 guard:now_ms < t 时当作 grace 已过。
+        Some(t) if now_ms >= t && now_ms - t < LOG_CLEAR_GRACE_MS => true,
+        // Some(t) 且 now_ms < t 或超出窗口 → 都不是 grace
+        Some(_) => false,
+        // None → 没清过日志,grace 不生效
+        None => false,
     }
 }
 

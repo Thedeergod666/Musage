@@ -80,14 +80,17 @@ const LOGIN_URL: &str = "https://platform.xiaomimimo.com/console/plan-manage";
 /// 判定 URL 是否已经离开 SSO 重定向链、到达 dashboard。
 ///
 /// 规则（白名单 + 黑名单组合）：
-/// - host 必须是 `platform.xiaomimimo.com`
+/// - host 必须**完全等于** `platform.xiaomimimo.com`（不接受子串匹配；
+///   否则 `platform.xiaomimimo.com.attacker.tld` DNS rebinding 可绕过）
+/// - scheme 必须是 `https`（防明文 / 钓鱼）
 /// - 不能在 `account.xiaomi.com` / `serviceLogin` / `passport` 路径上
 ///
 /// 这是 heuristic，不是绝对 —— 如果 Xiaomi 改了 SSO 流程（比如加一层
 /// 验证中间页），要改这里或加新关键字。
 fn is_dashboard_url(url: &Url) -> bool {
+    let host_ok = url.host_str() == Some("platform.xiaomimimo.com")
+        && url.scheme() == "https";
     let s = url.as_str();
-    let host_ok = s.contains("platform.xiaomimimo.com");
     let not_login =
         !s.contains("account.xiaomi.com") && !s.contains("serviceLogin") && !s.contains("passport");
     host_ok && not_login
@@ -138,6 +141,37 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
         .resizable(true)
         .decorations(true)
         .center()
+        // H8 fix (2026-07-06 全量审查): 在 webview 里注入 init script,挡住
+        // dashboard 域之外的 cookie 读取 + 第三方 widget 在受信 webview
+        // 上下文里跑 JS 偷 session。
+        //   - document.cookie getter: 仅当 location.hostname ===
+        //     "platform.xiaomimimo.com" 时返回真值,否则返空串。
+        //   - sessionStorage / localStorage: 同样限制。
+        // 配合 capabilities/default.json 把 webview create 权限 only 给
+        // xiaomi-login 窗口（已拆 capabilities/xiaomi-login.json）。
+        .initialization_script(
+            r#"
+            (function () {
+                const ALLOW_HOST = "platform.xiaomimimo.com";
+                function isAllowed() {
+                    try { return location.hostname === ALLOW_HOST; } catch (_) { return false; }
+                }
+                const _origCookie = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
+                Object.defineProperty(document, "cookie", {
+                    get() { return isAllowed() ? _origCookie.get.call(this) : ""; },
+                    set(v) { if (isAllowed()) _origCookie.set.call(this, v); },
+                    configurable: false
+                });
+                try {
+                    const _origLs = Object.getOwnPropertyDescriptor(Storage.prototype, "getItem");
+                    Object.defineProperty(Storage.prototype, "getItem", {
+                        value: function (k) { return isAllowed() ? _origLs.value.call(this, k) : null; },
+                        configurable: true
+                    });
+                } catch (_) {}
+            })();
+            "#,
+        )
         .on_page_load(move |window, payload| {
             let url = payload.url();
             tracing::debug!(%url, "xiaomi login webview page load");
@@ -371,10 +405,17 @@ fn emit_failed(app: &AppHandle, msg: String) {
 
 /// 从 URL 查询参数中提取 `userId`。
 /// dashboard URL 格式：`...?userId=12345&...` 或 `...?...&userId=12345`
+///
+/// 安全校验：只接受纯数字（≤32 位）。任何非数字字符（攻击者注入
+/// `<script>` / 控制字符 / 过长串）都返回 None，不写入 cookie。
 fn extract_user_id_from_url(url: &Url) -> Option<String> {
     for (key, value) in url.query_pairs() {
         if key == "userId" {
-            return Some(value.into_owned());
+            let v = value.into_owned();
+            if !v.is_empty() && v.len() <= 32 && v.chars().all(|c| c.is_ascii_digit()) {
+                return Some(v);
+            }
+            return None;
         }
     }
     None

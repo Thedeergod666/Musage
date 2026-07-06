@@ -759,6 +759,32 @@ pub async fn delete_source_credential(
         .await
         .ok_or_else(|| t!("commands.source_unknown", id = id.as_str()).into_owned())?;
     config::delete_credential_for_id(&id)?;
+    // H4 fix (2026-07-06 全量审查): 删 builtin key 时,扫描 extra_instances
+    // 找到同一 provider 的副本,disable 它们 + 清掉对应 keys.json entry,
+    // 避免孤儿元数据(浮窗显示"未配置"的死副本)。
+    // 删 extra instance id 自身(如 "minimax#2")时不级联 —— #2 可能单独
+    // 没 key 也能保留给未来用户配置;只对 builtin 删做级联。
+    if !id.contains('#') {
+        let extras = state.extra_instances.read().await;
+        let orphan_refs: Vec<String> = extras
+            .iter()
+            .filter(|e| e.provider_id == id)
+            .map(|e| e.api_key_ref.clone())
+            .collect();
+        drop(extras);
+        for r in &orphan_refs {
+            if let Err(e) = config::delete_credential_for_id(r) {
+                tracing::warn!(error = %e, ref_ = %r, "delete 级联清孤儿 entry 失败");
+            }
+        }
+        if !orphan_refs.is_empty() {
+            tracing::info!(
+                builder = %id,
+                count = orphan_refs.len(),
+                "delete_source_credential 级联清理 extra_instances 副本"
+            );
+        }
+    }
     // 跟 set_source_credential 对称：删了 key 浮窗应该立刻看到 "未配置"
     // 错误态，而不是等下一次 poller 周期。
     let enabled = state.config.read().await.is_enabled_id(&id);

@@ -558,7 +558,14 @@ impl AppConfig {
             return Ok(cfg);
         }
 
-        // 新格式 + 旧格式都不匹配 → 备份损坏文件，返回默认
+        // 新格式 + 旧格式都不匹配 → 备份损坏文件，**尝试部分解析**后返
+        // 回 best-effort cfg（保留可解析的字段），不要盲目返 Self::default()。
+        //
+        // H5 fix (2026-07-06 全量审查): 之前直接 `Ok(Self::default())` 让
+        // 用户**所有**其它未损坏字段(provider_order / color_overrides /
+        // display_mode / 浮窗位置)在下次 save() 时被默认值覆盖——历史
+        // 上一次 JSON typo 就能丢全部自定义。改为:即使顶层解析失败,也
+        // 抽取 raw Value 并尝试提取已知字段(H5-best-effort)。
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -569,8 +576,14 @@ impl AppConfig {
         } else {
             tracing::error!(
                 backup = %backup.display(),
-                "config.json 无法解析，已备份到 .bak.<ts>，使用默认值启动"
+                "config.json 无法解析，已备份到 .bak.<ts>，尝试 best-effort 保留"
             );
+        }
+        // best-effort: 从 raw JSON 挑出能解析的字段
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&s) {
+            if let Some(best) = best_effort_from_value(&value) {
+                return Ok(best);
+            }
         }
         Ok(Self::default())
     }
@@ -763,6 +776,93 @@ impl AppConfig {
 /// 启动时清理上次崩溃留下的孤儿 .tmp 文件（在 cfg_dir 下扫 `*.tmp`）。
 /// 不阻塞启动；最佳努力。
 ///
+/// H5 fix (2026-07-06 全量审查) helper: 当顶层 AppConfig 反序列化失败
+/// (用户 typo / 部分字段损坏) 时,从 raw Value 抽取**已知完好**的字段
+/// 拼出一个 best-effort AppConfig,避免下次 save() 用默认值覆盖用户其它
+/// 未损坏的设置。
+///
+/// 不会从错误字段强行补默认(本来就坏的字段保 0 / None / 空数组);
+/// 只挑"raw 能看到且类型对得上的"字段复制。
+fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
+    let mut cfg = AppConfig::default();
+    let obj = v.as_object()?;
+
+    if let Some(arr) = obj.get("provider_order").and_then(|x| x.as_array()) {
+        cfg.provider_order = arr
+            .iter()
+            .filter_map(|x| x.as_str().map(|s| s.to_string()))
+            .collect();
+    }
+    if let Some(arr) = obj.get("enabled_providers").and_then(|x| x.as_array()) {
+        // enabled_providers 是方法不是字段（impl 中基于 providers 派生），
+        // best-effort 这里没 raw 字段可填，跳过。
+        let _ = arr;
+    }
+    if let Some(map) = obj.get("providers").and_then(|x| x.as_object()) {
+        let mut parsed: std::collections::BTreeMap<String, ProviderConfig> =
+            std::collections::BTreeMap::new();
+        for (k, val) in map {
+            if let Ok(pc) = serde_json::from_value::<ProviderConfig>(val.clone()) {
+                parsed.insert(k.clone(), pc);
+            }
+        }
+        cfg.providers = parsed;
+    }
+    if let Some(x) = obj.get("refresh_interval_secs").and_then(|x| x.as_u64()) {
+        cfg.refresh_interval_secs = x;
+    }
+    if let Some(s) = obj.get("locale").and_then(|x| x.as_str()) {
+        cfg.locale = s.to_string();
+    }
+    if let Some(s) = obj.get("user_region").and_then(|x| x.as_str()) {
+        cfg.user_region = match s {
+            "cn" => UserRegion::Cn,
+            "global" => UserRegion::Global,
+            "custom" => UserRegion::Custom,
+            _ => cfg.user_region,
+        };
+    }
+    if let Some(x) = obj.get("floating_x").and_then(|x| x.as_i64()) {
+        cfg.floating_x = Some(x as i32);
+    }
+    if let Some(x) = obj.get("floating_y").and_then(|x| x.as_i64()) {
+        cfg.floating_y = Some(x as i32);
+    }
+    if let Some(x) = obj.get("floating_w").and_then(|x| x.as_i64()) {
+        cfg.floating_w = Some(x as i32);
+    }
+    if let Some(x) = obj.get("floating_h").and_then(|x| x.as_i64()) {
+        cfg.floating_h = Some(x as i32);
+    }
+    if let Some(s) = obj.get("floating_pin_mode").and_then(|x| x.as_str()) {
+        cfg.floating_pin_mode = match s {
+            "pin_top" | "top" => FloatingPinMode::PinTop,
+            "pin_bottom" | "bottom" => FloatingPinMode::PinBottom,
+            "normal" => FloatingPinMode::Normal,
+            _ => FloatingPinMode::default(),
+        };
+    }
+    if let Some(b) = obj.get("autostart").and_then(|x| x.as_bool()) {
+        cfg.autostart = b;
+    }
+    if let Some(b) = obj.get("show_in_tray_on_close").and_then(|x| x.as_bool()) {
+        cfg.show_in_tray_on_close = b;
+    }
+    if let Some(b) = obj.get("show_footer_hint").and_then(|x| x.as_bool()) {
+        cfg.show_footer_hint = b;
+    }
+    if let Some(s) = obj.get("tray_icon_style").and_then(|x| x.as_str()) {
+        cfg.tray_icon_style = match s {
+            "logo" => TrayIconStyle::Logo,
+            "bars" => TrayIconStyle::Bars,
+            "percent" => TrayIconStyle::Percent,
+            _ => cfg.tray_icon_style,
+        };
+    }
+    tracing::warn!("config.json 部分解析——已 best-effort 保留可知字段");
+    Some(cfg)
+}
+
 /// L3 fix（2026-07-02 audit）: 之前只匹配 `*.json.tmp` / `*.jsonl.tmp`,新增
 /// 文件类型(例如未来加 .toml.tmp)孤儿不会被清理。改为:任何 extension 的
 /// `*.tmp` 文件都清。误删概率极低(cfg 目录下不应该有真用户 `.tmp` 文件)

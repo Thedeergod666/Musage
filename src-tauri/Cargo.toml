@@ -63,6 +63,10 @@ windows-sys = { version = "0.59", features = [
   "Win32_Foundation",
   "Win32_UI_WindowsAndMessaging",
   "Win32_UI_Input_KeyboardAndMouse",
+  # Win32_UI_HiDpi 用于 SetProcessDpiAwarenessContext —— 2026-07-06 全量
+  # 审查 H2 fix: 保证 GetCursorPos / GetWindowRect 在多 DPI 屏之间用同一虚拟坐标系,
+  # 避免 100% DPI 屏拖到 175% DPI 屏时 hover 检测挂掉。
+  "Win32_UI_HiDpi",
 ] }
 
 [features]
@@ -70,7 +74,19 @@ default = ["custom-protocol"]
 custom-protocol = ["tauri/custom-protocol"]
 
 [profile.release]
-panic = "abort"
+# 改动 (2026-07-06 全量审查 C3 fix): panic = "abort" → "unwind"。
+# 理由：tray.rs / xiaomi_login.rs / providers/* 里有多个
+# `tauri::async_runtime::spawn` 包裹 fetch/cookie 提取逻辑。这些 task 内部
+# 有 `.unwrap()` (未来 schema 漂移 / Option 类型不匹配 / serde 拒绝 时)。abort
+# 模式下任何一个 spawn panic → 进程 abort → 托盘 / 浮窗 / in-flight 状态
+# 全部丢失,用户体验是"应用消失"。unwind 让 spawn panic 被 tokio runtime
+# 捕获,主进程继续。
+#
+# 兜底: xiaomi_login.rs:172 已有 `ExtractingGuard` RAII guard 强制 reset
+# 提取锁,unwind 路径下 Drop glue 仍运行。
+#
+# 代价: release binary 大小 +~0.3%（unwind tables），可忽略。
+panic = "unwind"
 codegen-units = 1
 lto = true
 opt-level = "s"

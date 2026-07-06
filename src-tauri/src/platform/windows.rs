@@ -67,11 +67,25 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use windows_sys::Win32::Foundation::GetLastError;
 use windows_sys::Win32::Foundation::{HWND as WIN_HWND, POINT, RECT};
+use windows_sys::Win32::UI::HiDpi::{
+    SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetCursorPos, GetWindowLongW, GetWindowRect, SetWindowLongW, SetWindowPos,
     WindowFromPoint, GA_ROOT, GWL_EXSTYLE, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOPMOST,
     SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, WS_EX_TOPMOST,
 };
+
+/// H2 fix (2026-07-06 全量审查): 启动期一次性把进程 DPI awareness 声明成
+/// Per-Monitor V2。之后 `GetCursorPos` / `GetWindowRect` 在多屏不同 DPI
+/// 缩放下都返回同一虚拟坐标系,hover 检测不会再因跨 DPI 屏而"鼠标永久在窗
+/// 外"。失败 (老 OS / manifest 冲突) 时静默 —— 非致命,行为退回到系统默
+/// 认 DPI awareness。
+fn ensure_per_monitor_v2_dpi() {
+    unsafe {
+        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    }
+}
 
 /// Hover tracker thread 是否已启动（idempotent 防重入）。
 static TRACKER_RUNNING: AtomicBool = AtomicBool::new(false);
@@ -228,6 +242,8 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
     if TRACKER_RUNNING.swap(true, Ordering::SeqCst) {
         return;
     }
+    // H2 fix: 启动期一次性声明 Per-Monitor V2 DPI awareness。
+    ensure_per_monitor_v2_dpi();
     let builder = thread::Builder::new()
         .name("musage-hover-emitter".into())
         .spawn(move || {

@@ -539,8 +539,17 @@ pub fn update_tray_from_snapshot(
 }
 
 fn make_placeholder_icon() -> Image<'static> {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("icons/tray-base.png");
-    if let Ok(img) = image::open(&path) {
+    // H7 fix (2026-07-06 全量审查): 之前用
+    // `env!("CARGO_MANIFEST_DIR").join("icons/tray-base.png")`,只在 dev 路径
+    // 有效。`pnpm tauri build` 产出的 .app / NSIS 包内该路径不存在
+    // (生产资源在 `BaseDirectory::Resource` 下,跟 CARGO_MANIFEST_DIR 不同),
+    // 导致 image::open 永远 Err,fallback 到完全透明 RGBA → Win11 200% DPI
+    // 下用户的托盘看不到 Musage 图标,看起来"应用消失"。
+    //
+    // 修复: 编译期 include_bytes! 嵌入 PNG,无论 dev/prod 都可用,
+    // 不再依赖运行时路径解析。
+    static TRAY_BASE_PNG: &[u8] = include_bytes!("../icons/tray-base.png");
+    if let Ok(img) = image::load_from_memory(TRAY_BASE_PNG) {
         let mut rgba = img.to_rgba8();
         let (w, h) = rgba.dimensions();
         // H5 fix: 注释(line 197-201)明确说 Win 64x64 是为了高 DPI 防糊，

@@ -61,8 +61,7 @@ static LAST_SUCCESSFUL: std::sync::OnceLock<
 > = std::sync::OnceLock::new();
 
 fn last_successful(
-) -> &'static std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, Endpoint)>>
-{
+) -> &'static std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, Endpoint)>> {
     LAST_SUCCESSFUL.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 

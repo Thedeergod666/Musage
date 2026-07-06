@@ -88,8 +88,7 @@ const LOGIN_URL: &str = "https://platform.xiaomimimo.com/console/plan-manage";
 /// 这是 heuristic，不是绝对 —— 如果 Xiaomi 改了 SSO 流程（比如加一层
 /// 验证中间页），要改这里或加新关键字。
 fn is_dashboard_url(url: &Url) -> bool {
-    let host_ok = url.host_str() == Some("platform.xiaomimimo.com")
-        && url.scheme() == "https";
+    let host_ok = url.host_str() == Some("platform.xiaomimimo.com") && url.scheme() == "https";
     let s = url.as_str();
     let not_login =
         !s.contains("account.xiaomi.com") && !s.contains("serviceLogin") && !s.contains("passport");

@@ -151,7 +151,11 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
                 // 进入时多 1 tick 防边界抖动（特别是 transparent 多窗口共存场景）。
                 const ENTER_THRESHOLD: u8 = 3;
                 const EXIT_THRESHOLD: u8 = 2;
-                let threshold = if pending_value { ENTER_THRESHOLD } else { EXIT_THRESHOLD };
+                let threshold = if pending_value {
+                    ENTER_THRESHOLD
+                } else {
+                    EXIT_THRESHOLD
+                };
 
                 if pending_ticks < threshold {
                     continue;

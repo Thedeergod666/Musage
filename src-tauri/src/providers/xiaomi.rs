@@ -465,10 +465,11 @@ impl Xiaomimimo {
         // 内的字符。后者会被某些代理或日志工具作注入点(尽管 reqwest 也会
         // 拦,但我们提前返友好错误)。
         let bad = cookie.chars().find(|c| {
-            matches!(c,
+            matches!(
+                c,
                 '\r' | '\n' | '\t' | '\0'
                 | '\x1b'  // ANSI escape
-                | '\x7f'  // DEL
+                | '\x7f' // DEL
             ) || c.is_control()
         });
         if let Some(bad) = bad {

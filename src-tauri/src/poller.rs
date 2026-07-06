@@ -27,8 +27,7 @@ fn in_flight() -> &'static std::sync::Mutex<JoinSet<()>> {
 /// M7 fix (2026-07-03 audit): tick() 并发去重。用户在 poller 自动 tick 期间
 /// 点"立即刷新",两个 tick() 并发跑 → 2N 次网络请求 + backoff 记录竞争。
 /// 正在跑时直接返回 Ok,避免重复 fetch。
-static TICK_RUNNING: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static TICK_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn start(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
@@ -225,12 +224,15 @@ pub async fn tick_now(app: &AppHandle) -> Result<(), String> {
 
 pub async fn tick(app: &AppHandle) -> Result<(), String> {
     // M7 fix: 并发去重。CAS swap false→true 失败说明已有 tick 在跑,直接返回。
-    if TICK_RUNNING.compare_exchange(
-        false,
-        true,
-        std::sync::atomic::Ordering::SeqCst,
-        std::sync::atomic::Ordering::SeqCst,
-    ).is_err() {
+    if TICK_RUNNING
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+        )
+        .is_err()
+    {
         tracing::debug!("tick() 已有实例在跑,跳过本次并发触发");
         return Ok(());
     }

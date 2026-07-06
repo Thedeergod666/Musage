@@ -239,7 +239,15 @@ fn spawn_append_job(store: LogStore, job: AppendJob) {
             .expect("启动 logstore 后台 append 线程");
         tx
     });
-    let _ = tx.send((store, job));
+    // M3 fix (2026-07-06 全量审查): send 返 Err 通常意味着后台 worker
+    // 已死(panic / OOM / ring clone 失败)。静默 `let _ = tx.send(...)`
+    // 只能让运维盲飞。升级 error 级 log —— 磁盘落盘停止的事实要被看见。
+    if let Err(e) = tx.send((store, job)) {
+        tracing::error!(
+            error = ?e,
+            "logstore background append worker 已死 —— 后续 push 在内存 ring 里更新,但不再落盘"
+        );
+    }
 }
 
 /// 后台线程实际写的 append 实现。
@@ -251,7 +259,13 @@ fn append_entry(entry: &LogEntry) -> std::io::Result<()> {
     let mut f = OpenOptions::new().create(true).append(true).open(&path)?;
     let s = serde_json::to_string(entry)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
-    writeln!(f, "{}", s)
+    writeln!(f, "{}", s)?;
+    // M2 fix (2026-07-06 全量审查): flush + sync_all,确保崩溃后最关键
+    // 错误日志不丢。否则 forensic 关键时刻(应用 crash 前最后一条 error)
+    // 会因为 page cache 没刷盘而缺失 —— 留下"为什么崩溃"的无解之谜。
+    let _ = f.flush();
+    let _ = f.sync_all();
+    Ok(())
 }
 
 /// 把 ring buffer 内容重写到磁盘（覆盖整个 .jsonl 文件）。

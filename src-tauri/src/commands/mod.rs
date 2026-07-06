@@ -98,6 +98,10 @@ pub async fn set_provider_enabled(
                 xiaomi_display_mode: None,
             });
         entry.enabled = enabled;
+        // M4 fix (2026-07-06 全量审查): 跟 `add_extra_instance` / 锁顺序契约
+        // 保持一致 —— 在持有 config.write 时,同步取一份 extra_instances
+        // read guard(即使不用值),保证调用方刷新时可观测一致快照。
+        let _extras_raii = state.extra_instances.read().await;
         cfg.save()?;
     }
     // 如果用户关掉了某个 provider，立刻清掉它在 in-memory snapshot 里

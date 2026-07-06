@@ -758,6 +758,12 @@ impl AppConfig {
         let tmp = path.with_extension("json.tmp");
         std::fs::write(&tmp, &s)
             .map_err(|e| t!("commands.config_write", err = e.to_string()).into_owned())?;
+        // M1 fix (2026-07-06 全量审查): tmp 写完立刻 sync_all,确保元数据+数据
+        // 都落盘,再 rename。否则掉电 / kernel panic 可能在 rename 之前发生,
+        // 用户最近一次 save 静默丢失(下次启动读到的还是旧文件)。
+        if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&tmp) {
+            let _ = f.sync_all();
+        }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -930,6 +936,10 @@ fn write_keys_atomic(map: &KeysMap) -> Result<(), String> {
     let s = serde_json::to_string_pretty(map)
         .map_err(|e| t!("commands.config_serialize", err = e.to_string()).into_owned())?;
     std::fs::write(&tmp, &s).map_err(|_| t!("commands.keys_io", op = "write tmp").into_owned())?;
+    // M1 fix (2026-07-06 全量审查): fsync tmp 再 rename,确保掉电不丢 cookie/key。
+    if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&tmp) {
+        let _ = f.sync_all();
+    }
 
     #[cfg(unix)]
     {

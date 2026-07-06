@@ -199,6 +199,10 @@ pub fn save(instances: &[ExtraInstance]) -> Result<(), String> {
     let s = serde_json::to_string_pretty(instances)
         .map_err(|e| format!("serialize extra_instances: {e}"))?;
     std::fs::write(&tmp, &s).map_err(|e| format!("write tmp: {e}"))?;
+    // M1 fix (2026-07-06 全量审查): fsync tmp 再 rename,防掉电丢数据。
+    if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&tmp) {
+        let _ = f.sync_all();
+    }
 
     #[cfg(unix)]
     {

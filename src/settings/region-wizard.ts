@@ -20,9 +20,12 @@ import { setRegion, getRegion } from "./api";
 import type { AppConfig } from "./types";
 
 export async function renderRegionSection(container: HTMLElement) {
-  // getRegion 是 Tauri command（async），getLocale 是前端 i18n helper（同步，进程内 state）
-  const currentRegion = await getRegion().catch(() => "cn");
-  const currentLocale = getLocale();
+  // M13 fix (2026-07-06 全量审查): 并发 getRegion + getLocale,避免 UI 显示
+  // "新 locale + 旧 region" 的中间态(用户切换时 apply 刚触发就有 read 错位)。
+  const [currentRegion, currentLocale] = await Promise.all([
+    getRegion().catch(() => "cn"),
+    Promise.resolve(getLocale()),
+  ]);
 
   // ── 语言 radio ──
   const langOpts: Array<{ value: "zh-CN" | "en"; title: string }> = [
@@ -124,8 +127,29 @@ export async function renderRegionSection(container: HTMLElement) {
 
 /// 在 settings panel 启动时检测：user_region != Custom → 在主面板顶部
 /// 插一条 banner 提示用户去区域向导
+///
+/// M14 fix (2026-07-06 全量审查): 首启 (cfg.user_region == 'cn' 仍是 serde
+/// 默认) 时,navigator.language 以 'en' / 'en-*' 开头 → 自动应用 Global
+/// + emit apply 事件。US 用户无需手动点 Apply,CNC endpoint 不会再挂在
+/// 配置面板上(老 bug: 美区用户安装后 MiniMax card 显示 'cn' endpoint 直接
+/// fail)。
 export async function maybeShowRegionBanner(cfg: AppConfig, app: HTMLElement) {
   if (cfg.user_region === "custom") return;
+
+  // 首启检测:navigator.language 非 zh-* → 自动 apply Global
+  const lang = (navigator?.language ?? "").toLowerCase();
+  const isZh = lang.startsWith("zh");
+  const isFirstLaunchCnDefault =
+    cfg.user_region === "cn" &&
+    Array.isArray(cfg.provider_order) &&
+    cfg.provider_order.length === 0;
+  if (isFirstLaunchCnDefault && !isZh && lang) {
+    // fire-and-forget: 自动 setRegion('global');失败也无所谓,banner 继续
+    setRegion("global").then(() =>
+      flash(t("settings.region.auto_applied"), false),
+    ).catch(() => {});
+  }
+
   const banner = el("div", { class: "region-banner" },
     el("span", {}, t("settings.region.banner")),
     el("button", { class: "primary" }, t("settings.region.go_to_wizard")),

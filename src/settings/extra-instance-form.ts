@@ -513,6 +513,17 @@ async function submitCustom(body: HTMLElement): Promise<boolean> {
     flash(t("custom_source.err.field_too_long", { field: "name" }), true);
     return false;
   }
+  // M11 fix (2026-07-06 全量审查) 二线:同样对 baseUrl + path 做长度 + 控制字符过滤。
+  const bu = sanitizeField(baseUrl);
+  if (bu === null) {
+    flash(t("custom_source.err.field_too_long", { field: "base_url" }), true);
+    return false;
+  }
+  const pp = sanitizeField(path);
+  if (pp === null) {
+    flash(t("custom_source.err.field_too_long", { field: "path" }), true);
+    return false;
+  }
 
   // 2. 前端基本校验
   if (!displayName) { flash(t("custom_source.err.name_required"), true); return false; }

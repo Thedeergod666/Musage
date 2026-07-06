@@ -692,7 +692,17 @@ pub async fn set_source_credential(
     // merge 策略：build_credentials 返回的 Credentials 中，哪个字段是
     // Some → 本次有意写入；None → 未指定，应从已有凭据中继承（如果存在）。
     let cred = if src.auth_kind() == AuthKind::ApiKeyOrCookie && field.is_none() {
-        let existing = config::load_credential_for_id(&id).unwrap_or(None);
+        // L11 fix (2026-07-06 全量审查): unwrap_or(None) 静默吞掉 IO 错误 /
+        // parse 错误。当 keys.json 损坏时,ApiKeyOrCookie(xiaomimimo) 用户的
+        // 已有 cookie / api_key 一侧会消失。改为:Err → 走 no-merge 分支
+        // + log warn,保留本次 build_credentials 的值。
+        let existing = match config::load_credential_for_id(&id) {
+            Ok(opt) => opt,
+            Err(e) => {
+                tracing::warn!(error = %e, id = %id, "load 旧凭据失败,本次保存按 fresh 处理");
+                None
+            }
+        };
         match existing {
             Some(old) => Credentials {
                 api_key: cred.api_key.or(old.api_key),

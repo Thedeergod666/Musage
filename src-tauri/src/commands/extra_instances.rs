@@ -205,18 +205,15 @@ pub async fn add_extra_instance(
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    if let Some(k) = api_key_val {
+    // L15 fix (2026-07-06 全量审查): 之前两次连续 save_credential_for_id 各
+    // 自覆盖(temp_api_key_ref → {api_key: x, cookie: None} 后又
+    // → {api_key: None, cookie: y}),第二轮 delete_by_id 只会删第二个 entry
+    // 留下来的 cookie。改成构造一个完整 Credentials(两边字段一次写入),
+    // save 一次,避免 cheap writeorder race。
+    if api_key_val.is_some() || api_cookie_val.is_some() {
         let cred = Credentials {
-            api_key: Some(k.to_string()),
-            cookie: None,
-        };
-        save_credential_for_id(&temp_api_key_ref, &cred)
-            .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
-    }
-    if let Some(c) = api_cookie_val {
-        let cred = Credentials {
-            api_key: None,
-            cookie: Some(c.to_string()),
+            api_key: api_key_val.map(|s| s.to_string()),
+            cookie: api_cookie_val.map(|s| s.to_string()),
         };
         save_credential_for_id(&temp_api_key_ref, &cred)
             .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;

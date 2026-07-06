@@ -49,6 +49,13 @@ pub fn read_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
     let mut current = root;
     let mut chars = path.chars().peekable();
 
+    // M19 fix (2026-07-06 全量审查): 限制解析路径的最大段数(默认 32)。
+    // 防止恶意中转站返回 1 万层嵌套 JSON 时,read_path 经由
+    // serde_json::Value::get 递归调用链路吃光栈空间。User 配置路径不会
+    // 超过 ~10 段,32 给足冗余。
+    const MAX_SEGMENTS: usize = 32;
+    let mut segments_traversed: usize = 0;
+
     // 第一段不带前导 `.`
     let mut buf = String::new();
     while let Some(&c) = chars.peek() {
@@ -63,6 +70,10 @@ pub fn read_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
     if !buf.is_empty() {
         current = current.get(&buf)?;
         buf.clear();
+        segments_traversed += 1;
+        if segments_traversed > MAX_SEGMENTS {
+            return None;
+        }
     }
 
     // 后续段：可能是 `.field` / `[idx]` / `.field[idx]`
@@ -82,6 +93,10 @@ pub fn read_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
                 }
                 current = current.get(&buf)?;
                 buf.clear();
+                segments_traversed += 1;
+                if segments_traversed > MAX_SEGMENTS {
+                    return None;
+                }
             }
             '[' => {
                 // 数字到 `]`

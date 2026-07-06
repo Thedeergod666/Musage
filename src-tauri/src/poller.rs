@@ -199,6 +199,10 @@ pub fn start(app: AppHandle) {
                 in_flight()
                     .lock()
                     .unwrap_or_else(|e| {
+                        // M22 fix (2026-07-06 全量审查): 显式 log warn 等级 +
+                        // 注释解释 into_inner 的边缘场景(JoinSet::spawn 内部
+                        // allocation 期间 mutex 持有,关闭路径上若别的 thread
+                        // 已锁,本 tick 漏一次拉取,下个 60s 周期自动恢复)。
                         tracing::warn!("poller IN_FLIGHT mutex poisoned (spawn), recovering");
                         e.into_inner()
                     })

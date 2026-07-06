@@ -825,6 +825,31 @@ pub fn shared_client() -> &'static reqwest::Client {
     })
 }
 
+/// M18 fix (2026-07-06 全量审查) 常量:provider 响应 body 字节上限。
+/// reqwest 0.12 ClientBuilder 在 default features 下没有 `body_limit`;
+/// per-fetch 路径用 [`enforce_body_limit`] 拒绝超大响应。
+///
+/// 8 MiB 选择:正常 quota JSON < 10 KiB;8 MiB 给 schema 万变(包含意外大
+/// 字段如 usage history)的合理余量;再大就有 OOM 风险。
+pub const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+
+/// 检查 raw body 字节是否在 [`MAX_RESPONSE_BYTES`] 内,否则返 FetchError。
+/// 各 provider 在 `resp.bytes().await?` 之后 / `resp.json()` 之前调用,
+/// 防止恶意 / 异常中转站撑爆 reqwest 默认的内部缓冲。
+pub fn enforce_body_limit(body: &[u8]) -> Result<(), crate::providers::FetchError> {
+    if body.len() > MAX_RESPONSE_BYTES {
+        return Err(crate::providers::FetchError::parse(
+            format!(
+                "response body {} bytes exceeds limit {}",
+                body.len(),
+                MAX_RESPONSE_BYTES
+            )
+            .into_boxed_str(),
+        ));
+    }
+    Ok(())
+}
+
 // ── 单元测试 fixture（共享 JSON） ───────────────────────────────────
 
 #[cfg(test)]

@@ -459,10 +459,19 @@ impl Xiaomimimo {
         // 行首空白，reqwest 的 HeaderValue 会把这些字符静默丢弃或 reject，但错误
         // 表现为 "Cookie header value is invalid" 而不是清晰的 "请重新复制"。
         // 这里在 send 前过滤常见异常字符 + 给出友好的 FetchError::auth。
-        if let Some(bad) = cookie
-            .chars()
-            .find(|c| matches!(c, '\r' | '\n' | '\t' | '\0'))
-        {
+        //
+        // M23 fix (2026-07-06 全量审查): 扩到 ANSI 转义 (\x1b) + 标准 cookie
+        // 控制字符 (\x7f DEL) + 任何不在 RFC 6265 token / cookie-octet 集合
+        // 内的字符。后者会被某些代理或日志工具作注入点(尽管 reqwest 也会
+        // 拦,但我们提前返友好错误)。
+        let bad = cookie.chars().find(|c| {
+            matches!(c,
+                '\r' | '\n' | '\t' | '\0'
+                | '\x1b'  // ANSI escape
+                | '\x7f'  // DEL
+            ) || c.is_control()
+        });
+        if let Some(bad) = bad {
             return Err(FetchError::auth(
                 t!(
                     "error.xiaomi.cookie_format_invalid",
@@ -844,9 +853,25 @@ fn apply_display_mode(
 }
 
 /// "2026-06-27 23:59:59" → epoch ms（**UTC**，按 dashboard 标注）
+///
+/// M21 fix (2026-07-06 全量审查): 之前 NTP / 闰秒 / 时区漂移导致 dashboard
+/// 返回本地时间字符串(无 Z 后缀)时,`and_utc()` 默默把它当 UTC 解读 →
+/// 重置时间显示差 8 小时。改为:优先按 ISO 8601 (RFC 3339) 解析,Z/偏移在
+/// 就用真实时区;降级再试 NaiveDateTime 但**显式 log warn** 提醒 schema 漂移。
 fn parse_datetime_utc_ms(s: &str) -> Option<i64> {
-    let dt = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok()?;
-    Some(dt.and_utc().timestamp_millis())
+    // 优先: RFC 3339 (含时区)
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Some(dt.timestamp_millis());
+    }
+    // 降级: NaiveDateTime 强制当 UTC —— 但 log 提醒 schema 漂移
+    if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+        tracing::debug!(
+            input = s,
+            "xiaomi 返回无时区 suffix 的 datetime —— 按 UTC 解析(可能 8h 漂移)"
+        );
+        return Some(dt.and_utc().timestamp_millis());
+    }
+    None
 }
 
 /// epoch ms → "2026-06-27 23:59 (UTC)" 给 plan_expired_hint 文案用。

@@ -1134,22 +1134,29 @@ async function init() {
     if (on) document.body.dataset.hover = "1";
     else delete document.body.dataset.hover;
   };
-  // (a) 失焦时把 body mouseenter 视为无效：app 切换瞬间 WKWebView 派发的
-  //     spurious enter 不应该让玻璃显形。Rust hover emitter 已经在跑（macOS
-  //     必需），focus 回来后第一个真正的 enter 由 Rust 兜底（`inside` 为 true
-  //     时 emit true），不会丢首次 hover 体验。
-  let focused = true;
+  // (a) 页面级 visibility —— 覆盖 fullscreen watcher 隐藏浮窗的场景
+  //     (macOS 探测菜单栏不可见后调 hide_floating，WKWebView 此时触发
+  //     visibilitychange hidden)。这种"窗口真看不见了"的状态必须把 hover
+  //     显形撤销，否则用户切回全屏 app 时会看到玻璃卡住的残影。
+  //
+  //     **2026-07-08 fix**：之前还有 `focused` 参与 guard (onBodyMouseEnter
+  //     + Rust emit 两条路径都拦)，但 transparent + decorations:false 浮窗
+  //     在 macOS 上**鼠标 hover 不会让它变 key window** —— focus 只在用户
+  //     点击浮窗 / 应用切换时变化。一旦失焦就永远失焦，hover 玻璃效果被
+  //     永久锁死。Rust 端 dwell-time hysteresis (macos.rs: enter 3 ticks /
+  //     exit 2 ticks) + JS 端 40ms debounce 已经是正确双层去抖，focus state
+  //     没必要再叠第三层。Rust `inside` 是 mouseLocation + topmost 的纯函数
+  //     （与 focus 无关），emit 信号本身就是 ground truth。
   let pageVisible = true;
   const wForFocus = getCurrentWindow();
-  // 用 Promise.then 链挂 focus 监听；不 await —— 失败也只丢信号。
+  // 保留 onFocusChanged 监听：用户切到别的 app 时（focus=false）立刻主动
+  // setHoverAttr(false) 撤玻璃 —— 即时视觉反馈比"等 Rust 100ms emit false"
+  // 更跟手。注意：focused 状态本身不再参与 hover guard，Rust 端是 ground truth。
   wForFocus
     .onFocusChanged(({ payload: f }) => {
-      focused = f;
       if (!f) setHoverAttr(false);
     })
     .catch(() => {});
-  // 页面级 visibility —— 覆盖 fullscreen watcher 隐藏浮窗的场景（macOS 探测
-  // 菜单栏不可见后调 hide_floating，WKWebView 此时触发 visibilitychange）。
   document.addEventListener("visibilitychange", () => {
     pageVisible = document.visibilityState === "visible";
     if (!pageVisible) setHoverAttr(false);
@@ -1161,7 +1168,7 @@ async function init() {
   let hoverEnterTimer: ReturnType<typeof setTimeout> | null = null;
   const HOVER_DEBOUNCE_MS = 40;
   const onBodyMouseEnter = () => {
-    if (!focused || !pageVisible) return; // 失焦 / 隐藏态 → spurious 忽略
+    if (!pageVisible) return; // 隐藏态 → spurious 忽略
     if (hoverEnterTimer !== null) clearTimeout(hoverEnterTimer);
     hoverEnterTimer = setTimeout(() => {
       hoverEnterTimer = null;
@@ -1179,11 +1186,15 @@ async function init() {
   document.body.addEventListener("mouseleave", onBodyMouseLeave);
   let lastHoverPayload: boolean | null = null;
   listen<boolean>("musage://floating-hover", (e) => {
-    // Rust 端在窗口 deactive 时也会跑 hover emitter；如果当前 window 已失焦，
-    // 把 inside=true 的 emit 也吞掉（避免和 (a) 的 spurious enter 一样的闪烁）。
-    // 注意：(a) 的 listener 失焦时会主动 setHoverAttr(false)，但 Rust 可能在
-    // 失焦后的 50ms tick 里仍 emit true —— 这里再挡一层保险。
-    if (e.payload && (!focused || !pageVisible)) return;
+    // 隐藏态吞掉 inside=true emit：fullscreen watcher 调 hide_floating 后
+    // WKWebView 进入 visibilitychange hidden，pageVisible=false 时任何 emit
+    // 都按隐藏态算（setHoverAttr(true) 会让玻璃卡住等用户切回全屏 app）。
+    //
+    // **2026-07-08 fix**：之前还拦 `!focused`，但 Rust `inside` 是 mouseLocation
+    // + topmost 的纯函数（macos.rs），与 focus 无关；浮窗失焦后用户再 hover，
+    // Rust emit true 是 ground truth，JS 端不应再吞。focused 已在 onFocusChanged
+    // 失焦时主动 setHoverAttr(false)，等 Rust 100ms emit false 接力即可。
+    if (e.payload && !pageVisible) return;
     // 防 Rust 端 spurious emit（同值重复 emit 不重复切）：hover emitter 内部
     // 已有 `inside != last_inside` 去重；这里再做一层保险避免连续同值 emit
     // 在 CSS spring 动画进行中反复重置起始点（视觉抖动）。

@@ -1592,6 +1592,35 @@ fn dedup_cache() -> &'static std::sync::Mutex<std::collections::HashMap<(String,
 
 const LOG_DEDUP_WINDOW_MS: i64 = 60_000;
 
+/// M1 fix (2026-07-08 全量审查): dedup_cache 单条 entry 超过 24h 无活动
+/// 就清掉,防止 add/delete extra instance 长期累积导致 entry 永久驻留。
+/// 24h 远大于 60s 去重窗口,正常活跃 entry 不会在窗口内被误清。
+/// 复用 `now.saturating_sub(*ts)` 处理时钟回拨(now < ts 时视为未过期)。
+const LOG_DEDUP_TTL_MS: i64 = 24 * 60 * 60 * 1000;
+
+/// 检查 `(provider, kind)` 是否在 `now_ms` 时刻应被 dedup 吞掉 —— 纯函数,
+/// 方便单测覆盖;`log_provider_error` 拿锁后调用。
+///
+/// true = 在 60s 窗口内命中过同 key,应 dedup;false = 允许写新日志。
+/// 时钟回拨处理跟 L13 saturating_sub 保持一致:last_ts > now 时视为"很久以前"。
+fn is_dedup_window_hit(
+    cache: &std::collections::HashMap<(String, &'static str), i64>,
+    key: &(String, &'static str),
+    now_ms: i64,
+) -> bool {
+    match cache.get(key) {
+        Some(&last_ts) => {
+            let delta = if now_ms >= last_ts {
+                now_ms - last_ts
+            } else {
+                i64::MAX
+            };
+            delta < LOG_DEDUP_WINDOW_MS
+        }
+        None => false,
+    }
+}
+
 /// 把一次 provider 拉取失败写进 [`crate::logstore::LogStore`]。
 ///
 /// 同 (provider_id, kind) 在 60s 窗口内只保留第一条，避免长断网刷爆 ring buffer。
@@ -1607,31 +1636,17 @@ fn log_provider_error(app: &AppHandle, provider_id: &str, kind: ErrorKind, messa
     // 序列化的形式一致，i18n 切换不会破坏去重窗口。
     let key = (provider_id.to_string(), kind.as_str());
 
-    // 去重判断：拿锁尽量短
+    // 去重判断 + 24h 老化：拿锁尽量短,顺手清过期 entry 避免无限增长
     {
         let mut g = match dedup_cache().lock() {
             Ok(g) => g,
             Err(poisoned) => poisoned.into_inner(), // 中毒也继续，日志比强一致重要
         };
-        if let Some(&last_ts) = g.get(&key) {
-            // L13 fix (2026-07-06 全量审查): NTP 倒退 / OS 挂起后时钟跳回时,
-            // 签名减法 underflow 成大负数,< 比较仍 true → 同一 provider 后
-            // 续所有失败永久 dedup。改用 saturating_sub + 单调性 guard:
-            // t > now(时钟倒回)时,把 last_ts 视为"很久以前",允许继续记录。
-            let delta_ms = if now >= last_ts {
-                now - last_ts
-            } else {
-                tracing::warn!(
-                    now,
-                    last_ts,
-                    key = %format!("{}/{}", provider_id, kind.as_str()),
-                    "clock rollback detected, resetting dedup ts"
-                );
-                i64::MAX
-            };
-            if delta_ms < LOG_DEDUP_WINDOW_MS {
-                return;
-            }
+        // M1 老化:24h 内无活动的 entry 删掉。共用同一次 lock acquire,O(n) 成本可忽略
+        // (n ≤ ~66 builtin + 用户 extras,sub-microsecond)。
+        g.retain(|_, ts| now.saturating_sub(*ts) < LOG_DEDUP_TTL_MS);
+        if is_dedup_window_hit(&g, &key, now) {
+            return;
         }
         g.insert(key, now);
     }
@@ -1901,5 +1916,96 @@ pub fn clear_logs(state: State<'_, AppState>) {
         .lock()
     {
         *g = Some(chrono::Utc::now().timestamp_millis());
+    }
+}
+
+#[cfg(test)]
+mod dedup_cache_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn k(s: &str) -> (String, &'static str) {
+        (s.to_string(), "auth_failed")
+    }
+
+    #[test]
+    fn is_dedup_window_hit_within_60s() {
+        let mut cache: HashMap<(String, &'static str), i64> = HashMap::new();
+        let now = 1_000_000;
+        cache.insert(k("minimax"), now - 30_000);
+        assert!(is_dedup_window_hit(&cache, &k("minimax"), now));
+    }
+
+    #[test]
+    fn is_dedup_window_hit_after_60s_allows() {
+        let mut cache: HashMap<(String, &'static str), i64> = HashMap::new();
+        let now = 1_000_000;
+        cache.insert(k("minimax"), now - 90_000);
+        assert!(!is_dedup_window_hit(&cache, &k("minimax"), now));
+    }
+
+    #[test]
+    fn is_dedup_window_hit_unknown_key_allows() {
+        let cache: HashMap<(String, &'static str), i64> = HashMap::new();
+        assert!(!is_dedup_window_hit(&cache, &k("minimax"), 1_000_000));
+    }
+
+    /// M1 24h 老化：retain 谓词应清掉 24h+ 的 entry,保留活跃 entry。
+    /// 模拟 `log_provider_error` 锁块里的 retain 行(纯逻辑,不依赖 AppHandle)。
+    #[test]
+    fn retain_evicts_entries_older_than_24h() {
+        let mut cache: HashMap<(String, &'static str), i64> = HashMap::new();
+        let now = 1_000_000_000_000_i64; // 随便一个 now
+        let ttl = LOG_DEDUP_TTL_MS;
+
+        // 24h+1s 前插入 → 期望被清
+        cache.insert(k("minimax"), now - ttl - 1_000);
+        // 24h 边界前 1ms → 期望保留(now - ts < ttl)
+        cache.insert(k("claude_official"), now - ttl + 1);
+        // 30s 前 → 活跃,保留
+        cache.insert(k("zhipu"), now - 30_000);
+
+        cache.retain(|_, ts| now.saturating_sub(*ts) < ttl);
+
+        assert!(!cache.contains_key(&k("minimax")), "24h+ entry 应被清");
+        assert!(
+            cache.contains_key(&k("claude_official")),
+            "边界内 entry 保留"
+        );
+        assert!(cache.contains_key(&k("zhipu")), "活跃 entry 保留");
+    }
+
+    /// 时钟回拨：last_ts > now 时 saturating_sub 返 0,entry 不会被误清。
+    /// (保留 entry 等下个正常周期再清;同时 L13 已经在 is_dedup_window_hit 里
+    /// 把回拨当"很久以前"处理,允许写新日志)
+    #[test]
+    fn retain_clock_rollback_keeps_entry() {
+        let mut cache: HashMap<(String, &'static str), i64> = HashMap::new();
+        let now = 1_000_000;
+        // 未来时间戳(last_ts = now + 5min)
+        cache.insert(k("minimax"), now + 5 * 60 * 1000);
+
+        cache.retain(|_, ts| now.saturating_sub(*ts) < LOG_DEDUP_TTL_MS);
+
+        assert!(cache.contains_key(&k("minimax")), "回拨时 entry 不应被清");
+    }
+
+    /// 端到端风格:模拟 `log_provider_error` 走完一次 insert + dedup,
+    /// 验证后续 60s 内的同 key 调用被 helper 命中。
+    #[test]
+    fn dedup_window_blocks_repeat_calls() {
+        let mut cache: HashMap<(String, &'static str), i64> = HashMap::new();
+        let t0 = 1_000_000;
+        let key = k("minimax");
+
+        // 首次调用:cache 未知 → is_dedup_window_hit = false → 允许写
+        assert!(!is_dedup_window_hit(&cache, &key, t0));
+        cache.insert(key.clone(), t0);
+
+        // 30s 后同 key → 命中
+        assert!(is_dedup_window_hit(&cache, &key, t0 + 30_000));
+
+        // 65s 后同 key → 放过
+        assert!(!is_dedup_window_hit(&cache, &key, t0 + 65_000));
     }
 }

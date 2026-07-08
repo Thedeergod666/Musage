@@ -41,6 +41,7 @@ use super::{
 };
 
 use crate::config::ProviderOverrides;
+use crate::providers::RowKind;
 use crate::t;
 
 const URL_CN: &str = "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains";
@@ -458,7 +459,12 @@ fn parse(
             resets_at: t.resets_at,
             unit: Some("%".to_string()),
             extra: None,
-            kind: None,
+            // M2 fix (2026-07-08 全量审查补 provider 端): tray.rs 的
+            // five_hour_util / weekly_util 改用 RowKind 枚举匹配后,这里
+            // 必须显式填枚举,否则 tray 永远 find 不到 → 0%。前端浮窗
+            // 不受影响(读 r.utilization),但 tray 图标 + tray tooltip
+            // 的 minimax 行聚合会 0%。
+            kind: Some(RowKind::FiveHour),
         });
     }
     if let Some(t) = weekly {
@@ -471,7 +477,7 @@ fn parse(
             resets_at: t.resets_at,
             unit: Some("%".to_string()),
             extra: None,
-            kind: None,
+            kind: Some(RowKind::Weekly),
         });
     }
 
@@ -843,6 +849,10 @@ mod tests {
         assert_eq!(snap.rows.len(), 2);
         assert_eq!(snap.rows[0].label, t!("row.five_hour"));
         assert_eq!(snap.rows[1].label, t!("row.weekly"));
+        // M2 fix (2026-07-08 全量审查补 provider 端): tray 按 RowKind 枚举
+        // 匹配 5h/Weekly 行,这里必须显式断言 kind 填对了,否则 tray 0%。
+        assert_eq!(snap.rows[0].kind, Some(RowKind::FiveHour));
+        assert_eq!(snap.rows[1].kind, Some(RowKind::Weekly));
         // 5h: 100-72=28%; week: 100-86=14%
         assert!((snap.rows[0].utilization.unwrap() - 28.0).abs() < 0.001);
         assert!((snap.rows[1].utilization.unwrap() - 14.0).abs() < 0.001);

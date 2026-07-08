@@ -401,8 +401,20 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
     // 会 poison mutex → 后续 .unwrap() 直接 panic（窗口事件回调拿不到锁），
     // 整个 geometry 持久化静默坏掉。改用项目统一的 `.unwrap_or_else(|e| ...)`
     // poison 恢复模式。
+    //
+    // **2026-07-08 fix**：Moved 分支显式拒绝 `(0, 0)` —— 治根因层
+    // (macOS NSWindow 未指定 x/y 时默认 (0,0),启动 set_position 矫正前
+    // WKWebView 可能 emit 合成 Moved(0,0),会被 persister 落进 config.json)。
+    // Layer 1 在 `position_is_visible` 兜底读到的脏数据,这里 Layer 2 在源头
+    // 阻断脏数据进入 `latest`。两者独立,缺一不可:`position_is_visible` 单修
+    // 解决重启位置,但 disk 上还会留 `(0,0)` 等下次清 config 时才消失;
+    // 这里单修不解决老用户已经落 `(0,0)` 的 config.json。
     win.on_window_event(move |event| match event {
         tauri::WindowEvent::Moved(pos) => {
+            if pos.x == 0 && pos.y == 0 {
+                // OS 默认值,不是用户拖动 → 丢弃
+                return;
+            }
             let mut g = latest_for_cb.lock().unwrap_or_else(|e| {
                 tracing::warn!("geom_persister latest_for_cb poisoned (Moved), recovering");
                 e.into_inner()
@@ -472,7 +484,18 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
 ///
 /// monitors: `WebviewWindow::available_monitors()` 返回的列表。
 /// x/y: 物理像素 (跟 `PhysicalPosition` 一致)。
+///
+/// **2026-07-08 fix**:`(0, 0)` 显式拒绝 —— macOS NSWindow 未指定 x/y 时
+/// 默认 (0, 0),启动 set_position(top_right) 矫正前 WKWebView 可能 emit 过
+/// `WindowEvent::Moved(0, 0)` 给 persister → config.json 落 `(0, 0)`。
+/// 第二次启动读 disk,`position_is_visible` 因为主屏 `pos=(0,0)` 会误判合法
+/// → 浮窗回到左上角。`(0, 0)` 不可能是用户主动拖到的位置(贴边 0px 没意义),
+/// 一律按"OS 默认值"踢回 fallback。多屏下副屏在主屏左侧时 `pos.x < 0`,
+/// 用户拖过去再回来不会留 (0, 0),所以这条规则跨屏安全。
 fn position_is_visible(x: i32, y: i32, monitors: &[tauri::Monitor]) -> bool {
+    if x == 0 && y == 0 {
+        return false;
+    }
     monitors.iter().any(|m| {
         let pos = m.position();
         let size = m.size();

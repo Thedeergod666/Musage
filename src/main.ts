@@ -465,9 +465,11 @@ function rowsForRender(p: ProviderSnapshot): QuotaRow[] {
 /// 涨到 N+1，下一轮 scrollHeight 就变成 N+1，再 +1 = N+2 …… 每次 render 长 1px，
 /// 几小时下来浮窗能涨几十像素。回归：[H5]、浮窗静置桌面越长越高的 bug。
 ///
-/// 正确读法：`#app.scrollHeight` —— 这是 #app 内部所有卡片 + padding 的**自然**
-/// 高度，不受窗口 clientHeight 干扰。设到这个值后窗口内刚好能容下所有内容，
-/// 下一轮 scrollHeight 不变，达到稳态。
+/// 正确读法：`measureContentHeight(#app)` —— 逐个累加子元素高度 + padding + gap，
+/// 与窗口当前 clientHeight 完全解耦。既能在内容变多时**涨**，也能在内容变少
+/// （删卡 / 关 footer / 简洁模式）时**缩**，不会在底部留空白。
+/// （注意：`#app.scrollHeight` 因 `height:100%` 会返回 max(窗口高, 内容高)，
+///  窗口偏高时读到窗口高 → 只涨不缩，正是"下面空一块"的成因。）
 ///
 /// **不每次 render 都 fit**（修复"手动拖窗口被自动 fit 覆盖"）：
 /// 算 `contentFingerprint(snap)`，跟 `lastFitFingerprint` 比，相同就跳过。
@@ -495,8 +497,35 @@ async function autoResizeWindowToContent() {
   await resizeWindowToContent(appEl);
 }
 
+/// 量 `#app` 的**自然内容高度**（padding + 首个卡顶 → 末个卡底 的总跨度）。
+///
+/// **不能用 `#app.scrollHeight`**：`#app` 是 `height:100%; overflow-y:auto`，
+/// 按规范 `scrollHeight = max(clientHeight, contentHeight)`。窗口比内容**高**时
+/// clientHeight = 窗口高 ≥ 内容高 → scrollHeight 返回窗口高而非内容高 →
+/// desired ≈ currentH → 永远只涨不缩，窗口底部空出一大块。（[H5] 注释里对
+/// documentElement 的同一坑，#app 的 height:100% 又把它带回来了。）
+///
+/// 用"首个 child 顶边 → 末个 child 底边"的跨度 + 上下 padding：
+/// 中间所有 gap / margin 都天然算进跨度里，不像逐个累加那样漏算而"吞掉"
+/// 最后一张卡（回归：Tavily 卡底部被裁）。首尾 rect 随滚动同步平移，差值
+/// 稳定，无需处理 scrollTop。
+function measureContentHeight(appEl: HTMLElement): number {
+  const cs = getComputedStyle(appEl);
+  const padTop = parseFloat(cs.paddingTop) || 0;
+  const padBottom = parseFloat(cs.paddingBottom) || 0;
+  const children = Array.from(appEl.children) as HTMLElement[];
+  if (children.length === 0) return padTop + padBottom;
+  const first = children[0].getBoundingClientRect();
+  const last = children[children.length - 1].getBoundingClientRect();
+  const firstMt = parseFloat(getComputedStyle(children[0]).marginTop) || 0;
+  const lastMb = parseFloat(getComputedStyle(children[children.length - 1]).marginBottom) || 0;
+  const span = last.bottom - first.top + firstMt + lastMb;
+  // 向上取整 1px，避免 sub-pixel 舍入把末卡底边裁掉
+  return Math.ceil(padTop + span + padBottom);
+}
+
 async function resizeWindowToContent(appEl: HTMLElement) {
-  const contentH = appEl.scrollHeight;
+  const contentH = measureContentHeight(appEl);
   const screenH = window.screen?.availHeight ?? 2400;
   const maxH = Math.max(200, screenH - 80);
   const currentH = window.innerHeight;

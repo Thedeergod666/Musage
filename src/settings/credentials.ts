@@ -13,6 +13,7 @@ import {
   getSourceCredential,
   getXiaomiDisplayMode,
   hasSourceCredential,
+  listExtraInstances,
   setSourceCredential,
   setXiaomiDisplayMode,
   refreshNow,
@@ -475,8 +476,29 @@ export async function deleteCredentialAction(id: string, action: "key" | "cookie
   // "Delete {name} API key?" → 渲染 "Delete Tavily API key API key?"（"API key" 重复）。
   // 改成只传 provider 名字，让模板自带 "API key" / "Cookie" 后缀。
   const providerName = t(`provider.${id as ProviderId}.name`);
-  const key = action === "key" ? "credentials.confirm_delete_key" : "credentials.confirm_delete_cookie";
-  if (!confirm(t(key, { name: providerName }))) return;
+  const baseKey = action === "key" ? "credentials.confirm_delete_key" : "credentials.confirm_delete_cookie";
+  // M3 fix (2026-07-08 全量审查): builtin provider 删 key 会级联清空所有
+  // 副本的 keys.json entry(H4 fix 设计),但用户看不到副作用 → 浮窗突然
+  // 显示"UnconfiguredKey"。extra instance 副本数 > 0 时,先弹二次 confirm
+  // 警告。失败兜底:listExtraInstances 抛错就走原 confirm,不阻塞删除。
+  let cascadeCount = 0;
+  if (!id.includes("#")) {
+    try {
+      const extras = await listExtraInstances();
+      cascadeCount = extras.filter((e) => e.provider_id === id).length;
+    } catch (e) {
+      console.warn("listExtraInstances failed, skip cascade confirm:", e);
+    }
+  }
+  const confirmKey =
+    cascadeCount > 0 ? "credentials.confirm_delete_key_with_extras" : baseKey;
+  // i18n params 类型是 Record<string, string|number>,不接受 undefined;
+  // 两种 case 都构造完整的 args 对象,保证 t() 签名一致。
+  const confirmArgs: Record<string, string | number> =
+    cascadeCount > 0
+      ? { name: providerName, count: cascadeCount }
+      : { name: providerName };
+  if (!confirm(t(confirmKey, confirmArgs))) return;
   // 后端 delete_source_credential 会同时清 api_key 和 cookie，统一用一个入口
   await deleteSourceCredential(id);
   await loadCredentialStatus(id);

@@ -399,6 +399,7 @@
     "confirm_delete_key_zenmux": "Delete ZenMux API key?",
     "confirm_delete_cookie": "Delete {name} Cookie?",
     "confirm_clear_xiaomi": "Clear saved Xiaomi Cookie?\nYou'll need to login again.",
+    "confirm_delete_key_with_extras": "Delete {name} API key?\nThis will also clear {count} extra instance key(s).",
     "xiaomi_login_only": "Quick login only enabled for Xiaomi",
     "xiaomi_login_opened": "Login window opened — will close automatically after login",
     "xiaomi_login_failed": "Open login window failed: {err}",

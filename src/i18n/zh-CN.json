@@ -399,6 +399,7 @@
     "confirm_delete_key_zenmux": "确认删除 ZenMux 的 API key？",
     "confirm_delete_cookie": "确认删除 {name} 的 Cookie？",
     "confirm_clear_xiaomi": "确认清除已保存的 Xiaomi Cookie？\n清除后需要重新登录。",
+    "confirm_delete_key_with_extras": "确认删除 {name} 的 API key？\n同时会清掉 {count} 个副本的 key。",
     "xiaomi_login_only": "一键登录只对 Xiaomi 启用",
     "xiaomi_login_opened": "已打开登录窗口 —— 登录完成后会自动关闭窗口",
     "xiaomi_login_failed": "打开登录窗口失败: {err}",

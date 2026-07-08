@@ -62,7 +62,7 @@ use serde_json::Value;
 
 use super::{
     shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
-    QuotaSource,
+    QuotaSource, RowKind,
 };
 use crate::t;
 
@@ -277,14 +277,20 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
 
     // 5h tier
     if let Some(five_h) = raw.get("five_hour") {
-        if let Some(row) = build_tier_row(&t!("row.five_hour").to_string(), five_h) {
+        // M2 fix (2026-07-08 全量审查): 显式传 RowKind::FiveHour,让 tray
+        // 等下游消费者按枚举匹配,不被 locale-bake-in 的 label 字符串困住
+        // (切到 zh-CN 后 row.label = "5h" 还行,但 row.weekly = "周" 跟
+        // tray 重新求值 t!() 拿到的 "Weekly" 不匹配,显示 0%)。
+        if let Some(row) =
+            build_tier_row(&t!("row.five_hour").to_string(), RowKind::FiveHour, five_h)
+        {
             rows.push(row);
         }
     }
 
     // 周 tier
     if let Some(weekly) = raw.get("seven_day") {
-        if let Some(row) = build_tier_row(&t!("row.weekly").to_string(), weekly) {
+        if let Some(row) = build_tier_row(&t!("row.weekly").to_string(), RowKind::Weekly, weekly) {
             rows.push(row);
         }
     }
@@ -314,7 +320,10 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
 }
 
 /// 把单个 tier object 解析成 QuotaRow。任一关键字段缺失 → None（自然降级）。
-fn build_tier_row(label: &str, tier: &Value) -> Option<QuotaRow> {
+///
+/// `kind` 由调用方显式传入 —— M2 fix: 让下游(tray/浮窗 rowKey)按枚举
+/// 匹配 row,不被 locale 字符串绑定。
+fn build_tier_row(label: &str, kind: RowKind, tier: &Value) -> Option<QuotaRow> {
     let utilization = tier.get("utilization").and_then(|v| v.as_f64())?;
     if !(0.0..=100.0).contains(&utilization) {
         // 异常值（> 100 或负数）不显示，避免 UI 渲染出 bar
@@ -332,7 +341,7 @@ fn build_tier_row(label: &str, tier: &Value) -> Option<QuotaRow> {
         resets_at,
         unit: Some("%".to_string()),
         extra: None,
-        kind: None,
+        kind: Some(kind),
     })
 }
 
@@ -385,6 +394,8 @@ mod tests {
 
         let five_h = &snap.rows[0];
         assert_eq!(five_h.label, t!("row.five_hour").as_ref());
+        // M2 fix: kind 显式赋值,跟 locale 解耦
+        assert_eq!(five_h.kind, Some(RowKind::FiveHour));
         assert!((five_h.utilization.unwrap() - 72.0).abs() < 0.001);
         assert_eq!(five_h.unit.as_deref(), Some("%"));
         // ISO 8601 → 2026-06-16T18:30:00.000Z 是 1781253000000 ms（近似）
@@ -393,6 +404,7 @@ mod tests {
 
         let weekly = &snap.rows[1];
         assert_eq!(weekly.label, t!("row.weekly").as_ref());
+        assert_eq!(weekly.kind, Some(RowKind::Weekly));
         assert!((weekly.utilization.unwrap() - 45.0).abs() < 0.001);
     }
 
@@ -408,6 +420,7 @@ mod tests {
         let snap = parse(&raw, "claude_official", "Claude").expect("parse");
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].label, t!("row.five_hour").as_ref());
+        assert_eq!(snap.rows[0].kind, Some(RowKind::FiveHour));
     }
 
     #[test]
@@ -421,6 +434,7 @@ mod tests {
         let snap = parse(&raw, "claude_official", "Claude").expect("parse");
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].label, t!("row.weekly").as_ref());
+        assert_eq!(snap.rows[0].kind, Some(RowKind::Weekly));
     }
 
     #[test]

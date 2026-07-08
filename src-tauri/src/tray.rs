@@ -24,7 +24,7 @@ use tauri::{
 use tokio::sync::mpsc;
 
 use crate::config::TrayIconStyle;
-use crate::providers::{ProviderSnapshot, QuotaSnapshot};
+use crate::providers::{ProviderSnapshot, QuotaSnapshot, RowKind};
 // rust-i18n t! macro 在 crate 根（lib.rs）定义，子模块需显式 use 才能用。
 // 不要在子模块里写 `use rust_i18n::t;` —— 那会找错 macro；必须走 crate::t
 // 才能拿到 i18n!("locales") 生成的那份。
@@ -608,10 +608,6 @@ fn render_icon(snap: &QuotaSnapshot, style: TrayIconStyle) -> Image<'static> {
 /// 取 MiniMax 行的 5h / 周 utilization（缺则 0.0）。
 /// MiniMax 不存在或失败时返回 None。
 ///
-/// P1 i18n：行 label 来自 provider 端 `t!("row.five_hour")` / `t!("row.weekly")`，
-/// 这里也用 t!() 比较，保证跨语言一致（切到 en 时 zh-CN 字符串 "5h"/"周" 不会
-/// 永远匹配不上 en 字符串 "5h"/"Weekly"）。
-///
 /// v0.2.1 commit 5:多 instance 时遍历所有 minimax instance,选 5h utilization
 /// 最高的(快耗尽的副本最该被高亮);并列时取 instance_index 小的优先。
 /// 失败/无数据时 fallback 到任意一份成功的。进度条小图标只画 1 份,
@@ -650,7 +646,11 @@ fn pick_minimax_rows(snap: &QuotaSnapshot) -> Option<(f64, f64)> {
 fn five_hour_util(p: &ProviderSnapshot) -> f64 {
     p.rows
         .iter()
-        .find(|r| r.label == t!("row.five_hour"))
+        // M2 fix (2026-07-08 全量审查): 按 RowKind 枚举匹配,不再依赖
+        // label 字符串。provider 端把 label bake 成 fetch 时的 locale 字符串,
+        // tray 端 t!() 重新求值拿到的是当前 locale,切语言后两个字符串
+        // 不一致 → util 永远 0%。改用枚举匹配彻底跟 locale 解耦。
+        .find(|r| r.kind == Some(RowKind::FiveHour))
         .and_then(|r| r.utilization)
         .unwrap_or(0.0)
 }
@@ -658,7 +658,7 @@ fn five_hour_util(p: &ProviderSnapshot) -> f64 {
 fn weekly_util(p: &ProviderSnapshot) -> f64 {
     p.rows
         .iter()
-        .find(|r| r.label == t!("row.weekly"))
+        .find(|r| r.kind == Some(RowKind::Weekly))
         .and_then(|r| r.utilization)
         .unwrap_or(0.0)
 }

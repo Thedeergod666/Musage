@@ -56,6 +56,7 @@ use serde_json::Value;
 
 use super::{
     shared_client, AuthKind, Credentials, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
+    RowKind,
 };
 use crate::t;
 
@@ -316,7 +317,9 @@ fn parse(
             resets_at,
             unit: Some("%".to_string()),
             extra: None,
-            kind: None,
+            // M2 fix (2026-07-08 全量审查): 显式填 RowKind,让 tray 按枚举
+            // 匹配,不被 locale 字符串困住
+            kind: Some(RowKind::FiveHour),
         });
     }
     if let Some((pct, resets_at)) = weekly {
@@ -329,7 +332,7 @@ fn parse(
             resets_at,
             unit: Some("%".to_string()),
             extra: None,
-            kind: None,
+            kind: Some(RowKind::Weekly),
         });
     }
 
@@ -462,11 +465,14 @@ mod tests {
 
         let five_h = &snap.rows[0];
         assert_eq!(five_h.label, t!("row.five_hour").as_ref());
+        // M2 fix: kind 显式赋值
+        assert_eq!(five_h.kind, Some(RowKind::FiveHour));
         assert!((five_h.utilization.unwrap() - 44.0).abs() < 0.001);
         assert_eq!(five_h.resets_at, Some(1_000_000_000_000));
 
         let weekly = &snap.rows[1];
         assert_eq!(weekly.label, t!("row.weekly"));
+        assert_eq!(weekly.kind, Some(RowKind::Weekly));
         assert!((weekly.utilization.unwrap() - 53.0).abs() < 0.001);
         assert_eq!(weekly.resets_at, Some(2_000_000_000_000));
     }
@@ -487,6 +493,7 @@ mod tests {
         let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "Zhipu GLM").expect("parse");
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].label, t!("row.five_hour"));
+        assert_eq!(snap.rows[0].kind, Some(RowKind::FiveHour));
         assert!((snap.rows[0].utilization.unwrap() - 2.0).abs() < 0.001);
     }
 
@@ -517,9 +524,11 @@ mod tests {
         let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "Zhipu GLM").expect("parse");
         assert_eq!(snap.rows.len(), 2);
         assert_eq!(snap.rows[0].label, t!("row.five_hour"));
+        assert_eq!(snap.rows[0].kind, Some(RowKind::FiveHour));
         assert!((snap.rows[0].utilization.unwrap()).abs() < 0.001);
         assert_eq!(snap.rows[0].resets_at, None);
         assert_eq!(snap.rows[1].label, t!("row.weekly"));
+        assert_eq!(snap.rows[1].kind, Some(RowKind::Weekly));
         assert!((snap.rows[1].utilization.unwrap() - 25.0).abs() < 0.001);
     }
 

@@ -107,6 +107,22 @@ pub fn set_window_hover_raise<R: Runtime>(_app: &AppHandle<R>, _hovering: bool) 
 ///
 /// 浮窗前端的 `body[data-hover]` CSS spring 动画不会被反复重置，
 /// 闪烁消失。
+///
+/// **2026-07-09 fix（恢复 v0.1.0 响应速度）**：上面那套防抖把 hover 响应
+/// 从 ~50ms（v0.1.0 一个 tick）拖到 ~190ms（enter 3 ticks + 前端 40ms
+/// debounce），多数用户没遇到"同层多个 transparent 浮窗"的极端场景，但
+/// 都付了延迟代价。退一步：
+/// - **enter**：`ENTER_THRESHOLD = 1` —— 第一个 inside=true 就采纳，
+///   响应回到 v0.1.0 一个 tick（≤50ms）。极端场景（光标卡在 transparent
+///   边界 + 同层还有别家 transparent 浮窗）下偶发 enter 抖动回归，
+///   但前端的 `lastHoverPayload` 同值去重 + visibility / focus guard
+///   还能挡掉大部分重复切。
+/// - **exit**：`EXIT_THRESHOLD = 2`（100ms）—— 保留。光标离开的延迟没人
+///   在意，但能挡掉退场方向的偶发抖动；而且前端 `mouseleave` 路径会
+///   即时 `setHoverAttr(false)` 接管，exit 阈值对观感几乎无影响。
+///
+/// 权衡：极少数同层 transparent 浮窗共存的用户可能重新看到偶发闪烁，
+/// 换来 100% 用户的 hover 响应速度回到 v0.1.0 一档。
 pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
     if TRACKER_RUNNING.swap(true, Ordering::SeqCst) {
         return; // 已在跑
@@ -117,7 +133,10 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
             tracing::debug!("hover emitter 启动");
             let mut last_inside = false;
             // pending_ticks：当前观察到的 inside 与 last_inside 不同的累计 tick 数。
-            // 当达到对应阈值（enter 3 / exit 2）才采纳新状态 + emit。
+            // 当达到对应阈值才采纳新状态 + emit。
+            //   - ENTER_THRESHOLD = 1：第一个 inside=true 就采纳（v0.1.0 一档速度）
+            //   - EXIT_THRESHOLD = 2 (100ms)：保留挡退场抖动；前端 mouseleave
+            //     路径会即时 setHoverAttr(false) 接管，exit 阈值对观感无影响
             let mut pending_ticks: u8 = 0;
             // pending_value：累计观察到的"候选新值"。
             let mut pending_value = false;
@@ -147,9 +166,10 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
                     pending_ticks = pending_ticks.saturating_add(1);
                 }
 
-                // enter 阈值 (3) > exit 阈值 (2) —— 用户离开时希望玻璃及时撤销，
-                // 进入时多 1 tick 防边界抖动（特别是 transparent 多窗口共存场景）。
-                const ENTER_THRESHOLD: u8 = 3;
+                // enter 阈值 (1) < exit 阈值 (2) —— 进入方向零延迟回到 v0.1.0，
+                // 退场方向留 100ms 挡抖动。注释见上方 doc comment 的
+                // "2026-07-09 fix（恢复 v0.1.0 响应速度）" 段。
+                const ENTER_THRESHOLD: u8 = 1;
                 const EXIT_THRESHOLD: u8 = 2;
                 let threshold = if pending_value {
                     ENTER_THRESHOLD

@@ -1204,6 +1204,11 @@ async function init() {
   //
   // **2026-06-20 audit**：body mouseenter/mouseleave 之前是匿名 arrow，
   // beforeunload 没办法 remove。改成 named fn 配对 remove。
+  //
+  // **2026-07-09 fix（恢复 v0.1.0 响应速度）**：Rust 端 ENTER_THRESHOLD
+  // 已从 3 降到 1（macos.rs），本端的 40ms debounce 是冗余延迟，去掉。
+  // 保留 `hoverEnterTimer` 变量名 + cleanup 路径（虽然恒为 null）以便
+  // 日后需要再加 debounce 时不用重写整段。
   const setHoverAttr = (on: boolean) => {
     if (on) document.body.dataset.hover = "1";
     else delete document.body.dataset.hover;
@@ -1224,10 +1229,10 @@ async function init() {
   //     + Rust emit 两条路径都拦)，但 transparent + decorations:false 浮窗
   //     在 macOS 上**鼠标 hover 不会让它变 key window** —— focus 只在用户
   //     点击浮窗 / 应用切换时变化。一旦失焦就永远失焦，hover 玻璃效果被
-  //     永久锁死。Rust 端 dwell-time hysteresis (macos.rs: enter 3 ticks /
-  //     exit 2 ticks) + JS 端 40ms debounce 已经是正确双层去抖，focus state
-  //     没必要再叠第三层。Rust `inside` 是 mouseLocation + topmost 的纯函数
-  //     （与 focus 无关），emit 信号本身就是 ground truth。
+  //     永久锁死。Rust 端 dwell-time hysteresis (macos.rs: enter 1 tick /
+  //     exit 2 ticks) + JS 端 pageVisible guard 已经是正确两层去抖，
+  //     focused 状态没必要再叠第三层。Rust `inside` 是 mouseLocation +
+  //     topmost 的纯函数（与 focus 无关），emit 信号本身就是 ground truth。
   let pageVisible = true;
   const wForFocus = getCurrentWindow();
   // 保留 onFocusChanged 监听：用户切到别的 app 时（focus=false）立刻主动
@@ -1242,25 +1247,17 @@ async function init() {
     pageVisible = document.visibilityState === "visible";
     if (!pageVisible) setHoverAttr(false);
   });
-  // (b) 显形 debounce：enter→leave < 40ms 视为抖动，不切 data-hover。
-  //     显形方向 debounce（enter 后等 40ms 才设 hover），撤销方向照常。
-  //     这样 WKWebView spurious enter（瞬时）被吞掉；正常 hover 体验仅延后
-  //     40ms（不可察觉）。
-  let hoverEnterTimer: ReturnType<typeof setTimeout> | null = null;
-  const HOVER_DEBOUNCE_MS = 40;
+  // (b) 显形零延迟：2026-07-09 恢复 v0.1.0 hover 响应速度。
+  //     原本 40ms debounce 的目的是吞掉 enter→leave 抖动，但 Rust 端
+  //     ENTER_THRESHOLD 已经降到 1 + pageVisible guard 已经能挡 hide_floating
+  //     残留，JS 端 debounce 是冗余延迟。Rust emit true 是 ground truth，
+  //     JS 路径直接同步切，不再排 setTimeout。
+  let hoverEnterTimer: ReturnType<typeof setTimeout> | null = null; // 保留变量名 + cleanup 路径,但不再被赋值
   const onBodyMouseEnter = () => {
     if (!pageVisible) return; // 隐藏态 → spurious 忽略
-    if (hoverEnterTimer !== null) clearTimeout(hoverEnterTimer);
-    hoverEnterTimer = setTimeout(() => {
-      hoverEnterTimer = null;
-      setHoverAttr(true);
-    }, HOVER_DEBOUNCE_MS);
+    setHoverAttr(true);
   };
   const onBodyMouseLeave = () => {
-    if (hoverEnterTimer !== null) {
-      clearTimeout(hoverEnterTimer);
-      hoverEnterTimer = null;
-    }
     setHoverAttr(false);
   };
   document.body.addEventListener("mouseenter", onBodyMouseEnter);
@@ -1282,7 +1279,8 @@ async function init() {
     if (lastHoverPayload === e.payload) return;
     lastHoverPayload = e.payload;
     // Rust 路径直接同步切（已经过 50ms tick 去抖）；cancel pending enter
-    // timer（如果用户从 enter 进入但 40ms 内 Rust 也 emit true，按 Rust 为准）
+    // timer 占位保留（hoverEnterTimer 恒为 null）以防今后再加 debounce 时
+    // 遗漏 cleanup 路径（见 macos.rs doc comment + main.ts 顶部注释）。
     if (hoverEnterTimer !== null) {
       clearTimeout(hoverEnterTimer);
       hoverEnterTimer = null;
@@ -1483,6 +1481,7 @@ async function init() {
     if (unlistenPinMode) unlistenPinMode();
     if (countdownTimer !== null) clearInterval(countdownTimer);
     // 2026-07-03 fix: 配对清理 hover debounce timer（避免 unhandled timer）
+    // 2026-07-09: hover debounce 已移除,timer 恒为 null;保留 if 块防回归。
     if (hoverEnterTimer !== null) {
       clearTimeout(hoverEnterTimer);
       hoverEnterTimer = null;

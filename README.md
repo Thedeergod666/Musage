@@ -2,7 +2,7 @@
 
 > **Musage** = **My** + **Usage**，多 provider AI 套餐实时用量监控的桌面悬浮窗
 
-![platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS-blue) ![tauri](https://img.shields.io/badge/Tauri-2-orange) ![rust](https://img.shields.io/badge/rust-1.77+-orange) ![license](https://img.shields.io/badge/license-MIT-green)
+![platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-blue) ![tauri](https://img.shields.io/badge/Tauri-2-orange) ![rust](https://img.shields.io/badge/rust-1.77+-orange) ![license](https://img.shields.io/badge/license-MIT-green)
 
 ## 为什么做
 
@@ -137,11 +137,31 @@ cargo run -- dump
 
 ```bash
 pnpm tauri:build
-# 产出（macOS 同时出 aarch64 + x64 dmg，Windows 出 NSIS exe）：
-#   src-tauri/target/release/bundle/nsis/Musage_*_x64-setup.exe
+# 产出（macOS aarch64+x64 dmg, Windows NSIS exe + MSI, Linux AppImage/deb/rpm）：
 #   src-tauri/target/release/bundle/dmg/Musage_*_aarch64.dmg
 #   src-tauri/target/release/bundle/dmg/Musage_*_x64.dmg
+#   src-tauri/target/release/bundle/nsis/Musage_*_x64-setup.exe
+#   src-tauri/target/release/bundle/msi/Musage_*_x64_en-US.msi
+#   src-tauri/target/release/bundle/appimage/Musage_*_amd64.AppImage
+#   src-tauri/target/release/bundle/deb/musage_*_amd64.deb
+#   src-tauri/target/release/bundle/rpm/musage-*.x86_64.rpm
 ```
+
+**Linux 安装**（Ubuntu 22.04+ / Debian 12+）：
+
+```bash
+# 通用：AppImage 免安装,双击即可
+chmod +x Musage_*_amd64.AppImage
+./Musage_*_amd64.AppImage
+
+# Debian/Ubuntu: 双击 deb 或
+sudo apt install ./musage_*_amd64.deb
+
+# Fedora/RHEL:
+sudo dnf install ./musage-*.x86_64.rpm
+```
+
+**GNOME 桌面额外步骤**：系统托盘需要装 [AppIndicator extension](https://extensions.gnome.org/extension/615/appindicator-support/) 才能在顶部状态栏看到 Musage 托盘。其它桌面环境（KDE / XFCE / Cinnamon）开箱即用。
 
 ## 项目结构
 

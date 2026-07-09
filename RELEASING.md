@@ -2,7 +2,7 @@
 
 > 给维护者（你自己）的一份 cheat sheet：怎么改版本号、怎么打 tag、怎么发新版、怎么排查。
 >
-> **v0.2.0 起不内置自动更新** —— 升级走"用户手动下 dmg/nsis 覆盖装"路径。设置面板「关于」页有 GitHub releases 链接。
+> **v0.2.1 起不内置自动更新** —— 升级走"用户手动下 dmg/nsis/AppImage/deb/rpm 覆盖装"路径。设置面板「关于」页有 GitHub releases 链接。
 
 ---
 
@@ -13,12 +13,14 @@
 │   维护者     │ ───────────────────────→│  GitHub Actions   │
 │  (你)        │                          │  release.yml      │
 └──────────────┘                          └────────┬─────────┘
-                                                  │ ② tauri build × 3
-                                                  │   (mac arm64/x64, win)
+                                                  │ ② tauri build × 4
+                                                  │   (mac arm64/x64, win, linux)
                                                   ▼
                                          ┌──────────────────┐
                                          │  Bundle 输出     │
-                                         │  (.dmg/.exe)     │
+                                         │  (.dmg/.exe/.msi │
+                                         │   .AppImage/.deb │
+                                         │   /.rpm)         │
                                          └────────┬─────────┘
                                                   │ ③ tauri-action
                                                   │   上传为 release assets
@@ -34,11 +36,12 @@
    │  用户看到 GitHub    │  浏览器/feed reader 推送
    │  release notification│  → 访问 release 页
    └────────┬───────────┘
-            │ 下载 dmg / setup.exe
+            │ 下载 dmg / setup.exe / .msi / AppImage / deb / rpm
             ▼
    ┌────────────────────┐
    │  覆盖安装          │  macOS: 拖入 Applications 替换
-   │                    │  Windows: NSIS 安装器覆盖
+   │                    │  Windows: NSIS/MSI 安装器覆盖
+   │                    │  Linux: apt/dnf install 或双击 AppImage
    └────────┬───────────┘
             │
             ▼
@@ -133,28 +136,30 @@ git push origin main --tags
 
 ### 3.3 监控 workflow
 
-`https://github.com/Thedeergod666/Musage/actions` → 选 `Release` workflow → 看三个 job：
+`https://github.com/Thedeergod666/Musage/actions` → 选 `Release` workflow → 看四个 job：
 
 ```
-build (macos-arm64)   ~8 min
-build (macos-x64)     ~9 min
-build (windows-x64)   ~7 min
-verify release assets ~10 s
+build (macos-arm64)    ~8 min
+build (macos-x64)      ~9 min
+build (windows-x64)    ~7 min   (NSIS + MSI 双产物, MSI 可能因 WiX 镜像 timeout 失败)
+build (linux-x64)      ~12 min  (AppImage + deb + rpm, ubuntu-22.04 runner)
+verify release assets  ~10 s
 ```
 
 ### 3.4 审核 + 发布 Draft
 
 workflow 完事后到 [Releases 页](https://github.com/Thedeergod666/Musage/releases)：
-- Draft release 自动创建,含 3 个 bundle
+- Draft release 自动创建,含 7 个 bundle（2 dmg + nsis + msi + AppImage + deb + rpm）
 - 检查产物大小、CHANGELOG
 - 点 **Publish release**
 
 ### 3.5 用户收到更新
 
-- v0.2.0 起没有自动通知,用户在设置面板「关于」页看到当前版本 + GitHub releases 链接
-- 用户访问 release 页 → 下载 dmg / setup.exe → 覆盖安装
+- v0.2.1 起没有自动通知,用户在设置面板「关于」页看到当前版本 + GitHub releases 链接
+- 用户访问 release 页 → 下载 dmg / setup.exe / msi / AppImage / deb / rpm → 覆盖安装
 - **macOS**: 拖入 `/Applications` 替换旧版（系统会保留配置）
 - **Windows NSIS**: passive 模式升级,无需卸载（也会保留配置）
+- **Linux deb/rpm**: 包管理器升级，自动保留配置；AppImage 需重新下载
 
 ---
 
@@ -165,7 +170,7 @@ workflow 完事后到 [Releases 页](https://github.com/Thedeergod666/Musage/rel
 | `pnpm tauri:build` 报 "Bundling failed" (Win) | `tauri.conf.json` 缺 macOS entitlement 路径 | 检查 `bundle.macOS.entitlements` 路径对不对（macOS-only 字段不影响 win build,但有时 validator 抱怨）|
 | windows build 报 "permission denied" | 权限/sandbox 拦了 tauri build | 看具体 stack trace,通常是 admin 权限或杀毒软件 |
 | macOS build 报 "xcrun: error: unable to find utility" | Xcode CLT 没装 | `xcode-select --install` |
-| WiX 镜像 timeout (历史问题) | v0.2.0 起 bundle targets 只剩 `["nsis", "dmg"]`,不走 WiX | 不需要再处理 |
+| WiX 镜像 timeout (Windows MSI 可能炸) | v0.2.1 试一次恢复 MSI, 失败下次发板砍回 `bundles: nsis` | 检查 wixtoolset 镜像可达性, 或 fallback 到只 `nsis` |
 | Workflow 报 "no target" | tag 格式不匹配 | tag 必须是 `vX.Y.Z` 格式（带 v） |
 | Workflow 报 "failed to decode secret key" | `TAURI_SIGNING_PRIVATE_KEY` secret 没配 | v0.2.0 不再用 updater,这种情况不该再出现 |
 

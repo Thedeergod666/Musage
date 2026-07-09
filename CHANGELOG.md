@@ -7,6 +7,80 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-07-09
+
+v0.2.0 (2026-06-29) 之后 10 天的累计：**3 critical + 23 high + 19 medium security/quality 全量审查修复 + macOS signing saga + Linux + Windows MSI 发板**。version 字段 0.2.1，git tag `v0.2.1` 落在本 commit。
+
+### Added
+
+- **Linux x64 发板**：`.AppImage` (免安装) + `.deb` (Debian/Ubuntu) + `.rpm` (Fedora/RHEL) 三种 bundle，由 `ubuntu-22.04` runner 构建。`platform/` Linux stub、`tray.rs` Linux 字体路径 (DejaVu/Liberation Sans) 之前已就位，0 个 Rust 代码改动
+- **Windows MSI installer** (`.msi`)：与 v0.1.0 行为对齐。NSIS (`.exe`) + MSI 双产物并存
+- **`tauri-action` 升级 v0 → v1** (Jun 29 2026 latest)：Linux bundle 集成更稳，asset 上传逻辑修了几个 edge case
+
+### Fixed (Critical — 安全/正确性)
+
+- **C1 (poller)**: `src.id()` (base id) 查 `cfg.providers` enabled 状态时多实例场景下 `minimax#2` / `minimax#3` 永远走 fallback (commit `201687a`)
+- **C1 (xiaomi_login)**: `is_dashboard_url` 子串匹配 → DNS rebinding 攻击，改 `host_str() == "platform.xiaomimimo.com"` + `scheme == "https"` 严格匹配；`extract_user_id_from_url` 加 digits-only 校验 (commit `4cb80d8`)
+- **C2 (openrouter)**: `LAST_SUCCESSFUL` 之前是 `Mutex<Option<(Instant, Endpoint)>>` 全局单例，`minimax#2` 切 endpoint 会覆盖 `minimax` 缓存。改 per-source endpoint 缓存；`free_tier` 不再误报 `Parse` (commit `ca706c0`)
+- **C2 (capabilities)**: 拆分 `default.json` + `xiaomi-login.json`，`create-webview-window` 权限只给 xiaomi-login 窗口，default webview 不再能起新窗口 (commit `4cb80d8`)
+- **C3 (release profile)**: `panic = "abort"` → `"unwind"` — spawn task panic 不再 abort 整个进程，托盘/浮窗不会丢 (commit `4cb80d8`)
+- **C3 (extra_instances)**: `delete_extra_instance` 先 read lock → 释放 → write lock 删除，两个 lock 之间用户 add 同 provider 会导致删除错位。改 write lock 全程 (commit `a3e6950`)
+- **C1 (config migrate)**: `config::migrated()` 老 config.json 升级用 `unreachable!()` → `default_provider_config(id)` helper，老配置升级到 v0.2.x 不再 panic (commit `ee3dfc3`)
+
+### Fixed (High — 行为正确性)
+
+- **H1 (tray)**: `pick_minimax_rows` 之前 `source_id == Some("minimax")` 严格相等匹配，多实例 `minimax#2` / `minimax#3` 全被过滤掉。改 starts_with 匹配 base id (commit `d5612ab`)
+- **H2 (resize)**: 浮窗 resize 时 NaN 检查缺失，未捕获路径会让 emit 逻辑算脏值 (commit `d5612ab`)
+- **H2 (Win HiDPI)**: 显式 `SetProcessDpiAwarenessContext(Per-Monitor V2)`，跨 DPI 屏 hover 检测不再挂 (commit `4cb80d8`)
+- **H4 (delete cascade)**: `delete_source_builtin_key` 级联清 `extra_instances` 副本，防止浮窗显示"未配置"的死副本 (commit `4cb80d8`)
+- **H4 (tavily)**: `((u/l)*100)` 没 clamp，`limit_remaining` 负值或 `u>l` 时返 >100% / 负数。进度条爆框 (commit `28f32e1`)
+- **H5 (config)**: `config.json` 损坏不再 fallback 到 `Self::default()`，`best_effort_from_value` 保留可知字段 (commit `4cb80d8`)
+- **H6-H9 (providers)**: 11 provider 一致性 + 共享 SSRF 防护 (commit `28f32e1`)
+- **H11-H14 (extra_instances)**: add/update save 失败回滚 + 删死代码 (commit `a3e6950`)
+- **H15 (delete_credential fallback)**: 找不到 builtin 时正确 fallback (commit `d5612ab`)
+- **H16 (macOS hideOnDeactivate)**: 浮窗隐藏行为符合 macOS 习惯 (commit `d5612ab`)
+- **H17/H21 (frontend credentials)**: `saveCredentialAction` 之前 `input.value.trim()` 把整段 textarea 当一个值，多行 cookie 粘贴全丢。改逐行处理 (commit `e04cffe`)
+- **H18/H19/H22/H23 (frontend)**: UUID 拦截 / 死代码 / `card-dot-error` CSS / 阈值顺序校验 (commit `e04cffe`)
+- **H1/H2 (Windows 浮窗重启)**: 重启浮窗回左上角 — `(0,0)` NSWindow 默认值两层拦截 (commit `7b488a7`)
+
+### Fixed (Medium — 全量审查 batch 2a/2b/3/4)
+
+29 个 medium 级别问题分 4 批修复，覆盖 persistence / providers / platform / frontend / i18n 全栈：
+
+- **batch 2a (persistence)**: fsync + worker recover + lock ordering (commit `31aeb44`)
+- **batch 2b (providers)**: body cap + jpath depth + ANSI filter + tz parse + spawn recover doc (commit `ad05224`)
+- **batch 3 (platform+frontend+locs)**: M5/M9/M10/M11/M17/L1/L7/L13/L14/L16 (commit `bcecd57`)
+- **batch 4 (misc+locs)**: frontend regex wiring + region race + first-launch + L11 + L15 (commit `f38a91e`)
+
+### Fixed (UI / UX)
+
+- **delete builtin key 二次 confirm** 警告副本级联 (commit `d0def65`)
+- **tray 5h/Weekly 行匹配**: 改用 `RowKind` 枚举，跟 locale 解耦 (commit `b7e8d65`)
+- **logs dedup_cache 24h 过期回收** (commit `0eda5c9`)
+- **minimax provider QuotaRow 填 `RowKind` 枚举**: 补 M2 漏改 (commit `707db33`)
+- **浮窗显示逻辑**: 移除不必要的 `focused` 状态检查 (commit `40f0c11`)
+- **浮窗内容高度测量**: 避免底部留空白 (commit `760dddd`)
+- **浮窗 ResizeObserver**: 自动调整高度，保留用户手动调整窗口能力 (commit `63d01eb`)
+- **浮窗 emit 简化**: 提升代码可读性 (commit `a0f0025`)
+- **浮窗 hover 响应速度**: 恢复 v0.1.0 体验 (commit `7822901`)
+- **浮窗毛玻璃后台偶发闪一下**: macOS 修复 (commit `5983104`)
+- **hover emitter 加 dwell-time hysteresis**: 治根因（多 transparent 窗口共存抖动）(commit `f2eeb3c`)
+- **macOS menubar hidden 检测**: 修 `unused variable` warning (commit `4e6ccd9`)
+- **macos.rs M7 refactor 漏掉的 `std::thread` import** (commit `92b98d9`)
+
+### Fixed (Build / CI / i18n)
+
+- **rust-i18n Windows release bug**: MSVC + lto + strip 组合下链接器会把 HashMap 字面量 backing 数据段当 unreferenced 丢掉，导致 release binary 的 backend 是空的 —— t!() 全部回退成 `locale.key` 字面量。**砍 `strip = true` 解决** (commit `5e87468`)
+- **CI 跨平台 i18n test stability**: 4 个 i18n test 在 ubuntu/macos runner fail 但本地 zh-CN 过。修测试假设 (commit `f199efb`)
+- **cargo fmt**: 修 batch 4 引入的 6 处格式偏差 (commit `4209c75`)
+- **rustfmt 修 batch 4 引入的格式偏差** (`src-tauri/src/lib.rs:437` emit 合并行) (commit `7822901` 之前的 patch)
+
+### Known Caveats
+
+- **macOS 安装包未签名**: 用户机器没有 Apple Developer ID，dmg 走未签名构建 + quarantine xattr → macOS 弹"应用已损坏"。**应急**: `xattr -cr /Applications/Musage.app && codesign --force --deep --options runtime --sign - /Applications/Musage.app` (详见 AGENTS.md 「macOS 安装后显示『应用已损坏』」)
+- **Linux AppImage 无签名**: 第一次运行需 `chmod +x` + 双击或命令行运行。GNOME 桌面需要装 AppIndicator extension 才能看到系统托盘
+- **Linux Wayland**: 默认走 XWayland；原生 Wayland 渲染有 dpi / 字体微调问题，未专门适配
+
 ## [0.2.0] - 2026-06-29
 
 v0.1.0 (2026-06-13) 之后 16 天的累计：6+ PR + 1 次大清理 + PR 1b 额外实例 + 35 个 follow-up commit。version 字段钉死 0.2.0，git tag `v0.2.0` 落在本 commit。

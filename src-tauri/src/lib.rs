@@ -437,10 +437,7 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
             // 和我们 set_size 用的 LogicalSize 同维度,回声比对方便。
             if size.height > 0 {
                 let logical_h = (size.height as f64 / scale).round() as i32;
-                let _ = app_for_emit.emit(
-                    "musage://floating-resized",
-                    logical_h,
-                );
+                let _ = app_for_emit.emit("musage://floating-resized", logical_h);
             }
             let mut g = latest_for_cb.lock().unwrap_or_else(|e| {
                 tracing::warn!("geom_persister latest_for_cb poisoned (Resized), recovering");

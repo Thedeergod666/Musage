@@ -254,32 +254,12 @@ function snapKey(p: ProviderSnapshot): string {
   return (p.unique_id ?? p.source_id ?? p.provider) as string;
 }
 
-function effectiveSnap(p: ProviderSnapshot): ProviderSnapshot {
-  const entry = lastGoodSnap.get(snapKey(p));
-  if (isTransientError(p.error_kind) && entry && (Date.now() - entry.at < LAST_GOOD_TTL_MS)) {
-    return entry.snap;
-  }
-  return p;
-}
-
 /// 描述"用户看到的浮窗内容结构" —— 只看会改变 layout 的维度：
 ///   - provider / source_id 列表（决定几张卡）
 ///   - 每张卡是 ok 还是 err（错误态有 .err-msg / .err-btn 行）
 ///   - 渲染哪些 row（按 rowKey，不看 utilization 数字）
 ///
 /// 利用率、倒计时文字、logo / name 变化都**不**计入 → 不触发 fit。
-function contentFingerprint(snap: QuotaSnapshot): string {
-  const providers = snap.providers.map((p) => {
-    const eff = effectiveSnap(p);
-    const id = eff.source_id ?? eff.provider;
-    const state = eff.success ? "ok" : `err:${eff.error_kind ?? "other"}`;
-    const rows = rowsForRender(eff);
-    return `${id}|${state}|${rows.length}|${rows.map((r, i) => rowKey(id, i, r)).join(",")}`;
-  }).join(";");
-  // footer 显隐也影响内容高度，加入 fingerprint 确保切换时触发 fit
-  return `fh:${renderPrefs.showFooterHint ? 1 : 0};${providers}`;
-}
-
 /// 每个 provider 的"最后一次成功"快照 + 记录时间。
 /// 瞬态错误来时，浮窗用这份数据继续渲染 + dot 翻红。
 /// 持久错误（且无历史成功）才走完整的错误 UI。
@@ -307,12 +287,6 @@ function purgeStaleLastGoodSnap(): void {
     console.debug(`purged ${removed} stale lastGoodSnap entries`);
   }
 }
-
-/// 上一次 fit-to-content 时的"可见结构"指纹。
-/// 内容数据刷新（utilization / countdown）不改变这个值 → auto-resize 跳过，
-/// 保留用户手动改的窗口高度。结构变化（卡片增删 / 新错误 / 行数变化）才
-/// 重新 fit。详见 `contentFingerprint` + `autoResizeWindow`。
-let lastFitFingerprint: string | null = null;
 
 /**
  * ErrorKind 简短 label —— P1 错误分类重构后走 i18n。
@@ -427,10 +401,12 @@ function render(snap: QuotaSnapshot) {
   updateFoot(snap);
 
   startCountdown();
-  // 改完 DOM 后 → 量内容高度，调 Rust 把浮窗 resize 到 fit-content。
-  // autoResizeWindow 自己用 contentFingerprint 去重：utilization 刷新等
-  // 数据变化不动窗口；只有卡片/行结构变了才 fit。
-  void autoResizeWindow(snap);
+  // 自适应高度由 ResizeObserver 接管（见 installAutoResizeObserver）。
+  // render() 改成"只动 DOM"——卡骨架先建、rowsBox 行后插，DOM 真正稳定
+  // 是在后续 microtask + 一帧之后。ResizeObserver 跟着 #app contentBox
+  // 自然触发，不依赖 fingerprint，比"render 末尾主动 fit 一次"更准
+  // （回归：行后插但 fingerprint 未变 → 主动 fit 量到旧高度卡底被裁）。
+  void touchFitReason();
 }
 
 /// 按 RenderPrefs 过滤 / 改写 rows（影响渲染前的数据，不动后端）
@@ -475,26 +451,73 @@ function rowsForRender(p: ProviderSnapshot): QuotaRow[] {
 /// 算 `contentFingerprint(snap)`，跟 `lastFitFingerprint` 比，相同就跳过。
 /// 数据刷新（utilization / countdown / logo 变化）不改变 fingerprint →
 /// 保留用户手动尺寸；结构变化（新增/移除卡、新错误、行数变化）才重新 fit。
-async function autoResizeWindow(snap: QuotaSnapshot) {
-  await new Promise<void>((r) => requestAnimationFrame(() => r()));
+/// 自适应浮窗高度 —— ResizeObserver 监听 #app contentBox：
+///   - 涨/缩都自动 fit（治"骨架先建、rows 后插"导致 fit 量到错高度的回归）
+///   - 用户手动拖窗口 800ms 内不覆盖（保护手动尺寸）
+///
+/// 设计取舍：原本走 render() 末尾 fit + contentFingerprint 去重。问题在
+/// updateCard 先 buildCardSkeleton（#app 多出空 .card，0px 高）再往 rowsBox
+/// 插 .row —— render() 末尾 fit 量的是"骨架高度"，rows 后插触发的第二次
+/// contentBox 变化 fingerprint 不变 → 主动 fit 不再跑 → 永远不重 fit，
+/// 末卡被裁。改用 ResizeObserver 后：rows 后插 / 切简洁模式删 row / 关 footer
+/// 都触发 contentBox 尺寸变化 → 自动 fit，不需要 fingerprint 协调。
+///
+/// 用户拖窗口时 #app 仍是 height:100% + overflow:auto → clientHeight 不变
+/// → observer 不触发 → 手动尺寸被尊重 ✓。
+///
+/// fit 回声防自循环：observer 触发 fit → invoke set_size → Rust emit
+/// `floating-resized` → 我们把"刚 fit 过"标志短期置位 → 收到自己的回声
+/// 事件不 bump userResizedAt。标志在下一帧清掉（避开"恰好 800ms 内又
+/// 一次 fit 撞上用户拖"的边界场景靠 Rust 事件去重，out of scope）。
+let userResizedAt = 0;
+const USER_RESIZE_PROTECT_MS = 800;
+let lastFitContentH = -1;
+let lastFitWindowH = -1;     // 我们刚刚 set_size 出去的目标窗口高
+let observerInstalled = false;
+let observerBusy = false;
+
+function installAutoResizeObserver() {
+  if (observerInstalled) return;
   const appEl = document.getElementById("app");
   if (!appEl) return;
-
-  // 内容结构没变（只是 utilization / countdown 刷新）→ 保留用户手动尺寸
-  const fp = contentFingerprint(snap);
-  if (fp === lastFitFingerprint) return;
-  lastFitFingerprint = fp;
-
-  await resizeWindowToContent(appEl);
+  observerInstalled = true;
+  const ro = new ResizeObserver(() => { void fitOnObserverTick(); });
+  ro.observe(appEl);
 }
 
-/// 空态 resize（renderEmptyState 后调用）:不走 contentFingerprint 去重,
-/// 每次都量当前 DOM 高度。
-async function autoResizeWindowToContent() {
-  await new Promise<void>((r) => requestAnimationFrame(() => r()));
-  const appEl = document.getElementById("app");
-  if (!appEl) return;
-  await resizeWindowToContent(appEl);
+async function fitOnObserverTick() {
+  if (Date.now() - userResizedAt < USER_RESIZE_PROTECT_MS) return;
+  if (observerBusy) return;
+  observerBusy = true;
+  try {
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    const appEl = document.getElementById("app");
+    if (!appEl) return;
+    const contentH = measureContentHeight(appEl);
+    if (contentH === lastFitContentH) return;
+    lastFitContentH = contentH;
+    const screenH = window.screen?.availHeight ?? 2400;
+    const maxH = Math.max(200, screenH - 80);
+    const target = Math.round(Math.min(contentH, maxH));
+    if (Math.abs(window.innerHeight - target) <= 1) return;
+    lastFitWindowH = target;
+    try {
+      await invoke("resize_floating_window", { height: target });
+    } catch (e) {
+      console.debug("[floating] auto-resize 失败", e);
+    }
+  } finally {
+    observerBusy = false;
+  }
+}
+
+/// render() / renderEmptyState() 末尾调用 —— 语义化"我改了 #app"。
+/// observer 自己盯住 #app 后续所有 contentBox 变化（rows 后插、切简洁
+/// 模式删 row、关 footer 等），不需要 fingerprint 协调。这里只确保
+/// observer 装上 + 清掉 lastFitContentH 让下次变化一定会触发 fit。
+function touchFitReason() {
+  void installAutoResizeObserver();
+  lastFitContentH = -1;
 }
 
 /// 量 `#app` 的**自然内容高度**（padding + 首个卡顶 → 末个卡底 的总跨度）。
@@ -509,6 +532,12 @@ async function autoResizeWindowToContent() {
 /// 中间所有 gap / margin 都天然算进跨度里，不像逐个累加那样漏算而"吞掉"
 /// 最后一张卡（回归：Tavily 卡底部被裁）。首尾 rect 随滚动同步平移，差值
 /// 稳定，无需处理 scrollTop。
+///
+/// **box-shadow 也要算**（[Tavily 底部被裁 - 第二次] 回归）：data-hover 切到
+/// true 时 .card 的 box-shadow 从 0 升到 `0 10px 30px rgba(0,0,0,.45)`，阴影
+/// 渲染到卡片**外**部 30px。getBoundingClientRect() 不含 shadow,最后一张卡
+/// 底下如果不预留 shadow 高度就被浮窗下沿裁了。手动从 box-shadow CSS 串
+/// 抽出第 3 个数(blur 半径)再加一点,既能 fit 到 shadow 边缘,又不会太宽。
 function measureContentHeight(appEl: HTMLElement): number {
   const cs = getComputedStyle(appEl);
   const padTop = parseFloat(cs.paddingTop) || 0;
@@ -519,24 +548,39 @@ function measureContentHeight(appEl: HTMLElement): number {
   const last = children[children.length - 1].getBoundingClientRect();
   const firstMt = parseFloat(getComputedStyle(children[0]).marginTop) || 0;
   const lastMb = parseFloat(getComputedStyle(children[children.length - 1]).marginBottom) || 0;
+  // 末卡 box-shadow 向下延伸量。CSS 写 `0 Xpx Ypx rgba(...)`:
+  //   - X = 横向 offset（这里都是 0）
+  //   - Y = 纵向 offset（hover 时是 10）
+  //   - 第三个 = blur 半径(hover 时是 30,会向下散开 30px)
+  // 经验值:blur 之外还要加 ~10px 给阴影柔和边缘留余地,否则 sub-pixel
+  // 舍入还是会把最外层 1-2px 阴影裁掉。
+  const lastShadow = getComputedStyle(children[children.length - 1]).boxShadow;
+  const shadowExtra = parseBoxShadowExtraBottom(lastShadow);
   const span = last.bottom - first.top + firstMt + lastMb;
   // 向上取整 1px，避免 sub-pixel 舍入把末卡底边裁掉
-  return Math.ceil(padTop + span + padBottom);
+  return Math.ceil(padTop + span + padBottom + shadowExtra);
 }
 
-async function resizeWindowToContent(appEl: HTMLElement) {
-  const contentH = measureContentHeight(appEl);
-  const screenH = window.screen?.availHeight ?? 2400;
-  const maxH = Math.max(200, screenH - 80);
-  const currentH = window.innerHeight;
-  const desired = Math.min(contentH, maxH);
-  if (Math.abs(currentH - desired) <= 1) return;
-  const target = Math.round(desired);
-  try {
-    await invoke("resize_floating_window", { height: target });
-  } catch (e) {
-    console.debug("[floating] auto-resize 失败", e);
+/// 从 `box-shadow: 0 10px 30px rgba(...)` CSS 串里抽出"向下"延伸的额外
+/// 高度 = max(0, y_offset + blur)。不解析 spread 和 color,够用。
+/// 没阴影 / `none` 返回 0。
+function parseBoxShadowExtraBottom(shadow: string): number {
+  if (!shadow || shadow === "none") return 0;
+  // 多重 box-shadow 用逗号分隔,取向下延伸最大的那个
+  let max = 0;
+  for (const part of shadow.split(",")) {
+    // 去掉颜色(rgba/hsl/#xxx)再切空格
+    const tokens = part.trim().split(/\s+/);
+    if (tokens.length < 3) continue;
+    // tokens: [0, 10px, 30px, rgba(...)] → 索引 0=offsetX, 1=offsetY, 2=blur
+    const yOffset = parseFloat(tokens[1]) || 0;
+    const blur = parseFloat(tokens[2]) || 0;
+    // 阴影向下延伸 = y offset 为正时加 offset,否则只算 blur / 2
+    // (实际 blur 半径会上下各散开一半,但向下方向永远存在 blur 视觉效果)
+    const extend = yOffset + blur;
+    if (extend > max) max = extend;
   }
+  return max;
 }
 
 function renderEmptyState() {
@@ -556,7 +600,7 @@ function renderEmptyState() {
       <div class="empty-state-hint">${escapeHtml(t("floating.tray_right_to_settings"))}</div>
     </div>
   `;
-  void autoResizeWindowToContent();
+  void touchFitReason();
 }
 
 // ── 卡片 ──
@@ -1121,6 +1165,7 @@ async function init() {
   // 订阅后端推送
   let unlisten: UnlistenFn | null = null;
   let unlistenHover: UnlistenFn | null = null;
+  let unlistenResized: UnlistenFn | null = null;
   let unlistenCfg: UnlistenFn | null = null;
   // **2026-06-20 audit**：5 处 listen().then() 之前都没 .catch()，
   // IPC bridge 启动挂掉时 promise reject → unhandled rejection。补 catch + log。
@@ -1162,6 +1207,13 @@ async function init() {
   const setHoverAttr = (on: boolean) => {
     if (on) document.body.dataset.hover = "1";
     else delete document.body.dataset.hover;
+    // hover 切到 true 时 .card 的 box-shadow 从 0 升到 `0 10px 30px`，
+    // paint-only 变化 ResizeObserver 不触发 → 必须主动 fit 一次,让
+    // measureContentHeight 读到的"末卡 shadow 延伸高度"参与预算。
+    // 反向 (hover=false) 也调:影子缩回 0 后,fit 收回浮窗,避免空 40px。
+    // 内部 800ms 手动 resize 保护窗会拦住"用户刚拖完"的场景,不打扰。
+    const appEl = document.getElementById("app");
+    if (appEl) void fitOnObserverTick();
   };
   // (a) 页面级 visibility —— 覆盖 fullscreen watcher 隐藏浮窗的场景
   //     (macOS 探测菜单栏不可见后调 hide_floating，WKWebView 此时触发
@@ -1239,6 +1291,22 @@ async function init() {
   })
     .then((fn) => (unlistenHover = fn))
     .catch((e) => console.error("[floating] listen musage://floating-hover 失败", e));
+
+  // ── 用户手动 resize 窗口 → 通知前端冻结 800ms auto-fit ──
+  // Rust 端每收到 Resized 就 emit 这个事件（不管源头是用户拖动还是
+  // 我们自己 fit 触发的 set_size）。前端比对新高度 vs lastFitHeight:
+  //   - 相等 → 这是我们自己 fit 的回声，**不** bump userResizedAt，
+  //           否则 observer → set_size → bumped → observer 被冻结 → 死循环
+  //   - 不等 → 用户拖动，bump userResizedAt 冻结 800ms 避免自动 fit 覆盖
+  // 不变量：fit 期间我们 set_size 到 targetH → 立刻更新 lastFitHeight = targetH，
+  //         Resized emit 回来时 lastFitHeight === payload → 忽略 ✓。
+  listen<number>("musage://floating-resized", (e) => {
+    const newH = e.payload;
+    if (newH === lastFitWindowH) return; // 我们自己 fit 的回声
+    userResizedAt = Date.now();
+  })
+    .then((fn) => (unlistenResized = fn))
+    .catch((e) => console.error("[floating] listen musage://floating-resized 失败", e));
 
   // ── 省电模式同步：body[data-low-power] 让 CSS 关掉 backdrop-filter + transition ──
   let unlistenLowPower: UnlistenFn | null = null;
@@ -1409,6 +1477,7 @@ async function init() {
   window.addEventListener("beforeunload", () => {
     if (unlisten) unlisten();
     if (unlistenHover) unlistenHover();
+    if (unlistenResized) unlistenResized();
     if (unlistenLowPower) unlistenLowPower();
     if (unlistenCfg) unlistenCfg();
     if (unlistenPinMode) unlistenPinMode();

@@ -30,7 +30,7 @@ rust_i18n::i18n!("locales", fallback = "en");
 pub use rust_i18n::t;
 
 use std::sync::Arc;
-use tauri::{Listener, Manager};
+use tauri::{Emitter, Listener, Manager};
 use tokio::sync::RwLock;
 
 use crate::commands::apply_pin_mode_to_window;
@@ -395,6 +395,13 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
 
     let latest: Arc<Mutex<Option<(i32, i32, i32, i32)>>> = Arc::new(Mutex::new(None));
     let latest_for_cb = latest.clone();
+    // 前端要按"逻辑像素"比对 fit 目标,所以在 on_window_event 之前 cache
+    // scale_factor (WebviewWindow::scale_factor 借 &self,不能在已 borrow 的
+    // 闭包里再调)。事件回调里读这个 cache,不重算。
+    let scale = win.scale_factor().unwrap_or(1.0);
+    // 通知前端用的 AppHandle 也 clone 出来 —— on_window_event 闭包 move 走
+    // 一次,async 落盘 task 还要用 app,两者都要所有权。
+    let app_for_emit = app.clone();
 
     // 回调线程：只更新 latest，不做 I/O
     // **2026-06-20 audit**：之前 `.lock().unwrap()` 在 persister task panic 后
@@ -423,6 +430,18 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
             *g = Some((pos.x, pos.y, cur.2, cur.3));
         }
         tauri::WindowEvent::Resized(size) => {
+            // 通知前端"用户刚拖动过窗口" —— 前端在 800ms 内冻结 auto-fit
+            // 避免覆盖手动尺寸。**所有** Resized 都通知（包括我们自己 set_size
+            // 触发的）—— 前端 fit 调 set_size 之后会自己清掉 userResizedAt。
+            // 传**逻辑像素**（除 scale_factor）—— 与前端 `window.innerHeight`
+            // 和我们 set_size 用的 LogicalSize 同维度,回声比对方便。
+            if size.height > 0 {
+                let logical_h = (size.height as f64 / scale).round() as i32;
+                let _ = app_for_emit.emit(
+                    "musage://floating-resized",
+                    logical_h,
+                );
+            }
             let mut g = latest_for_cb.lock().unwrap_or_else(|e| {
                 tracing::warn!("geom_persister latest_for_cb poisoned (Resized), recovering");
                 e.into_inner()

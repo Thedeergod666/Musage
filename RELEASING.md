@@ -153,6 +153,31 @@ workflow 完事后到 [Releases 页](https://github.com/Thedeergod666/Musage/rel
 - 检查产物大小、CHANGELOG
 - 点 **Publish release**
 
+### 3.5a macOS 用户应急：未签名 dmg ad-hoc sign
+
+v0.2.x 不走 Apple Developer ID（配置见 [§2.1](#21可选macos-签名--公证)），下载 dmg 挂载装好后**首次启动**会被 Gatekeeper 拦下：
+
+```
+"Musage" 已损坏，无法打开。你应该将它移到废纸篓。
+```
+
+**真原因**：dmg / `.app` 上有 `com.apple.quarantine` xattr（Edge 下载自动加）**+** 完全没签名。Gatekeeper (Big Sur+) 拒绝执行。**和"应用真坏了"无关**。
+
+**修法**（30 秒，跑一次）：
+
+```bash
+# 1. 装（拖 Musage.app 到 /Applications 之后）
+# 2. 清 quarantine + ad-hoc 签
+xattr -cr /Applications/Musage.app
+codesign --force --deep --options runtime --sign - /Applications/Musage.app
+# 3. 双击启动（spctl 会报 rejected 但能跑）
+#    第一次右键 → 打开 → 弹窗点打开,之后双击就过
+```
+
+**长期解法**：配 Apple Developer ID + 6 个 GitHub Secret（[§2.1](#21可选macos-签名--公证)），CI 自动签名 + 公证 + staple，**用户零弹窗**。
+
+> **每次升级 v0.2.x → v0.2.y 都要重做** —— 新 `.app` 又是未签名状态。
+
 ### 3.5 用户收到更新
 
 - v0.2.1 起没有自动通知,用户在设置面板「关于」页看到当前版本 + GitHub releases 链接

@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-07-10
+
+v0.2.2 (2026-07-10) 紧跟的视觉 hotfix：macOS 26 (Tahoe) 菜单栏上 M 圆比预期大一圈 + 圆外多一圈"halo"空间。**1 个文件改动**（`src-tauri/icons/tray-base.png`），Rust 代码完全不动。
+
+### Fixed (Visual)
+
+- **macOS 26 菜单栏 tray icon 偏大 + halo**：
+  - **症状**：托盘 M 圆**视觉大小**比期望大 25%，圆外多一圈"halo"空间，light/dark mode 都有
+  - **根因**：[src-tauri/icons/tray-base.png](src-tauri/icons/tray-base.png) 是 32×32，M 圆**几乎贴边**（外径 32/32 = 100%）。tray-icon 0.24.1 强制 `setSize(18, 18)`，macOS retina 下需要 36×36 物理像素 → **从 32 上采样 12.5%**，边缘模糊 + 圆看着"大一圈"
+  - **对比**：Usticky dev 走 `default_window_icon()` → `icons/icon.png` (1024×1024)，**下采样**到 36×36 锐利得多
+  - **修法**（fix-B，最小改动）：`tray-base.png` 重做为 **64×64**，**48×48 内容居中** + **8 像素透明 padding 四边**。`tray.rs:558` 的 `if w < ICON_SIZE` Lanczos 上采样分支跳过（64 > 32），64×64 直接透传给 NSImage。retina 36×36 下采样 44% 锐利，**opaque bbox 从 32×32 缩到 24×24**（-25% 视觉大小），圆外 6px 透明 padding 让 halo 消失
+  - **验证**（Python PIL ASCII 对比）：
+
+    | 状态 | Opaque bbox @ 36×36 | 占比 |
+    |---|---|---|
+    | 之前 (32×32) | (2,2)→(33,33) = 32×32 | 89% |
+    | 之后 (64×64 fix-B) | (6,6)→(29,29) = 24×24 | 67% |
+
+  - **tray.rs:541-573 行为**：64 source 进 `Image::new_owned(rgba.into_raw(), 64, 64)`，rust `match w < ICON_SIZE` 不进 resize 分支（64 ≥ 32），64×64 透传 → NSImage `setSize(18, 18)` 渲染
+  - **不影响的平台**：Win/Linux 不读 `tray-base.png`（Win 走 `tray-base.png` 同样的 `include_bytes!` 但 `ICON_SIZE = 64`，64 → 64 直接透传，行为不变；Linux 同）
+
+## [0.2.2] - 2026-07-10
+
+v0.2.1 (2026-07-09) 紧急 hotfix：macOS release 跑起来 UI 全是 raw i18n key（`provider.minimax.name` / `settings.nav.providers` / `floating.countdown.reset_suffix` 等）。7 platform bundle 内容不变，只换 frontend bundle。
+
+### Fixed (Critical — frontend i18n 全炸)
+
+- **v0.2.1 release UI 显示 raw i18n key**：浮窗 / 设置面板所有 t() 调用的位置都返 key 字面量（截图证据：provider.minima... / 5hfloating.countdown.reset_suffix / settings.nav.providers / settings.region.section_title / window.settings）。
+  - **根因**：[src/i18n/index.ts](src/i18n/index.ts) 之前用 `await import(\`./${l}.json\`)` 模板字符串动态 import 加载 locale JSON。Vite/Rollup 只能静态分析 **literal 路径**（`./en.json`），模板字符串里的 `${l}` 让 build 阶段**没有 chunk 生成目标**，runtime 时 `import()` 静默失败（没有错误弹窗）→ loadLocale catch 走 fallback `dicts[l] = {}` → t() 永远 lookup null → 返 raw key
+  - **跟 v0.2.0 那个"Windows LTO+strip 把 HashMap backing 段丢了"的 bug 不同**：那个是后端 Rust i18n 全空（probe 启动即崩），这次是前端 dicts 一直是 `{}`（probe OK，UI 露馅）。两个 bug 独立
+  - **跟 v0.1.0 也没关系** —— 这条路径在 v0.2.0 引入 `loadLocale()` 时就这么写，只是当时 locales 文件也是"空结构（仅 metadata）"（index.ts:9-11 注释），症状相同被掩盖。v0.2.0 follow-up 把 en.json / zh-CN.json 填到 543 行（11 sections, ~180 keys）后，**bug 还在**，只是没人跑过 release dmg 验证（dev 模式 console warn 一堆但 UI 仍能继续用）
+  - **修法**：src/i18n/index.ts module 顶部 static import 两个 locale（`import enDict from "./en.json"` + `import zhCNDict from "./zh-CN.json"`），dicts 在 module load 时填好。`loadLocale()` 退化成"确认 dict 已就位"的 no-op（保留 export 不破坏外部调用方）
+  - **验证**：rebuild 后 `dist/assets/main.js` 里 `"MiniMax"` / `"Xiaomi MiMo"` / `"Settings"` 等翻译字符串出现 7 处（之前 0）；`provider.minimax.name` 这种 raw key 在 bundle 里消失
+
+### Documentation
+
+- **RELEASING.md §3.5a 新增**：macOS 未签名 dmg ad-hoc sign 应急步骤（`xattr -cr` + `codesign --force --deep --options runtime --sign -`），v0.2.x 每次升级都要重做
+- **README 故障排查表加一行**：v0.2.1 raw i18n key 现象的诊断 + 修法（升 v0.2.2 / rebuild）
+
+### Notes
+
+- **本次 release 是 frontend-only fix**，Rust binary 没动。理论上不需要重打 macOS / Windows / Linux bundle —— 但 tauri-action 是按 tag 触发全平台重 build，7 个 bundle 都会重产。文件 hash 会变（dist/assets/* 因为 vite content hash 改了），但**功能上 100% 等价于 v0.2.1 + i18n fix**
+- **用户操作**：v0.2.1 → v0.2.2 升级路径同 v0.2.0 → v0.2.1（覆盖装）。macOS 仍需重做 ad-hoc sign 步骤
+
 ## [0.2.1] - 2026-07-09
 
 v0.2.0 (2026-06-29) 之后 10 天的累计：**3 critical + 23 high + 19 medium security/quality 全量审查修复 + macOS signing saga + Linux + Windows MSI 发板**。version 字段 0.2.1，git tag `v0.2.1` 落在本 commit。

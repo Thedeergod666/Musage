@@ -253,6 +253,7 @@ Authorization: Bearer <api_key>
 | 悬浮窗"测试连接"报 401 | API key 错 | 检查 key 前缀（`sk-cp-` / `tp-` / `tvly-` 等） |
 | 拉不到数据 / `未返回结果` | MiniMax 改了 schema | v0.2 已实现 percent-based 新 schema；仍失败：`cargo run -- dump` 看新字段 |
 | macOS 弹窗「应用已损坏」 | 未签名 + quarantine xattr | 装好后跑 `xattr -cr /Applications/Musage.app && codesign --force --deep --sign - /Applications/Musage.app`，或 [RELEASING.md](RELEASING.md) 配 Apple Developer ID 走真签名 + 公证 |
+| macOS 跑起来 UI 全是 `provider.minimax.name` / `settings.nav.providers` 这种 raw key | v0.2.1 的 frontend i18n bundle bug（Vite 动态 import 模板字符串没生成 chunk，dicts 永远是空）。**v0.2.2 已修** | 升 v0.2.2 即可；如果还看到 raw key 说明 dist 没重建，跑 `pnpm build && pnpm tauri build` |
 | Linux 报错 | Tauri 2 Linux 工具链可能未装全 | `rustup default stable-x86_64-unknown-linux-gnu`，再加 webkit2gtk-4.1 dev pkg |
 
 ## License

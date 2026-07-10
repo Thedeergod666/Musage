@@ -129,13 +129,15 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 - `*_remaining_percent=100` 不代表"还有 100%"，可能是 `status=2/3`（不在套餐内）
 - 旧字段对 Plus 订阅者全为 0
 
-## 当前进度（v0.2.1 快照，2026-07-09）
+## 当前进度（v0.2.3 快照，2026-07-10）
 
-✅ **v0.2.1 已发布**（git tag `v0.2.1` 落在本 commit，version 字段 0.2.1）
-   - v0.2.0 (2026-06-29) 之后 10 天的累计：3 critical + 23 high + 19 medium 全量审查修复 + macOS signing saga + Linux + Windows MSI 发板 + tauri-action v0→v1
-   - 29 个 commit 整体归到 v0.2.1,CHANGELOG 的 [Unreleased] 段已迁到 [0.2.1] - 2026-07-09 段
+✅ **v0.2.3 已发布**（git tag `v0.2.3` 落在本 commit，version 字段 0.2.3）
+   - v0.2.1 frontend i18n hotfix（[src/i18n/index.ts](src/i18n/index.ts) static import 修 Vite dynamic import chunk 缺失）
+   - v0.2.2 frontend i18n hotfix（详见上方 §v0.2.1 follow-up）
+   - v0.2.3 macOS 26 tray icon visual hotfix：[src-tauri/icons/tray-base.png](src-tauri/icons/tray-base.png) 重做为 64×64（48px 内容 + 8px 透明 padding 四边），圆外径 32→24 (-25%)，halo 消失
+   - v0.2.2 + v0.2.3 都没正式 ship（v0.2.1 → v0.2.3 直接跨度），CHANGELOG 两段都保留
 
-✅ v0.2.0 全部完成 + v0.2.1 增量（详见上方"2026-06-20 全量代码审查修复"节 + CHANGELOG [0.2.1] 段）
+✅ v0.2.1 全部完成 + v0.2.2/v0.2.3 增量（详见 CHANGELOG [0.2.2] / [0.2.3] 段）
 
 ✅ 项目骨架完整
 ✅ 12 个 provider 全实装（11 内置 + custom），全部加 `instance_index` + `unique_id()` + `with_instance_index()`

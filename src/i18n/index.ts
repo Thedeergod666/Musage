@@ -7,17 +7,26 @@
 // - locale 文件在 src/i18n/{en,zh-CN}.json，跟 tauri 端 src-tauri/locales/*.json 同名
 // - 切语言走 setLocale() → 持久化（后端 set_locale 命令）+ 触发 listeners
 //
-// P0 阶段：loadLocale / setLocale 已有最小可用实现，t() / plural 支持完整。
-// en.json / zh-CN.json 是空结构（仅 metadata），任何 t() 调用会回退 key 字符串。
-// P1 阶段填实际翻译。
+// **v0.2.2 fix (2026-07-10)**：loadLocale 之前用 `await import(\`./${l}.json\`)`
+// 模板字符串动态 import。Vite/Rollup 只能静态分析 literal 路径（`./en.json`），
+// 模板字符串里的 `${l}` 让 build 阶段没有 chunk 生成目标，runtime 时
+// import() 静默失败 → dicts 永远是 `{}` → t() 全部返 raw key。
+// 修法：static import 两个 locale，在 loadLocale 里用 dict 选。
 
 export type Locale = "en" | "zh-CN";
 const SUPPORTED: Locale[] = ["en", "zh-CN"];
 
 let current: Locale = "zh-CN";
+// **v0.2.2 fix**：static import 两个 locale。Vite 在 build 时能把这两份 JSON
+// 内联进 main.js 同一 chunk（也可以拆 chunk，取决于 assets 大小），但**一定**
+// 能拿到 —— 不再依赖 dynamic import 静态分析。
+// JSON 内容由 Vite `import` 时直接 attach 到 module namespace，dicts[l] = mod.default。
+import enDict from "./en.json";
+import zhCNDict from "./zh-CN.json";
+
 const dicts: Record<Locale, Record<string, any>> = {
-  "en": {} as any,
-  "zh-CN": {} as any,
+  "en": enDict as Record<string, any>,
+  "zh-CN": zhCNDict as Record<string, any>,
 };
 let loaded = false;
 const listeners = new Set<(l: Locale) => void>();
@@ -137,19 +146,20 @@ export const setLocale = async (l: Locale): Promise<void> => {
 };
 
 /**
- * 加载 locale 的 JSON dict。Vite 支持 JSON import 同步，但为支持动态切语言，
- * 走 dynamic import 让第一次 setLocale() 时才下载 / 解析。
+ * 加载 locale 的 JSON dict。
+ *
+ * **v0.2.2 fix**：之前走 `await import(\`./${l}.json\`)` 动态 import 失败
+ * （Vite 不能静态分析模板字符串 → build 没生成 chunk → runtime 静默失败
+ * → dicts 永远空 → t() 返 raw key）。现在两个 locale 在 module 顶部 static
+ * import，dicts 在 module load 时就填好。loadLocale 退化成"确认 dict 已就位"
+ * 的轻量 check，保留 export 以免破坏外部调用方。
  *
  * 重复调同 locale 直接返回（不重复 fetch）。
  */
 export const loadLocale = async (l: Locale): Promise<void> => {
-  if (dicts[l] && Object.keys(dicts[l]).length > 0) return;
-  try {
-    const mod = await import(`./${l}.json`);
-    dicts[l] = mod.default ?? mod;
-  } catch (e) {
-    if (dev) console.warn(`[i18n] failed to load ${l}.json`, e);
-    dicts[l] = {};
+  if (!dicts[l] || Object.keys(dicts[l]).length === 0) {
+    // 防御：理论上 static import 不会让 dict 空，进了这里就是 dev-time 误用
+    if (dev) console.warn(`[i18n] loadLocale(${l}) called but dict is empty`);
   }
 };
 

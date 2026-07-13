@@ -1,0 +1,33 @@
+# .mailmap — 把所有 thedeergod 变体归一到 Thedeergod666
+#
+# 格式: 正确的 Name <email> <错误的 email>
+# 也支持: 正确的 Name <email> <错误的 Name> <错误的 email>
+#
+# 目标: GitHub Contributors 面板 / git shortlog / git blame
+#       看到的所有 author 都归到 Thedeergod666
+#
+# 背景: 家里电脑 2026-06-22 v0.2.0 burst 那天用了
+#       name=Thedeergod + email=thedergod@users.noreply.github.com,
+#       GitHub 自动把 18 个 commit 归到一个闲置老号 thedeergod
+#       (display name: "specimen 8"), 导致 Contributors 面板出现
+#       一个不是当前用户的 contributor.
+
+# noreply 邮箱 (10 个 Thedeergod + 8 个 thedeergod) — 直接归一
+Thedeergod666 <1158252932@qq.com> Thedeergod <thedergod@users.noreply.github.com>
+Thedeergod666 <1158252932@qq.com> thedeergod <thedergod@users.noreply.github.com>
+
+# local fallback 邮箱 (39 个 thedeergod@local) — 邮箱和 name 都改
+Thedeergod666 <1158252932@qq.com> thedeergod <thedeergod@local>
+
+# typo: 1 个 thedergod@local (少一个 e)
+Thedeergod666 <1158252932@qq.com> thedergod <thedergod@local>
+
+# name 错成小写 thedeergod + 邮箱已经是 qq.com (47 个)
+# git 自带 mailmap 在"邮箱没变、name 变"时不归一 (设计如此 — 邮箱一致视为同一人)。
+# 这条靠 git-filter-repo 的 --mailmap 在重写时直接改 name，不靠 git mailmap。
+
+# local fallback 大写 name (9 个 Thedeergod666@local)
+Thedeergod666 <1158252932@qq.com> Thedeergod666 <Thedeergod666@local>
+
+# noreply 大写 name (5 个 Thedeergod666@users.noreply.github.com)
+Thedeergod666 <1158252932@qq.com> Thedeergod666 <thedeergod666@users.noreply.github.com>

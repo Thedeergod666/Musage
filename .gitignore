@@ -54,3 +54,6 @@ Icon?
 MIGRATION.html
 CLAUDE.md
 .kilo
+
+# Backup of .git (used during history-rewrite operations like filter-repo)
+.git.bak/

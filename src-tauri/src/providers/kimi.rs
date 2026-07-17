@@ -218,9 +218,12 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
     // ── 周限额：从顶层 usage 取 ──
     if let Some(usage) = raw.get("usage") {
         let resets_at = extract_reset_ms(usage.get("resetTime"));
-        if let Some(row) =
-            build_window_row(usage, t!("row.weekly").to_string(), RowKind::Weekly, resets_at)
-        {
+        if let Some(row) = build_window_row(
+            usage,
+            t!("row.weekly").to_string(),
+            RowKind::Weekly,
+            resets_at,
+        ) {
             rows.push(row);
         }
     }
@@ -281,11 +284,8 @@ fn build_window_row(
     }
     // remaining 缺失时：先看显式 used，能反推就反推；否则视为已用满（0 剩余）。
     let explicit_used = parse_f64(obj.get("used"));
-    let remaining = parse_f64(obj.get("remaining")).unwrap_or_else(|| {
-        explicit_used
-            .map(|u| (limit - u).max(0.0))
-            .unwrap_or(0.0)
-    });
+    let remaining = parse_f64(obj.get("remaining"))
+        .unwrap_or_else(|| explicit_used.map(|u| (limit - u).max(0.0)).unwrap_or(0.0));
     let used = explicit_used.unwrap_or_else(|| (limit - remaining).max(0.0));
     // clamp：防御 used > limit 的异常上限态渲染出 >100% 的 bar
     let utilization = ((used / limit) * 100.0).clamp(0.0, 100.0);

@@ -1177,22 +1177,13 @@ async function init() {
     // 但加 catch 防止 IPC 拒绝变成 unhandled rejection。
     w.startDragging().catch((err) => console.debug("[floating] startDragging 失败", err));
   });
-  // 双击 → 立即刷新
-  // **2026-06-20 audit**：之前 catch 只 console.error，用户看到"啥反应都没有"。
-  // 改为 flash dot 变红（用 settings 用的 flash helper 不可取 —— main.ts 没引
-  // 入。最简：用 status dot 临时翻红 + 100ms 后恢复）。
-  app.addEventListener("dblclick", async () => {
-    try {
-      const snap = await invoke<QuotaSnapshot>("refresh_now");
-      render(snap);
-    } catch (e) {
-      console.error(e);
-      const dot = document.querySelector<HTMLElement>(".card-dot");
-      if (dot) {
-        dot.classList.add("card-dot-error");
-        setTimeout(() => dot.classList.remove("card-dot-error"), 1500);
-      }
-    }
+  // 双击 → 打开设置面板（2026-07-17 改：原绑定是"立即刷新"，刷新走托盘菜单）。
+  // 跟上面拖动的 mousedown 一样跳过按钮 / 输入框，避免双击"重试"等按钮时
+  // 既触发按钮动作又弹设置窗。
+  app.addEventListener("dblclick", (e) => {
+    const target = e.target as HTMLElement;
+    if (target.closest("button, input, select, a")) return;
+    invoke("open_settings_window").catch((err) => console.error(err));
   });
 
   // 订阅后端推送

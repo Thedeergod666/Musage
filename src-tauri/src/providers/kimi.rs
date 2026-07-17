@@ -202,53 +202,26 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
             let Some(detail) = limit_item.get("detail") else {
                 continue;
             };
-            let limit = parse_f64(detail.get("limit"));
-            let remaining = parse_f64(detail.get("remaining"));
             let resets_at = extract_reset_ms(detail.get("resetTime"));
-
-            if let (Some(l), Some(r)) = (limit, remaining) {
-                if l > 0.0 {
-                    let used = (l - r).max(0.0);
-                    let utilization = (used / l) * 100.0;
-                    rows.push(QuotaRow {
-                        label: t!("row.five_hour").to_string(),
-                        utilization: Some(utilization),
-                        remaining: Some(r),
-                        used: Some(used),
-                        total: Some(l),
-                        resets_at,
-                        unit: Some("%".to_string()),
-                        extra: None,
-                        kind: Some(RowKind::FiveHour),
-                    });
-                    break; // 只取第一条 5h 限额
-                }
+            if let Some(row) = build_window_row(
+                detail,
+                t!("row.five_hour").to_string(),
+                RowKind::FiveHour,
+                resets_at,
+            ) {
+                rows.push(row);
+                break; // 只取第一条 5h 限额
             }
         }
     }
 
     // ── 周限额：从顶层 usage 取 ──
     if let Some(usage) = raw.get("usage") {
-        let limit = parse_f64(usage.get("limit"));
-        let remaining = parse_f64(usage.get("remaining"));
         let resets_at = extract_reset_ms(usage.get("resetTime"));
-
-        if let (Some(l), Some(r)) = (limit, remaining) {
-            if l > 0.0 {
-                let used = (l - r).max(0.0);
-                let utilization = (used / l) * 100.0;
-                rows.push(QuotaRow {
-                    label: t!("row.weekly").to_string(),
-                    utilization: Some(utilization),
-                    remaining: Some(r),
-                    used: Some(used),
-                    total: Some(l),
-                    resets_at,
-                    unit: Some("%".to_string()),
-                    extra: None,
-                    kind: Some(RowKind::Weekly),
-                });
-            }
+        if let Some(row) =
+            build_window_row(usage, t!("row.weekly").to_string(), RowKind::Weekly, resets_at)
+        {
+            rows.push(row);
         }
     }
 
@@ -281,6 +254,53 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
 }
 
 // ── 工具函数 ─────────────────────────────────────────────────────
+
+/// 从一个 `{limit, remaining, used}` 对象构造窗口行（5h / 周）。
+///
+/// **回归修复（2026-07-17）**：5h 窗口达到 100% 上限时，Kimi API 会把
+/// `remaining` 字段翻成 `0`、或干脆**省略**该字段（只回 `limit` / `used`）。
+/// 旧逻辑严格要求 `limit` 与 `remaining` 同时 `Some` 才建行，导致 5h 达上限后
+/// 整行 drop —— 浮窗里 5h 行消失（周限还在，因为周还没满）。跟 MiniMax 之前
+/// 的 `status` 门控 bug（commit 7af0755）同源。
+///
+/// 新策略（对齐 ccswitch `query_kimi` 的 `unwrap_or` 容错）：
+/// - `limit` 缺失 / <= 0 → 无法算百分比，返回 None（自然降级，非上限态）
+/// - `remaining` 缺失 → 优先用显式 `used` 字段；再退化为 `0`（= 已用满 100%）
+/// - `used` 优先取显式字段，否则用 `limit - remaining`
+///
+/// 这样只要拿到合法 `limit`，行就一定存在，哪怕 remaining/used 在上限态被省略。
+fn build_window_row(
+    obj: &Value,
+    label: String,
+    kind: RowKind,
+    resets_at: Option<i64>,
+) -> Option<QuotaRow> {
+    let limit = parse_f64(obj.get("limit"))?;
+    if limit <= 0.0 {
+        return None;
+    }
+    // remaining 缺失时：先看显式 used，能反推就反推；否则视为已用满（0 剩余）。
+    let explicit_used = parse_f64(obj.get("used"));
+    let remaining = parse_f64(obj.get("remaining")).unwrap_or_else(|| {
+        explicit_used
+            .map(|u| (limit - u).max(0.0))
+            .unwrap_or(0.0)
+    });
+    let used = explicit_used.unwrap_or_else(|| (limit - remaining).max(0.0));
+    // clamp：防御 used > limit 的异常上限态渲染出 >100% 的 bar
+    let utilization = ((used / limit) * 100.0).clamp(0.0, 100.0);
+    Some(QuotaRow {
+        label,
+        utilization: Some(utilization),
+        remaining: Some(remaining),
+        used: Some(used),
+        total: Some(limit),
+        resets_at,
+        unit: Some("%".to_string()),
+        extra: None,
+        kind: Some(kind),
+    })
+}
 
 /// 解析 JSON 值为 f64，兼容数字和字符串格式（如 `100` 和 `"100"`）。
 fn parse_f64(v: Option<&Value>) -> Option<f64> {
@@ -411,6 +431,68 @@ mod tests {
         });
         let err = parse(&raw, "kimi", "Kimi").unwrap_err();
         assert_eq!(err.kind, FetchError::parse("test").kind);
+    }
+
+    // ── 回归：5h 达 100% 上限后行不消失（2026-07-17）───────────────
+
+    #[test]
+    fn parse_5h_exhausted_remaining_zero_keeps_row() {
+        // 5h 达上限：remaining=0。旧逻辑 (Some,Some) 门控其实能过,但确认
+        // 100% utilization 正常建行(不被后续 clamp / 空判 drop)。
+        let raw = json!({
+            "limits": [{ "detail": { "limit": 100, "remaining": 0, "resetTime": 1749840000 } }],
+            "usage": { "limit": 1000, "remaining": 530 }
+        });
+        let snap = parse(&raw, "kimi", "Kimi").expect("parse");
+        assert_eq!(snap.rows.len(), 2, "5h + weekly 都要在");
+        let five_h = &snap.rows[0];
+        assert_eq!(five_h.kind, Some(RowKind::FiveHour));
+        assert!((five_h.utilization.unwrap() - 100.0).abs() < 0.001);
+        assert!(five_h.resets_at.is_some());
+    }
+
+    #[test]
+    fn parse_5h_exhausted_remaining_omitted_keeps_row() {
+        // **核心回归**：5h 达上限时 API 省略 remaining 字段,只回 limit(+used)。
+        // 旧逻辑 `(Some(l), Some(r))` 门控 → r=None → 整行 drop → 浮窗 5h 消失。
+        // 新逻辑：remaining 缺失退化为已用满 → 100% 行仍在。
+        let raw = json!({
+            "limits": [{ "detail": { "limit": 100, "resetTime": 1749840000 } }],
+            "usage": { "limit": 1000, "remaining": 742 }
+        });
+        let snap = parse(&raw, "kimi", "Kimi").expect("parse");
+        assert_eq!(snap.rows.len(), 2, "remaining 省略时 5h 行不能消失");
+        let five_h = &snap.rows[0];
+        assert_eq!(five_h.kind, Some(RowKind::FiveHour));
+        assert!((five_h.utilization.unwrap() - 100.0).abs() < 0.001);
+        assert_eq!(five_h.total, Some(100.0));
+        assert_eq!(five_h.remaining, Some(0.0));
+    }
+
+    #[test]
+    fn parse_window_row_prefers_explicit_used() {
+        // 某些 schema 回 used 而不回 remaining（codexbar/usagebar 观测形态）。
+        // used=139, limit=200 → utilization=69.5%, remaining 反推=61。
+        let raw = json!({
+            "limits": [{ "detail": { "limit": 200, "used": 139, "resetTime": 1749840000 } }]
+        });
+        let snap = parse(&raw, "kimi", "Kimi").expect("parse");
+        assert_eq!(snap.rows.len(), 1);
+        let five_h = &snap.rows[0];
+        assert!((five_h.utilization.unwrap() - 69.5).abs() < 0.001);
+        assert_eq!(five_h.used, Some(139.0));
+        assert_eq!(five_h.remaining, Some(61.0));
+    }
+
+    #[test]
+    fn parse_window_row_clamps_over_limit() {
+        // 防御：used > limit（异常上限态）不渲染 >100% 的 bar。
+        let raw = json!({
+            "usage": { "limit": 100, "used": 130 }
+        });
+        let snap = parse(&raw, "kimi", "Kimi").expect("parse");
+        assert_eq!(snap.rows.len(), 1);
+        assert!((snap.rows[0].utilization.unwrap() - 100.0).abs() < 0.001);
     }
 
     #[test]

@@ -592,6 +592,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_5h_exhausted_100pct_keeps_row() {
+        // 回归（2026-07-17）：5h 达 100% 上限时行不能消失。zhipu 走 percentage
+        // 字段（默认 0.0),每条 TOKENS_LIMIT 无条件建行,percentage=100 照常渲染。
+        // 与 kimi / MiniMax / claude_official 的"上限行消失"修复对齐,加测锁死。
+        let raw = json!({
+            "success": true,
+            "data": {
+                "level": "pro",
+                "limits": [
+                    { "type": "TOKENS_LIMIT", "unit": 3, "percentage": 100.0, "nextResetTime": 1_000_000_000_000_i64 },
+                    { "type": "TOKENS_LIMIT", "unit": 6, "percentage": 47.0, "nextResetTime": 2_000_000_000_000_i64 }
+                ]
+            }
+        });
+        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "Zhipu GLM").expect("parse");
+        assert_eq!(snap.rows.len(), 2, "5h 达 100% 时行不能消失");
+        assert_eq!(snap.rows[0].kind, Some(RowKind::FiveHour));
+        assert!((snap.rows[0].utilization.unwrap() - 100.0).abs() < 0.001);
+        assert_eq!(snap.rows[1].kind, Some(RowKind::Weekly));
+    }
+
+    #[test]
     fn parse_missing_data_is_error() {
         let raw = json!({ "success": true });
         let err = parse(&raw, ZhipuRegion::Cn, "zhipu", "智谱 GLM").unwrap_err();

@@ -324,11 +324,15 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
 /// `kind` 由调用方显式传入 —— M2 fix: 让下游(tray/浮窗 rowKey)按枚举
 /// 匹配 row,不被 locale 字符串绑定。
 fn build_tier_row(label: &str, kind: RowKind, tier: &Value) -> Option<QuotaRow> {
-    let utilization = tier.get("utilization").and_then(|v| v.as_f64())?;
-    if !(0.0..=100.0).contains(&utilization) {
-        // 异常值（> 100 或负数）不显示，避免 UI 渲染出 bar
+    let raw_util = tier.get("utilization").and_then(|v| v.as_f64())?;
+    // 回归防御（2026-07-17）：达上限时 utilization 可能报 100.x（overage）。
+    // 旧逻辑 `!(0.0..=100.0).contains` 直接 drop → 5h/周达上限后行消失
+    // （跟 kimi / MiniMax 同源 bug）。改为 clamp：负值视为无效 drop（脏数据），
+    // 超 100 的 overage clamp 到 100 照常显示行 + 重置时间。
+    if raw_util < 0.0 {
         return None;
     }
+    let utilization = raw_util.min(100.0);
     let resets_at = tier
         .get("resets_at")
         .and_then(extract_reset_ms_from_string_or_int);
@@ -457,10 +461,25 @@ mod tests {
     }
 
     #[test]
-    fn parse_out_of_range_utilization_skips_tier() {
-        // utilization > 100 视为异常（不应该出现）→ 跳过
+    fn parse_over_100_utilization_clamps_and_keeps_row() {
+        // 回归（2026-07-17）：utilization > 100（overage / 上限态）不再 drop 整行,
+        // 而是 clamp 到 100 照常显示 —— 跟 kimi / MiniMax 同源"上限行消失"修复对齐。
         let raw = json!({
             "five_hour": { "utilization": 150.0, "resets_at": "2026-06-16T18:30:00.000Z" },
+            "seven_day": { "utilization": 20.0, "resets_at": "2026-06-19T03:00:00.000Z" }
+        });
+        let snap = parse(&raw, "claude_official", "Claude").expect("parse");
+        assert_eq!(snap.rows.len(), 2, "overage 不能让 5h 行消失");
+        assert_eq!(snap.rows[0].label, t!("row.five_hour").as_ref());
+        assert!((snap.rows[0].utilization.unwrap() - 100.0).abs() < 0.001);
+        assert!(snap.rows[0].resets_at.is_some());
+    }
+
+    #[test]
+    fn parse_negative_utilization_skips_tier() {
+        // 负值仍视为脏数据（不可能出现）→ 跳过,只保留合法的周行。
+        let raw = json!({
+            "five_hour": { "utilization": -5.0, "resets_at": "2026-06-16T18:30:00.000Z" },
             "seven_day": { "utilization": 20.0, "resets_at": "2026-06-19T03:00:00.000Z" }
         });
         let snap = parse(&raw, "claude_official", "Claude").expect("parse");

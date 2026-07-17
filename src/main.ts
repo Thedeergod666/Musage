@@ -888,9 +888,21 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
   if (r.used != null && r.total != null) {
     const util = r.utilization ?? (r.used / r.total) * 100;
     const cls = colorClass(util);
-    // 左侧：used/total（如 "253/1000"）
+    // 左侧标签：
+    // - 滚动窗口行（kind = five_hour / weekly，如 Kimi）→ 动态窗口标签
+    //   （剩 <1 天 "5h"，≥1 天 "7d"），每秒随倒计时刷新（见 updateCountdowns）
+    // - 其余（Tavily 等）→ used/total（如 "253/1000"）
+    const isWindowRow = r.kind === "five_hour" || r.kind === "weekly";
     const labelSpan = rowEl.querySelector<HTMLElement>(".row-label > span:first-child")!;
-    labelSpan.textContent = `${Math.round(r.used)}/${Math.round(r.total)}`;
+    if (isWindowRow && r.resets_at) {
+      rowEl.dataset.dynLabel = "1";
+      labelSpan.textContent = dynamicWindowLabel(r.resets_at - Date.now());
+    } else {
+      delete rowEl.dataset.dynLabel;
+      labelSpan.textContent = isWindowRow
+        ? r.label
+        : `${Math.round(r.used)}/${Math.round(r.total)}`;
+    }
     // 右侧：大字 utilization %（如 "25%"）
     const pct = rowEl.querySelector<HTMLElement>(".pct")!;
     pct.textContent = formatPct(util);
@@ -902,8 +914,14 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
     // row-foot：plan_name + 月重置倒计时
     if (r.resets_at) {
       rowEl.dataset.resetsAt = String(r.resets_at);
-      // Tavily 月重置：用 i18n 前缀，不复用 label（"Free tier"）
-      rowEl.dataset.resetsPrefix = t("floating.countdown.monthly_prefix");
+      if (isWindowRow) {
+        // 窗口行：prefix 跟随左侧动态标签（"5h重置" / "7d重置"），
+        // 走 updateCountdowns 的 fallback（label 文本 + reset_suffix）
+        delete rowEl.dataset.resetsPrefix;
+      } else {
+        // Tavily 月重置：用 i18n 前缀，不复用 label（"Free tier"）
+        rowEl.dataset.resetsPrefix = t("floating.countdown.monthly_prefix");
+      }
     } else {
       delete rowEl.dataset.resetsAt;
       delete rowEl.dataset.resetsPrefix;
@@ -999,6 +1017,12 @@ function updateCountdowns() {
     if (!raw) return;
     const ms = Number(raw);
     if (!Number.isFinite(ms) || ms <= 0) return;
+    // 动态窗口标签（Kimi 5h/7d）：跟倒计时同频每秒刷新。
+    // 必须在算 foot prefix 之前更新 —— 窗口行的 foot prefix 就是读 label 文本。
+    if (row.dataset.dynLabel) {
+      const labelSpan = row.querySelector<HTMLElement>(".row-label > span:first-child");
+      if (labelSpan) labelSpan.textContent = dynamicWindowLabel(ms - Date.now());
+    }
     const foot = row.querySelector<HTMLElement>(".row-foot");
     if (!foot) return;
     // 优先用 data-resets-prefix（Tavily 用 t("floating.countdown.monthly_prefix")），否则用 label + reset suffix
@@ -1041,6 +1065,15 @@ function dotClass(p: ProviderSnapshot): string {
 function barWidth(util: number | null | undefined): number {
   if (util == null) return 0;
   return Math.min(util, 100);
+}
+
+/// 动态窗口标签（2026-07-17 Kimi 需求）：滚动窗口行的左侧标签不再显示
+/// "8/100"，改显示窗口剩余时间的动态单位 —— 剩 ≥1 天 → "7d"（向上取整天数），
+/// <1 天 → "5h"（向上取整小时，最小 1h）。初始值在 updateRow 里算一次，
+/// 之后每秒随 updateCountdowns 刷新（row.dataset.dynLabel 标记）。
+function dynamicWindowLabel(remainMs: number): string {
+  if (remainMs >= 86400000) return `${Math.ceil(remainMs / 86400000)}d`;
+  return `${Math.max(1, Math.ceil(remainMs / 3600000))}h`;
 }
 
 function formatResetWithCountdown(ms: number, prefix: string): string {

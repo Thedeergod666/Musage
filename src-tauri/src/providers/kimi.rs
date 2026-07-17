@@ -32,8 +32,9 @@
 //!
 //! ## 渲染策略
 //!
-//! - 第一行（5h 滚动窗口）：`body.limits[].detail.{limit, remaining}` → "28% used · 72/100"
-//! - 第二行（周限额）：`body.usage.{limit, remaining}` → "26% used · 742/1000"
+//! - 第一行（5h 滚动窗口）：`body.limits[].detail.{limit, remaining}`，kind = FiveHour
+//! - 第二行（7 天滚动窗口）：`body.usage.{limit, remaining}`，kind = Weekly
+//! - 浮窗左侧标签按 resets_at 动态显示窗口剩余（"5h" / "7d"），不显示 used/total
 //! - `resetTime` 容错：字符串（ISO 8601）+ 数字（epoch 秒/毫秒自动识别）
 //!
 //! 字段名 / schema 参照 ccswitch；老套餐只回 `usage` 时只显示 1 行（自然降级）。
@@ -46,7 +47,7 @@ use serde_json::Value;
 
 use super::{
     shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
-    QuotaSource,
+    QuotaSource, RowKind,
 };
 use crate::t;
 
@@ -218,7 +219,7 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
                         resets_at,
                         unit: Some("%".to_string()),
                         extra: None,
-                        kind: None,
+                        kind: Some(RowKind::FiveHour),
                     });
                     break; // 只取第一条 5h 限额
                 }
@@ -245,7 +246,7 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
                     resets_at,
                     unit: Some("%".to_string()),
                     extra: None,
-                    kind: None,
+                    kind: Some(RowKind::Weekly),
                 });
             }
         }
@@ -342,6 +343,7 @@ mod tests {
 
         let five_h = &snap.rows[0];
         assert_eq!(five_h.label, t!("row.five_hour").as_ref());
+        assert_eq!(five_h.kind, Some(RowKind::FiveHour));
         assert!((five_h.utilization.unwrap() - 28.0).abs() < 0.001);
         assert_eq!(five_h.remaining, Some(72.0));
         assert_eq!(five_h.total, Some(100.0));
@@ -351,6 +353,7 @@ mod tests {
 
         let weekly = &snap.rows[1];
         assert_eq!(weekly.label, t!("row.weekly"));
+        assert_eq!(weekly.kind, Some(RowKind::Weekly));
         assert!((weekly.utilization.unwrap() - 25.8).abs() < 0.001);
         assert_eq!(weekly.remaining, Some(742.0));
         // epoch 秒 1749840000 → 1749840000000 ms

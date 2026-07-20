@@ -369,9 +369,10 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 /// 5 条 menu label + 2 个 Win-only force_top 都走 t!()（i18n）。
 /// 切换语言时 [`rebuild_tray`] 重新构造菜单 + set_menu 替换（不闪烁）。
 ///
-/// **Win 端 z-order 逃生口**（2026-06-12）：hover-raise 的 16ms tick +
-/// dual-path + 焦点事件 hook 多管齐下，OS 还是持续 demote `WS_EX_TOPMOST`。
-/// 给用户一个**主动**操作：菜单里点 "强制置顶浮窗" 走
+/// **Win 端 z-order 逃生口**（2026-06-12）：hover-raise 是自动路径
+/// （2026-07-20 重写：hysteresis + edge-trigger，见 platform/windows.rs），
+/// 万一用户场景里仍被系统策略压制，给用户一个**主动**操作：菜单里点
+/// "强制置顶浮窗" 走
 /// `AllowSetForegroundWindow(ASFW_ANY) + SetForegroundWindow`，靠**抢前台**
 /// 把浮窗真顶到最上面（**会**抢焦点，但用户点菜单那一瞬间本来就在
 /// 操作我们 app，UX 可接受）。

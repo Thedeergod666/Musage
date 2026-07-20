@@ -276,22 +276,26 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 
 **为什么 `?url` 单独不够**：Vite 5 对 SVG 默认是走 `?url` 行为的（也走外部文件），但 `assetsInlineLimit` 是**全局**的兜底。`?url` + `assetsInlineLimit: 0` 配合最稳，前者声明意图，后者兜底任何后续新增的小资源。
 
-## Win 端 PinBottom 模式 hover-raise 是 best-effort（2026-06-12 写，2026-06-13 调完）
+## Win 端 PinBottom 模式 hover-raise 修复（2026-07-20 根因定位 + 重写）
 
-**症状**：PinBottom 模式下，鼠标 hover 进悬浮窗可见区时，浮窗**理应**临时置顶；hover 离开置底；hover 进被别处 app 盖住的区域**不**置顶（macOS-parity "未被遮挡" 语义）。
+**症状**（v0.2.4 用户反馈）：PinBottom 模式下，鼠标 hover 进悬浮窗可见区时浮窗**不**临时置顶。
 
-**实测结果**：Win 11 上**做不到稳定 hover-raise**。
-- 16ms level-trigger（每 50ms 一次 re-assert `SetWindowPos(HWND_TOPMOST)`）在 best-effort 下命中率约 **3/7 inside=true 案例**（剩下 4/7 仍沉底）
-- 加 dual-path（`SetWindowLongW` + `SetWindowPos` 双路并发）没用，OS 持续 demote
-- 加 focus event hook（`WindowEvent::Focused(false)` 时 re-assert）也没用，OS demote 比 focus event 早或晚
-- 加 `WS_EX_NOACTIVATE` 想从源头断 demote-on-focus-loss 链，**反而让事情更糟**（1/9），撤回
-- 加 covered check（`WindowFromPoint + GetAncestor(GA_ROOT)`）能正确识别"被遮挡"，**macOS-parity "未被遮挡" 语义已经落地**，但跟 demote 是两个独立问题
+**根因**（修正 2026-06-12 的"OS 持续 demote"误判）：`WS_EX_TOPMOST` 是 sticky 的，OS 不会自发清掉。真正的失败机制是**自己撤销自己** —— 旧 tracker 没有防抖：hit test（`WindowFromPoint`）单 tick 抖动返一拍 false（DWM 重绘 / WebView2 瞬态子窗口 / 光标压 rect 边界 / 光标在"被遮挡与未遮挡"细条间摆动），旧代码立刻 edge-drop 把窗口塞回 `HWND_BOTTOM`。raise 后 50~100ms 内就被自己的 drop 撤销，肉眼看到"hover 不变置顶"。历史实测的 3/7 命中率（7 次 inside=true 只 3 次肉眼可见）也是同一机制。
 
-**根因**：Win32 z-order 是**平铺列表**，任何同进程模块（包括 WebView2 / Tauri 自己 re-assert exstyle 的窗口恢复路径）都能调 `SetWindowPos` 改 z-order。`HWND_TOPMOST` 只是一个位置，**不是** macOS 那套 NSWindow level —— 没法持久。OS 焦点调度 + DWM 合成时**持续**demote，没有 user space 路径能稳定压制。
+**修复**（[src-tauri/src/platform/windows.rs](src-tauri/src/platform/windows.rs) `start_hover_emitter`，结构对齐 macos.rs）：
+- **dwell-time hysteresis**：enter 1 tick（`Visible`，≤50ms 响应；`Covered` 走下方两级命中）/ exit 3 tick（150ms）—— 单/双 tick 抖动被吞，不再误 drop。macOS 用 exit 2，Win 的 `WindowFromPoint` 抖动更频繁所以取 3
+- **edge-trigger 切换**：raise / drop 只在**采纳的**状态切换时各做一次，不再 20Hz 反复 `SetWindowPos`（无效 churn + 扩大跟 tao/WebView2 主线程窗口管理的竞争窗口）
+- **稳定 hover 期间 1s 低频 re-assert 一次 TopMost** 兜底（防极端情况被别的窗口管理操作顶掉）
+- emit 也改到采纳后触发 —— 顺带修了 Win 端玻璃 hover 的 spring 闪烁（同 macOS 2026-07-03 修复的收益）
+- 采纳切换时 `tracing::debug!` 落日志（默认 `musage=debug` 可见）
 
-**逃生口**：tray 右键菜单"强制置顶浮窗（Win 逃生口）"走 `AllowSetForegroundWindow(ASFW_ANY) + SetForegroundWindow` —— **会**抢焦点，但**用户主动**点菜单触发的操作 UX 上可接受。代码 [src-tauri/src/tray.rs](src-tauri/src/tray.rs) 的 `"force_top_floating"` 分支。
+**两级命中语义**（2026-07-20 第二轮，取代原"未被遮挡才算"macOS-parity 语义）：hit test 返三态 —— `Visible`（鼠标在未被盖区域）1 tick 即抬；`Covered`（鼠标在被盖区域）**连续 dwell 5 tick（250ms）** 也抬；`Outside` 3 tick（150ms）落回 `HWND_BOTTOM`。改动动机：Win 用户真实场景是浮窗**长期被最大化窗口盖住大半、只露一条边**，严格"未被遮挡"语义下鼠标几乎永远落在被盖区域，hover-raise 等于不存在（v0.2.4 用户实测反馈）。250ms dwell 挡住路过式误触发（鼠标横穿浮窗所在屏幕区域通常 <100ms）；抬起走 `SWP_NOACTIVATE` 不抢焦点。已知代价：用户把鼠标停在浮窗被盖区域干别的事（>250ms）时浮窗会弹出遮一下，移开即恢复。注意 macOS 端仍是严格"未被遮挡"语义（`windowNumberAtPoint`），两平台**有意分歧** —— macOS 窗口很少被完全盖住（fullscreen 是独立 Space），Win 最大化是常态。
 
-**建议**：如果将来想再压榨 hover-raise 成功率，唯一剩下的 user space 路径是 **WndProc subclass**（拦截 `WM_WINDOWPOSCHANGING` 在 OS 端把 demote 改回 HWND_TOPMOST），但侵入性大、可能跟 Tauri/tao 自己的 WndProc 打架，得严格测。**先 ship 上面那个能用的版本**。
+**逃生口**（保留）：tray 右键菜单"强制置顶浮窗（Win 逃生口）"走 `AllowSetForegroundWindow(ASFW_ANY) + SetForegroundWindow` —— **会**抢焦点，但**用户主动**点菜单触发的操作 UX 上可接受。代码 [src-tauri/src/tray.rs](src-tauri/src/tray.rs) 的 `"force_top_floating"` 分支。
+
+**如果 2026-07-20 版仍不生效**，再考虑 **WndProc subclass**（拦截 `WM_WINDOWPOSCHANGING`），侵入性大、可能跟 Tauri/tao 自己的 WndProc 打架，得严格测。
+
+**历史记录（2026-06-12/13 实测，已被上方根因取代）**：当时试过的无效路径 —— 16ms level-trigger re-assert / dual-path（`SetWindowLongW` + `SetWindowPos`）/ focus event hook / `WS_EX_NOACTIVATE`（反而更糟，撤回）。covered check 的**判定机制**（`WindowFromPoint + GetAncestor(GA_ROOT)`）是当时落地的正确部分，保留至今 —— 2026-07-20 第二轮只改了它的**语义**（从"被盖一律不抬"改成"被盖 dwell 250ms 抬"）。
 
 ## 文件结构（v0.2.0 / 2026-06-29 快照）
 

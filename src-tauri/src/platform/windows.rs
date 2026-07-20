@@ -23,42 +23,76 @@
 //!    tauri.conf.json 已经把 `alwaysOnTop` 改成 `false`，让 pin 模式
 //!    (`set_window_pin_bottom/top/normal`) 成为 topmost 状态的**唯一**真值源。
 //!
-//! ## hit test —— "未被遮挡"才算（macOS-parity）
+//! ## hit test —— 两级命中：可见即抬 + 被遮挡 dwell 抬
 //!
-//! 单纯 `point_in_rect` 太宽松：浮窗 frame 被其它 app 部分盖住时，鼠标
-//! 移到被盖区域（用户其实在跟那个 app 交互）会误触发 raise。Win 端用
-//! `WindowFromPoint(pt)` 拿 topmost window 的 hwnd，**沿 parent 链
-//! 爬到顶层根**（`GetAncestor(_, GA_ROOT)`）后必须等于浮窗自己 —— 严格
-//! 只算"浮窗是最上层"的那一格。
+//! 三态判定（`WindowFromPoint` + `GetAncestor(_, GA_ROOT)`）：
+//! 1. 鼠标不在浮窗 rect 内 → `Outside`
+//! 2. 在 rect 内、该点 topmost 窗口爬根后是浮窗自己（或其子窗口
+//!    WebView2）→ `Visible`
+//! 3. 在 rect 内、该点 topmost 是别的 app（浮窗被盖住）→ `Covered`
+//!
+//! 2026-07-20 之前是严格"未被遮挡才算"（macOS-parity，commit `88affcc`）：
+//! `Covered` 一律不 raise，防止"用户其实在跟遮挡它的 app 交互"时误抬。
+//! 但 Windows 用户的真实场景是浮窗**长期被最大化窗口盖住大半、只露一条
+//! 边** —— 严格语义下鼠标几乎永远落在 `Covered` 区域，hover-raise 等于
+//! 不存在（v0.2.4 用户实测反馈）。
+//!
+//! 改为两级：`Visible` 1 tick 即抬（快路径，v0.1.0 一档响应）；`Covered`
+//! 需要**连续** 5 tick（250ms）dwell 才抬（慢路径）—— 鼠标路过浮窗所在
+//! 屏幕区域通常 <100ms 不停留，不会误弹；用户"想看浮窗"时自然会停鼠标。
+//! 抬升不抢焦点（`SWP_NOACTIVATE`），鼠标移开 150ms 后自动沉回
+//! `HWND_BOTTOM`。代价：用户把鼠标停在浮窗被盖区域干别的事（>250ms）时
+//! 浮窗会弹出来遮一下，移开即恢复 —— 换来主场景可用，值得。
 //!
 //! WebView2 是浮窗的子窗口，`WindowFromPoint` 在浮窗可见区域返回的是
 //! WebView2 的 hwnd（不是浮窗的）。`GetAncestor(WebView2, GA_ROOT)` 沿
-//! parent 链爬到顶层根（就是我们的浮窗），比对通过。`e9e7f87` 拿掉过这条
-//! 检查（在 focus loss 下 `WindowFromPoint` 行为不可靠），commit `79dbdbc`
-//! 修好双路 re-assert 之后加回来。
+//! parent 链爬到顶层根（就是我们的浮窗），比对通过判 `Visible`。
 //!
-//! ## Win 端 z-order 是 best-effort
+//! ## Win 端 z-order 的 sticky 性与兜底
 //!
-//! `HWND_TOPMOST` 是个**位置**，不是 macOS 那套 `NSWindow level` 那种
-//! 有 window server 持久维持的**级别**。WebView2 / OS 焦点调度 / DWM
-//! 合成会**持续** demote `WS_EX_TOPMOST` style bit，user space 没有稳
-//! 定压制的路径。50ms tick + dual-path（`SetWindowLongW` 直接改 style
-//! bit + `SetWindowPos` 走 z-order API）走 best-effort。
+//! `HWND_TOPMOST` 是 z-order 里的一个**位置**，但 `WS_EX_TOPMOST` 本身是
+//! sticky 的 —— 设置一次后 OS 不会自发清掉，不需要 macOS 那种 window
+//! server 级别的持久维持。真正让历史上 hover-raise 失效的是**自己撤销
+//! 自己**（见下方"为什么需要 exit hysteresis"），不是 OS demote。
 //!
-//! 焦点丢失（用户点别处 app）后 hover-raise 大概率**不**生效 —— 端用户
-//! 可点 tray 菜单 "强制置顶浮窗" 走更暴力的路径
+//! 因此新实现改为：enter/exit 各做一次 edge-trigger 切换，稳定 hover
+//! 期间只每 1s 低频 re-assert 一次兜底（防止极端情况下被别的窗口管理
+//! 操作顶掉），不再 20Hz 反复 `SetWindowPos` —— 那既是无效 churn，也
+//! 扩大了跟 tao / WebView2 主线程窗口管理竞争的窗口。
+//!
+//! 万一用户场景里 raise 仍被系统策略压制（极少数），tray 菜单
+//! "强制置顶浮窗" 走更暴力的路径
 //! （`AllowSetForegroundWindow(ASFW_ANY) + SetForegroundWindow`），
 //! 代价是抢焦点。
 //!
 //! ## Hover tracker 生命周期
 //!
 //! - 始终运行，由 `start_hover_emitter` 拉起一次
-//! - 50ms tick，每 tick：
+//! - 50ms tick，三态 hit test（`HitTest`）+ dwell-time hysteresis：
+//!   - **`Visible` → 1 tick**：未被遮挡时第一个 tick 就采纳（v0.1.0 一档响应）
+//!   - **`Covered` → 5 tick（250ms）**：被遮挡时需连续 dwell 才采纳，
+//!     路过不误抬（见上方"两级命中"）
+//!   - **`Outside` → 3 tick（150ms）**：退场防抖
+//! - 采纳的状态切换时：
 //!   1. 永远 `app.emit("musage://floating-hover", inside)` 给前端
 //!      （驱动 CSS `body[data-hover]` 玻璃效果）
 //!   2. 当 `LEVEL_SWITCHING_ACTIVE` 为 true（PinBottom 模式）：
-//!      - `inside == true` → re-assert `HWND_TOPMOST`
-//!      - `inside` 切到 `false`（edge-trigger）→ drop 到 `HWND_BOTTOM`
+//!      - 采纳 `true` → raise 到 `HWND_TOPMOST`（edge-trigger，抬一次）
+//!      - 采纳 `false` → drop 到 `HWND_BOTTOM`
+//! - 稳定 hover 期间每 20 tick（1s）低频 re-assert 一次 TopMost 兜底，
+//!   不再每 tick 抬（WS_EX_TOPMOST 本身是 sticky 的）
+//!
+//! ## 为什么需要 exit hysteresis（2026-07-20 根因定位）
+//!
+//! 旧实现**没有**防抖：单 tick 的 spurious `inside=false` 立刻触发
+//! edge-drop 把窗口塞回 `HWND_BOTTOM`。而 `WindowFromPoint` 在 Win 上
+//! 比 macOS `windowNumberAtPoint` 更容易单 tick 抖动 —— DWM 重绘、
+//! WebView2 瞬态子窗口、光标压在 rect 边界 1px、光标在"被遮挡/未遮挡"
+//! 细条之间摆动，都会让 hit test 偶发返一拍 false。结果是 raise 后
+//! 50~100ms 内就被自己的 edge-drop 撤销，肉眼看到"hover 不变置顶"
+//! （也是历史上 best-effort 3/7 命中率的真正根因，不是 OS demote）。
+//! exit 阈值 3 tick 把这类抖动全部吞掉；离开方向的 100ms 额外延迟
+//! 人眼不可感知。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -247,39 +281,104 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
     let builder = thread::Builder::new()
         .name("musage-hover-emitter".into())
         .spawn(move || {
+            tracing::debug!("hover emitter 启动");
             let mut last_inside = false;
+            // pending_ticks / pending_value：dwell-time hysteresis 计数
+            // （结构同 macos.rs，但观察值是三态 HitTest —— 计数仍按
+            // "inside-ish"（Visible/Covered）vs Outside 的二值方向累计，
+            // 阈值按当前观察到的具体态分档）。
+            let mut pending_ticks: u8 = 0;
+            let mut pending_value = false;
+            // raised：当前 TopMost 是我们抬的（用于稳定 hover 期间的低频
+            // safety re-assert）。edge-trigger 之后不再每 tick 抬。
+            let mut raised = false;
+            let mut steady_ticks: u8 = 0;
             loop {
                 thread::sleep(Duration::from_millis(50));
 
-                let Some(inside) = is_cursor_inside_floating(&app) else {
+                let Some(hit) = hit_test_floating(&app) else {
                     continue;
                 };
+                // Covered 算 inside 候选（dwell 够了就采纳）；一旦已采纳
+                // （窗口已抬起成 topmost），Covered 只可能是"被另一个
+                // topmost 窗口压住"，不算离开 —— 不会因此误 drop。
+                let inside = hit != HitTest::Outside;
 
-                // (1) 永远 emit hover 事件（驱动 CSS 玻璃效果）
-                if inside != last_inside {
-                    let _ = app.emit("musage://floating-hover", inside);
-                }
-
-                // (2) PinBottom 模式：切 z-order
-                if LEVEL_SWITCHING_ACTIVE.load(Ordering::SeqCst) {
-                    if inside {
-                        // inside: 每 tick re-assert TopMost（best-effort）
-                        if let Some(win) = app.get_webview_window("floating") {
-                            if let Ok(hwnd) = win.hwnd() {
-                                unsafe { apply_z_order(hwnd.0, ZOrder::TopMost) };
-                            }
-                        }
-                    } else if last_inside {
-                        // 刚离开: edge-trigger drop 到 BOTTOM
-                        if let Some(win) = app.get_webview_window("floating") {
-                            if let Ok(hwnd) = win.hwnd() {
-                                unsafe { apply_z_order(hwnd.0, ZOrder::Bottom) };
+                if inside == last_inside {
+                    pending_ticks = 0;
+                    // 稳定 hover 中：每 20 tick（1s）safety re-assert TopMost。
+                    // WS_EX_TOPMOST 是 sticky 的，这只是兜底"万一被顶掉"；
+                    // 20Hz 反复 SetWindowPos 是无效 churn（见模块 doc）。
+                    if inside && raised && LEVEL_SWITCHING_ACTIVE.load(Ordering::SeqCst) {
+                        steady_ticks = steady_ticks.saturating_add(1);
+                        if steady_ticks >= 20 {
+                            steady_ticks = 0;
+                            if let Some(win) = app.get_webview_window("floating") {
+                                if let Ok(hwnd) = win.hwnd() {
+                                    unsafe { apply_z_order(hwnd.0, ZOrder::TopMost) };
+                                }
                             }
                         }
                     }
+                    continue;
                 }
 
+                // 观察值与 last_inside 不同 —— 真切换还是抖动？进入累计。
+                if pending_value != inside {
+                    pending_value = inside;
+                    pending_ticks = 1;
+                } else {
+                    pending_ticks = pending_ticks.saturating_add(1);
+                }
+
+                // 阈值按当前观察态分档：
+                // - Visible 1 tick（≤50ms，v0.1.0 一档响应）
+                // - Covered 5 tick（250ms dwell）：浮窗被盖住时，鼠标停在
+                //   浮窗所在屏幕区域 250ms 才算 intentional hover —— 路过
+                //   （通常 <100ms）不误抬。这是 v0.2.4 用户场景修复：浮窗
+                //   长期被最大化窗口盖住大半、只露一条边，严格"未被遮挡"
+                //   语义下 hover-raise 永远不会触发（见模块 doc"两级命中"）。
+                // - Outside 3 tick（150ms）：退场防抖。WindowFromPoint 单
+                //   tick 抖动（DWM 重绘 / WebView2 瞬态子窗口 / 光标压边界）
+                //   不会再让 raise 被自己瞬间撤销（模块 doc 有根因分析）。
+                const ENTER_VISIBLE: u8 = 1;
+                const ENTER_COVERED: u8 = 5;
+                const EXIT_THRESHOLD: u8 = 3;
+                let threshold = match hit {
+                    HitTest::Visible => ENTER_VISIBLE,
+                    HitTest::Covered => ENTER_COVERED,
+                    HitTest::Outside => EXIT_THRESHOLD,
+                };
+                if pending_ticks < threshold {
+                    continue;
+                }
+
+                // 阈值达成 —— 采纳新状态，emit + 切 z-order
                 last_inside = inside;
+                pending_ticks = 0;
+                steady_ticks = 0;
+
+                // (1) 永远 emit hover 事件（驱动 CSS 玻璃效果）。
+                //     采纳后才 emit，前端 spring 不会被抖动反复重置。
+                if let Err(e) = app.emit("musage://floating-hover", inside) {
+                    tracing::trace!(error = %e, "emit hover 失败");
+                }
+
+                // (2) PinBottom 模式：edge-trigger 切 z-order
+                if LEVEL_SWITCHING_ACTIVE.load(Ordering::SeqCst) {
+                    let z = if inside {
+                        ZOrder::TopMost
+                    } else {
+                        ZOrder::Bottom
+                    };
+                    tracing::debug!(inside, ?hit, "hover 状态采纳，切换浮窗 z-order");
+                    if let Some(win) = app.get_webview_window("floating") {
+                        if let Ok(hwnd) = win.hwnd() {
+                            unsafe { apply_z_order(hwnd.0, z) };
+                        }
+                    }
+                    raised = inside;
+                }
             }
         });
     if let Err(e) = builder {
@@ -290,17 +389,33 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
 
 // ── 内部 ──
 
-/// Hit test：鼠标位置是否在浮窗**未遮挡**区域内。
+/// Hit test 三态结果：鼠标相对浮窗的位置。
 ///
-/// 严格判定两步（macOS-parity，对应 `windowNumberAtPoint`）：
-/// 1. 鼠标在浮窗 rect 内（`GetWindowRect` → `point_in_rect`）
-/// 2. 鼠标该点 topmost window 沿 parent 链爬到顶层根（`GetAncestor(_, GA_ROOT)`）
-///    后必须等于浮窗自己 —— 防止"被另一个 app 窗口盖住时误触发 raise"
+/// 设计见模块 doc"两级命中"：`Visible` 快路径即抬，`Covered` 慢路径
+/// dwell 抬，`Outside` 不抬。计数时 `Covered` 算 inside 候选
+/// （`hit != HitTest::Outside`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HitTest {
+    /// 鼠标不在浮窗 rect 内。
+    Outside,
+    /// 在 rect 内，但该点 topmost 窗口爬根后**不是**浮窗 —— 浮窗被其它
+    /// app（或另一个 topmost 窗口）盖住。
+    Covered,
+    /// 在 rect 内，且该点 topmost 窗口爬根后**是**浮窗（或其子窗口
+    /// WebView2）—— 未被遮挡。
+    Visible,
+}
+
+/// Hit test：返回鼠标相对浮窗的三态位置。
+///
+/// 判定两步：
+/// 1. 鼠标在浮窗 rect 内（`GetWindowRect` → `point_in_rect`），否则 `Outside`
+/// 2. 鼠标该点 topmost window 沿 parent 链爬到顶层根（`GetAncestor(_, GA_ROOT)`）：
+///    等于浮窗自己 → `Visible`；不等于 → `Covered`
 ///
 /// `WindowFromPoint` 在浮窗可见区域会返回 WebView2（浮窗的子窗口）的
-/// hwnd，`GetAncestor` 爬到顶层根 = 浮窗 = match。被其它 app 完全覆盖
-/// 的区域 `WindowFromPoint` 返回那个 app 的 hwnd，爬根不 match → false
-/// → 不 raise，浮窗保持被覆盖的常态。
+/// hwnd，`GetAncestor` 爬到顶层根 = 浮窗 = `Visible`。被其它 app 覆盖
+/// 的区域 `WindowFromPoint` 返回那个 app 的 hwnd，爬根不 match → `Covered`。
 ///
 /// 返回 `None` 表示本轮无法判定（窗口未上屏 / Win API 失败），caller
 /// continue 即可。
@@ -310,7 +425,7 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
 /// (0,0) 可能是合法点)。改为:Win API 失败时调 GetLastError 查具体原因,
 /// 把 ERROR_ACCESS_DENIED (5) 等"真有错" 和"恰好 (0,0)" 区分开。
 /// 实际生产中 (0,0) 几乎不可能(任务栏/开始菜单抢占),但严格说应区分。
-fn is_cursor_inside_floating<R: Runtime>(app: &AppHandle<R>) -> Option<bool> {
+fn hit_test_floating<R: Runtime>(app: &AppHandle<R>) -> Option<HitTest> {
     let win = app.get_webview_window("floating")?;
     let hwnd_t = win.hwnd().ok()?;
     if hwnd_t.0.is_null() {
@@ -327,7 +442,7 @@ fn is_cursor_inside_floating<R: Runtime>(app: &AppHandle<R>) -> Option<bool> {
             let err = GetLastError();
             tracing::trace!(
                 error = err,
-                "is_cursor_inside_floating: GetCursorPos 失败,跳过本 tick"
+                "hit_test_floating: GetCursorPos 失败,跳过本 tick"
             );
             return None;
         }
@@ -336,14 +451,14 @@ fn is_cursor_inside_floating<R: Runtime>(app: &AppHandle<R>) -> Option<bool> {
             let err = GetLastError();
             tracing::trace!(
                 error = err,
-                "is_cursor_inside_floating: GetWindowRect 失败,跳过本 tick"
+                "hit_test_floating: GetWindowRect 失败,跳过本 tick"
             );
             return None;
         }
         // PointInRect 不用 GetLastError —— 它本身就是正确区分命中/不命中,
         // 跟 (0,0) 边界 case 无关。
         if !point_in_rect(pt, &rect) {
-            return Some(false);
+            return Some(HitTest::Outside);
         }
         // WindowFromPoint 成功 → topmost non-null = 真实命中窗口。
         // 失败 → null = 未知状态(UAC 同意框 / 锁屏 / 不同 desktop)，
@@ -358,9 +473,17 @@ fn is_cursor_inside_floating<R: Runtime>(app: &AppHandle<R>) -> Option<bool> {
         let root = GetAncestor(topmost, GA_ROOT);
         if root.is_null() {
             // 兜底:取不到根就退到裸比
-            return Some(topmost == our_hwnd);
+            return Some(if topmost == our_hwnd {
+                HitTest::Visible
+            } else {
+                HitTest::Covered
+            });
         }
-        Some(root == our_hwnd)
+        Some(if root == our_hwnd {
+            HitTest::Visible
+        } else {
+            HitTest::Covered
+        })
     }
 }
 

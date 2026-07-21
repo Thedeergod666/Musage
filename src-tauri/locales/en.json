@@ -20,6 +20,7 @@
   "row": {
     "five_hour": "5h",
     "weekly": "Weekly",
+    "credit": "Credit",
     "balance": "Balance",
     "plan": "Plan",
     "compensation": "Compensation",
@@ -80,7 +81,9 @@
     },
     "stepfun": {
       "token_unconfigured_hint": "StepFun Oasis-Token not configured (copy from stepfun.ai → DevTools → Cookies → Oasis-Token)",
-      "token_invalid_hint": "StepFun Oasis-Token invalid or expired (re-login at stepfun.ai and paste new token)"
+      "token_invalid_hint": "StepFun Oasis-Token invalid or expired (re-login at stepfun.ai and paste new token)",
+      "token_expired_hint": "StepFun Oasis-Token already expired {mins} minutes ago — re-login at platform.stepfun.com and paste a fresh token",
+      "token_malformed_hint": "StepFun Oasis-Token format unrecognized — copy the value directly from the Oasis-Token cookie in DevTools"
     },
     "claude_official": {
       "cookie_invalid_hint": "Claude sessionKey cookie invalid or expired (claude.ai login session expires after ~8h — re-extract)",

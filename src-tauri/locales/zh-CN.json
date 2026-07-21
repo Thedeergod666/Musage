@@ -20,6 +20,7 @@
   "row": {
     "five_hour": "5h",
     "weekly": "周",
+    "credit": "额度",
     "balance": "余额",
     "plan": "套餐",
     "compensation": "补偿",
@@ -79,8 +80,10 @@
       "auth_failed_hint": "鉴权失败 —— 智谱 GLM API key 无效（注意 key 不要加 Bearer 前缀；CN/EN 区域 key 不通用）"
     },
     "stepfun": {
-      "token_unconfigured_hint": "未配置 StepFun Oasis-Token（设置面板填入；从 stepfun.ai 浏览器 DevTools → Cookies → Oasis-Token 复制）",
-      "token_invalid_hint": "StepFun Oasis-Token 无效或已过期（去 stepfun.ai 重新登录并粘贴新 token）"
+      "token_unconfigured_hint": "未配置 StepFun Oasis-Token（设置面板填入；从 platform.stepfun.com 浏览器 DevTools → Cookies → Oasis-Token 复制）",
+      "token_invalid_hint": "StepFun Oasis-Token 无效或已过期（去 platform.stepfun.com 重新登录并粘贴新 token）",
+      "token_expired_hint": "StepFun Oasis-Token 已过期 {mins} 分钟 — 去 platform.stepfun.com 重新登录并粘贴新 token",
+      "token_malformed_hint": "StepFun Oasis-Token 格式无法识别 — 请直接从 DevTools → Cookies → Oasis-Token 的 value 字段复制"
     },
     "claude_official": {
       "cookie_invalid_hint": "Claude sessionKey Cookie 无效或已过期（claude.ai 登录 session 约 8h 失效，重新提取）",

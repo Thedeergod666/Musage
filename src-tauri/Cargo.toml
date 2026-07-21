@@ -39,6 +39,10 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 dirs = "5"
 uuid = { version = "1", features = ["v4"] }
+# StepFun Oasis-Token: 解析 refresh half 的 JWT payload 提取 device_id,
+# 用作 Oasis-Webid (CodexBar reverse-engineered)。
+# 用 URL_SAFE_NO_PAD(JWT 标准)避免 padding 处理。
+base64 = "0.22"
 # P0 国际化：rust-i18n 3.1.5 默认支持 JSON/YAML/TOML，不需指定 feature。
 # 路径 src-tauri/locales/{en,zh-CN}.json，fallback = "en"（找不到 key 时回退英文 key）。
 # 关键约定：tr!("key", param = value) 的占位符命名 = JSON 里 `{name}` —— 见

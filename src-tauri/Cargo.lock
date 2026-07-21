@@ -2436,6 +2436,7 @@ version = "0.2.4"
 dependencies = [
  "ab_glyph",
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "clap",
  "dirs 5.0.1",

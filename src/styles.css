@@ -4,10 +4,12 @@
  *   - 整窗 #app 完全透明，每个 .card 是独立的玻璃胶囊瓦片
  *   - 默认（idle）：瓦片半透 + **所有数据文字统一白色**（仿 macOS 26 天气 widget：
  *     温度/城市/时段都是白的，只有太阳/雨图标保留颜色），"不抢注意力"但仍可读
- *   - 鼠标进入窗口（body[data-hover] #app）：瓦片背景升至 ~82% alpha + 强 blur + 阴影 + 内描边，
+ *   - 鼠标进入窗口（body[data-hover] #app）：瓦片背景升至 ~82% alpha + 阴影 + 内描边，
  *     同时数字从白色平滑变为 iOS 语义色（绿/橙/红/蓝），bar 上的渐变彩条 fade-in
  *   - 状态点 .card-dot 与天气 widget 里的"太阳/雨"图标对应，**全程保留色彩**
  *   - 所有色彩切换走 CSS variable swap，单一 body[data-hover] #app 触发整组变化，~280ms iOS spring 过渡
+ *   - **2026-07-20**：blur 28px / saturate 180% 写死（idle 不再切 10px/140%）——
+ *     见下方"WKWebView backdrop sample throttling"3 层防御块
  *
  * ## 为什么用 body[data-hover] 而不是 :hover？
  *
@@ -19,6 +21,63 @@
  * Win/Linux 上不需要 Rust 轮询（WebView 正常分发事件），但 main.ts 同时挂
  * JS mouseenter/leave 兜底也设这个 attribute，CSS 选择器跨平台统一。
  */
+
+/* ═══════════════════════════════════════════════════════════════════
+ *  WKWebView backdrop sample throttling —— 3 层防御
+ * ═══════════════════════════════════════════════════════════════════
+ *
+ * （2026-07-20 移植自 Usticky styles.css 文件头同名块，两边实现保持一致）
+ *
+ * macOS WKWebView 对非 key / 透明 / backdrop-filter 窗口有合成层节流：
+ *   - 静止 ~2s 后丢 backdrop 采样 backing store（窗口空闲判定）
+ *   - level 切换（PinBottom hover-raise）时 sample 因 z-order 变化
+ *     失效，~2s 后才被重新计算
+ * 移植前 Musage 的可感知症状：玻璃"时不时闪一下" —— 静止 2s 褪成清水
+ * 玻璃，下一次真实 paint（倒计时分钟翻转 / poller 刷新 / hover 切换）
+ * 采样恢复又"啪"地回来；PinBottom hover-raise 切 level 时闪得更明显。
+ * （每秒 updateCountdowns 写的是分钟/天粒度的相同字符串，不产生 paint，
+ *  压不住 ~2s 节流窗口，不算心跳。）
+ *
+ * 修复方案 3 层叠加（任一层漏掉都重现）：
+ *   L1: will-change: backdrop-filter —— 让 WebKit 给元素独立 GPU layer，
+ *       不进空闲节流判定
+ *   L2: 心跳动画 @keyframes musage-backdrop-heartbeat —— 0.001 度 rotate
+ *       + 0.001 opacity 微动强制每帧 paint invalidation，绕过 sample 失效
+ *      （transform/opacity 是 compositor-only，不触发 layout/paint 重算，
+ *        但合成阶段会重采 backdrop；linear 4s 保证覆盖 ~2s 节流窗口）
+ *   L3: 监听 musage://backdrop-refresh 事件（set_window_level 切 level
+ *       后 emit），前端 force reflow 立刻重采
+ *
+ * 配套决策：**blur 28px / saturate 180% 写死，idle/hover 不再切换**。
+ * 原 idle 10px → hover 28px 的 backdrop-filter 插值过渡既是 throttling
+ * 的触发路径，也是合成层重操作（emitter 抖动时反复插值会闪）。
+ * 玻璃 fold/unfold 只靠 tile-bg alpha / border / shadow 的纯 paint 切换。
+ */
+
+/* L1: will-change —— 每个玻璃元素独立 GPU layer */
+.card,
+.err {
+  will-change: backdrop-filter;
+}
+
+/* L2: 心跳动画 —— 振幅 0.001（亚像素，肉眼不可见）。.mini-flash 不覆盖：
+ * 它是瞬态 toast（fixed blur 8px），不参与节流防御。 */
+@keyframes musage-backdrop-heartbeat {
+  0%, 100% { transform: rotate(0deg);     opacity: 1; }
+  50%      { transform: rotate(0.001deg); opacity: 0.999; }
+}
+.card,
+.err {
+  animation: musage-backdrop-heartbeat 4s linear infinite;
+}
+
+/* L3: level 切换后 force reflow —— main.ts 收到 musage://backdrop-refresh
+ * 时给 .card/.err 加这个 class，100ms 后移除。用 filter（drop-shadow 微小）
+ * 而不是 transform —— 心跳动画已经占了 transform 通道，再叠加会冲突。 */
+.card.force-reflow,
+.err.force-reflow {
+  filter: drop-shadow(0 0 0 transparent);
+}
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -52,10 +111,14 @@ html, body {
   scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
   cursor: grab;
 
-  /* 玻璃材质 */
-  --tile-bg: rgba(22, 24, 30, 0.30);
-  --tile-blur: 10px;
-  --tile-saturate: 140%;
+  /* 玻璃材质
+   * **2026-07-20**：blur 10px → 28px、saturate 140% → 180%、tile-bg rgb
+   * 22,24,30 → 28,30,38 —— 向 Usticky idle 对齐（两 app 同屏观感统一）。
+   * blur / saturate 在此**写死**，idle/hover 不再切换：切换 backdrop-filter
+   * 是 WKWebView backdrop throttling 的触发路径，见文件头 3 层防御块。 */
+  --tile-bg: rgba(28, 30, 38, 0.30);
+  --tile-blur: 28px;
+  --tile-saturate: 180%;
   --tile-border: rgba(255, 255, 255, 0);
   --tile-shadow: 0 0 0 rgba(0, 0, 0, 0);
 
@@ -81,9 +144,10 @@ html, body {
 
 /* ── 鼠标进入窗口 → 唤醒玻璃材质 + iOS 语义色 ── */
 body[data-hover] #app {
+  /* blur / saturate 不在此切换 —— 28px / 180% 已在 idle 写死（2026-07-20，
+   * 见文件头 3 层防御块）。hover 只动 alpha / border / shadow / 色彩，
+   * 纯 paint 切换，不重新合成 backdrop layer。 */
   --tile-bg: rgba(28, 30, 38, 0.82);
-  --tile-blur: 28px;
-  --tile-saturate: 180%;
   --tile-border: rgba(255, 255, 255, 0.10);
   --tile-shadow: 0 10px 30px rgba(0, 0, 0, 0.45),
                  0 0 0 0.5px rgba(255, 255, 255, 0.04) inset;
@@ -116,10 +180,10 @@ body[data-hover] #app {
   border: 1px solid var(--tile-border);
   border-radius: 18px;
   box-shadow: var(--tile-shadow);
+  /* 不 transition backdrop-filter —— blur/saturate 已写死不再切换（文件头
+   * 3 层防御块）；且它是合成层重操作，emitter 抖动时反复插值会闪。 */
   transition:
     background-color 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-    backdrop-filter 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-    -webkit-backdrop-filter 0.28s cubic-bezier(0.22, 1, 0.36, 1),
     border-color 0.28s cubic-bezier(0.22, 1, 0.36, 1),
     box-shadow 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -409,10 +473,10 @@ body[data-hover] #app .err-server_error     .err-label { color: #ff453a; backgro
   border: 1px solid var(--tile-border);
   border-radius: 18px;
   box-shadow: var(--tile-shadow);
+  /* 不 transition backdrop-filter —— blur/saturate 已写死不再切换（文件头
+   * 3 层防御块）；且它是合成层重操作，emitter 抖动时反复插值会闪。 */
   transition:
     background-color 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-    backdrop-filter 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-    -webkit-backdrop-filter 0.28s cubic-bezier(0.22, 1, 0.36, 1),
     border-color 0.28s cubic-bezier(0.22, 1, 0.36, 1),
     box-shadow 0.28s cubic-bezier(0.22, 1, 0.36, 1);
 }

@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (Visual — 玻璃"时不时闪一下")
+
+- **WKWebView backdrop sample throttling：移植 Usticky 的 3 层防御**
+  - **症状**：浮窗玻璃静止 ~2s 后"褪色"成清水玻璃，下一次真实 paint
+    （倒计时分钟翻转 / poller 刷新 / hover 切换）采样恢复又闪回来；
+    PinBottom hover-raise 切 `NSWindow.setLevel` 时闪得更明显
+  - **根因**：macOS WKWebView 对非 key / 透明 / backdrop-filter 窗口有
+    合成层节流 —— 静止 ~2s 丢 CABackdropLayer 采样；level 切换时采样
+    因 z-order 变化失效，~2s 后才重算。Musage 此前零防御（每秒
+    `updateCountdowns` 写的是分钟/天粒度的相同字符串，不产生 paint，
+    压不住 ~2s 节流窗口，不算心跳）
+  - **修法**（移植自 Usticky styles.css 文件头同名方案，两边实现一致）：
+    - L1：`.card` / `.err` 加 `will-change: backdrop-filter`（独立 GPU
+      layer，不进空闲节流判定）
+    - L2：`@keyframes musage-backdrop-heartbeat`（0.001° rotate +
+      0.001 opacity，4s linear 无限循环）强制每帧 paint invalidation，
+      亚像素振幅肉眼不可见
+    - L3：`set_window_level` 切 level 后 emit
+      `musage://backdrop-refresh`（[macos.rs](src-tauri/src/platform/macos.rs)，
+      emit 放在 setLevel **之后**同一 main-thread dispatch 任务内，
+      否则 reflow 击穿的是旧 z-order 的 sample 窗口），前端
+      [main.ts](src/main.ts) listener 给 `.card` / `.err` 加 100ms
+      `.force-reflow`（`filter: drop-shadow(0 0 0 transparent)`）立刻重采
+  - **配套决策**：blur 28px / saturate 180% **写死**，idle 不再切
+    10px/140%（backdrop-filter 插值过渡既是 throttling 触发路径，也是
+    合成层重操作）；`.card` / `.err` 的 transition 移除 backdrop-filter
+    项。玻璃 fold/unfold 只靠 tile-bg alpha / border / shadow 纯 paint 切换
+
+### Changed (Visual)
+
+- **idle 玻璃参数向 Usticky 对齐，两 app 同屏观感统一**：idle
+  `--tile-blur` 10px → 28px、`--tile-saturate` 140% → 180%、`--tile-bg`
+  rgb 22,24,30 → 28,30,38（alpha 0.30 不变）。此前同屏时 Musage 瓦片
+  比 Usticky 偏灰偏"实"，主因就是 saturate/blur 参数差
+
 ## [0.2.3] - 2026-07-10
 
 v0.2.2 (2026-07-10) 紧跟的视觉 hotfix：macOS 26 (Tahoe) 菜单栏上 M 圆比预期大一圈 + 圆外多一圈"halo"空间。**1 个文件改动**（`src-tauri/icons/tray-base.png`），Rust 代码完全不动。

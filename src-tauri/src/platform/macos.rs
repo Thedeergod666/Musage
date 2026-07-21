@@ -234,6 +234,13 @@ pub fn set_window_level<R: Runtime>(app: &AppHandle<R>, level: CGWindowLevel, is
                     // 不是 hide()。所有模式都设 false,让浮窗始终可见。
                     let _ = is_pin_bottom; // 保留参数兼容现有调用,语义不再依赖
                     window.setHidesOnDeactivate(false);
+                    // **2026-07-20（移植 Usticky L3 / P2-4 fix）**：切 level 后立刻
+                    // emit backdrop-refresh，前端 force-reflow 击穿 WKWebView
+                    // ~2s 的 backdrop sample 失效窗口。emit 必须放在 setLevel
+                    // **之后**（同一 main thread dispatch 任务内，顺序保证）——
+                    // 在 dispatch 前同步 emit 会让前端 reflow 击穿旧 z-order
+                    // 的 sample 窗口，对新 z-order 完全无效。
+                    let _ = app2.emit("musage://backdrop-refresh", ());
                 }
             }
         }

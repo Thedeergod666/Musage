@@ -1314,6 +1314,28 @@ async function init() {
     .then((fn) => (unlistenHover = fn))
     .catch((e) => console.error("[floating] listen musage://floating-hover 失败", e));
 
+  // ── Backdrop refresh（L3，2026-07-20 移植自 Usticky）──
+  // Rust 端 set_window_level（PinBottom hover-raise / pin mode 切换）后 emit
+  // `musage://backdrop-refresh`，前端给所有 .card / .err 加 .force-reflow
+  // class（filter: drop-shadow 微动 → paint invalidation → backdrop layer
+  // 重采样），击穿 macOS WKWebView ~2s 的 sample 失效窗口。
+  // 与 hover emitter 的去抖修复正交：前者解决 sample 失效（物理层），
+  // 后者解决 hover 状态机误触发（逻辑层）。
+  let backdropRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let unlistenBackdropRefresh: UnlistenFn | null = null;
+  listen("musage://backdrop-refresh", () => {
+    if (backdropRefreshTimer !== null) clearTimeout(backdropRefreshTimer);
+    const targets = app.querySelectorAll<HTMLElement>(".card, .err");
+    targets.forEach((el) => el.classList.add("force-reflow"));
+    backdropRefreshTimer = setTimeout(() => {
+      backdropRefreshTimer = null;
+      app.querySelectorAll<HTMLElement>(".card.force-reflow, .err.force-reflow")
+        .forEach((el) => el.classList.remove("force-reflow"));
+    }, 100);
+  })
+    .then((fn) => (unlistenBackdropRefresh = fn))
+    .catch((e) => console.error("[floating] listen musage://backdrop-refresh 失败", e));
+
   // ── 用户手动 resize 窗口 → 通知前端冻结 800ms auto-fit ──
   // Rust 端每收到 Resized 就 emit 这个事件（不管源头是用户拖动还是
   // 我们自己 fit 触发的 set_size）。前端比对新高度 vs lastFitHeight:
@@ -1503,6 +1525,8 @@ async function init() {
     if (unlistenLowPower) unlistenLowPower();
     if (unlistenCfg) unlistenCfg();
     if (unlistenPinMode) unlistenPinMode();
+    if (unlistenBackdropRefresh) unlistenBackdropRefresh();
+    if (backdropRefreshTimer !== null) clearTimeout(backdropRefreshTimer);
     if (countdownTimer !== null) clearInterval(countdownTimer);
     // 2026-07-03 fix: 配对清理 hover debounce timer（避免 unhandled timer）
     // 2026-07-09: hover debounce 已移除,timer 恒为 null;保留 if 块防回归。

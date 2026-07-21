@@ -1,6 +1,6 @@
 # Musage 项目说明
 
-> 任何新打开此项目的 AI 会话应先读这个文件。这是当前对话的精炼版（v0.2.0 / 2026-06-29 快照）。
+> 任何新打开此项目的 AI 会话应先读这个文件。这是当前对话的精炼版（v0.2.4 / 2026-07-21 快照）。
 
 ## 这是什么
 
@@ -129,21 +129,28 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 - `*_remaining_percent=100` 不代表"还有 100%"，可能是 `status=2/3`（不在套餐内）
 - 旧字段对 Plus 订阅者全为 0
 
-## 当前进度（v0.2.3 快照，2026-07-10）
+## 当前进度（v0.2.4 快照，2026-07-21）
 
-✅ **v0.2.3 已发布**（git tag `v0.2.3` 落在本 commit，version 字段 0.2.3）
-   - v0.2.1 frontend i18n hotfix（[src/i18n/index.ts](src/i18n/index.ts) static import 修 Vite dynamic import chunk 缺失）
-   - v0.2.2 frontend i18n hotfix（详见上方 §v0.2.1 follow-up）
+✅ **v0.2.4 已发布**（git tag `v0.2.4`，2026-07-17）
+   - feat(kimi)：浮窗左侧标签改动态窗口剩余（剩 <1 天 → `5h`，≥1 天 → `7d`），替代 used/total；foot 前缀跟随（`5h重置`/`7d重置`），Tavily 无 kind 标记保持原样（commit `75a5d8f`）
+   - feat(floating)：双击浮窗打开设置面板（原双击"立即刷新"移除，托盘菜单仍可触发；跳过 button/input/select/a 防误触）（commit `361fc55`）
+   - fix：5h 用量达 100% 上限时 kimi / zhipu / claude_official 行被隐藏（commit `de6668b`）
+   - v0.2.1/v0.2.2 frontend i18n hotfix（[src/i18n/index.ts](src/i18n/index.ts) static import 修 Vite dynamic import chunk 缺失）
    - v0.2.3 macOS 26 tray icon visual hotfix：[src-tauri/icons/tray-base.png](src-tauri/icons/tray-base.png) 重做为 64×64（48px 内容 + 8px 透明 padding 四边），圆外径 32→24 (-25%)，halo 消失
    - v0.2.2 + v0.2.3 都没正式 ship（v0.2.1 → v0.2.3 直接跨度），CHANGELOG 两段都保留
 
-✅ v0.2.1 全部完成 + v0.2.2/v0.2.3 增量（详见 CHANGELOG [0.2.2] / [0.2.3] 段）
+⏳ **Unreleased（v0.2.5 候选，详见 CHANGELOG [Unreleased] 段）**：
+   - **StepFun 集成重写**（commit `0d51124`，2026-07-21）：端点迁 `platform.stepfun.com`；`Oasis-Webid` 请求头从 token refresh half 的 JWT `device_id` claim 本地提取（CodexBar 逆向，新增 `base64` 依赖 `URL_SAFE_NO_PAD`），缺 webid 一律 401；token 过期/格式本地预检（`token_expired_hint` 带过期分钟数 / `token_malformed_hint`），不再让用户拿 401 猜原因；credit 套餐（`plan_family=2` Mini/Pro）解析 + 单行「额度」（新 i18n key `row.credit`）；支持整段 `Cookie: Oasis-Token=...` 粘贴自动剥离
+   - **Win PinBottom hover-raise 重写**（commit `ff309bb`，2026-07-20）：dwell hysteresis + 两级命中（`Visible` 1 tick / `Covered` 250ms dwell / `Outside` 150ms）+ edge-trigger + 1s re-assert 兜底，详见下方专节
+   - **玻璃 backdrop throttling 三层防御**（commit `1a38d89`）：`will-change: backdrop-filter` + 4s 心跳 keyframes + `set_window_level` 后 emit `musage://backdrop-refresh` 强制重采；idle 玻璃参数向 Usticky 对齐（blur 28px / saturate 180% 写死，不再 idle 切换）
+
+✅ v0.2.1 全部完成 + v0.2.2/v0.2.3/v0.2.4 增量（详见 CHANGELOG 对应段）
 
 ✅ 项目骨架完整
 ✅ 12 个 provider 全实装（11 内置 + custom），全部加 `instance_index` + `unique_id()` + `with_instance_index()`
 ✅ 12 个 provider 全部支持**多实例**（`minimax#2` / `minimax#3` 共存）
-✅ Rust 核心代码：main / lib / api / poller / poller_backoff / tray / config / commands / icon / xiaomi_login / logstore
-✅ 前端：main.ts / settings.ts + settings/ 21 个子模块（PR 1b 后）
+✅ Rust 核心代码：main / lib / poller / poller_backoff / tray / config / commands / xiaomi_login / logstore（icon.rs 已并入 tray.rs，api.rs 已拆进 providers/）
+✅ 前端：main.ts / settings.ts + settings/ 21 个子模块
 ✅ 托盘图标动态绘制（颜色 + 百分比文字 + 多实例 `#N` 后缀）
 ✅ 本地 `keys.json`（0600）存 key + cookie，macOS 启动零弹窗
 ✅ 后台 tokio 轮询 + per-provider 指数退避（30min 上限）
@@ -151,14 +158,14 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 ✅ i18n P0-P3 完整（rust-i18n 后端 + 自写 helper 前端，en + zh-CN，运行时切换）
 ✅ 设置面板重构（6 组分组 + 搜索 + 两段式 picker modal）
 ✅ Extra Instance（PR 1b）：内置 provider 副本 + 统一 `extra_instances.json` 持久化
-✅ 13 内置 + N 动态架构：`QuotaSource` trait + `builtin_sources()` + `CustomSource`
+✅ 11 内置 + N 动态架构：`QuotaSource` trait + `builtin_sources()` + `CustomSource`
 ✅ Xiaomi 一键登录 WebView + 系统通知 cookie 失效
 ✅ import/export 配置（无 keys）
-✅ 自动更新：tauri-plugin-updater + GitHub release 签名 manifest
+❌ ~~自动更新~~：**v0.2.0 已删 tauri-plugin-updater**（`TAURI_SIGNING_PRIVATE_KEY` GitHub Secret 未配 → Windows build 报 "Missing comment in secret key" 整批 release 挂，commit `586e55c`）。升级走「GitHub release 手动下载 dmg/nsis/AppImage/deb/rpm 覆盖装」，设置面板「关于」页放 releases 链接（[src/settings/about.ts](src/settings/about.ts)）。详见 [RELEASING.md](RELEASING.md)
 ✅ **`cargo check` 0 错**（v0.2 cleanup 砍 dead code + Provider enum，剩 `#[allow(dead_code)]` 2 处是 v2 预留）
 ✅ **`cargo test --lib` 196 passed**（v0.2.0 follow-up 修 10 broken test + 23 i18n assertion + 1 production i18n bug）
 ✅ **`pnpm tsc --noEmit` 0 errors**
-✅ **`pnpm tauri build` 通过**（macOS dmg + Windows NSIS）
+✅ **`pnpm tauri build` 通过**（macOS dmg + Windows NSIS + Linux AppImage/deb/rpm）
 
 ⚠️ **坑：MinGW 工具链 16-bit 导出表上限**
 - 现象：`cdylib` 链接时 `ld.exe: error: export ordinal too large: 141874`
@@ -172,7 +179,7 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 - monitor hotplug 监听（拔插副屏时实时重新判定浮窗位置）
 - 错误卡"忽略本次错误"按钮
 - Frontend 单元测试 4 核心函数（contentFingerprint / render / updateCard / autoResizeWindow）
-- `http_status_to_error_kind` helper 统一 12 provider 错误分类
+- ~~`http_status_to_error_kind` helper~~ → 已落地为 [`classify_http_status`](src-tauri/src/providers/mod.rs)（2026-07-02 audit L1 fix），kimi 先用；其余 provider 保留各自的具体 msg 短路，**全面推广留 v0.3**
 - `refresh_inner` 每次 `Box::new` 12 个 source 优化（按 Arc 缓存）
 - Backoff 状态持久化到 disk
 - Per-provider poller task shutdown signal（App 退出时不泄漏）
@@ -212,7 +219,7 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
   - `com.apple.security.cs.allow-jit` — WKWebView 内部 JIT
   - `com.apple.security.cs.allow-unsigned-executable-memory` — WKWebView 内部
   - `com.apple.security.cs.disable-library-validation` — 让 objc2 链系统 framework + `setLevel(-1)` 等私有 API 生效
-  - `com.apple.security.network.client` / `.server` — 13 provider 拉 API + Tauri 自动更新
+  - `com.apple.security.network.client` / `.server` — provider 拉 API + GitHub release 页跳转（自动更新已删，见「当前进度」段）
   - **不**开 `com.apple.security.app-sandbox`（与 `platform/macos.rs` 把窗口放到 `kCGNormalWindowLevel - 1` 互斥）
 - `tauri.conf.json` 加 `bundle.macOS`：
   ```json
@@ -297,7 +304,7 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 
 **历史记录（2026-06-12/13 实测，已被上方根因取代）**：当时试过的无效路径 —— 16ms level-trigger re-assert / dual-path（`SetWindowLongW` + `SetWindowPos`）/ focus event hook / `WS_EX_NOACTIVATE`（反而更糟，撤回）。covered check 的**判定机制**（`WindowFromPoint + GetAncestor(GA_ROOT)`）是当时落地的正确部分，保留至今 —— 2026-07-20 第二轮只改了它的**语义**（从"被盖一律不抬"改成"被盖 dwell 250ms 抬"）。
 
-## 文件结构（v0.2.0 / 2026-06-29 快照）
+## 文件结构（v0.2.4 / 2026-07-21 快照）
 
 ```
 ~/Project/Musage/                  ← 当前在 macOS 上,Win 路径 D:\Codes\Musage\
@@ -317,14 +324,13 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 ├── src/                      ← 前端（vanilla TS）
 │   ├── main.ts               ← 悬浮窗逻辑（拖动、订阅、渲染、i18n）
 │   ├── settings.ts           ← 设置面板入口
-│   ├── updater.ts            ← 应用自动更新
 │   ├── assets.d.ts           ← *.png/svg/?url 模块声明
 │   ├── styles.css / tokens.css
 │   ├── assets/               ← provider logo 资源（11 内置 + 部分 SVG）
 │   └── settings/             ← 设置面板 21 个子模块
 │       ├── main.ts / app.ts / config.ts / api.ts / types.ts / utils.ts
 │       ├── credentials.ts / providers.ts / floating.ts / order.ts
-│       ├── logs.ts / test.ts / about.ts / updater.ts / advanced.ts
+│       ├── logs.ts / test.ts / about.ts / advanced.ts
 │       ├── extra-instance-form.ts  ← + 添加新来源（PR 1b 两段式 picker）
 │       ├── source-extras.ts        ← per-provider 渲染 region/mode/extras
 │       ├── groups.ts                ← 6 组分组
@@ -335,10 +341,10 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 │       └── order.test.ts            ← vitest 单元测试（前端首批）
 ├── src-tauri/                ← Rust 后端
 │   ├── Cargo.toml            ← crate-type = ["staticlib", "rlib"]（不用 cdylib）
-│   ├── tauri.conf.json       ← bundle targets: nsis + dmg,version 0.2.0
+│   ├── tauri.conf.json       ← bundle targets: nsis + dmg（CI matrix 另加 msi / appimage,deb,rpm）,version 0.2.4
 │   ├── entitlements.plist    ← macOS Hardened Runtime entitlement
 │   ├── build.rs
-│   ├── capabilities/default.json
+│   ├── capabilities/         ← default.json + settings.json + xiaomi-login.json（权限拆分）
 │   ├── icons/                ← 32/128/ico/icns/128@2x/tray-base
 │   ├── locales/              ← 后端 i18n (en.json + zh-CN.json)
 │   ├── assets/               ← font.ttf 待选填（无则托盘无百分比文字）
@@ -365,18 +371,20 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 │       │   ├── deepseek.rs / xiaomi.rs / tavily.rs / zenmux.rs
 │       │   ├── openrouter.rs / kimi.rs / zhipu.rs
 │       │   ├── stepfun.rs / siliconflow.rs / claude_official.rs
-│       └── platform/         ← 平台特定代码（仅 macOS 有非 stub 实现）
+│       └── platform/         ← 平台特定代码
 │           ├── mod.rs
-│           └── macos.rs      ← PinBottom 走 NSWindow.setLevel(-1)
+│           ├── macos.rs      ← PinBottom 走 NSWindow.setLevel(-1) + hover emitter
+│           └── windows.rs    ← hover emitter（dwell hysteresis + 两级命中）+ Per-Monitor V2 DPI
 └── docs/
     ├── codeplan/             ← 历史 plan / review notes
     │   └── 2026-06-15-extend-providers.md
     └── research/             ← 调研报告
 ```
 
-构建产物：
-- macOS dmg：`src-tauri/target/release/bundle/dmg/Musage_0.2.0_*.dmg`（aarch64 + x64 两个）
-- Windows NSIS：`src-tauri/target/release/bundle/nsis/Musage_0.2.0_x64-setup.exe`
+构建产物（本地 `pnpm tauri build` 只出 nsis + dmg；CI matrix 全量）：
+- macOS dmg：`src-tauri/target/release/bundle/dmg/Musage_0.2.4_*.dmg`（aarch64 + x64 两个）
+- Windows NSIS：`src-tauri/target/release/bundle/nsis/Musage_0.2.4_x64-setup.exe`（CI 另有 MSI）
+- Linux（CI）：`bundle/appimage/Musage_0.2.4_amd64.AppImage` + `bundle/deb/musage_0.2.4_amd64.deb` + `bundle/rpm/musage-0.2.4-1.x86_64.rpm`
 - 裸 exe：`src-tauri/target/release/musage.exe`（仅 Windows）
 
 ## 已确立的设计决策
@@ -455,12 +463,12 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 2. **monitor hotplug 监听**：拔插副屏时实时重新判定浮窗位置
 3. **错误卡"忽略本次错误"按钮**：P2-A-7 增量 2/3
 4. **Frontend 单元测试 4 核心函数**：contentFingerprint / render / updateCard / autoResizeWindow
-5. **`http_status_to_error_kind` helper 统一 12 provider 错误分类**：现在 401/403/429 各自映射不同，缺一个统一映射 helper
+5. **~~`http_status_to_error_kind` helper~~ → 已落地为 `classify_http_status`**（[providers/mod.rs](src-tauri/src/providers/mod.rs)，2026-07-02 audit L1 fix；kimi 先用）：剩 10 个 provider 各自保留具体 msg 短路，全面推广留 v0.3
 6. **`refresh_inner` 每次 `Box::new` 12 个 source 优化**：按 `Arc<dyn QuotaSource>` 缓存避免每 tick 重建（参考 [memory/source-instance-rebuild-footgun](memory/source-instance-rebuild-footgun.md)）
 7. **Backoff 状态持久化到 disk**：重启后 30min 退避归零是用户痛点
 8. **Per-provider poller task shutdown signal**：App 退出时不泄漏 task
 9. **`delete_extra_instance` v2**：改 instance_index 时同步重命名 keys.json 里的 key
-10. **i18n 收尾**：`types.ts` 6 行 / `credentials.ts:307/387` / `updater.ts:90` 等 <5% 残留硬编码中文
+10. **i18n 收尾**：`types.ts` 6 行 / `credentials.ts:307/387` 等 <5% 残留硬编码中文（`updater.ts` 已随自动更新删除）
 
 ## i18n 约定（P0-P2 已铺好，详见 `memory/musage-i18n-conventions.md`）
 

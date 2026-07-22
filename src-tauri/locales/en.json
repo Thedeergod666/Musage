@@ -32,7 +32,7 @@
     "bonus": "Bonus",
     "quota": "Quota",
     "rate_limit": "Rate limit",
-    "calls_per_min": "calls/min"
+    "calls_per_sec": "req/s"
   },
   "error": {
     "common": {
@@ -95,8 +95,7 @@
     "anysearch": {
       "token_empty": "AnySearch session token not configured (Settings → AnySearch → click \"Login AnySearch\")",
       "token_invalid_hint": "AnySearch session token invalid or expired — click the floating window \"Re-login\" or Settings → AnySearch → \"Login AnySearch\"",
-      "no_keys": "No API key found on this AnySearch account — create one at anysearch.com/console/api-keys",
-      "schema_unknown_hint": "AnySearch response schema changed (data.keys missing or empty)"
+      "schema_unknown_hint": "AnySearch response schema changed (data used/total/rate_limit_qps missing)"
     },
     "custom": {
       "network": "CustomSource network error: {err}",

@@ -1,6 +1,6 @@
 # Musage 项目说明
 
-> 任何新打开此项目的 AI 会话应先读这个文件。这是当前对话的精炼版（v0.2.4 / 2026-07-21 快照）。
+> 任何新打开此项目的 AI 会话应先读这个文件。这是当前对话的精炼版（v0.2.4 + Unreleased AnySearch / 2026-07-22 快照）。
 
 ## 这是什么
 
@@ -25,7 +25,7 @@
 | 日志 | tracing + tracing-subscriber |
 | 自动启动 | tauri-plugin-autostart |
 | 前端类型 | `@types/node` 20.x（vite.config.ts 用 `node:url`） |
-| Providers | minimax / deepseek / xiaomimimo / tavily / zenmux / openrouter / kimi / zhipu / stepfun / siliconflow / claude_official + **用户自定义 New API 中转站 (custom_<uuid>)**（11 内置 + N 动态） |
+| Providers | minimax / deepseek / xiaomimimo / tavily / zenmux / openrouter / kimi / zhipu / stepfun / siliconflow / claude_official / **anysearch** + **用户自定义 New API 中转站 (custom_<uuid>)**（12 内置 + N 动态） |
 
 ## 环境与工具链
 
@@ -143,6 +143,7 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
    - **StepFun 集成重写**（commit `0d51124`，2026-07-21）：端点迁 `platform.stepfun.com`；`Oasis-Webid` 请求头从 token refresh half 的 JWT `device_id` claim 本地提取（CodexBar 逆向，新增 `base64` 依赖 `URL_SAFE_NO_PAD`），缺 webid 一律 401；token 过期/格式本地预检（`token_expired_hint` 带过期分钟数 / `token_malformed_hint`），不再让用户拿 401 猜原因；credit 套餐（`plan_family=2` Mini/Pro）解析 + 单行「额度」（新 i18n key `row.credit`）；支持整段 `Cookie: Oasis-Token=...` 粘贴自动剥离
    - **Win PinBottom hover-raise 重写**（commit `ff309bb`，2026-07-20）：dwell hysteresis + 两级命中（`Visible` 1 tick / `Covered` 250ms dwell / `Outside` 150ms）+ edge-trigger + 1s re-assert 兜底，详见下方专节
    - **玻璃 backdrop throttling 三层防御**（commit `1a38d89`）：`will-change: backdrop-filter` + 4s 心跳 keyframes + `set_window_level` 后 emit `musage://backdrop-refresh` 强制重采；idle 玻璃参数向 Usticky 对齐（blur 28px / saturate 180% 写死，不再 idle 切换）
+   - **AnySearch 集成（commits `1e0c877` + `54a8937`，2026-07-22）**：第 12 个内置 provider，免费 1000 calls/天（vs Tavily 1000/月）。用量端点 `GET /api/api/user/keys` **只认 console session JWT**（`as_sk_` API key 返 401），JWT 在 `window.localStorage`（`search-template-auth-state.state.accessToken`，实测 572 字符 `eyJ…`），不在 cookie jar → 仿 Xiaomi 一键登录 WebView 但**提取通道是 cookie 而不是 title**（Tauri 2 `WebviewWindow::title()` 读 OS 窗口标题非 `document.title`，第一版设计踩坑 → 改成 init script 写 `MUSAGE_TOKEN` cookie + Rust `cookies_for_url` 读）。**设计要点**：auth_kind=Cookie + JWT 存 cookie 槽位 / `default_enabled=true` 跟 11 个 peer 一致（让 checkbox/floating/poller 三方不自相矛盾）/ init script 500ms setInterval 监听 localStorage（SPA 客户端跳转也能捕获）/ hardening 锁 `document.cookie`+`Storage.getItem` 到 `www.anysearch.com` 挡第三方 tracker 偷 JWT / 浮窗行「Quota 主 + Rate limit 副」无 logo 资产时走首字母+蓝色 accent fallback。详见 [memory/anysearch-provider-integration.md](memory/anysearch-provider-integration.md)
 
 ✅ v0.2.1 全部完成 + v0.2.2/v0.2.3/v0.2.4 增量（详见 CHANGELOG 对应段）
 
@@ -160,6 +161,7 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 ✅ Extra Instance（PR 1b）：内置 provider 副本 + 统一 `extra_instances.json` 持久化
 ✅ 11 内置 + N 动态架构：`QuotaSource` trait + `builtin_sources()` + `CustomSource`
 ✅ Xiaomi 一键登录 WebView + 系统通知 cookie 失效
+✅ AnySearch 一键登录 WebView（v0.2.5，commit `1e0c877`）：仿 Xiaomi 但鉴权不同 —— JWT 在 localStorage 不在 cookie jar，所以 init script 用 `setInterval` 把 token 写到 `MUSAGE_TOKEN` cookie（同源），Rust 端 `cookies_for_url` + 白名单 `COOKIE_NAME` 读。**第一版用 `document.title` 中转失败**——Tauri 2 `WebviewWindow::title()` 读 OS 窗口标题不是 `document.title`，两套 API。这条经验加 [memory/anysearch-provider-integration.md](memory/anysearch-provider-integration.md)。
 ✅ import/export 配置（无 keys）
 ❌ ~~自动更新~~：**v0.2.0 已删 tauri-plugin-updater**（`TAURI_SIGNING_PRIVATE_KEY` GitHub Secret 未配 → Windows build 报 "Missing comment in secret key" 整批 release 挂，commit `586e55c`）。升级走「GitHub release 手动下载 dmg/nsis/AppImage/deb/rpm 覆盖装」，设置面板「关于」页放 releases 链接（[src/settings/about.ts](src/settings/about.ts)）。详见 [RELEASING.md](RELEASING.md)
 ✅ **`cargo check` 0 错**（v0.2 cleanup 砍 dead code + Provider enum，剩 `#[allow(dead_code)]` 2 处是 v2 预留）
@@ -344,7 +346,7 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 │   ├── tauri.conf.json       ← bundle targets: nsis + dmg（CI matrix 另加 msi / appimage,deb,rpm）,version 0.2.4
 │   ├── entitlements.plist    ← macOS Hardened Runtime entitlement
 │   ├── build.rs
-│   ├── capabilities/         ← default.json + settings.json + xiaomi-login.json（权限拆分）
+│   ├── capabilities/         ← default.json + settings.json + xiaomi-login.json + anysearch-login.json（权限拆分）
 │   ├── icons/                ← 32/128/ico/icns/128@2x/tray-base
 │   ├── locales/              ← 后端 i18n (en.json + zh-CN.json)
 │   ├── assets/               ← font.ttf 待选填（无则托盘无百分比文字）
@@ -357,6 +359,7 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 │       ├── config.rs         ← AppConfig + keys.json 文件存储
 │       ├── logstore.rs       ← 内存日志环形缓冲（设置面板 logs section）
 │       ├── xiaomi_login.rs   ← Xiaomi 一键登录 WebView
+│       ├── anysearch_login.rs← AnySearch 一键登录 WebView (localStorage→cookie 中转提取 JWT)
 │       ├── commands/         ← tauri::command 暴露给前端
 │       │   ├── mod.rs            ← 30+ IPC
 │       │   ├── extra_instances.rs ← 6 IPC (list/add/update/delete/list_picker/test)
@@ -370,8 +373,8 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 │       │   ├── minimax.rs         ← 2026-06-01 前后双 schema
 │       │   ├── deepseek.rs / xiaomi.rs / tavily.rs / zenmux.rs
 │       │   ├── openrouter.rs / kimi.rs / zhipu.rs
-│       │   ├── stepfun.rs / siliconflow.rs / claude_official.rs
-│       └── platform/         ← 平台特定代码
+│       │   ├── stepfun.rs / siliconflow.rs / claude_official.rs / anysearch.rs
+│       ├── platform/         ← 平台特定代码
 │           ├── mod.rs
 │           ├── macos.rs      ← PinBottom 走 NSWindow.setLevel(-1) + hover emitter
 │           └── windows.rs    ← hover emitter（dwell hysteresis + 两级命中）+ Per-Monitor V2 DPI
@@ -459,7 +462,7 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 
 ## 下一步建议（v0.3 候选）
 
-1. **Claude cookie 一键重登**：仿 Xiaomi 一键登录的 WebView 方案，研究 Claude 官方 cookie 抓取路径
+1. ~~**Claude cookie 一键重登**：仿 Xiaomi 一键登录的 WebView 方案，研究 Claude 官方 cookie 抓取路径~~ → **已替换为 AnySearch**（v0.2.5，commit `1e0c877`：类似 WebView 流程但鉴权走 localStorage→cookie 中转）
 2. **monitor hotplug 监听**：拔插副屏时实时重新判定浮窗位置
 3. **错误卡"忽略本次错误"按钮**：P2-A-7 增量 2/3
 4. **Frontend 单元测试 4 核心函数**：contentFingerprint / render / updateCard / autoResizeWindow

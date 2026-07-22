@@ -10,6 +10,7 @@
 // settings 侧不再 hardcode "智谱 GLM" / "Z.ai" 等显示名。
 
 import { t, onLocaleChange } from "../i18n";
+import anysearchLogo from "../assets/anysearch-logo.svg";
 import minimaxLogo from "../assets/minimax-logo.png";
 import deepseekLogo from "../assets/deepseek-icon.png";
 import xiaomimimoLogo from "../assets/xiaomimimo-logo.png";
@@ -68,6 +69,7 @@ export function buildProviderMeta(): Record<string, ProviderMeta> {
     stepfun: { name: t("provider.stepfun.name"), logo: stepfunLogo, accent: "#6366f1" },
     siliconflow: { name: t("provider.siliconflow.name"), logo: siliconflowLogo, accent: "#ff6b35" },
     claude_official: { name: t("provider.claude_official.name"), logo: claudeLogo, accent: "#d97706" },
+    anysearch: { name: t("provider.anysearch.name"), logo: anysearchLogo, accent: "#2563eb" },
   };
 }
 

@@ -23,6 +23,7 @@ import zhipuEnLogo from "./assets/zhipu-en-logo.svg?url";
 import stepfunLogo from "./assets/stepfun-logo.svg?url";
 import siliconflowLogo from "./assets/siliconflow-logo.svg?url";
 import claudeLogo from "./assets/claude-logo.svg?url";
+import anysearchLogo from "./assets/anysearch-logo.svg?url";
 import "./styles.css";
 
 /// 静态映射：provider id → 官网 logo + 显示名 + accent 色
@@ -55,6 +56,8 @@ function buildProviderMeta(): Record<string, { name: string; logo: string; accen
     stepfun: { name: t("provider.stepfun.name"), logo: stepfunLogo, accent: "#6366f1" },
     siliconflow: { name: t("provider.siliconflow.name"), logo: siliconflowLogo, accent: "#ff6b35" },
     claude_official: { name: t("provider.claude_official.name"), logo: claudeLogo, accent: "#d97706" },
+    // AnySearch logo：蓝底白 chevron；accent 同色，给 first-letter fallback 兜底
+    anysearch: { name: t("provider.anysearch.name"), logo: anysearchLogo, accent: "#2563eb" },
   };
 }
 
@@ -724,6 +727,8 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
         // no action button
       } else if (kind === "auth_failed" && id === "xiaomimimo") {
         actionBtn = `<button class="err-btn err-btn-relogin" data-action="relogin-xiaomi">${escapeHtml(t("floating.err_btn_relogin_xiaomi"))}</button>`;
+      } else if (kind === "auth_failed" && id === "anysearch") {
+        actionBtn = `<button class="err-btn err-btn-relogin" data-action="relogin-anysearch">${escapeHtml(t("floating.err_btn_relogin_anysearch"))}</button>`;
       } else {
         actionBtn = `<button class="err-btn open-settings">${escapeHtml(t("floating.open_settings"))}</button>`;
       }
@@ -1406,7 +1411,13 @@ async function init() {
       const section = target.dataset.section ?? "advanced";
       invoke("open_settings_window", { section }).catch((err) => console.error(err));
     } else if (target.classList.contains("err-btn-relogin")) {
-      invoke("open_xiaomi_login_window").catch((err) => console.error(err));
+      // 按 data-action 分发：xiaomi / anysearch 各自的登录 webview
+      const action = target.dataset.action;
+      if (action === "relogin-anysearch") {
+        invoke("open_anysearch_login_window").catch((err) => console.error(err));
+      } else {
+        invoke("open_xiaomi_login_window").catch((err) => console.error(err));
+      }
     } else if (target.classList.contains("err-btn-copy")) {
       // v0.2.1 commit 10: 反查 snapshot 拿 p.error 复制到剪贴板。
       // 不在按钮上拼长字符串(每次 render 都 escape,效率差)。

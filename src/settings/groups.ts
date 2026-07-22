@@ -49,7 +49,7 @@ export function buildGroupDefinitions(): Record<GroupKey, GroupDef> {
     official: {
       title: t("groups.official_title"),
       icon: "building-2",
-      predicate: (m) => ["tavily", "zenmux", "claude_official"].includes(m.id),
+      predicate: (m) => ["tavily", "zenmux", "claude_official", "anysearch"].includes(m.id),
     },
     xiaomi: {
       title: t("groups.xiaomi_title"),

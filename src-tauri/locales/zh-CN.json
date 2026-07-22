@@ -29,7 +29,10 @@
     "credits": "credits",
     "calls": "calls",
     "topup": "充值",
-    "bonus": "奖励"
+    "bonus": "奖励",
+    "quota": "配额",
+    "rate_limit": "速率限制",
+    "calls_per_min": "次/分钟"
   },
   "error": {
     "common": {
@@ -88,6 +91,12 @@
     "claude_official": {
       "cookie_invalid_hint": "Claude sessionKey Cookie 无效或已过期（claude.ai 登录 session 约 8h 失效，重新提取）",
       "missing_five_hour_seven_day": "Claude 响应里没找到 five_hour / seven_day 字段"
+    },
+    "anysearch": {
+      "token_empty": "未配置 AnySearch 登录凭据（设置面板 · AnySearch · 点「登录 AnySearch」）",
+      "token_invalid_hint": "AnySearch 登录凭据无效或已过期 —— 点浮窗「重新登录」或 设置面板 · AnySearch ·「登录 AnySearch」",
+      "no_keys": "该 AnySearch 账号下没有 API key —— 去 anysearch.com/console/api-keys 创建一个",
+      "schema_unknown_hint": "AnySearch 响应 schema 变更（data.keys 缺失或为空）"
     },
     "custom": {
       "network": "CustomSource 网络错误: {err}",
@@ -164,6 +173,7 @@
   "window": {
     "settings": "Musage · 设置",
     "xiaomi_login": "登录小米账号 - Musage",
+    "anysearch_login": "登录 AnySearch - Musage",
     "floating": "Musage"
   },
   "provider_name": {
@@ -178,7 +188,8 @@
     "zhipu_en": "Z.ai",
     "stepfun": "阶跃星辰 Step Plan",
     "siliconflow": "SiliconFlow",
-    "claude_official": "Claude 官方"
+    "claude_official": "Claude 官方",
+    "anysearch": "AnySearch"
   },
   "provider": {
     "suffix": {
@@ -200,6 +211,11 @@
     "cookies_for_url_failed": "webview.cookies_for_url 失败: {err}",
     "cookies_not_found": "没找到 Xiaomi dashboard cookies（共 {count} 个 cookie，白名单期望 {expected} 个：{wanted}）。实际可用：{available}",
     "cookies_incomplete": "提取的 cookie 不完整（api-platform_serviceToken={has_service_token}, userId={has_user_id}）。两者都必须存在才能调用 dashboard API —— 未写入，原有 cookie 保留。请重新登录。",
+    "save_keys_failed": "写 keys.json 失败: {err}"
+  },
+  "anysearch_login": {
+    "parse_login_url": "parse LOGIN_URL: {err}",
+    "build_webview": "build webview: {err}",
     "save_keys_failed": "写 keys.json 失败: {err}"
   }
 }

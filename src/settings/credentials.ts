@@ -204,7 +204,40 @@ export function renderCredentialBlock(meta: SourceMeta): HTMLElement {
     // 用户要保留某一项时只能重输，可接受：v1 UX 重点是"丢 key 就行"。
     return renderMultiAuthBlock(meta);
   } else {
-    // ── 纯 cookie 模式（备用，目前未使用，保留兼容）──
+    // ── 纯 cookie 模式：AnySearch 走这里（JWT 存 cookie 槽位）──
+    // AnySearch 在 textarea 上方加一键登录 banner（跟 Xiaomi 同款交互，但提取
+    // localStorage 里的 session JWT 而非 cookie）。
+    if (meta.id === "anysearch") {
+      block.appendChild(
+        el("div", { class: "quick-login-banner" },
+          el("div", { class: "quick-login-text" },
+            el("strong", {}, t("credentials.anysearch_login_hint")),
+            el("br"),
+            t("credentials.anysearch_login_help"),
+          ),
+          el("div", { class: "row" },
+            el("button", {
+              class: "primary big",
+              id: `anysearch-login-${meta.id}`,
+              "data-id": meta.id,
+              "data-action": "anysearch-login",
+            }, t("credentials.login_anysearch")),
+            el("button", {
+              class: "danger",
+              id: `anysearch-clear-token-${meta.id}`,
+              "data-id": meta.id,
+              "data-action": "anysearch-clear-cookie",
+            }, t("credentials.clear_cookie")),
+            el("a", {
+              class: "link-ext",
+              href: "https://www.anysearch.com/console/api-keys",
+              target: "_blank",
+              rel: "noopener noreferrer",
+            }, t("credentials.visit_official_site")),
+          ),
+        ),
+      );
+    }
     const textarea = el("textarea", {
       id: `cookie-${meta.id}`,
       "data-id": meta.id,
@@ -226,7 +259,7 @@ export function renderCredentialBlock(meta: SourceMeta): HTMLElement {
     );
     block.appendChild(
       el("div", { class: "help" },
-        cookieHelpNode(),
+        meta.id === "anysearch" ? renderHelp(t("help.anysearch")) : cookieHelpNode(),
       ),
     );
   }
@@ -555,6 +588,52 @@ export async function xiaomiClearCookieAction(id: string) {
   }
 }
 
+/// 一键登录 AnySearch：弹 webview → 用户登录 → 后端从 localStorage 抽 JWT。
+///
+/// 数据流同 [`xiaomiLoginAction`]，区别在后端用 `document.title` 通道读
+/// localStorage（AnySearch 的 token 不在 cookie jar 里）。
+export async function anysearchLoginAction(id: string) {
+  if (id !== "anysearch") {
+    flash(t("credentials.anysearch_login_only"), true);
+    return;
+  }
+  try {
+    await invoke("open_anysearch_login_window");
+    flash(t("credentials.anysearch_login_opened"));
+  } catch (e) {
+    flash(t("credentials.anysearch_login_failed", { err: String(e) }), true);
+  }
+}
+
+/// 清除 AnySearch token 并提示用户重新登录。
+export async function anysearchClearTokenAction(id: string) {
+  if (id !== "anysearch") return;
+  if (!confirm(t("credentials.confirm_clear_anysearch"))) return;
+  try {
+    await deleteSourceCredential(id);
+    flash(t("credentials.anysearch_clear_done"));
+    await loadCredentialStatus(id);
+  } catch (e) {
+    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
+  }
+}
+
+/// 绑一次后端 AnySearch 登录事件 → UI 反馈。init 时调一次。
+const _anysearchListeners: UnlistenFn[] = [];
+let _anysearchListenersBound = false;
+export function bindAnysearchLoginEvents() {
+  if (_anysearchListenersBound) return;
+  void listen<number>("musage://anysearch-login-success", (e) => {
+    const savedLen = e.payload;
+    flash(t("credentials.anysearch_login_success", { bytes: savedLen }));
+    void loadCredentialStatus("anysearch");
+  }).then((un) => _anysearchListeners.push(un));
+  void listen<string>("musage://anysearch-login-failed", (e) => {
+    flash(t("credentials.anysearch_login_failure", { err: e.payload }), true);
+  }).then((un) => _anysearchListeners.push(un));
+  _anysearchListenersBound = true;
+}
+
 /// 绑一次后端登录事件 → UI 反馈。
 /// 在 main.ts init() 末尾调一次就行（**只绑一次**，多次绑会重复响应）。
 // M8 fix: 之前 void listen(...) 丢 unlisten。模块 scope 存 unlisten 句柄，第二次
@@ -618,6 +697,12 @@ export function bindCredentialButtonsGlobal() {
         break;
       case "xiaomi-clear-cookie":
         void xiaomiClearCookieAction(id);
+        break;
+      case "anysearch-login":
+        void anysearchLoginAction(id);
+        break;
+      case "anysearch-clear-cookie":
+        void anysearchClearTokenAction(id);
         break;
     }
   });

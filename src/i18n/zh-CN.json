@@ -40,6 +40,9 @@
     "claude_official": {
       "name": "Claude 官方"
     },
+    "anysearch": {
+      "name": "AnySearch"
+    },
     "suffix": {
       "dup": " #{}"
     },
@@ -72,6 +75,7 @@
       "unknown": "未知错误"
     },
     "err_btn_relogin_xiaomi": "重新登录小米",
+    "err_btn_relogin_anysearch": "重新登录 AnySearch",
     "err_btn_retry": "重试",
     "err_retry_in_minutes": "下次自动重试约 {mins} 分钟后",
     "err_btn_copy": "📋 复制错误",
@@ -407,6 +411,16 @@
     "xiaomi_login_success": "Xiaomi 登录成功，已保存 cookie（{bytes} 字节）",
     "xiaomi_login_failure": "Xiaomi 登录失败: {err}",
     "xiaomi_api_key_hint_extra": "Xiaomi 用量 API 当前对 Bearer 返 401，但别担心——下面的 Cookie 一旦配好，Bearer 失败时会自动 fallback（你不用手动切）。",
+    "login_anysearch": "登录 AnySearch",
+    "anysearch_login_hint": "不想手动复制 token？",
+    "anysearch_login_help": "点下面按钮 → 弹窗登录 anysearch.com → 后端自动从页面提取 session token 写进 keys.json，全程不需要碰 DevTools。",
+    "anysearch_login_only": "一键登录只对 AnySearch 启用",
+    "anysearch_login_opened": "已打开登录窗口 —— 登录完成后会自动关闭窗口",
+    "anysearch_login_failed": "打开登录窗口失败: {err}",
+    "anysearch_clear_done": "token 已清除，请重新点击「登录 AnySearch」",
+    "anysearch_login_success": "AnySearch 登录成功，已保存 token（{bytes} 字节）",
+    "anysearch_login_failure": "AnySearch 登录失败: {err}",
+    "confirm_clear_anysearch": "确认清除已保存的 AnySearch token？\n清除后需要重新登录。",
     "default_help": "API key 存到本机 keys.json。",
     "cookie_status_saved": "已保存到本机",
     "cookie_status_unset": "未设置",
@@ -538,6 +552,7 @@
     "siliconflow": "SiliconFlow（硅基流动）钱包余额，按 CNY 显示。<br><br>从 <a href=\"https://cloud.siliconflow.cn/account/ak\" target=\"_blank\" class=\"link-ext\">cloud.siliconflow.cn</a> 获取 API key。",
     "claude_official": "Claude Pro / Max 官方 OAuth 用量监控。<br><br><strong>鉴权特殊</strong>：用 Cookie <code>sessionKey=&lt;value&gt;</code>（不是 Bearer API key）。<br><br>获取方法：Chrome 登录 <a href=\"https://claude.ai\" target=\"_blank\" class=\"link-ext\">claude.ai</a> → F12 → Application → Cookies → <code>sessionKey</code> 整段 value 复制（或只粘纯 value 也行，程序自动补 <code>sessionKey=</code> 前缀）。<br><br><strong>已知限制</strong>：<ul style=\"margin: 4px 0; padding-left: 20px;\"><li>sessionKey 约 8h 过期（claude.ai 登录 session 失效）</li><li>OAuth usage API 偶发 429（<a href=\"https://github.com/anthropics/claude-code/issues/31021\" target=\"_blank\" class=\"link-ext\">claude-code#31021</a>），属 Anthropic 端问题，Musage 不重试</li></ul>",
     "xiaomi_cookie": "️ Xiaomi 用量走 dashboard admin API，需要浏览器登录态。<br><br><strong>获取方法</strong>：Chrome 登录 <a href=\"https://platform.xiaomimimo.com/console/plan-manage\" target=\"_blank\" class=\"link-ext\">platform.xiaomimimo.com</a> → F12 → Network → 任意 <code>/api/v1/tokenPlan/*</code> 请求 → 右键 → Copy → Copy request headers → 找 <code>cookie:</code> 这一行整段粘贴到上面。<br><br>Cookie 登出后失效，过期时 (HTTP 401) 错误信息会引导重粘。",
+    "anysearch": "AnySearch 是面向 AI agent 的搜索 API（每天 1000 次免费调用）。Musage 通过 <strong>console 登录 token</strong> 跟踪其用量，<strong>不是</strong> <code>as_sk_</code> 那个 MCP API key（单独的 key 调用量端点会返 401）。<br><br><strong>推荐</strong>：点上方「登录 AnySearch」→ 弹窗里登录 → token 自动提取。<br><br><strong>手动兜底</strong>：Chrome 登录 <a href=\"https://www.anysearch.com/console/api-keys\" target=\"_blank\" class=\"link-ext\">anysearch.com/console</a> → F12 → Application → Local Storage → <code>search-template-auth-state</code> → 复制 <code>state.accessToken</code>（那段 <code>eyJ…</code> 的 JWT）粘到上面。<br><br>token 随网页登录态失效，过期时（HTTP 401）重新登录即可。",
     "default": "API key 存到本机 keys.json。"
   }
 }

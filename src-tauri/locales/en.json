@@ -29,7 +29,10 @@
     "credits": "credits",
     "calls": "calls",
     "topup": "Topup",
-    "bonus": "Bonus"
+    "bonus": "Bonus",
+    "quota": "Quota",
+    "rate_limit": "Rate limit",
+    "calls_per_min": "calls/min"
   },
   "error": {
     "common": {
@@ -88,6 +91,12 @@
     "claude_official": {
       "cookie_invalid_hint": "Claude sessionKey cookie invalid or expired (claude.ai login session expires after ~8h — re-extract)",
       "missing_five_hour_seven_day": "Claude response missing five_hour / seven_day field"
+    },
+    "anysearch": {
+      "token_empty": "AnySearch session token not configured (Settings → AnySearch → click \"Login AnySearch\")",
+      "token_invalid_hint": "AnySearch session token invalid or expired — click the floating window \"Re-login\" or Settings → AnySearch → \"Login AnySearch\"",
+      "no_keys": "No API key found on this AnySearch account — create one at anysearch.com/console/api-keys",
+      "schema_unknown_hint": "AnySearch response schema changed (data.keys missing or empty)"
     },
     "custom": {
       "network": "CustomSource network error: {err}",
@@ -164,6 +173,7 @@
   "window": {
     "settings": "Musage · Settings",
     "xiaomi_login": "Login Xiaomi — Musage",
+    "anysearch_login": "Login AnySearch — Musage",
     "floating": "Musage"
   },
   "provider_name": {
@@ -178,7 +188,8 @@
     "zhipu_en": "Z.ai",
     "stepfun": "StepFun Step Plan",
     "siliconflow": "SiliconFlow",
-    "claude_official": "Claude"
+    "claude_official": "Claude",
+    "anysearch": "AnySearch"
   },
   "provider": {
     "suffix": {
@@ -200,6 +211,11 @@
     "cookies_for_url_failed": "webview.cookies_for_url failed: {err}",
     "cookies_not_found": "No Xiaomi dashboard cookies found ({count} total, expected {expected}: {wanted}). Actually available: {available}",
     "cookies_incomplete": "Extracted cookies incomplete (api-platform_serviceToken={has_service_token}, userId={has_user_id}). Both must be present to call the dashboard API — not saved, original cookie kept. Please log in again.",
+    "save_keys_failed": "Failed to write keys.json: {err}"
+  },
+  "anysearch_login": {
+    "parse_login_url": "parse LOGIN_URL: {err}",
+    "build_webview": "build webview: {err}",
     "save_keys_failed": "Failed to write keys.json: {err}"
   }
 }

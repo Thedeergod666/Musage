@@ -40,6 +40,9 @@
     "claude_official": {
       "name": "Claude"
     },
+    "anysearch": {
+      "name": "AnySearch"
+    },
     "suffix": {
       "dup": " #{}"
     },
@@ -72,6 +75,7 @@
       "unknown": "Unknown error"
     },
     "err_btn_relogin_xiaomi": "Re-login Xiaomi account",
+    "err_btn_relogin_anysearch": "Re-login AnySearch",
     "err_btn_retry": "Retry",
     "err_retry_in_minutes": "Next auto-retry in ~{mins}m",
     "err_btn_copy": "📋 Copy error",
@@ -407,6 +411,16 @@
     "xiaomi_login_success": "Xiaomi login succeeded, cookie saved ({bytes} bytes)",
     "xiaomi_login_failure": "Xiaomi login failed: {err}",
     "xiaomi_api_key_hint_extra": "Xiaomi usage API currently returns 401 for Bearer — but don't worry, once Cookie is set, Bearer failure auto-falls back (no manual switch needed).",
+    "login_anysearch": "Login AnySearch",
+    "anysearch_login_hint": "Don't want to manually copy the token?",
+    "anysearch_login_help": "Click the button below → popup login anysearch.com → backend auto-extracts the session token from the page and writes it to keys.json, no DevTools needed.",
+    "anysearch_login_only": "Quick login only enabled for AnySearch",
+    "anysearch_login_opened": "Login window opened — will close automatically after login",
+    "anysearch_login_failed": "Open login window failed: {err}",
+    "anysearch_clear_done": "Token cleared, please click \"Login AnySearch\" again",
+    "anysearch_login_success": "AnySearch login succeeded, token saved ({bytes} bytes)",
+    "anysearch_login_failure": "AnySearch login failed: {err}",
+    "confirm_clear_anysearch": "Clear saved AnySearch token?\nYou'll need to login again.",
     "default_help": "API key saved to local keys.json.",
     "cookie_status_saved": "Saved to local",
     "cookie_status_unset": "Not set",
@@ -538,6 +552,7 @@
     "siliconflow": "SiliconFlow (硅基流动) wallet balance, displayed in CNY.<br><br>Get the API key from <a href=\"https://cloud.siliconflow.cn/account/ak\" target=\"_blank\" class=\"link-ext\">cloud.siliconflow.cn</a>.",
     "claude_official": "Claude Pro / Max official OAuth usage monitor.<br><br><strong>Auth special</strong>: use Cookie <code>sessionKey=&lt;value&gt;</code> (not Bearer API key).<br><br>How to get it: Chrome login <a href=\"https://claude.ai\" target=\"_blank\" class=\"link-ext\">claude.ai</a> → F12 → Application → Cookies → <code>sessionKey</code> full value (you can paste just the value, app auto-adds <code>sessionKey=</code> prefix).<br><br><strong>Known limits</strong>: <ul style=\"margin: 4px 0; padding-left: 20px;\"><li>sessionKey expires in ~8h (when claude.ai login session ends)</li><li>OAuth usage API occasionally 429 (<a href=\"https://github.com/anthropics/claude-code/issues/31021\" target=\"_blank\" class=\"link-ext\">claude-code#31021</a>), this is on Anthropic's side, Musage doesn't retry</li></ul>",
     "xiaomi_cookie": "️ Xiaomi usage goes through dashboard admin API, requires browser login state.<br><br><strong>How to get it</strong>: Chrome login <a href=\"https://platform.xiaomimimo.com/console/plan-manage\" target=\"_blank\" class=\"link-ext\">platform.xiaomimimo.com</a> → F12 → Network → any <code>/api/v1/tokenPlan/*</code> request → right-click → Copy → Copy request headers → find <code>cookie:</code> row and paste the whole line above.<br><br>Cookie expires when logged out; on expiry (HTTP 401) error message will guide you to re-paste.",
+    "anysearch": "AnySearch is an AI-agent search API (1000 free calls/day). Musage tracks its quota via the <strong>console session token</strong>, not the <code>as_sk_</code> MCP API key (the key alone returns 401 on the usage endpoint).<br><br><strong>Recommended</strong>: click \"Login AnySearch\" above → login in the popup → token auto-extracted.<br><br><strong>Manual fallback</strong>: Chrome login <a href=\"https://www.anysearch.com/console/api-keys\" target=\"_blank\" class=\"link-ext\">anysearch.com/console</a> → F12 → Application → Local Storage → <code>search-template-auth-state</code> → copy <code>state.accessToken</code> (the <code>eyJ…</code> JWT) and paste above.<br><br>The token expires with your web session; on expiry (HTTP 401) re-login.",
     "default": "API key saved to local keys.json."
   }
 }

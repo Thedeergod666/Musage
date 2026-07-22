@@ -15,6 +15,7 @@
 //! - `ProviderImpl` trait 已删（v0.1 老 trait，新代码统一用 `QuotaSource`）
 //! - `ProviderSnapshot.provider` 字段保留（默认 `""`），仅给老 JSON 反向兼容用
 
+pub mod anysearch;
 pub mod claude_official;
 pub mod custom;
 pub mod deepseek;
@@ -634,6 +635,7 @@ pub fn builtin_sources() -> Vec<Box<dyn QuotaSource>> {
         Box::new(deepseek::DeepseekSource::default()),
         Box::new(xiaomi::XiaomimimoSource::default()),
         Box::new(tavily::TavilySource::default()),
+        Box::new(anysearch::AnysearchSource::default()),
         Box::new(zenmux::ZenmuxSource::default()),
         Box::new(openrouter::OpenrouterSource::default()),
         Box::new(kimi::KimiSource::default()),
@@ -748,6 +750,7 @@ pub fn instantiate_builtin(provider_id: &str) -> Option<Box<dyn QuotaSource>> {
         "stepfun" => Some(Box::new(stepfun::StepfunSource::default())),
         "siliconflow" => Some(Box::new(siliconflow::SiliconflowSource::default())),
         "claude_official" => Some(Box::new(claude_official::ClaudeOfficialSource::default())),
+        "anysearch" => Some(Box::new(anysearch::AnysearchSource::default())),
         _ => None,
     }
 }
@@ -794,6 +797,9 @@ pub fn instantiate_builtin_with_index(
         )),
         "claude_official" => Some(Box::new(
             claude_official::ClaudeOfficialSource::default().with_instance_index(index),
+        )),
+        "anysearch" => Some(Box::new(
+            anysearch::AnysearchSource::default().with_instance_index(index),
         )),
         _ => None,
     }

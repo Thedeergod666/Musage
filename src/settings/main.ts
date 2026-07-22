@@ -16,7 +16,7 @@ import { renderLogsSection, loadLogs } from "./logs";
 import { renderAboutSection } from "./about";
 // v0.2.0 不再自动检查更新 —— 升级走"用户手动下 dmg/nsis 装"路径
 import { renderRegionSection } from "./region-wizard";
-import { bindCredentialButtonsGlobal, bindXiaomiLoginEvents, loadXiaomiDisplayMode } from "./credentials";
+import { bindCredentialButtonsGlobal, bindXiaomiLoginEvents, bindAnysearchLoginEvents, loadXiaomiDisplayMode } from "./credentials";
 import { bindOrderButtonsGlobal, updateOrderConfig, isSuppressingConfigRebuild } from "./order";
 import { flash } from "./utils";
 import { t, initLocale, onLocaleChange } from "../i18n";
@@ -133,6 +133,7 @@ async function init() {
     // 全局事件委托（只绑一次，document-level）
     bindCredentialButtonsGlobal();
     bindXiaomiLoginEvents();
+    bindAnysearchLoginEvents();
     bindOrderButtonsGlobal();
 
     // 拉 cfg + sources（并发）

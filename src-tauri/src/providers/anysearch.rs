@@ -42,16 +42,19 @@
 //!
 //! ## 渲染策略
 //!
-//! - 第一行（主指标）：`"523 / 1000 calls"` + 进度条（Free Plan 是 limited，1000/天）
+//! - 主指标行：`"523 / 1000 calls"` + 进度条（Free Plan 是 limited，1000/天）
 //!   无限额时 `"523 calls"`（无进度条）
-//! - 第二行（副指标）：`rate_limit_qps` → `"10 /秒"`（QPS 单位）
-//! - 重置时间：从 `next_reset_at` 解析 → 填 `resets_at`（主指标行）
+//! - 重置时间：从 `next_reset_at` 解析 → 填 `resets_at`（主指标行）；
+//!   `reset_period`（"daily" / "monthly"）塞进主行 `extra.reset_period`，
+//!   浮窗据此显示「日重置」/「月重置」前缀（Free Plan 是 daily → 日重置）
 //! - 头部副标题：`plan_name = tier_name`（如 "Free Plan"）
+//!
+//! 注：速率限制（QPS）副行按产品要求**不展示**，只留主配额行。
 
 use std::borrow::Cow;
 use std::pin::Pin;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use super::{
     shared_client, AuthKind, Credentials, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
@@ -242,17 +245,20 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
     let used = num_f64(data, "used").unwrap_or(0.0);
     let total = num_f64(data, "total");
     let remaining = num_f64(data, "remaining");
-    let rate_qps = num_f64(data, "rate_limit_qps");
-    let rate_unlimited = data
-        .get("rate_limit_unlimited")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
     let is_active = data
         .get("is_active")
         .and_then(|v| v.as_bool())
         .unwrap_or(true);
     // total=0 / null / -1 = unlimited（schema 没明说，按 Tavily 那边的兜底约定）
     let is_unlimited = total.map(|t| t <= 0.0).unwrap_or(true);
+
+    // reset_period（"daily" / "monthly"）→ 塞进主行 extra，浮窗据此选
+    // 「日重置」/「月重置」前缀。Free Plan 实测 = "daily"。缺失时 extra=None，
+    // 浮窗 fallback 到月重置前缀（跟旧行为一致）。
+    let row_extra: Option<Value> = data
+        .get("reset_period")
+        .and_then(|v| v.as_str())
+        .map(|p| json!({ "reset_period": p }));
 
     // resets_at：`next_reset_at` 是 ISO 8601 UTC（"2026-07-23T00:00:00Z"），
     // DateTime::parse_from_rfc3339 直接吃。
@@ -284,7 +290,7 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
             total: None,
             resets_at,
             unit: Some(t!("row.calls").to_string()),
-            extra: None,
+            extra: row_extra.clone(),
             kind: None,
         });
     } else if let Some(l) = total {
@@ -299,7 +305,7 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
                 total: Some(l),
                 resets_at,
                 unit: Some(t!("row.calls").to_string()),
-                extra: None,
+                extra: row_extra.clone(),
                 kind: None,
             });
         } else {
@@ -311,29 +317,13 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
                 total: None,
                 resets_at,
                 unit: Some(t!("row.calls").to_string()),
-                extra: None,
+                extra: row_extra.clone(),
                 kind: None,
             });
         }
     }
 
-    // ── 副行：QPS 限速
-    // rate_limit_qps=0 也显示（让用户知道"无 QPS 限"）；unlimited 不显示
-    if !rate_unlimited {
-        if let Some(qps) = rate_qps {
-            rows.push(QuotaRow {
-                label: t!("row.rate_limit").to_string(),
-                utilization: None,
-                remaining: None,
-                used: Some(qps),
-                total: None,
-                resets_at: None,
-                unit: Some(t!("row.calls_per_sec").to_string()),
-                extra: None,
-                kind: None,
-            });
-        }
-    }
+    // 速率限制（QPS）副行按产品要求不展示 —— 只留主配额行。
 
     if rows.is_empty() {
         return Err(FetchError::parse(
@@ -407,8 +397,8 @@ mod tests {
         assert_eq!(snap.plan_name.as_deref(), Some("Free Plan"));
         assert_eq!(snap.source_id.as_deref(), Some("anysearch"));
         assert!(snap.is_healthy);
-        // 2 行：quota + rate_limit
-        assert_eq!(snap.rows.len(), 2);
+        // 只有 1 行：quota（QPS 副行按产品要求不再展示）
+        assert_eq!(snap.rows.len(), 1);
 
         let main = &snap.rows[0];
         assert_eq!(main.label, t!("row.quota"));
@@ -424,11 +414,11 @@ mod tests {
             .unwrap()
             .timestamp_millis();
         assert_eq!(main.resets_at, Some(expected));
-
-        let rate = &snap.rows[1];
-        assert_eq!(rate.label, t!("row.rate_limit"));
-        assert_eq!(rate.used, Some(10.0));
-        assert_eq!(rate.unit.as_deref(), Some(t!("row.calls_per_sec").as_ref()));
+        // reset_period=daily → 塞进主行 extra（浮窗据此显示「日重置」）
+        assert_eq!(
+            main.extra.as_ref().and_then(|e| e.get("reset_period")).and_then(|v| v.as_str()),
+            Some("daily")
+        );
     }
 
     #[test]
@@ -458,13 +448,14 @@ mod tests {
     }
 
     #[test]
-    fn parse_rate_limit_unlimited_hides_qps_row() {
-        // rate_limit_unlimited=true → 不显示副行
+    fn parse_rate_limit_fields_ignored_single_row() {
+        // QPS 副行已按产品要求移除：无论 rate_limit_unlimited / rate_limit_qps
+        // 取何值，都只产出 1 行主配额（不再读这两个字段）。
         let mut v: Value = serde_json::from_str(FREE_PLAN_OK).unwrap();
-        v["data"]["rate_limit_unlimited"] = json!(true);
-        v["data"]["rate_limit_qps"] = json!(99999);
+        v["data"]["rate_limit_unlimited"] = json!(false);
+        v["data"]["rate_limit_qps"] = json!(10);
         let snap = parse(&v, "anysearch", "AnySearch").expect("parse");
-        assert_eq!(snap.rows.len(), 1, "rate unlimited → 副行消失");
+        assert_eq!(snap.rows.len(), 1, "只留主配额行，无 QPS 副行");
         assert_eq!(snap.rows[0].label, t!("row.quota"));
     }
 

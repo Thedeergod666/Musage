@@ -106,13 +106,24 @@ export async function renderProvidersSection(container: HTMLElement) {
   // 3) 套餐区扁平列表：所有 provider 按「浮窗卡片顺序」铺在一个长列表里。
   // 组归属通过每个 provider header 里的 .provider-group-tag 体现（如
   // "Token Plan"），不再需要顶部的组分隔线。
+  // 跟「浮窗卡片顺序」section（order.ts buildOrderItems）的视觉顺序对齐：
+  // enabled 在前、disabled 在后，段内按 currentProviderOrder 出现顺序。
+  // 之前只按 currentProviderOrder 线性排 —— 新加 builtin（如 anysearch）不在
+  // 用户旧 provider_order 里，被 canonicalizeOrder 追加到末尾，面板就置底，
+  // 要翻到最后才看得到；而顺序 section 按 enabled/disabled 分段，它显示在第 6
+  // 位，两处不一致。改成同样的「enabled 优先」分段排序后三处（浮窗 / 顺序
+  // section / 面板列表）一致。
   const orderIdx = new Map(currentProviderOrder.map((id, i) => [id, i]));
+  const isEnabledId = (id: string) => cfg.providers?.[id]?.enabled ?? true;
   const allSorted = [...allSources].sort((a, b) => {
-    const ai = orderIdx.get(a.id);
-    const bi = orderIdx.get(b.id);
-    // ES2019+ Array.sort 稳定：两个都不在 orderIdx 里时保留 builtin_sources()
-    // 注册顺序，新加 provider 不会跳到列表中乱位。
-    return ((ai ?? Number.POSITIVE_INFINITY) - (bi ?? Number.POSITIVE_INFINITY));
+    const ea = isEnabledId(a.id) ? 0 : 1;
+    const eb = isEnabledId(b.id) ? 0 : 1;
+    if (ea !== eb) return ea - eb;
+    // 同段内按 currentProviderOrder 顺序；都不在时（ES2019+ 稳定排序）保留
+    // builtin_sources() 注册顺序，新加 provider 不乱位。
+    const ai = orderIdx.get(a.id) ?? Number.POSITIVE_INFINITY;
+    const bi = orderIdx.get(b.id) ?? Number.POSITIVE_INFINITY;
+    return ai - bi;
   });
 
   const flatContainer = el("div", { class: "providers-flat" });

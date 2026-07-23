@@ -66,6 +66,7 @@
     "countdown": {
       "reset_suffix": "reset",
       "monthly_prefix": "Monthly reset",
+      "daily_prefix": "Daily reset",
       "reset_done": "(reset)",
       "days_left": "({days}d)",
       "minutes_left": "(in {minutes} min)",

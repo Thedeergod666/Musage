@@ -37,8 +37,16 @@
 //!
 //! ## 并发 / 重入
 //!
-//! 用户重复点按钮 → 先关旧窗口（旧轮询任务因 `window.title()` 报错自然退出）→
-//! 开新窗口 + 新任务。`DONE` 标记保证成功后不再处理残留读。
+//! 用户重复点按钮 → 先关旧窗口（旧轮询任务因 `cookies_for_url` 报错 / 窗口
+//! 句柄消失自然退出）→ 开新窗口 + 新任务。`DONE` 标记保证成功后不再处理残留读。
+//!
+//! ## 重新登录 / 过期 token
+//!
+//! webview profile 持久化 localStorage —— 上一次（可能已过期）的 JWT 会残留。
+//! 不清理就重开登录窗，interval 会立刻把旧 JWT 写进中转 cookie，Rust 抓到存盘
+//! → 浮窗继续 401、窗口「弹出即消失」。fix：init script 在 document_start 删旧
+//! auth state + 清旧 cookie，并置 `MUSAGE_READY` 标记；Rust 轮询见到 READY 才
+//! 接受 token，保证抓到的一定是清理后新登录的 JWT。
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -67,19 +75,32 @@ const STORAGE_KEY: &str = "search-template-auth-state";
 /// 命名带 MUSAGE_ 前缀避免跟 anysearch 自己设的 cookie 撞名，值就是 JWT。
 const COOKIE_NAME: &str = "MUSAGE_TOKEN";
 
-/// JWT 形态校验：`eyJ` 开头 + 长度合理 + 无空白 / 控制字符。
-/// 挡掉 interval 还没拿到 token 时的空串，以及任何注入的脏字符。
+/// 「清理完成」握手标记 cookie。init script 在 document_start 清掉上一次
+/// 残留的 auth state 后写 `MUSAGE_READY=1`；Rust 轮询**见到 READY 才开始接受**
+/// `MUSAGE_TOKEN`。这样能堵住一个竞态：webview profile 持久化了上一次的
+/// `MUSAGE_TOKEN` cookie，若轮询在 init script 清理之前就读 cookie，会抓到
+/// 过期 token 存盘 → 浮窗继续 401、登录窗口「弹出即消失」。READY 保证
+/// token 一定是清理之后新写入的。
+const READY_COOKIE_NAME: &str = "MUSAGE_READY";
+
+/// JWT 形态校验：`eyJ` 开头 + 长度合理（≥ 20，挡 3-char 短串）+ ≤ 4096 +
+/// 无空白 / 控制字符。挡掉 interval 还没拿到 token 时的空串、init script
+/// 抓脏字符、以及任何明显不是真实 JWT 的极短串。长度下限是**合理性门槛**，
+/// 不是 JWT 规范强制的最小值（实测 AnySearch JWT ≈ 572 字符）。
 fn is_jwt_like(s: &str) -> bool {
     !s.is_empty()
         && s.starts_with("eyJ")
+        && s.len() >= 20
         && s.len() <= 4096
         && s.chars().all(|c| !c.is_whitespace() && !c.is_control())
 }
 
 /// 注入页面的 init script：
 /// - 把 cookie / storage 读取锁在受信 host（挡第三方 tracker 偷 JWT）
-/// - 起 interval：localStorage 一旦出现 JWT 就写进 `document.title`（带前缀）；
-///   没 token 时**不**碰 title（保留登录页真实标题）
+/// - **打开即清理**：删 localStorage 里上一次残留的 auth state + 清旧中转
+///   cookie，然后置 `MUSAGE_READY` 标记（重新登录不被过期 token 污染）
+/// - 起 interval：localStorage 一旦出现 JWT 就写同源 cookie `MUSAGE_TOKEN`；
+///   没 token 时把该 cookie 清成空（让 Rust 知道「还在等」）
 fn init_script() -> String {
     // 设计：**localStorage → cookie 中转** + Rust 用 `cookies_for_url` 读。
     //
@@ -100,6 +121,7 @@ fn init_script() -> String {
             var ALLOW_HOST = "www.anysearch.com";
             var COOKIE_NAME = "__MUSAGE_COOKIE_NAME__";
             var LS_KEY = "__MUSAGE_LS_KEY__";
+            var READY_NAME = "__MUSAGE_READY_NAME__";
             function isAllowed() {
                 try { return location.hostname === ALLOW_HOST; } catch (_) { return false; }
             }
@@ -118,6 +140,23 @@ fn init_script() -> String {
                     value: function (k) { return isAllowed() ? _origGet.value.call(this, k) : null; },
                     configurable: true
                 });
+            } catch (_) {}
+            // ── 重新登录：清掉上一次残留的登录态（关键 fix）──
+            // webview profile 持久化 localStorage —— 上一次（可能已过期）的 JWT
+            // 还在 LS_KEY 里。不清的话下面的 interval 会立刻把它写进中转
+            // cookie，Rust 抓到过期 token 存盘 → 浮窗继续 401，且登录窗口
+            // 「弹出即消失」。所以每次打开都从干净状态开始：
+            //   1) 删 localStorage 里的旧 auth state（强制重新登录）
+            //   2) 清掉旧的中转 cookie
+            //   3) 置 MUSAGE_READY 标记 —— Rust 见到 READY 才开始接受 token，
+            //      保证不会抓到清理之前残留在 cookie store 里的旧 MUSAGE_TOKEN
+            // 只在受信 host 上清（isAllowed 守卫），不碰第三方数据。
+            try {
+                if (isAllowed()) {
+                    localStorage.removeItem(LS_KEY);
+                    document.cookie = COOKIE_NAME + "=; path=/; max-age=0";
+                    document.cookie = READY_NAME + "=1; path=/; max-age=3600; SameSite=Lax";
+                }
             } catch (_) {}
             // ── 读 token ──
             function readToken() {
@@ -146,15 +185,18 @@ fn init_script() -> String {
         "#;
     JS.replace("__MUSAGE_COOKIE_NAME__", COOKIE_NAME)
         .replace("__MUSAGE_LS_KEY__", STORAGE_KEY)
+        .replace("__MUSAGE_READY_NAME__", READY_COOKIE_NAME)
 }
 
 /// 打开登录 webview 窗口。
 ///
 /// 行为：
 /// 1. 已有 `anysearch-login` 窗口 → 先关（重新登录 / 刷新 token 场景）
-/// 2. 开新 webview 指向 `LOGIN_URL`，注入 init script（title 通道 + tracker 防护）
-/// 3. spawn 一个轮询任务：读 `window.title()`，命中 `MUSAGE_TOKEN:<jwt>` →
-///    校验 → 写 keys.json → 关窗口 → emit 成功；窗口被关 / 超时 → 静默退出
+/// 2. 开新 webview 指向 `LOGIN_URL`，注入 init script（清旧登录态 + 置
+///    `MUSAGE_READY` + cookie 中转 + tracker 防护）
+/// 3. spawn 一个轮询任务：见到 `MUSAGE_READY` 后读 cookie jar，命中合法的
+///    `MUSAGE_TOKEN`（JWT）→ 校验 → 写 keys.json → 关窗口 → emit 成功；
+///    窗口被关 / 超时 → 静默退出
 ///
 /// 错误（仅“写盘失败”这类真错误）通过 `musage://anysearch-login-failed` 返回前端。
 /// 用户主动关窗 / 没登录不算错误，不弹红条。
@@ -238,6 +280,16 @@ async fn poll_token_from_cookie(
         .parse()
         .unwrap_or_else(|_| Url::parse("https://www.anysearch.com/").expect("hardcoded URL parses"));
 
+    // 首次读取前先让出 ~1.5s，等导航到 document_start、init script 跑完
+    // 「清旧 MUSAGE_TOKEN + 置 MUSAGE_READY」。webview profile 会持久化上一次
+    // 的 MUSAGE_TOKEN cookie；若一开窗就立刻读，可能先于清理抓到那个过期 token
+    // （「弹出即消失 + 信息不更新」bug）。登录页是轻量 SPA，1.5s 足够到
+    // document_start；真正的 token 写入（用户手动登录）远晚于此，不会错过。
+    sleep(Duration::from_millis(1500)).await;
+    if DONE.load(Ordering::SeqCst) || app.get_webview_window(WINDOW_LABEL).is_none() {
+        return PollOutcome::Cancelled;
+    }
+
     for _ in 0..MAX_ITERS {
         if DONE.load(Ordering::SeqCst) {
             return PollOutcome::Cancelled;
@@ -258,6 +310,14 @@ async fn poll_token_from_cookie(
                 return PollOutcome::Cancelled;
             }
         };
+
+        // 握手：init script 清完上一次残留的 auth state 后才写 MUSAGE_READY。
+        // 没见到 READY 就不读 token —— 否则可能抓到清理之前残留在 cookie store
+        // 里的过期 MUSAGE_TOKEN（「弹出即消失 + 信息不更新」bug 的根因）。
+        if !cookies.iter().any(|c| c.name() == READY_COOKIE_NAME) {
+            sleep(Duration::from_millis(700)).await;
+            continue;
+        }
 
         if let Some(tok) = cookies.iter().find(|c| c.name() == COOKIE_NAME) {
             // cookie value 可能带引号（macOS WKWebView 习惯），剥掉

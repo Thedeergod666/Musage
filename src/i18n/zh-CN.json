@@ -66,6 +66,7 @@
     "countdown": {
       "reset_suffix": "重置",
       "monthly_prefix": "月重置",
+      "daily_prefix": "日重置",
       "reset_done": "（已重置）",
       "days_left": "（{days}天）",
       "minutes_left": "（{minutes} 分钟后）",

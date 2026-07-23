@@ -164,6 +164,9 @@ interface QuotaRow {
   total?: number | null;
   resets_at: number | null;
   unit: string | null;
+  /** provider 特有扩展字段。AnySearch 主行带 `{reset_period: "daily"|"monthly"}`，
+   *  浮窗据此显示「日重置」/「月重置」前缀（缺省走月重置，跟旧行为一致）。 */
+  extra?: { reset_period?: string } | null;
   /** 行的语义分类（与 locale 解耦，**L7 fix 2026-06-19**）。
    *  rowKey 优先用这个做 DOM 稳定 key，避免切 locale 后 key 变化导致全量重建。 */
   kind?:
@@ -924,8 +927,14 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
         // 走 updateCountdowns 的 fallback（label 文本 + reset_suffix）
         delete rowEl.dataset.resetsPrefix;
       } else {
-        // Tavily 月重置：用 i18n 前缀，不复用 label（"Free tier"）
-        rowEl.dataset.resetsPrefix = t("floating.countdown.monthly_prefix");
+        // 非窗口行的重置前缀：按 row.extra.reset_period 区分日 / 月重置。
+        // AnySearch Free Plan = daily → 「日重置」；Tavily 等无 reset_period
+        // 信号 → fallback 月重置（跟旧行为 byte-for-byte 一致）。
+        const period = r.extra?.reset_period;
+        rowEl.dataset.resetsPrefix =
+          period === "daily"
+            ? t("floating.countdown.daily_prefix")
+            : t("floating.countdown.monthly_prefix");
       }
     } else {
       delete rowEl.dataset.resetsAt;

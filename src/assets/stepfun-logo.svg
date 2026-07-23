@@ -1,5 +1,10 @@
-<svg width="160" height="160" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="160" height="160" rx="32" fill="#1A1A2E"/>
-  <path d="M40 120V104H72V88H56V72H88V56H72V40H104V56H88V72H104V88H72V104H104V120H40Z" fill="#6366F1"/>
-  <path d="M120 120V104H104V120H120Z" fill="#6366F1"/>
+<svg width="160" height="160" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 官方真 mark（圆形 + 5 个深色方块阶梯，从右上到左下逐级升高，
+       完美呼应"阶跃"品牌语义）。深色圆角方块背景（#1A1A2E）+ 白色 mark，
+       跟 Musage 其他 provider logo 风格一致（Kimi / DeepSeek 等都深色底）。
+       Path d 来自 https://www.stepfun.com/assets/logo-B0FsyLQP.svg 第一个 path
+       （wordmark 里的 mark 部分，36x36 圆形坐标），fill 由 #000 改 #FFFFFF
+       （深色底上白 mark），跟 accent #6366F1 紫色形成高对比。 -->
+  <rect width="36" height="36" rx="8" fill="#1A1A2E"/>
+  <path d="M18 0C8.05758 0 0 8.05758 0 18C0 27.9424 8.05758 36 18 36C27.9424 36 36 27.9424 36 18C36 8.05758 27.9424 0 18 0ZM13.1431 29.4208H6.56393V22.8417H13.1431V29.4208ZM21.2769 29.4208H14.6977V22.8417H21.2769V29.4208ZM21.2769 21.2921H14.6977V14.713H21.2769V21.2921ZM21.2769 13.1634H14.6977V6.58425H21.2769V13.1634ZM29.4107 13.1583H22.8315V6.57917H29.4107V13.1583Z" fill="#FFFFFF"/>
 </svg>

@@ -897,20 +897,17 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
     const util = r.utilization ?? (r.used / r.total) * 100;
     const cls = colorClass(util);
     // 左侧标签：
-    // - 滚动窗口行（kind = five_hour / weekly，如 Kimi）→ 动态窗口标签
-    //   （剩 <1 天 "5h"，≥1 天 "7d"），每秒随倒计时刷新（见 updateCountdowns）
+    // - 滚动窗口行（kind = five_hour / weekly，如 Kimi / MiniMax / GLM）→
+    //   **静态**窗口标签（"5h" / "周" / "Weekly"），由 r.label 决定；
+    //   窗口剩余时间只在 row-foot 括号里体现（见 formatResetWithCountdown）。
+    //   旧实现每秒把 label 改成 "2h"/"2d" 是冗余的——括号里已经在倒计时了。
     // - 其余（Tavily 等）→ used/total（如 "253/1000"）
     const isWindowRow = r.kind === "five_hour" || r.kind === "weekly";
     const labelSpan = rowEl.querySelector<HTMLElement>(".row-label > span:first-child")!;
-    if (isWindowRow && r.resets_at) {
-      rowEl.dataset.dynLabel = "1";
-      labelSpan.textContent = dynamicWindowLabel(r.resets_at - Date.now());
-    } else {
-      delete rowEl.dataset.dynLabel;
-      labelSpan.textContent = isWindowRow
-        ? r.label
-        : `${Math.round(r.used)}/${Math.round(r.total)}`;
-    }
+    delete rowEl.dataset.dynLabel;
+    labelSpan.textContent = isWindowRow
+      ? r.label
+      : `${Math.round(r.used)}/${Math.round(r.total)}`;
     // 右侧：大字 utilization %（如 "25%"）
     const pct = rowEl.querySelector<HTMLElement>(".pct")!;
     pct.textContent = formatPct(util);
@@ -1031,15 +1028,10 @@ function updateCountdowns() {
     if (!raw) return;
     const ms = Number(raw);
     if (!Number.isFinite(ms) || ms <= 0) return;
-    // 动态窗口标签（Kimi 5h/7d）：跟倒计时同频每秒刷新。
-    // 必须在算 foot prefix 之前更新 —— 窗口行的 foot prefix 就是读 label 文本。
-    if (row.dataset.dynLabel) {
-      const labelSpan = row.querySelector<HTMLElement>(".row-label > span:first-child");
-      if (labelSpan) labelSpan.textContent = dynamicWindowLabel(ms - Date.now());
-    }
     const foot = row.querySelector<HTMLElement>(".row-foot");
     if (!foot) return;
-    // 优先用 data-resets-prefix（Tavily 用 t("floating.countdown.monthly_prefix")），否则用 label + reset suffix
+    // 优先用 data-resets-prefix（Tavily 用 t("floating.countdown.monthly_prefix")），
+    // 否则用 label + reset suffix（Kimi / MiniMax / GLM 等窗口行）
     const prefix = row.dataset.resetsPrefix
       ?? (row.querySelector<HTMLElement>(".row-label > span:first-child")?.textContent ?? "") + t("floating.countdown.reset_suffix");
     foot.textContent = formatResetWithCountdown(ms, prefix);
@@ -1081,23 +1073,17 @@ function barWidth(util: number | null | undefined): number {
   return Math.min(util, 100);
 }
 
-/// 动态窗口标签（2026-07-17 Kimi 需求）：滚动窗口行的左侧标签不再显示
-/// "8/100"，改显示窗口剩余时间的动态单位 —— 剩 ≥1 天 → "7d"（向上取整天数），
-/// <1 天 → "5h"（向上取整小时，最小 1h）。初始值在 updateRow 里算一次，
-/// 之后每秒随 updateCountdowns 刷新（row.dataset.dynLabel 标记）。
-function dynamicWindowLabel(remainMs: number): string {
-  if (remainMs >= 86400000) return `${Math.ceil(remainMs / 86400000)}d`;
-  return `${Math.max(1, Math.ceil(remainMs / 3600000))}h`;
-}
-
+/// 倒计时格式（Kimi / MiniMax / GLM 周行 + Xiaomi 月行共用）：
+/// - 剩余 ≥ 1 天 → 显示日期 + "(N天 Mh)"；周行带小时，月行 fallback 也走这条
+///   （月行 remainMs 巨大、hours 跨过午夜会跳变，但用户感知仍是"几天"为主，
+///   多给的小时数不干扰主要认知。Xiaomi 月重置实测 29 天 12h 这种，读起来仍直观）
+/// - 剩余 < 1 天 → 显示时分 + "(Nh Mm)"，精度到分钟
+/// - 剩余 ≤ 0 → "(已重置)"
+/// 跨日边界：> 1 day 用日期，< 1 day 用时分 —— 跟用户对"剩多久"的认知一致
+/// 日期走本地时区，跟 getHours()/getMinutes() 一致（用户看的是自己时区里的时间）
 function formatResetWithCountdown(ms: number, prefix: string): string {
   const remainMs = ms - Date.now();
   const dt = new Date(ms);
-  // 剩余 > 1 天 → 显示日期 + "(N天)"，数日子比读 321h30m 直观
-  //（典型：Xiaomi 套餐按月重置；MiniMax 周限额是滚动 7 天，跨日也用日期更清楚）
-  // 剩余 < 1 天 → 显示时分 + "(Nh Mm)"，精度需要到分钟
-  // 跨日边界：> 1 day 用日期，< 1 day 用时分 —— 跟用户对"剩多久"的认知一致
-  // 日期走本地时区，跟 getHours()/getMinutes() 一致（用户看的是自己时区里的时间）
   const days = Math.floor(remainMs / 86400000);
   if (remainMs <= 0) {
     const label = `${dt.getMonth() + 1}-${dt.getDate()}`;
@@ -1105,7 +1091,8 @@ function formatResetWithCountdown(ms: number, prefix: string): string {
   }
   if (days >= 1) {
     const label = `${dt.getMonth() + 1}-${dt.getDate()}`;
-    return `${prefix} ${label}${t("floating.countdown.days_left", { days })}`;
+    const hours = Math.floor((remainMs % 86400000) / 3600000);
+    return `${prefix} ${label}${t("floating.countdown.days_hours_left", { days, hours })}`;
   }
   // < 1 天：显示时分 + "Nh Mm" 倒计时
   const time = `${pad2(dt.getHours())}:${pad2(dt.getMinutes())}`;

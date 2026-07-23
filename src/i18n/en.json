@@ -69,6 +69,7 @@
       "daily_prefix": "Daily reset",
       "reset_done": "(reset)",
       "days_left": "({days}d)",
+      "days_hours_left": "({days}d {hours}h)",
       "minutes_left": "(in {minutes} min)",
       "hours_minutes": "({hours}h{minutes}m)"
     },

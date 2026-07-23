@@ -23,9 +23,27 @@
 //! 改用 cookie 中转（跟 xiaomi 的 `cookies_for_url()` 同套机制）：
 //!
 //! 1. init script 起 `setInterval` 监听 localStorage（key=`search-template-auth-state`）
-//!    → 一旦 `.state.accessToken` 出现，就写一个**同源 cookie** `MUSAGE_TOKEN=<jwt>`
+//!    → 一旦 `.state.accessToken` 出现，就写一个**同源 cookie** `MUSAGE_TOKEN`。
+//!    cookie 值是 **`<access>...<refresh>`**（有 refreshToken 时）或裸 access（没有时）——
+//!    `...` 哨兵分隔符跟 StepFun combined-token 约定一致（`...` 不是 base64url
+//!    合法字符，绝不跟 JWT 自身内容冲突）。
 //! 2. Rust 端用 [`tauri::WebviewWindow::cookies_for_url`] 读 cookie jar → 按白名单
-//!    `MUSAGE_TOKEN` name 拿 value → 校验 JWT 形态 → 保存
+//!    `MUSAGE_TOKEN` name 拿 value → 校验形态 → 保存
+//!
+//! ## 为什么要连 refreshToken 一起抓（AnySearch 特有）
+//!
+//! AnySearch 的 access token 是 **OAuth 短命令牌，寿命仅 30 分钟**（实测 JWT
+//! `exp - iat = 1800s`）。只存 access → 用户出门吃个饭回来必掉线（浮窗 401）。
+//! auth-state 里同时有一个长效 `refreshToken`，配 `POST /api/ssuser/auth/refresh`
+//! 端点（body `{refresh_token}` → 返新的 `{access_token, refresh_token,
+//! expires_in_seconds}`）可换新的 access。所以这里把 access + refresh 一起抓下来
+//! （combined 存进 cookie 槽位），provider 侧在 access 快过期时主动 refresh
+//! （详见 [`crate::providers::anysearch`]）。
+//!
+//! ⚠️ **refresh token 是单次轮换的（single-use rotation）**：每次 refresh 都换发
+//! 一个新的 refresh_token 并作废旧的（实测旧 token 复用返 `40114 revoked`）。
+//! 所以 provider refresh 成功后**必须**把新的 refresh_token 原子写回 keys.json，
+//! 否则下一轮就废了。
 //!
 //! 用 `setInterval` 而不是 `on_page_load` 是因为 AnySearch 登录后是 **SPA 客户端
 //! 跳转**（pushState，不触发 document load），`on_page_load` 不会再 fire；interval
@@ -159,12 +177,22 @@ fn init_script() -> String {
                 }
             } catch (_) {}
             // ── 读 token ──
+            // 返回 `access...refresh`（有 refreshToken 时）或裸 access（没有时）。
+            // 分隔符 `...` 跟 StepFun 的 combined-token 约定一致：`...` 不是
+            // base64url 合法字符（JWT 只含 A-Za-z0-9-_ + '.'），所以拿它当哨兵
+            // 分隔两段 token 绝不会跟 token 自身内容冲突。Rust 端按 `...` split
+            // 出 access / refresh 两半：access 用来请求 + 本地读 exp，refresh 用来
+            // 到期时换新（AnySearch access token 仅 30 分钟寿命）。
             function readToken() {
                 try {
                     var raw = localStorage.getItem(LS_KEY);
                     if (!raw) return "";
                     var st = JSON.parse(raw);
-                    return (st && st.state && st.state.accessToken) || "";
+                    var s = (st && st.state) || {};
+                    var access = s.accessToken || "";
+                    if (!access) return "";
+                    var refresh = s.refreshToken || "";
+                    return refresh ? (access + "..." + refresh) : access;
                 } catch (_) { return ""; }
             }
             // ── 每 500ms 把 token 写到 cookie（覆盖式，方便 Rust 端轮询读）──

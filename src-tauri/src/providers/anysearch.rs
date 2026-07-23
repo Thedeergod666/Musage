@@ -11,13 +11,36 @@
 //! 是「全 key 累计调用数」、无日配额/剩余额度）；**真正展示给用户看的用量在
 //! `/api/api/user/billing/overview`**（overview 页直接调它）。
 //!
+//! ## ⭐ access token 短命 + 主动续期（refresh token 方案）
+//!
+//! AnySearch 的 access token 是 **OAuth 短命令牌，寿命仅 30 分钟**（实测 JWT
+//! `exp - iat = 1800s`）。若只存 access，用户「出门吃个饭回来必掉线」（浮窗 401）。
+//! 解法：登录时连 **refreshToken** 一起抓下来（[`crate::anysearch_login`]），combined
+//! 成 `<access>...<refresh>` 存进 cookie 槽位；本 provider 在请求前：
+//!
+//! 1. 按 `...` 哨兵 split 出 access / refresh 两半（无 `...` = 老格式/手动粘贴的裸
+//!    access，退化成只有 access、无法续期）。
+//! 2. **本地预检** access 的 `exp` claim：已过期或 `SKEW_SECS`(120s) 内将过期，
+//!    且有 refresh token → 先调 `POST /api/ssuser/auth/refresh` 换新的 access+refresh。
+//! 3. 用（可能刚换的）access 请求 billing/overview。
+//! 4. **兜底**：若请求仍返 401（本地预检没抓到、但服务端已作废），有 refresh 时
+//!    再 refresh 一次 + 重试一遍请求。
+//!
+//! ⚠️ **refresh token 单次轮换（single-use rotation）**：每次 refresh 换发一个新的
+//! refresh_token 并作废旧的（实测旧 token 复用返 `40114 revoked`）。所以 refresh
+//! **成功后必须**把新的 `<access>...<refresh>` 原子写回 keys.json（`save_credential_for_id`），
+//! 否则下一轮 refresh 就废了。写回用 `unique_id`（跟 poller/commands load 的 key 一致，
+//! 副本 `anysearch#2` 也对得上）。
+//!
 //! 用户操作（推荐一键登录，详见 [`crate::anysearch_login`]）：
 //! 1. 设置面板点 “🔑 登录 AnySearch” → 弹 webview → 登录 anysearch.com
-//! 2. 后端从 webview 的 localStorage 抽出 JWT → 写 keys.json
-//! 3. 后台轮询用这个 JWT 拉数据；JWT 过期 (HTTP 401) 时错误信息引导重新登录
+//! 2. 后端从 webview 的 localStorage 抽出 access+refresh JWT → 写 keys.json
+//! 3. 后台轮询用 access 拉数据，到期自动用 refresh 续；refresh 也失效时 (HTTP 401)
+//!    错误信息引导重新登录
 //!
-//! 也支持手动兜底：把 JWT 整段粘到下面的 “Cookie / Token” 文本框（跟 cookie 字段共用
-//! 存储槽位，[`AuthKind::Cookie`]）。
+//! 也支持手动兜底：把 access JWT 整段粘到下面的 “Cookie / Token” 文本框（跟 cookie
+//! 字段共用存储槽位，[`AuthKind::Cookie`]）。手动粘贴无 refresh 半段 → 不能续期，
+//! 30 分钟后仍需重新粘。
 //!
 //! ## 响应 schema
 //!
@@ -54,6 +77,8 @@
 use std::borrow::Cow;
 use std::pin::Pin;
 
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use serde_json::{json, Value};
 
 use super::{
@@ -67,6 +92,21 @@ use crate::t;
 /// 返回用户的日/月配额、剩余、QPS、重置时间。`/api/api/user/keys` 只返
 /// API key 元数据，不是用户用量。
 const URL: &str = "https://www.anysearch.com/api/api/user/billing/overview";
+
+/// access token 刷新端点（逆向自 anysearch.com 前端 bundle）。
+/// `POST` body `{"refresh_token": "..."}` → 返
+/// `{code:0, data:{access_token, refresh_token, expires_in_seconds}}`。
+/// ⚠️ refresh token 单次轮换：每次换发新的、作废旧的。
+const REFRESH_URL: &str = "https://www.anysearch.com/api/ssuser/auth/refresh";
+
+/// combined token 的哨兵分隔符：`<access>...<refresh>`。`...` 不是 base64url
+/// 合法字符（JWT 只含 `A-Za-z0-9-_` + `.`），拿它当分隔符绝不跟 token 内容冲突。
+/// 跟 StepFun combined-token 约定一致。
+const TOKEN_SEP: &str = "...";
+
+/// access token 过期缓冲：距 `exp` 不足这个秒数就提前 refresh（避免「刚好卡在
+/// 请求发出瞬间过期」的边界 401）。
+const SKEW_SECS: i64 = 120;
 
 // ── QuotaSource 实现 ─────────────────────────────────────────────
 
@@ -149,17 +189,173 @@ impl QuotaSource for AnysearchSource {
                     t!("error.anysearch.token_empty").into_owned(),
                 ));
             }
-            do_fetch(token, &self.unique_id(), &self.display_name().to_string()).await
+            do_fetch(
+                token,
+                &self.unique_id(),
+                &self.display_name().to_string(),
+            )
+            .await
         })
     }
 }
 
+/// 从 combined `<access>...<refresh>` 拆出两半。无 `...` = 老格式 / 手动粘贴的
+/// 裸 access → refresh 半段为 None（不能续期）。
+fn split_token(combined: &str) -> (&str, Option<&str>) {
+    match combined.split_once(TOKEN_SEP) {
+        Some((access, refresh)) => {
+            let refresh = refresh.trim();
+            (
+                access.trim(),
+                if refresh.is_empty() {
+                    None
+                } else {
+                    Some(refresh)
+                },
+            )
+        }
+        None => (combined.trim(), None),
+    }
+}
+
+/// 本地预检 access token 的 `exp` claim（不校验签名，参考 stepfun）。
+///
+/// 返回距过期的秒数：`> 0` = 还有 N 秒有效；`<= 0` = 已过期 |N| 秒。
+/// 解析不出 `exp` 时返 `None`（交给服务端 401 兜底路径）。
+fn access_expires_in_secs(access: &str) -> Option<i64> {
+    let payload_b64 = access.split('.').nth(1)?.trim_end_matches('=');
+    let bytes = URL_SAFE_NO_PAD.decode(payload_b64).ok()?;
+    let v: Value = serde_json::from_slice(&bytes).ok()?;
+    let exp = v.get("exp").and_then(|x| x.as_i64())?;
+    Some(exp - chrono::Utc::now().timestamp())
+}
+
+/// 调 refresh 端点用 refresh_token 换新的 `<access>...<refresh>`。
+///
+/// 成功后**立即**把新 combined 原子写回 keys.json（`save_credential_for_id(unique_id)`）——
+/// refresh token 单次轮换，不写回下一轮就废。写回失败只 warn 不阻塞（本轮拿到的
+/// 新 access 仍可用，只是下次得重登）。返回新的 combined token。
+async fn refresh_token(refresh: &str, unique_id: &str) -> Result<String, FetchError> {
+    let client = shared_client();
+    let resp = client
+        .post(REFRESH_URL)
+        .header("Accept", "application/json")
+        .json(&json!({ "refresh_token": refresh }))
+        .send()
+        .await
+        .map_err(|e| {
+            FetchError::network(
+                t!("error.common.network", url = REFRESH_URL, err = e.to_string()).into_owned(),
+            )
+        })?;
+
+    let status = resp.status();
+    let raw: Value = resp.json().await.map_err(|e| {
+        FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
+    })?;
+
+    // 业务级 code（0 = 成功；40114 = refresh token 已作废 → 需重新登录）
+    let code = raw.get("code").and_then(|v| v.as_i64()).unwrap_or(0);
+    if !status.is_success() || code != 0 {
+        // refresh 失败几乎都是 refresh token 也过期/被作废 → 引导重新登录
+        return Err(FetchError::auth(
+            t!("error.anysearch.token_invalid_hint").into_owned(),
+        ));
+    }
+
+    let data = raw.get("data").ok_or_else(|| {
+        FetchError::auth(t!("error.anysearch.token_invalid_hint").into_owned())
+    })?;
+    let new_access = data
+        .get("access_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    let new_refresh = data
+        .get("refresh_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    if new_access.is_empty() || new_refresh.is_empty() {
+        return Err(FetchError::auth(
+            t!("error.anysearch.token_invalid_hint").into_owned(),
+        ));
+    }
+
+    let combined = format!("{new_access}{TOKEN_SEP}{new_refresh}");
+
+    // 原子写回（单次轮换硬约束）。失败只 warn —— 本轮新 access 仍可用。
+    let cred = Credentials {
+        api_key: None,
+        cookie: Some(combined.clone()),
+    };
+    if let Err(e) = crate::config::save_credential_for_id(unique_id, &cred) {
+        tracing::warn!(error = %e, unique_id, "anysearch refresh 后写回 keys.json 失败（本轮仍可用，下次可能需重登）");
+    } else {
+        tracing::info!(unique_id, "anysearch access token 已通过 refresh 续期并写回");
+    }
+
+    Ok(combined)
+}
+
 async fn do_fetch(
-    token: &str,
-    source_id: &str,
+    combined: &str,
+    unique_id: &str,
     display_name: &str,
 ) -> Result<ProviderSnapshot, FetchError> {
-    if token.trim().is_empty() {
+    if combined.trim().is_empty() {
+        return Err(FetchError::unconfigured(
+            t!("error.anysearch.token_empty").into_owned(),
+        ));
+    }
+
+    let (access, refresh) = split_token(combined);
+    let mut access = access.to_string();
+
+    // ── 主动续期：本地预检 access exp，快过期且有 refresh → 先换新 ──
+    if let Some(refresh) = refresh {
+        let should_refresh = match access_expires_in_secs(&access) {
+            Some(remaining) => remaining <= SKEW_SECS, // 已过期或 SKEW 内将过期
+            None => false, // 解析不出 exp → 不主动 refresh，交给 401 兜底
+        };
+        if should_refresh {
+            match refresh_token(refresh, unique_id).await {
+                Ok(new_combined) => {
+                    let (new_access, _) = split_token(&new_combined);
+                    access = new_access.to_string();
+                }
+                // 主动 refresh 失败（refresh 也废了）→ 直接返 auth 错误引导重登
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    // ── 用 access 请求 billing/overview ──
+    match do_fetch_once(&access, unique_id, display_name).await {
+        // 兜底：请求仍 401（本地预检没抓到 / access 实际已被服务端作废），
+        // 且有 refresh → refresh 一次再重试一遍。
+        Err(e) if e.kind == super::ErrorKind::AuthFailed => {
+            if let Some(refresh) = refresh {
+                let new_combined = refresh_token(refresh, unique_id).await?;
+                let (new_access, _) = split_token(&new_combined);
+                do_fetch_once(new_access, unique_id, display_name).await
+            } else {
+                // 无 refresh（手动粘贴的裸 access）→ 原样返回引导重登
+                Err(e)
+            }
+        }
+        other => other,
+    }
+}
+
+/// 单次 billing/overview 请求（不含续期逻辑）。`access` 是纯 access JWT。
+async fn do_fetch_once(
+    access: &str,
+    unique_id: &str,
+    display_name: &str,
+) -> Result<ProviderSnapshot, FetchError> {
+    let token = access.trim();
+    if token.is_empty() {
         return Err(FetchError::unconfigured(
             t!("error.anysearch.token_empty").into_owned(),
         ));
@@ -187,7 +383,8 @@ async fn do_fetch(
         ));
     }
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        // JWT 过期 / 无效 —— 引导用户点浮窗「重新登录」（前端按 auth_failed 分发按钮）
+        // JWT 过期 / 无效 —— 上层 do_fetch 见 AuthFailed 会尝试 refresh；
+        // refresh 也失败时这个文案引导用户点浮窗「重新登录」。
         return Err(FetchError::auth(
             t!("error.anysearch.token_invalid_hint").into_owned(),
         ));
@@ -220,7 +417,7 @@ async fn do_fetch(
         }
     }
 
-    parse(&raw, source_id, display_name)
+    parse(&raw, unique_id, display_name)
 }
 
 /// 解析 `/api/api/user/billing/overview` 响应。
@@ -369,6 +566,65 @@ fn num_f64(obj: &Value, field: &str) -> Option<f64> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // ── combined token split + exp 预检 ──
+
+    #[test]
+    fn split_token_combined() {
+        let (a, r) = split_token("eyJaccess...myrefresh");
+        assert_eq!(a, "eyJaccess");
+        assert_eq!(r, Some("myrefresh"));
+    }
+
+    #[test]
+    fn split_token_bare_access_no_refresh() {
+        // 老格式 / 手动粘贴的裸 access → refresh 半段 None（不能续期）
+        let (a, r) = split_token("eyJbareAccessOnly");
+        assert_eq!(a, "eyJbareAccessOnly");
+        assert_eq!(r, None);
+    }
+
+    #[test]
+    fn split_token_trims_and_empty_refresh_is_none() {
+        let (a, r) = split_token("  eyJx  ...   ");
+        assert_eq!(a, "eyJx");
+        assert_eq!(r, None, "空 refresh 半段 → None");
+    }
+
+    #[test]
+    fn access_expires_in_secs_reads_exp() {
+        // 构造一个 exp = now + 1000s 的极简 JWT（header.payload.sig，只 payload 有用）
+        let future = chrono::Utc::now().timestamp() + 1000;
+        let payload = json!({ "exp": future });
+        let payload_b64 =
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap());
+        let jwt = format!("eyJhbGciOiJFZERTQSJ9.{payload_b64}.sig");
+        let remaining = access_expires_in_secs(&jwt).expect("应解析出 exp");
+        assert!(
+            (900..=1000).contains(&remaining),
+            "剩余应 ~1000s，实际 {remaining}"
+        );
+    }
+
+    #[test]
+    fn access_expires_in_secs_expired_is_negative() {
+        let past = chrono::Utc::now().timestamp() - 500;
+        let payload = json!({ "exp": past });
+        let payload_b64 =
+            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap());
+        let jwt = format!("eyJhbGciOiJFZERTQSJ9.{payload_b64}.sig");
+        let remaining = access_expires_in_secs(&jwt).expect("应解析出 exp");
+        assert!(remaining < 0, "已过期应为负，实际 {remaining}");
+    }
+
+    #[test]
+    fn access_expires_in_secs_no_exp_or_garbage_is_none() {
+        assert!(access_expires_in_secs("not-a-jwt").is_none());
+        // 合法结构但 payload 无 exp
+        let payload_b64 = URL_SAFE_NO_PAD.encode(b"{\"sub\":\"x\"}");
+        let jwt = format!("h.{payload_b64}.s");
+        assert!(access_expires_in_secs(&jwt).is_none());
+    }
 
     /// 真实 console overview 抓的 Free Plan 数据
     const FREE_PLAN_OK: &str = r#"{

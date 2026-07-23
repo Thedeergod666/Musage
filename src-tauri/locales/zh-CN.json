@@ -20,6 +20,7 @@
   "row": {
     "five_hour": "5h",
     "weekly": "周",
+    "weekly_7d": "7d",
     "credit": "额度",
     "balance": "余额",
     "plan": "套餐",

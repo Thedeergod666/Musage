@@ -216,11 +216,12 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
     }
 
     // ── 周限额：从顶层 usage 取 ──
+    // Kimi 的周窗固定显示 "7d"（跟 5h 形成对称 5h/7d），跟 MiniMax / GLM 区分
     if let Some(usage) = raw.get("usage") {
         let resets_at = extract_reset_ms(usage.get("resetTime"));
         if let Some(row) = build_window_row(
             usage,
-            t!("row.weekly").to_string(),
+            t!("row.weekly_7d").to_string(),
             RowKind::Weekly,
             resets_at,
         ) {
@@ -372,7 +373,7 @@ mod tests {
         assert!(five_h.resets_at.is_some());
 
         let weekly = &snap.rows[1];
-        assert_eq!(weekly.label, t!("row.weekly"));
+        assert_eq!(weekly.label, t!("row.weekly_7d"));
         assert_eq!(weekly.kind, Some(RowKind::Weekly));
         assert!((weekly.utilization.unwrap() - 25.8).abs() < 0.001);
         assert_eq!(weekly.remaining, Some(742.0));
@@ -401,7 +402,7 @@ mod tests {
         });
         let snap = parse(&raw, "kimi", "Kimi").expect("parse");
         assert_eq!(snap.rows.len(), 1);
-        assert_eq!(snap.rows[0].label, t!("row.weekly"));
+        assert_eq!(snap.rows[0].label, t!("row.weekly_7d"));
         assert_eq!(snap.rows[0].resets_at, Some(1749840000000));
     }
 
@@ -414,7 +415,7 @@ mod tests {
         });
         let snap = parse(&raw, "kimi", "Kimi").expect("parse");
         assert_eq!(snap.rows.len(), 1); // 5h 被跳过
-        assert_eq!(snap.rows[0].label, t!("row.weekly"));
+        assert_eq!(snap.rows[0].label, t!("row.weekly_7d"));
     }
 
     #[test]

@@ -1,4 +1,16 @@
-<svg width="56" height="56" viewBox="0 0 56 56" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="56" height="56" rx="13" fill="#2563EB"/>
-  <path d="M17 39 L37 19 M21 19 H37 V35" stroke="#FFFFFF" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<svg width="56" height="56" viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- AnySearch mark: L-shape on left + 2 floating squares on right
+       从 cdn.anysearch.com/webSite-PC/images/anysearch-logo.webp (372x72)
+       左侧 mark 部分精确扫像素得到（ASCII 见 commit msg）。整体造型：
+       顶横条（占上半宽，连接到左竖条）+ 左竖条（贯穿全高）+ 底横条（从左
+       竖条向右延伸）+ 右上独立方块 + 右下独立方块。 -->
+  <!-- L 形主体：3 段拼合（顶横 / 左竖 / 底横），每段独立 rx 让所有内角
+       是圆角（跟原图吻合），外角也圆角 -->
+  <rect x="3"  y="6"  width="48" height="15" rx="3" fill="#2563EB"/>
+  <rect x="3"  y="6"  width="15"  height="59" rx="3" fill="#2563EB"/>
+  <rect x="3"  y="52" width="24" height="13" rx="3" fill="#2563EB"/>
+  <!-- 右上独立方块 -->
+  <rect x="51" y="6"  width="15" height="28" rx="3" fill="#2563EB"/>
+  <!-- 右下独立方块 -->
+  <rect x="51" y="51" width="15" height="14" rx="3" fill="#2563EB"/>
 </svg>

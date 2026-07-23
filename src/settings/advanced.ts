@@ -9,7 +9,7 @@ import { debounce } from "./utils";
 import { setSchemaOverrides } from "./api";
 import { el, flash } from "./utils";
 import type { AppConfig, FieldTriple, ProviderOverrides } from "./types";
-import { apiKeyPlaceholder, loadCredentialStatus } from "./credentials";
+import { apiKeyPlaceholder, cookieHelpNode, cookieLabelText, cookiePlaceholder, loadCredentialStatus } from "./credentials";
 import { t } from "../i18n";
 
 export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
@@ -200,13 +200,80 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
   );
   container.appendChild(xmSection);
 
+  // ── Claude 官方 + AnySearch cookie（主面板只显示 banner / 状态徽章）──
+  // 跟 Xiaomi 同款 hide_credentials=true 模式：cookie 不常改（Claude sessionKey
+  // ~8h 过期但平时一键重新登录流程不需要在主面板手填），挪到高级 tab 避免
+  // 占主面板空间 + 误改。status 徽章 id 与主面板一致（cookie-status-<id>），
+  // loadCredentialStatus 一次写两处。
+  container.appendChild(
+    renderHiddenCookieSection({
+      id: "claude_official",
+      title: t("settings.advanced.claude_credentials_title"),
+      help: t("settings.advanced.claude_credentials_help"),
+    }),
+  );
+  container.appendChild(
+    renderHiddenCookieSection({
+      id: "anysearch",
+      title: t("settings.advanced.anysearch_credentials_title"),
+      help: t("settings.advanced.anysearch_credentials_help"),
+    }),
+  );
+
   // 加载凭据状态（延迟，等 DOM 就绪）
   setTimeout(() => {
     void loadCredentialStatus("xiaomimimo");
+    void loadCredentialStatus("claude_official");
+    void loadCredentialStatus("anysearch");
   }, 100);
 
   // v0.2.1 commit 7 (P2-B-10): import/export 配置 section
   container.appendChild(renderImportExportSection());
+}
+
+/// hide_credentials provider（Claude / AnySearch）在高级 tab 渲染完整 cookie
+/// 输入 UI：textarea + status + save/del 按钮 + help。复用了 credentials.ts
+/// 的 cookiePlaceholder / cookieLabelText / cookieHelpNode 派发器，保证文案
+/// 跟主面板 banner 一致（sessionKey vs AnySearch JWT）。
+function renderHiddenCookieSection(args: {
+  id: string;
+  title: string;
+  help: string;
+}): HTMLElement {
+  const { id, title, help } = args;
+
+  return el("section", { class: "section-card" },
+    el("h2", {}, title),
+    el("div", { class: "help" }, help),
+    el("div", { class: "field" },
+      el("label", { for: `cookie-${id}-adv` }, cookieLabelText(id)),
+      el("textarea", {
+        id: `cookie-${id}-adv`,
+        "data-id": id,
+        "data-advanced": "true",
+        rows: "4",
+        placeholder: cookiePlaceholder(id),
+      }) as HTMLTextAreaElement,
+      el("div", { class: "status", id: `cookie-status-${id}-adv`, "data-id": id }, t("credentials.cookie_status_placeholder")),
+      el("div", { class: "row" },
+        el("button", {
+          class: "primary",
+          id: `save-cookie-${id}-adv`,
+          "data-id": id,
+          "data-action": "save-cookie",
+          "data-advanced": "true",
+        }, t("credentials.save_cookie")),
+        el("button", {
+          class: "danger",
+          id: `del-cookie-${id}-adv`,
+          "data-id": id,
+          "data-action": "del-cookie",
+          "data-advanced": "true",
+        }, t("credentials.del_cookie")),
+      ),
+      el("div", { class: "help" }, cookieHelpNode(id)),
+    ),
+  );
 }
 
 // ── v0.2.1 commit 7: Import/Export 配置(无 keys) ──────────────────

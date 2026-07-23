@@ -238,15 +238,31 @@ export function renderCredentialBlock(meta: SourceMeta): HTMLElement {
         ),
       );
     }
+    // ── hide_credentials (Claude / AnySearch)：主面板只渲染 banner + 状态徽章 ──
+    // 真正的 cookie textarea + 保存/删除按钮在「高级」tab 里渲染（跟 Xiaomi
+    // 同款 UX：cookie 不常改、不占主面板空间、避免误改）。
+    // status 元素 id 仍叫 cookie-status-<id>（不带 -adv 后缀），让主面板也能
+    // 显示「已配置 / 未配置」状态（loadCredentialStatus 同时写主面板 + adv）。
+    if (meta.hide_credentials) {
+      block.appendChild(
+        el("div", { class: "field" },
+          el("div", { class: "status", id: `cookie-status-${meta.id}`, "data-id": meta.id }, t("credentials.cookie_status_placeholder")),
+          el("div", { class: "help" },
+            cookieHelpNode(meta.id),
+          ),
+        ),
+      );
+      return block;
+    }
     const textarea = el("textarea", {
       id: `cookie-${meta.id}`,
       "data-id": meta.id,
       rows: "4",
-      placeholder: t("credentials.cookie_textarea_placeholder"),
+      placeholder: cookiePlaceholder(meta.id),
     }) as HTMLTextAreaElement;
     block.appendChild(
       el("div", { class: "field" },
-        el("label", {}, t("credentials.cookie_label")),
+        el("label", {}, cookieLabelText(meta.id)),
         textarea,
         el("div", { class: "status", id: `cookie-status-${meta.id}`, "data-id": meta.id }, t("credentials.cookie_status_placeholder")),
       ),
@@ -259,7 +275,7 @@ export function renderCredentialBlock(meta: SourceMeta): HTMLElement {
     );
     block.appendChild(
       el("div", { class: "help" },
-        meta.id === "anysearch" ? renderHelp(t("help.anysearch")) : cookieHelpNode(),
+        meta.id === "anysearch" ? renderHelp(t("help.anysearch")) : cookieHelpNode(meta.id),
       ),
     );
   }
@@ -359,7 +375,7 @@ function renderMultiAuthBlock(meta: SourceMeta): HTMLElement {
           el("button", { class: "danger", id: `del-cookie-${meta.id}`, "data-id": meta.id, "data-action": "del-cookie" }, t("credentials.delete")),
         ),
         el("div", { class: "help" },
-          cookieHelpNode(),
+          cookieHelpNode(meta.id),
         ),
       ),
     );
@@ -435,8 +451,35 @@ function apiKeyHelpNode(id: string): HTMLElement {
   return renderHelp(html);
 }
 
-function cookieHelpNode(): HTMLElement {
-  return renderHelp(t("help.xiaomi_cookie"));
+export function cookieHelpNode(id: string): HTMLElement {
+  // 按 provider id 派发 help.${id}。Cookie 单鉴权 mode 下被 AnySearch /
+  // Claude 共用；之前硬编码 xiaomi_cookie 是 bug —— Claude 显示的是小米
+  // dashboard 教程（platform.xiaomimimo.com / api-platform_serviceToken…），
+  // 跟 claude.ai 的 sessionKey 流程毫无关系。
+  // 缺省 fallback xiaomi_cookie 兼容未来可能新增的 cookie 模式 provider。
+  const key = `help.${id}`;
+  const html = t(key);
+  if (html === key) {
+    return renderHelp(t("help.xiaomi_cookie"));
+  }
+  return renderHelp(html);
+}
+
+/// Cookie textarea placeholder：跟 cookieHelpNode 同样的派发，避免 Claude 卡片
+/// 默认显示 Xiaomi 的 `api-platform_serviceToken=...` 占位符（用户根本不知道
+/// 那是哪个平台的字段名）。
+export function cookiePlaceholder(id: string): string {
+  const key = `credentials.cookie_textarea_placeholder.${id}`;
+  const v = t(key);
+  return v === key ? t("credentials.cookie_textarea_placeholder") : v;
+}
+
+/// Cookie field label：默认 `Cookie header 值`（Xiaomi 风格）；Claude / AnySearch
+/// 各自有更精确的标签（"sessionKey Cookie" / "AnySearch 登录 token"）。
+export function cookieLabelText(id: string): string {
+  const key = `credentials.cookie_label.${id}`;
+  const v = t(key);
+  return v === key ? t("credentials.cookie_label") : v;
 }
 
 // ── 统一 id-based 凭据操作（动态 panel 按钮事件委托走这里）──

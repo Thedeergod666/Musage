@@ -647,7 +647,12 @@ pub async fn list_sources(state: State<'_, AppState>) -> Result<Vec<SourceMeta>,
             },
             enabled: cfg.is_enabled_id(s.id().as_ref()),
             // Xiaomi: API key (Bearer) 永远 401，手动 cookie 是兜底 → 都放高级 tab
-            hide_credentials: s.id() == "xiaomimimo",
+            hide_credentials: {
+                let id = s.id();
+                id == "xiaomimimo"
+                    || id == "claude_official" // sessionKey 约 8h 过期，不常改
+                    || id == "anysearch"      // 一键登录 banner 在主面板，cookie textarea 放高级
+            },
             is_stub: s.is_stub(),
         })
         .collect())

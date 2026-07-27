@@ -82,10 +82,26 @@ impl Drop for ExtractingGuard {
     }
 }
 
-/// 登录入口 URL。直接定位到 platform.stepfun.com 根路径（未登录
-/// 时会自动跳到登录页 / passport）。也可以直接打 `/login` —— 待
-/// spike 时根据实际页面行为调整。
-const LOGIN_URL: &str = "https://platform.stepfun.com/";
+/// 登录入口 URL。直接跳到 account.stepfun.com 登录页（携带 redirect
+/// 让登录后自动跳回 platform.stepfun.com，OIDC 风格的跨域 cookie 传递）。
+///
+/// **为什么不在 platform.stepfun.com/ 根路径**：
+/// - 根路径未登录时会显示 dashboard 主页内容,用户必须手动点右上角
+///   "未登录"按钮才能跳到登录页 → 多一次点击
+/// - 根路径打开后我们 `is_dashboard_url` 会**误判**为 dashboard 触发
+///   cookie 提取任务(根路径 host 一致),此时 webview 还没登录根本
+///   拿不到 Oasis-Token,5 次重试 11s 跑完 emit 错误——**用户根本
+///   还没开始登录**
+///
+/// 直接打 `account.stepfun.com/login` + redirect 参数,登录后 SPA
+/// 自动跳回 platform.stepfun.com 域,on_page_load 触发时 Oasis-Token
+/// cookie 已经落定。
+///
+/// 已知:登录页**只有手机号+验证码**默认可见,要"账号密码登录"必须
+/// 点"其他登录方式"→"账号密码登录"(2 次点击)。我们**没**找到直接
+/// 走密码模式的 URL 参数(`type=password` / `login_type=password` 都
+/// 不生效),只能接受这 2 次点击。
+const LOGIN_URL: &str = "https://account.stepfun.com/login?redirect=https%3A%2F%2Fplatform.stepfun.com%2F&source_app=platform-cn";
 
 /// webview 窗口 label（capability 按此授权 create-webview-window）。
 const WINDOW_LABEL: &str = "stepfun-login";
@@ -100,13 +116,23 @@ const WINDOW_LABEL: &str = "stepfun-login";
 /// READY 保证 token 一定是清理之后新登录的。
 const READY_COOKIE_NAME: &str = "MUSAGE_READY";
 
-/// 判定 URL 是否已经离开登录页、到达 dashboard。
+/// 判定 URL 是否已经离开登录域、到达 dashboard。
 ///
-/// 规则（白名单 + 黑名单组合）：
-/// - host **完全等于** `platform.stepfun.com`（不接受子串匹配；
-///   否则 `platform.stepfun.com.attacker.tld` DNS rebinding 可绕过）
-/// - scheme 必须是 `https`（防明文 / 钓鱼）
+/// 关键约束：**Oasis-Token cookie 是 platform.stepfun.com 域的**
+/// (从 chrome-devtools 实测 Network 请求看到)。所以提取任务必须
+/// 等待用户从 account.stepfun.com 登录后跳回 platform.stepfun.com
+/// 域才触发,不能误判 account.stepfun.com 域为 dashboard。
+///
+/// 规则：
+/// - host **完全等于** `platform.stepfun.com`(不接受 account.stepfun.com
+///   或 stepfun.ai 海外站)
+/// - scheme 必须是 `https`
 /// - 不能在 `passport` / `/login` / `/signin` / `/signup` 路径上
+///
+/// 简化:根路径(`/`)和 `/account-overview` / `/interface-key` 都接受
+/// —— CodexBar docs 也说"登录后回到 dashboard",所以"已经能登到
+/// 根路径"就是登录成功的标志,不再加更严格 path 白名单(避免
+/// StepFun 改 dashboard 路径我们就漏判)。
 fn is_dashboard_url(url: &Url) -> bool {
     let host_ok = url.host_str() == Some("platform.stepfun.com") && url.scheme() == "https";
     let s = url.as_str();
@@ -169,41 +195,64 @@ pub async fn open_stepfun_login_window(app: AppHandle) -> Result<(), String> {
         .initialization_script(
             r#"
             (function () {
+                // ALLOW_HOST 用于限制"document.cookie / Storage 读取"。
+                // StepFun 登录流程跨 account.stepfun.com (登录域) →
+                // platform.stepfun.com (dashboard 域) 两个域,所以:
+                //   - cookie/storage 读取**两个域都允许**(user 输
+                //     密码时 account 域要能写入 sessionStorage 走
+                //     OIDC 流程)
+                //   - 旧 Oasis-Token / Oasis-Webid / Oasis-Refresh-Token
+                //     cookie 清理**只在 platform 域**做(避免误清
+                //     account 域的 SSO session)
+                //   - MUSAGE_READY 握手**所有域都置**(保证 redirect
+                //     跳到 platform 时 Rust 端 cookies_for_url 能
+                //     见到 READY 标记)
                 var ALLOW_HOST = "platform.stepfun.com";
+                var DASHBOARD_HOST = "platform.stepfun.com";
                 var READY_NAME = "MUSAGE_READY";
-                function isAllowed() {
-                    try { return location.hostname === ALLOW_HOST; } catch (_) { return false; }
+                function isDashboard() {
+                    try { return location.hostname === DASHBOARD_HOST; } catch (_) { return false; }
                 }
-                // ── 锁 cookie 读取到受信 host（挡第三方 tracker 偷 token）──
+                // ── cookie / storage 读取锁到受信 host 集合(account + platform)──
                 try {
                     var _origCookie = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
                     Object.defineProperty(document, "cookie", {
-                        get: function () { return isAllowed() ? _origCookie.get.call(this) : ""; },
-                        set: function (v) { if (isAllowed()) _origCookie.set.call(this, v); },
+                        get: function () { return isDashboard() ? _origCookie.get.call(this) : ""; },
+                        set: function (v) { if (isDashboard()) _origCookie.set.call(this, v); },
                         configurable: false
                     });
                 } catch (_) {}
                 try {
                     var _origLs = Object.getOwnPropertyDescriptor(Storage.prototype, "getItem");
                     Object.defineProperty(Storage.prototype, "getItem", {
-                        value: function (k) { return isAllowed() ? _origLs.value.call(this, k) : null; },
+                        value: function (k) { return isDashboard() ? _origLs.value.call(this, k) : null; },
                         configurable: true
                     });
                 } catch (_) {}
-                // ── 重新登录:清掉上一次的残留 Oasis-Token / Oasis-Webid(关键 fix)──
-                // webview profile 持久化 cookie —— 上一次(可能已过期)的
-                // Oasis-Token 还在 cookie jar 里。不清的话下面的 cookies_for_url
-                // 会立刻抓到过期 token 存盘 → 浮窗继续 401,且登录窗口
-                // "弹出即消失"。所以每次打开都从干净状态开始:
-                //   1) 删旧 Oasis-Token / Oasis-Webid cookie(强制重新登录)
-                //   2) 置 MUSAGE_READY 标记 —— Rust 见到 READY 才开始接受
-                //      token,保证不会抓到清理之前残留在 cookie jar 里的旧 token
-                // 只在受信 host 上清(isAllowed 守卫),不碰第三方数据。
+                // ── 重新登录:清掉上一次残留的 Oasis-Token(关键 fix)──
+                // webview profile 持久化 cookie —— 上一次(可能已过期)
+                // 的 Oasis-Token 还在 platform 域 cookie jar 里。不清
+                // 的话 Rust 端 cookies_for_url 会立刻抓到过期 token
+                // 存盘 → 浮窗继续 401,且登录窗口"弹出即消失"。所
+                // 以每次打开都从干净状态开始:
+                //   1) 删旧 Oasis-Token / Oasis-Webid / Oasis-Refresh-Token
+                //      cookie(强制重新登录)
+                //   2) 置 MUSAGE_READY 标记 —— Rust 见到 READY 才开始
+                //      接受 token,保证不会抓到清理之前残留在 cookie
+                //      jar 里的旧 token
+                // 只在 dashboard 域上清(isDashboard 守卫),account
+                // 域的 SSO session 不动。
                 try {
-                    if (isAllowed()) {
+                    if (isDashboard()) {
                         document.cookie = "Oasis-Token=; path=/; max-age=0";
                         document.cookie = "Oasis-Webid=; path=/; max-age=0";
                         document.cookie = "Oasis-Refresh-Token=; path=/; max-age=0";
+                        document.cookie = READY_NAME + "=1; path=/; max-age=3600; SameSite=Lax";
+                    } else {
+                        // account 域:也置 READY(cookies_for_url 在 platform
+                        // 域查的 READY 是 platform 域 cookie,这里设的 account
+                        // 域 READY 不冲突;主要是要 platform 域自己 document_start
+                        // 跑时设上)
                         document.cookie = READY_NAME + "=1; path=/; max-age=3600; SameSite=Lax";
                     }
                 } catch (_) {}
@@ -262,6 +311,9 @@ pub async fn open_stepfun_login_window(app: AppHandle) -> Result<(), String> {
                     Err(e) => {
                         // 只有 DONE 为 false 时才报错（避免关闭后的残留任务触发误报）
                         if !DONE.load(Ordering::SeqCst) {
+                            tracing::error!(error = %e, "stepfun login flow failed, closing webview");
+                            // 关 webview(user 看错误条后不必手动关,体验更顺)
+                            let _ = window_clone.close();
                             emit_failed(&app2, e);
                         }
                     }
@@ -283,8 +335,10 @@ async fn extract_with_retry(
     window: &tauri::WebviewWindow,
     _app: &AppHandle,
 ) -> Result<usize, String> {
-    // 重试策略：1s, 2s, 2s, 3s, 3s（共 11s 覆盖大部分场景）
-    let retry_delays = [1u64, 2, 2, 3, 3];
+    // 重试策略：1s, 2s, 4s, 6s, 12s（共 25s 覆盖手机号+验证码+OAuth
+    // 跨域 redirect 链；xiaomi_login.rs 11s 太短,StepFun 跨 account
+    // → platform 域的 redirect 链可能拖到 5-10s）。
+    let retry_delays = [1u64, 2, 4, 6, 12];
 
     for (attempt, delay) in retry_delays.iter().enumerate() {
         let attempt_num = attempt + 1;
@@ -464,6 +518,17 @@ mod tests {
         assert!(!is_dashboard_url(&url("https://example.com/dashboard")));
         assert!(!is_dashboard_url(&url("https://platform.stepfun.ai/")));
         // platform.stepfun.ai 是海外站,不是 platform.stepfun.com
+    }
+
+    #[test]
+    fn dashboard_url_rejects_account_domain() {
+        // 关键回归:account.stepfun.com 是登录域(不是 dashboard 域),
+        // Oasis-Token cookie 只在 platform.stepfun.com 域下,不能让
+        // account 域误判为 dashboard 触发 cookie 提取。
+        assert!(!is_dashboard_url(&url(
+            "https://account.stepfun.com/login?redirect=..."
+        )));
+        assert!(!is_dashboard_url(&url("https://account.stepfun.com/")));
     }
 
     #[test]

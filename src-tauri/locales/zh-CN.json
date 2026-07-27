@@ -177,6 +177,7 @@
     "settings": "Musage · 设置",
     "xiaomi_login": "登录小米账号 - Musage",
     "anysearch_login": "登录 AnySearch - Musage",
+    "stepfun_login": "登录 StepFun - Musage",
     "floating": "Musage"
   },
   "provider_name": {
@@ -220,6 +221,19 @@
   "anysearch_login": {
     "parse_login_url": "parse LOGIN_URL: {err}",
     "build_webview": "build webview: {err}",
+    "save_keys_failed": "写 keys.json 失败: {err}"
+  },
+  "stepfun_login": {
+    "parse_login_url": "parse LOGIN_URL: {err}",
+    "parse_url": "parse url: {err}",
+    "build_webview": "build webview: {err}",
+    "another_task_done": "另一个提取任务已经完成",
+    "read_url_failed": "读 webview URL 失败: {err}",
+    "cookie_extraction_failed": "Cookie 提取失败 —— 多次重试后仍未找到 Oasis-Token。请检查: 1) 登录已成功完成; 2) 已到达 platform.stepfun.com dashboard 页面",
+    "cookies_for_url_failed": "webview.cookies_for_url 失败: {err}",
+    "cookies_not_found": "未找到 StepFun dashboard cookie（共 {count} 个，期望 {expected} 个: {wanted}）。实际可用: {available}",
+    "cookies_incomplete": "提取的 cookie 不完整（Oasis-Token={has_oasis_token}）。Oasis-Token 必须存在 —— 未写入，原有 cookie 保留。请重新登录。",
+    "handshake_not_ready": "init script MUSAGE_READY 握手未出现 —— webview 还没完成首次清理旧 cookie。等下次重试。",
     "save_keys_failed": "写 keys.json 失败: {err}"
   }
 }

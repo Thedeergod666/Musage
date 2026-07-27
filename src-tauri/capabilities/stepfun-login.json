@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "stepfun-login",
+  "description": "stepfun-login window — needs create-webview-window capability to spawn the StepFun login webview (Oasis-Token extractor in src/stepfun_login.rs). Only this window label gets the permission; floating + settings do not.",
+  "windows": ["stepfun-login"],
+  "permissions": [
+    "core:default",
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-set-focus"
+  ]
+}

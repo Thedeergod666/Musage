@@ -177,6 +177,7 @@
     "settings": "Musage · Settings",
     "xiaomi_login": "Login Xiaomi — Musage",
     "anysearch_login": "Login AnySearch — Musage",
+    "stepfun_login": "Login StepFun — Musage",
     "floating": "Musage"
   },
   "provider_name": {
@@ -220,6 +221,19 @@
   "anysearch_login": {
     "parse_login_url": "parse LOGIN_URL: {err}",
     "build_webview": "build webview: {err}",
+    "save_keys_failed": "Failed to write keys.json: {err}"
+  },
+  "stepfun_login": {
+    "parse_login_url": "parse LOGIN_URL: {err}",
+    "parse_url": "parse url: {err}",
+    "build_webview": "build webview: {err}",
+    "another_task_done": "Another extraction task already completed",
+    "read_url_failed": "Failed to read webview URL: {err}",
+    "cookie_extraction_failed": "Cookie extraction failed — after multiple retries still could not find the Oasis-Token cookie. Please check: 1) login completed successfully; 2) you are on the platform.stepfun.com dashboard page",
+    "cookies_for_url_failed": "webview.cookies_for_url failed: {err}",
+    "cookies_not_found": "No StepFun dashboard cookies found ({count} total, expected {expected}: {wanted}). Actually available: {available}",
+    "cookies_incomplete": "Extracted cookies incomplete (Oasis-Token={has_oasis_token}). Oasis-Token must be present — not saved, original cookie kept. Please log in again.",
+    "handshake_not_ready": "Init script MUSAGE_READY handshake not seen — webview did not finish initial cleanup of stale cookies yet. Waiting for next retry.",
     "save_keys_failed": "Failed to write keys.json: {err}"
   }
 }

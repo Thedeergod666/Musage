@@ -168,7 +168,12 @@ impl QuotaSource for StepfunSource {
         }
     }
     fn auth_kind(&self) -> AuthKind {
-        AuthKind::ApiKey
+        // v0.2.5+: stepfun 改用 webview 一键登录 (src/stepfun_login.rs)，
+        // token 落 `stepfun:cookie` 槽位。fetch 端 cookies().as_deref()
+        // 优先 cookie 字段;api_key 字段不再使用。AuthKind::Cookie 让
+        // settings 面板走纯 cookie 模式 + quick-login-banner 路径,
+        // 跟 anysearch 同款 UX。
+        AuthKind::Cookie
     }
 
     fn set_state<'a>(

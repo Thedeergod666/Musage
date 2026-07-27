@@ -734,6 +734,9 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
         actionBtn = `<button class="err-btn err-btn-relogin" data-action="relogin-xiaomi">${escapeHtml(t("floating.err_btn_relogin_xiaomi"))}</button>`;
       } else if (kind === "auth_failed" && id === "anysearch") {
         actionBtn = `<button class="err-btn err-btn-relogin" data-action="relogin-anysearch">${escapeHtml(t("floating.err_btn_relogin_anysearch"))}</button>`;
+      } else if (kind === "auth_failed" && id === "stepfun") {
+        // v0.2.5+: stepfun 改 webview 一键登录(原 token 过期/失效场景)
+        actionBtn = `<button class="err-btn err-btn-relogin" data-action="relogin-stepfun">${escapeHtml(t("floating.err_btn_relogin_stepfun"))}</button>`;
       } else {
         actionBtn = `<button class="err-btn open-settings">${escapeHtml(t("floating.open_settings"))}</button>`;
       }
@@ -1409,10 +1412,12 @@ async function init() {
       const section = target.dataset.section ?? "advanced";
       invoke("open_settings_window", { section }).catch((err) => console.error(err));
     } else if (target.classList.contains("err-btn-relogin")) {
-      // 按 data-action 分发：xiaomi / anysearch 各自的登录 webview
+      // 按 data-action 分发:xiaomi / anysearch / stepfun 各自的登录 webview
       const action = target.dataset.action;
       if (action === "relogin-anysearch") {
         invoke("open_anysearch_login_window").catch((err) => console.error(err));
+      } else if (action === "relogin-stepfun") {
+        invoke("open_stepfun_login_window").catch((err) => console.error(err));
       } else {
         invoke("open_xiaomi_login_window").catch((err) => console.error(err));
       }

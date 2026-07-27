@@ -44,6 +44,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **StepFun 一键登录**（2026-07-27，v0.2.5 候选）：
+  - **砍掉「粘 Oasis-Token」入口**：仿 Xiaomi/AnySearch 模式，settings
+    面板 stepfun 行改 anysearch 同款 `quick-login-banner` 形态 —
+    「🔑 登录 StepFun」按钮 + 「清除」按钮 + 官网链接。点按钮弹
+    webview 加载 `platform.stepfun.com`，用户在 webview 里正常走
+    邮箱+密码登录，后端自动从 webview cookie jar 抽 `Oasis-Token`
+    写进 `keys.json` 的 `stepfun:cookie` 槽位。全程不需要碰 DevTools
+  - **新增 `src-tauri/src/stepfun_login.rs`**（仿 `xiaomi_login.rs`
+    同款 `EXTRACTING` 锁 + `ExtractingGuard` RAII + `DONE` 标记 +
+    5 次重试 11s 覆盖）。新增 `capabilities/stepfun-login.json`
+    capability 拆分（仅 `stepfun-login` 窗口拿
+    `core:webview:allow-create-webview-window`）
+  - **3 个关键 fix**（避免 11 个 peer 的踩过的坑在 stepfun 重演）：
+    - `stepfun.rs` 的 `auth_kind` 改 `AuthKind::Cookie`（fetch 端
+      走 `credentials.cookie.as_deref()` 路径，token 落 cookie
+      槽位，settings 面板走纯 cookie 模式 + banner 路径）
+    - init script `document_start` 清旧 `Oasis-Token` /
+      `Oasis-Webid` / `Oasis-Refresh-Token` cookie + 置
+      `MUSAGE_READY=1` 握手标记（仿 [anysearch_login.rs](src-tauri/src/anysearch_login.rs)，
+      挡 webview profile 持久化过期 cookie 导致「弹出即消失」bug）
+    - hardening 锁 `document.cookie` / `Storage.getItem` 到
+      `platform.stepfun.com`，挡第三方 tracker 在受信 webview 上
+      偷 token
+  - **浮窗错误卡加 `relogin-stepfun` 分支**（仿 `relogin-anysearch`），
+    点按钮调 `open_stepfun_login_window` 重新登录
+  - **删 i18n**：`error.stepfun.token_unconfigured_hint` /
+    `token_invalid_hint` / `token_expired_hint`（用户不再需要这 3
+    条 — 跟「粘 token」入口一起删了）。`help.stepfun` 重写，删
+    DevTools 教程段。`BATCH_PREFIX_RULES` 删 `Oasis-Token` 防误识别
+  - **6 个新单测**：`is_dashboard_url` 基本 URL 接受 / 拒 login
+    路径 / 拒无关 host / 拒非 https / 白名单非空 / window label
+    匹配 capability
+  - **风险**：webview 路径未 spike 验证（缺真实 StepFun 账号），
+    CodexBar 选了 API 路径正是因为 webview 不可控。**降级方案**：
+    保留 webview 框架 + capability，settings 面板改成账号密码
+    内联表单（CodexBar 3 步 API POST：INGRESSCOOKIE → RegisterDevice
+    → SignInByPassword；device_id 即回显的 oasis-webid，生成一个
+    持久化用就行）
+
 - **StepFun 集成重写**（commit `0d51124`，2026-07-21）：
   - **端点迁移 `platform.stepfun.com`**（`QueryStepPlanRateLimit` +
     `GetStepPlanStatus`），旧 stepfun.ai 提示文案全部同步

@@ -238,6 +238,53 @@ export function renderCredentialBlock(meta: SourceMeta): HTMLElement {
         ),
       );
     }
+    // 2026-07-27 v0.2.5: stepfun 走 webview 一键登录,跟 anysearch 同款
+    // quick-login-banner 形态(纯 cookie 模式 + banner + 状态徽章)。
+    // 砍掉"粘 token"入口(用户明确要求):banner 渲染完直接 return,
+    // 不渲染 textarea + save/del 按钮(避免误改,见 help.stepfun 改写)。
+    // status 元素 id 必须 = cookie-status-<id>,让 loadCredentialStatus
+    // 能正确显示"已配置 / 未配置"。
+    if (meta.id === "stepfun") {
+      block.appendChild(
+        el("div", { class: "quick-login-banner" },
+          el("div", { class: "quick-login-text" },
+            el("strong", {}, t("credentials.stepfun_login_hint")),
+            el("br"),
+            t("credentials.stepfun_login_help"),
+          ),
+          el("div", { class: "row" },
+            el("button", {
+              class: "primary big",
+              id: `stepfun-login-${meta.id}`,
+              "data-id": meta.id,
+              "data-action": "stepfun-login",
+            }, t("credentials.login_stepfun")),
+            el("button", {
+              class: "danger",
+              id: `stepfun-clear-cookie-${meta.id}`,
+              "data-id": meta.id,
+              "data-action": "stepfun-clear-cookie",
+            }, t("credentials.clear_cookie")),
+            el("a", {
+              class: "link-ext",
+              href: "https://platform.stepfun.com/",
+              target: "_blank",
+              rel: "noopener noreferrer",
+            }, t("credentials.visit_official_site")),
+          ),
+        ),
+      );
+      block.appendChild(
+        el("div", { class: "field" },
+          el("div", { class: "status", id: `cookie-status-${meta.id}`, "data-id": meta.id },
+            t("credentials.cookie_status_placeholder")),
+          el("div", { class: "help" },
+            apiKeyHelpNode(meta.id),
+          ),
+        ),
+      );
+      return block;
+    }
     // ── hide_credentials (Claude / AnySearch)：主面板只渲染 banner + 状态徽章 ──
     // 真正的 cookie textarea + 保存/删除按钮在「高级」tab 里渲染（跟 Xiaomi
     // 同款 UX：cookie 不常改、不占主面板空间、避免误改）。
@@ -431,8 +478,9 @@ export function apiKeyPlaceholder(id: string): string {
     case "openrouter": return "sk-or-v1-...";
     case "kimi":       return "sk-...";
     case "zhipu":      return "id.secret";
-    // 2026-06-16 新增（PR 2）
-    case "stepfun":    return "Oasis-Token...";
+    // 2026-06-16 新增（PR 2）— 2026-07-27 v0.2.5 改为 webview 一键登录,
+    // 不再接受手动粘贴 Oasis-Token（占位符走纯 cookie 模式 + banner 路径）
+    case "stepfun":    return "..."; // unreachable: stepfun 走 quick-login-banner
     case "siliconflow":return "sk-...";
     case "claude_official": return t("credentials.cookie_value_hint");
     case "volcengine_ark": return "AK...SK";
@@ -662,6 +710,60 @@ export async function anysearchClearTokenAction(id: string) {
   }
 }
 
+/// 一键登录 StepFun：弹 webview → 用户在 platform.stepfun.com 走
+/// 邮箱+密码登录 → 后端自动从 webview cookie jar 抽 Oasis-Token。
+///
+/// 数据流(仿 xiaomi_login.rs / anysearch_login.rs):
+/// 1. `invoke("open_stepfun_login_window")` → 后端开 webview
+/// 2. 用户在 webview 里正常登录 StepFun
+/// 3. 后端 on_page_load 检测到 dashboard URL → 提 cookie → 写
+///    keys.json(`stepfun:cookie` 槽位) → 关 webview
+/// 4. 后端 emit `musage://stepfun-login-success` / `-failed`
+/// 5. 本函数在 init 时绑一次事件监听(见 `bindStepfunLoginEvents`)
+export async function stepfunLoginAction(id: string) {
+  if (id !== "stepfun") {
+    flash(t("credentials.stepfun_login_only"), true);
+    return;
+  }
+  try {
+    await invoke("open_stepfun_login_window");
+    flash(t("credentials.stepfun_login_opened"));
+  } catch (e) {
+    flash(t("credentials.stepfun_login_failed", { err: String(e) }), true);
+  }
+}
+
+/// 清除 StepFun cookie 并提示用户重新登录。
+export async function stepfunClearCookieAction(id: string) {
+  if (id !== "stepfun") return;
+  if (!confirm(t("credentials.confirm_clear_stepfun"))) return;
+  try {
+    await deleteSourceCredential(id);
+    flash(t("credentials.stepfun_clear_done"));
+    await loadCredentialStatus(id);
+  } catch (e) {
+    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
+  }
+}
+
+/// 绑一次后端 StepFun 登录事件 → UI 反馈。init 时调一次。
+// M8 fix: 跟 anysearch / xiaomi 同样 — _listeners 数组存 unlisten
+// 句柄,init 重试 / dev hot-reload 不会累积 listener。
+const _stepfunListeners: UnlistenFn[] = [];
+let _stepfunListenersBound = false;
+export function bindStepfunLoginEvents() {
+  if (_stepfunListenersBound) return;
+  void listen<number>("musage://stepfun-login-success", (e) => {
+    const savedLen = e.payload;
+    flash(t("credentials.stepfun_login_success", { bytes: savedLen }));
+    void loadCredentialStatus("stepfun");
+  }).then((un) => _stepfunListeners.push(un));
+  void listen<string>("musage://stepfun-login-failed", (e) => {
+    flash(t("credentials.stepfun_login_failure", { err: e.payload }), true);
+  }).then((un) => _stepfunListeners.push(un));
+  _stepfunListenersBound = true;
+}
+
 /// 绑一次后端 AnySearch 登录事件 → UI 反馈。init 时调一次。
 const _anysearchListeners: UnlistenFn[] = [];
 let _anysearchListenersBound = false;
@@ -748,6 +850,12 @@ export function bindCredentialButtonsGlobal() {
       case "anysearch-clear-cookie":
         void anysearchClearTokenAction(id);
         break;
+      case "stepfun-login":
+        void stepfunLoginAction(id);
+        break;
+      case "stepfun-clear-cookie":
+        void stepfunClearCookieAction(id);
+        break;
     }
   });
 
@@ -823,7 +931,8 @@ const BATCH_PREFIX_RULES: Array<{
   // 长度从长到短排列,长前缀先吃
   { prefix: "sk-or-v1-", id: "openrouter", field: "api_key" },
   { prefix: "sk-cp-", id: "minimax", field: "api_key" },
-  { prefix: "Oasis-Token", id: "stepfun", field: "api_key" },
+  // 2026-07-27 v0.2.5: stepfun 改用 webview 一键登录 (src/stepfun_login.rs),
+  // 不再接受手动粘贴 Oasis-Token。删 prefix 规则防 batch paste 误识别。
   { prefix: "tvly-", id: "tavily", field: "api_key" },
   // 通用 sk- 前缀: minimax/zenmux/openrouter/kimi/siliconflow 都有
   // 用 host 识别;无 host 的按 priority

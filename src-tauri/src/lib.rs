@@ -22,6 +22,7 @@ mod providers;
 mod tray;
 mod xiaomi_login;
 mod anysearch_login;
+mod stepfun_login;
 
 // P0 国际化：编译期展开 tr!() / t!() macro 时需要知道 locale 文件路径。
 // 必须在 `mod` 声明之后、其他文件 `use rust_i18n` 之前。
@@ -365,6 +366,7 @@ pub fn run() {
             commands::set_zhipu_region,
             xiaomi_login::open_xiaomi_login_window,
             anysearch_login::open_anysearch_login_window,
+            stepfun_login::open_stepfun_login_window,
         ])
         .on_window_event(|window, event| {
             // 关闭悬浮窗时拦截，避免退出整个 app

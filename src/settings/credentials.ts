@@ -435,6 +435,7 @@ export function apiKeyPlaceholder(id: string): string {
     case "stepfun":    return "Oasis-Token...";
     case "siliconflow":return "sk-...";
     case "claude_official": return t("credentials.cookie_value_hint");
+    case "volcengine_ark": return "AK...SK";
     default:           return "...";
   }
 }

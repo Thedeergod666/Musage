@@ -43,6 +43,13 @@ uuid = { version = "1", features = ["v4"] }
 # 用作 Oasis-Webid (CodexBar reverse-engineered)。
 # 用 URL_SAFE_NO_PAD(JWT 标准)避免 padding 处理。
 base64 = "0.22"
+# v0.2.5: 火山方舟 Coding Plan / Agent Plan 管控面鉴权走 v4 HMAC-SHA256
+# 签名(类 AWS SigV4,无 AWS4 前缀,SERVICE/REQUEST 终结)。每个 fetch 算
+# 一次签名(< 100µs 串行 4 次 HMAC)。reqwest 0.12 已传递依赖了 sha2 / hmac
+# (用于 HTTPS 握手),但我们显式声明本 crate 直接用,避免 feature 调整后
+# reqwest 移除传递依赖时签名模块静默 panic。
+sha2 = "0.10"
+hmac = "0.12"
 # P0 国际化：rust-i18n 3.1.5 默认支持 JSON/YAML/TOML，不需指定 feature。
 # 路径 src-tauri/locales/{en,zh-CN}.json，fallback = "en"（找不到 key 时回退英文 key）。
 # 关键约定：tr!("key", param = value) 的占位符命名 = JSON 里 `{name}` —— 见

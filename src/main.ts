@@ -58,6 +58,8 @@ function buildProviderMeta(): Record<string, { name: string; logo: string; accen
     claude_official: { name: t("provider.claude_official.name"), logo: claudeLogo, accent: "#d97706" },
     // AnySearch logo：蓝底白 chevron；accent 同色，给 first-letter fallback 兜底
     anysearch: { name: t("provider.anysearch.name"), logo: anysearchLogo, accent: "#2563eb" },
+    // v0.2.5: 火山方舟 Coding Plan —— 无 logo 资产，走首字母 fallback（accent 蓝橙火山色）
+    volcengine_ark: { name: t("provider.volcengine_ark.name"), logo: "", accent: "#ff6633" },
   };
 }
 

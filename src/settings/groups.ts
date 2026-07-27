@@ -38,7 +38,7 @@ export function buildGroupDefinitions(): Record<GroupKey, GroupDef> {
     token_plan: {
       title: t("groups.token_plan_title"),
       icon: "wallet",
-      predicate: (m) => ["minimax", "kimi", "zhipu"].includes(m.id),
+      predicate: (m) => ["minimax", "kimi", "zhipu", "volcengine_ark"].includes(m.id),
     },
     balance: {
       title: t("groups.balance_title"),

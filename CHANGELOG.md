@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (Critical — macOS 设置面板所有确认操作静默失效)
+
+- **extra instance × 删除按钮点了没反应（含全局 7 处同类 bug）**
+  - **症状**：设置面板给新建的副本（如 DeepSeek #3）点 × 删除按钮，
+    不弹窗、不报错、不删除，完全没反应。同根因还影响：删除各 provider
+    API key（3 处）、清除小米 / AnySearch / StepFun 登录态（3 处）、
+    清空日志（1 处）—— macOS 上全部点了没反应
+  - **根因**：删除流程第一道门是 native `confirm()`，但 macOS WKWebView
+    （tauri 2.11 / wry 0.55）的 UIDelegate **没实现** JS dialog panel 方法
+    （`runJavaScriptConfirmPanel` / `TextInputPanel` / `AlertPanel`），
+    `confirm()` 不弹窗、同步返回 `false` → handler 第一行就 return。
+    Windows WebView2 原生支持这三个对话框，所以 Win 端一直正常、
+    从未暴露。上一版修复（`ae3818a`）只把 `prompt()` 那道门换成
+    in-app modal、留了 `confirm()` 守门，流程仍死在第一行
+  - **修法**：
+    - 删除 extra instance：`confirm()` + 输全名两道门合并成**一个**
+      in-app `<dialog>`（警告文案 + 输入完整名称，输全名本身就是强确认）；
+      删掉恒返回 `null` 的 native `prompt()` fallback 死代码
+    - `modal.ts` 新增 `confirmInApp(message): Promise<boolean>` helper，
+      全局替换剩余 7 处 `confirm()`（credentials.ts × 6 / logs.ts × 1）；
+      `showModal` 改为返回 `HTMLDialogElement`（取消/ESC 兜底 resolve
+      不再靠脆弱的 `querySelector("dialog.modal:last-of-type")`）
+    - 文案里的 `\n` 用新增的 `.modal-message { white-space: pre-line }`
+      原样换行渲染
+  - **防回归**：新增 `scripts/check-no-native-dialogs.sh`（grep 禁
+    `confirm(`/`prompt(`/`alert(` 进 `src/`，排除注释行），接入
+    `ci.yml` frontend job 第一步 fail-fast
+
 ### Fixed (Visual — 玻璃"时不时闪一下")
 
 - **WKWebView backdrop sample throttling：移植 Usticky 的 3 层防御**

@@ -20,13 +20,50 @@ export interface ModalOptions {
   cancelLabel?: string;
 }
 
+/** in-app 确认框：替换 native `confirm()`。
+ *
+ * ⚠ 不要用 native `confirm()` / `prompt()` / `alert()`：macOS WKWebView 的
+ * UIDelegate（wry 0.55，`wry_web_view_ui_delegate.rs`）没实现 JS dialog panel
+ * 方法，`confirm()` 不弹窗直接同步返回 false、`prompt()` 返回 null、
+ * `alert()` 是 no-op —— 守卫直接静默拦截后续逻辑（2026-07-27 删除按钮失效
+ * bug 的根因）。Windows WebView2 原生支持所以那边看不出来。
+ *
+ * 返回 Promise：点确认 → true；点取消 / ESC / 关闭 → false。
+ * `message` 里的 `\n` 会原样换行渲染（.modal-message 的 pre-line）。 */
+export function confirmInApp(
+  message: string,
+  opts?: { title?: string; okLabel?: string; cancelLabel?: string },
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    let resolved = false;
+    const finish = (val: boolean) => {
+      if (resolved) return;
+      resolved = true;
+      resolve(val);
+    };
+    const dlg = showModal({
+      title: opts?.title ?? t("settings.common.confirm"),
+      body: el("p", { class: "modal-message" }, message),
+      submitLabel: opts?.okLabel ?? t("settings.common.confirm"),
+      cancelLabel: opts?.cancelLabel ?? t("settings.common.cancel"),
+      onSubmit: async () => {
+        finish(true);
+        return true;
+      },
+    });
+    // 取消 / ESC → close 事件兜底 resolve(false)。submit 路径先 finish(true)，
+    // 这里后触发但 resolved 已置位，不会覆盖。
+    dlg.addEventListener("close", () => finish(false), { once: true });
+  });
+}
+
 /** 弹出 modal。多次调用可以嵌套多个（每个独立一个 `<dialog>`）。
  *
  * **2026-06-20 audit**：之前 dialog 没 aria-labelledby / aria-describedby，
  * 屏幕阅读器朗读 dialog 内容时缺上下文。给 title h2 / body wrapper 分配 id，
  * 在 dialog 上 aria-labelledby 指向 title。
  */
-export function showModal(opts: ModalOptions): void {
+export function showModal(opts: ModalOptions): HTMLDialogElement {
   const dlg = el("dialog", { class: "modal" });
   const titleId = `modal-title-${Math.random().toString(36).slice(2, 9)}`;
   const descId = `modal-desc-${Math.random().toString(36).slice(2, 9)}`;
@@ -78,4 +115,5 @@ export function showModal(opts: ModalOptions): void {
   // 关闭时从 DOM 摘掉（防止多次弹 modal 堆 DOM 节点）
   dlg.addEventListener("close", () => dlg.remove());
   dlg.showModal();
+  return dlg;
 }

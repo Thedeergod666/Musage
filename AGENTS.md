@@ -404,6 +404,7 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 9. **`crate-type` 不用 cdylib**：Tauri 2 + Windows + GNU 工具链下，cdylib 会触发 MinGW ld 16-bit ordinal 表溢出
 10. **tray 逻辑合并在 tray.rs**：原 icon.rs 已删除，所有托盘 + 图标生成代码都集中在 `tray.rs`
 11. **macOS 置底走私有 API（platform/macos.rs）**：仅 `set_always_on_top(false)` 在 macOS 上不够 —— 窗口会变成 `kCGNormalWindowLevel = 0`，前台调度会把它埋掉。`platform::macos` 用 `objc2` 直接调 `NSWindow.setLevel()`，PinBottom 时设到 `kCGNormalWindowLevel - 1`（即 -1），低于所有普通 app 窗口但高于桌面。同时启一个 background thread 轮询 `NSEvent.mouseLocation()` + 窗口 `frame` 做点-in-rect，因为窗口在 level -1 时被其它 app 盖住，JS `mouseenter` 触发不到。详见 [musage-ui-design](memory/musage-ui-design.md)。非 macOS 平台 stub 走 Tauri 原生 `set_always_on_top`。
+12. **前端禁用 native `confirm()`/`prompt()`/`alert()`（2026-07-27）**：macOS WKWebView（tauri 2.x / wry 0.55）的 UIDelegate 没实现 JS dialog panel 方法 —— `confirm()` 不弹窗同步返回 false、`prompt()` 返回 null、`alert()` no-op，用它们做守卫会**静默拦截**后续逻辑（"× 删除按钮没反应"bug 的根因；Windows WebView2 原生支持所以 Win 端看不出来）。确认/输入一律走 [src/settings/modal.ts](src/settings/modal.ts) 的 `confirmInApp()` / `showModal()` in-app `<dialog>`。CI 有守门脚本 [scripts/check-no-native-dialogs.sh](scripts/check-no-native-dialogs.sh)（ci.yml frontend job 第一步）。
 
 **PR 3（2026-06-16，CustomSource + 设置面板重构）新增决策**：
 - **QuotaSource trait** `id()` / `display_name()` 从 `&'static str` 改 `Cow<'_, str>`：内置 source 返 `Cow::Borrowed`（零分配），CustomSource 返 `Cow::Owned`

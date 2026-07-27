@@ -19,6 +19,7 @@ import {
   refreshNow,
 } from "./api";
 import { el, flash } from "./utils";
+import { confirmInApp } from "./modal";
 import { t } from "../i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -82,7 +83,7 @@ export async function saveTavilyKey() {
 }
 
 export async function deleteTavilyKey() {
-  if (!confirm(t("credentials.confirm_delete_key_tavily"))) return;
+  if (!(await confirmInApp(t("credentials.confirm_delete_key_tavily")))) return;
   await deleteSourceCredential("tavily");
   await loadTavilyKeyStatus();
   flash(t("credentials.flash_deleted_tavily"));
@@ -129,7 +130,7 @@ export async function saveZenmuxKey() {
 }
 
 export async function deleteZenmuxKey() {
-  if (!confirm(t("credentials.confirm_delete_key_zenmux"))) return;
+  if (!(await confirmInApp(t("credentials.confirm_delete_key_zenmux")))) return;
   await deleteSourceCredential("zenmux");
   await loadZenmuxKeyStatus();
   flash(t("credentials.flash_deleted_zenmux"));
@@ -623,7 +624,7 @@ export async function deleteCredentialAction(id: string, action: "key" | "cookie
     cascadeCount > 0
       ? { name: providerName, count: cascadeCount }
       : { name: providerName };
-  if (!confirm(t(confirmKey, confirmArgs))) return;
+  if (!(await confirmInApp(t(confirmKey, confirmArgs)))) return;
   // 后端 delete_source_credential 会同时清 api_key 和 cookie，统一用一个入口
   await deleteSourceCredential(id);
   await loadCredentialStatus(id);
@@ -669,7 +670,7 @@ export async function xiaomiLoginAction(id: string) {
 /// 用于 cookie 过期（API 返 401）时，一键清掉旧 cookie + 刷新状态。
 export async function xiaomiClearCookieAction(id: string) {
   if (id !== "xiaomimimo") return;
-  if (!confirm(t("credentials.confirm_clear_xiaomi"))) return;
+  if (!(await confirmInApp(t("credentials.confirm_clear_xiaomi")))) return;
   // 同 deleteKey：补 try/catch + flash（2026-06-20 audit）
   try {
     await deleteSourceCredential(id);
@@ -700,7 +701,7 @@ export async function anysearchLoginAction(id: string) {
 /// 清除 AnySearch token 并提示用户重新登录。
 export async function anysearchClearTokenAction(id: string) {
   if (id !== "anysearch") return;
-  if (!confirm(t("credentials.confirm_clear_anysearch"))) return;
+  if (!(await confirmInApp(t("credentials.confirm_clear_anysearch")))) return;
   try {
     await deleteSourceCredential(id);
     flash(t("credentials.anysearch_clear_done"));
@@ -736,7 +737,7 @@ export async function stepfunLoginAction(id: string) {
 /// 清除 StepFun cookie 并提示用户重新登录。
 export async function stepfunClearCookieAction(id: string) {
   if (id !== "stepfun") return;
-  if (!confirm(t("credentials.confirm_clear_stepfun"))) return;
+  if (!(await confirmInApp(t("credentials.confirm_clear_stepfun")))) return;
   try {
     await deleteSourceCredential(id);
     flash(t("credentials.stepfun_clear_done"));

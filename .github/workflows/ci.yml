@@ -31,6 +31,11 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      # 禁 native confirm()/prompt()/alert() 守门: macOS WKWebView 不实现 JS
+      # dialog panel,confirm() 同步返回 false 静默拦截守卫(2026-07-27 删除
+      # 按钮失效 bug)。零依赖 grep,放最前面 fail-fast。
+      - name: No native JS dialogs
+        run: bash scripts/check-no-native-dialogs.sh
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         # 钉到 9.15.4,跟 package.json 的 packageManager 严格对齐,避免 corepack 报 mismatch
         with: { version: 9.15.4 }

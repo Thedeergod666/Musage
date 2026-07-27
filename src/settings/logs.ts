@@ -10,6 +10,7 @@
 
 import { clearLogs as clearLogsIPC, getRecentLogs } from "./api";
 import { el, escapeHtml, flash, formatLogTime } from "./utils";
+import { confirmInApp } from "./modal";
 import { t } from "../i18n";
 import type { LogEntry } from "./types";
 
@@ -104,7 +105,7 @@ function renderLogs(entries: LogEntry[]) {
 }
 
 export async function clearLogs() {
-  if (!confirm(t("settings.logs.confirm_clear"))) return;
+  if (!(await confirmInApp(t("settings.logs.confirm_clear")))) return;
   try {
     await clearLogsIPC();
     await loadLogs();

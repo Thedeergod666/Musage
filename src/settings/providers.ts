@@ -30,6 +30,7 @@ import { renderCredentialBlock, loadCredentialStatus, batchPasteKeys } from "./c
 import { getProviderMeta } from "./logos";
 import { getGroupDef, groupKeyFor } from "./groups";
 import { openAddExtraInstanceModal } from "./extra-instance-form";
+import { showModal } from "./modal";
 import { t } from "../i18n";
 import type { AppConfig, ExtraInstance, SourceMeta } from "./types";
 
@@ -336,24 +337,18 @@ function renderIntervalOverride(id: string, cfg: AppConfig): HTMLElement {
 }
 
 /// PR 1b: extra instance（副本 / custom）面板右上角 🗑️ 按钮
-/// 删除流程：confirm() → 二次输入 display_name → 调 deleteExtraInstance → 重建 section
+/// 删除流程：单个 in-app modal（警告 + 输入完整 display_name）→ 调
+/// deleteExtraInstance → 重建 section。
 ///
-/// M-FIX (2026-07-27): 用户反馈"点击 × 删除按钮无效"bug。旧代码用
-/// `prompt()` 收二次确认，且要求严格 `input === display_name` 匹配。
-/// 但 macOS WKWebView 的 native `prompt()` 有两个**已知行为**会导致
-/// 用户感知"删除失败"：
-///   1) `prompt()` 弹窗在 macOS 上可能被上一轮 `confirm()` 的 Z-order / focus
-///      残余影响，用户看到空白或一闪而过的 dialog，下意识点 Cancel。
-///   2) 用户复制 `display_name`（`DeepSeek #3`）粘贴时，前后会自带 trim，
-///      但 `prompt()` 自带值的"选中并替换"行为可能让剪贴板里
-///      "DeepSeek #3" 后面的换行 / 不可见字符混进来 → `input.trim()` 跟
-///      `display_name` 比仍不等 → flash mismatch → 用户以为"删不掉"。
-///
-/// 修法：
-///   - 改用 in-app `<dialog>` modal（avoid native prompt 的不可靠 UX）；
-///     fallback 保留原生 `prompt()`（极端 macOS 弹窗被全屏遮挡时 fallback）。
-///   - display_name 比较改为 case-insensitive + 全空白 trim，复制粘贴 99% 不会失败。
-///   - 末尾追加详细的 console.error 调试日志（不影响 UI），方便后台抓 dev 日志诊断。
+/// M-FIX2 (2026-07-27): "点击 × 删除按钮无效"bug 的真正根因 —— 旧代码用
+/// native `confirm()` + `prompt()` 两道门，但 macOS WKWebView（tauri 2.11 /
+/// wry 0.55）的 UIDelegate 没实现 JS dialog panel 方法：`confirm()` 不弹窗、
+/// 同步返回 false → handler 第一行就 return，用户看到"点了没任何反应"。
+/// Windows WebView2 原生支持 confirm/prompt，所以 Win 端一直正常、从未暴露。
+/// 上一版修复（ae3818a）只把 prompt() 那道门换成 in-app modal、留了 confirm()
+/// 守门，流程仍死在第一行。现把 confirm 并入 in-app modal（输全名本身就是
+/// 强确认，双门冗余），全程不碰 native dialog。项目约定：简单确认统一走
+/// modal.ts 的 confirmInApp()，禁用 confirm()/prompt()/alert()（CI 有守卫）。
 function renderDeleteExtraButton(meta: SourceMeta): HTMLElement {
   const btn = el("button", {
     type: "button",
@@ -362,23 +357,20 @@ function renderDeleteExtraButton(meta: SourceMeta): HTMLElement {
     title: t("settings.providers.delete_extra_btn_title", { name: meta.display_name }),
   }, "×");
   btn.addEventListener("click", async () => {
-    if (!confirm(t("settings.providers.delete_extra_confirm", { name: meta.display_name }))) {
-      return;
-    }
-    // 二次输入：防误删短 id（"minimax#2" 看起来跟 "minimax" 像）。
-    // 用 in-app 自定义 modal（避免 native prompt 的 macOS 怪行为），modal
-    // 显示完整 name 提示 + 一个 input 让用户原样输入。
+    // 单个 in-app modal：警告文案 + 输入完整名称（防误删短 id，"minimax#2"
+    // 看起来跟 "minimax" 像）。用户点取消 / ESC 返回 null。
     const typed = await promptForNameInApp(
       meta.display_name,
       t("settings.providers.delete_extra_prompt", { name: meta.display_name }),
     );
+    if (typed === null) return;
     // 三种比较（越来越宽松，命中任一即过；避免单纯大小写 / 空白差异误判）：
     //   1) 严格相等（用户用 modal 默认值直接提交时命中）
     //   2) case-insensitive trim 后相等（复制粘贴常见 lead/trail 全角空格）
     //   3) 仅匹配 "#N" 后缀（quick-confirm 副本号，老用户熟悉编号时用）
     const norm = (s: string) => s.trim().replace(/\s+/g, " ");
     const expected = norm(meta.display_name);
-    const got = norm(typed ?? "");
+    const got = norm(typed);
     const ok =
       got === expected ||
       got.toLowerCase() === expected.toLowerCase() ||
@@ -432,71 +424,52 @@ function renderDeleteExtraButton(meta: SourceMeta): HTMLElement {
 }
 
 /// in-app 二次确认 modal：弹 `<dialog>` 让用户输入 display_name。
-///
-/// 优先用 in-app modal（更可靠，macOS WKWebView 不会被 system prompt 干扰）；
-/// `promptDismissed=true`（用户点取消）返 `null`，跟 native `prompt` 语义一致。
-/// 失败/未实现 modal 时 fallback 到 native `prompt()`。
+/// 返回输入值；用户点取消 / ESC 返回 `null`。
+/// 不再有 native prompt() fallback —— WKWebView 上 prompt() 恒返回 null，
+/// 是死代码；showModal 走静态 import（modal.ts 只依赖 utils/i18n，无循环）。
 async function promptForNameInApp(
   expectedName: string,
   promptText: string,
 ): Promise<string | null> {
-  // Try in-app modal first.
-  try {
-    // 走 modal.ts 的 showModal（带 form method=dialog，ESC 关闭）
-    const { showModal } = await import("./modal");
-    const input = el("input", {
-      type: "text",
-      class: "delete-confirm-input",
-      value: expectedName,
-      autocomplete: "off",
-      spellcheck: "false",
-    }) as HTMLInputElement;
-    // 自动 focus + 全选, 让用户一眼看到默认值, 直接覆盖即可
-    // (setTimeout 0 跳过当前事件循环, 等 modal::showModal 完成)
-    setTimeout(() => {
-      input.focus();
-      input.select();
-    }, 0);
-    const body = el("div", { class: "field" },
-      el("p", { class: "help" }, promptText),
-      input,
-    );
-    // 用户输入完成 → form submit，submitHandler 返 true 关闭 modal
-    return await new Promise<string | null>((resolve) => {
-      let resolved = false;
-      const finish = (val: string | null) => {
-        if (resolved) return;
-        resolved = true;
-        resolve(val);
-      };
-      showModal({
-        title: t("settings.common.delete"), // 复用 "删除" 标题文案
-        body,
-        // submit 按钮 label 复用普通 "save" 文案（避免引入新的 i18n key）
-        submitLabel: t("settings.common.save"),
-        cancelLabel: t("settings.common.cancel"),
-        onSubmit: async () => {
-          finish(input.value);
-          return true; // 关闭 modal
-        },
-      });
-      // 用户点 cancel / ESC → modal 关闭但 onSubmit 不会被调，需要靠
-      // dialog 的 'close' event 兜底
-      const dialog = document.querySelector<HTMLDialogElement>("dialog.modal:last-of-type");
-      if (dialog) {
-        // 给 modal close 事件挂一次性 listener（cancel / ESC 触发）
-        dialog.addEventListener("close", () => {
-          // 如果 onSubmit 已经 resolve，不要重复 set
-          if (!resolved) finish(null);
-        }, { once: true });
-      }
+  const input = el("input", {
+    type: "text",
+    class: "delete-confirm-input",
+    value: expectedName,
+    autocomplete: "off",
+    spellcheck: "false",
+  }) as HTMLInputElement;
+  // 自动 focus + 全选, 让用户一眼看到默认值, 直接覆盖即可
+  // (setTimeout 0 跳过当前事件循环, 等 modal::showModal 完成)
+  setTimeout(() => {
+    input.focus();
+    input.select();
+  }, 0);
+  const body = el("div", { class: "field" },
+    el("p", { class: "help modal-message" }, promptText),
+    input,
+  );
+  // 用户输入完成 → form submit，submitHandler 返 true 关闭 modal
+  return await new Promise<string | null>((resolve) => {
+    let resolved = false;
+    const finish = (val: string | null) => {
+      if (resolved) return;
+      resolved = true;
+      resolve(val);
+    };
+    const dlg = showModal({
+      title: t("settings.common.delete"),
+      body,
+      submitLabel: t("settings.common.delete"),
+      cancelLabel: t("settings.common.cancel"),
+      onSubmit: async () => {
+        finish(input.value);
+        return true; // 关闭 modal
+      },
     });
-  } catch (e) {
-    console.warn("[delete-extra] in-app modal failed, fallback to native prompt", e);
-    // Fallback: native prompt
-    const r = prompt(promptText);
-    return r ?? null;
-  }
+    // 用户点 cancel / ESC → modal 关闭但 onSubmit 不会被调，靠 dialog 的
+    // 'close' event 兜底；submit 路径已先 finish，这里不会覆盖。
+    dlg.addEventListener("close", () => finish(null), { once: true });
+  });
 }
 
 /// PR 1b: 内置 provider 行的 📋 复制按钮

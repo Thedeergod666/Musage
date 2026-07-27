@@ -756,8 +756,15 @@ dialog.modal .modal-actions {
 }
 
 /* ── 删除二次确认 modal（providers.ts renderDeleteExtraButton, 2026-07-27）
- * In-app 替换 macOS WKWebView 的 native prompt()，避免 native dialog 的
- * focus / 拷贝粘贴怪行为。input 默认 value=display_name 并自动 focus+select */
+ * In-app 替换 native confirm()/prompt() —— macOS WKWebView 不实现 JS dialog
+ * panel，confirm() 同步返回 false / prompt() 返回 null，全部静默失效。
+ * input 默认 value=display_name 并自动 focus+select。
+ * .modal-message 给 confirmInApp / promptForNameInApp 的说明文字用，
+ * pre-line 让文案里的 \n 原样换行。 */
+.modal-message {
+  white-space: pre-line;
+  margin: 0;
+}
 .delete-confirm-input {
   width: 100%;
   padding: 6px 10px;

@@ -21,6 +21,8 @@
     "five_hour": "5h",
     "weekly": "Weekly",
     "weekly_7d": "7d",
+    "daily": "Daily",
+    "monthly": "Monthly",
     "credit": "Credit",
     "balance": "Balance",
     "plan": "Plan",
@@ -90,6 +92,9 @@
     "claude_official": {
       "cookie_invalid_hint": "Claude sessionKey cookie invalid or expired (claude.ai login session expires after ~8h — re-extract)",
       "missing_five_hour_seven_day": "Claude response missing five_hour / seven_day field"
+    },
+    "volcengine": {
+      "invalid_ak_sk_format": "Volcengine Ark credential format wrong — paste `AK...SK` (AccessKey ID, three dots, SecretAccessKey). Get them from console.volcengine.com → 账号菜单 → API 访问密钥"
     },
     "anysearch": {
       "token_empty": "AnySearch session token not configured (Settings → AnySearch → click \"Login AnySearch\")",
@@ -187,7 +192,8 @@
     "stepfun": "StepFun Step Plan",
     "siliconflow": "SiliconFlow",
     "claude_official": "Claude",
-    "anysearch": "AnySearch"
+    "anysearch": "AnySearch",
+    "volcengine_ark": "Volcengine Ark Coding Plan"
   },
   "provider": {
     "suffix": {

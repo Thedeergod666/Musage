@@ -26,6 +26,7 @@ pub mod parse;
 pub mod siliconflow;
 pub mod stepfun;
 pub mod tavily;
+pub mod volcengine_ark;
 pub mod xiaomi;
 pub mod zenmux;
 pub mod zhipu;
@@ -644,6 +645,8 @@ pub fn builtin_sources() -> Vec<Box<dyn QuotaSource>> {
         Box::new(stepfun::StepfunSource::default()),
         Box::new(siliconflow::SiliconflowSource::default()),
         Box::new(claude_official::ClaudeOfficialSource::default()),
+        // v0.2.5: 火山方舟 Coding Plan —— 5h/周/月 三个窗口
+        Box::new(volcengine_ark::VolcengineArkSource::default()),
     ]
 }
 
@@ -751,6 +754,7 @@ pub fn instantiate_builtin(provider_id: &str) -> Option<Box<dyn QuotaSource>> {
         "siliconflow" => Some(Box::new(siliconflow::SiliconflowSource::default())),
         "claude_official" => Some(Box::new(claude_official::ClaudeOfficialSource::default())),
         "anysearch" => Some(Box::new(anysearch::AnysearchSource::default())),
+        "volcengine_ark" => Some(Box::new(volcengine_ark::VolcengineArkSource::default())),
         _ => None,
     }
 }
@@ -800,6 +804,9 @@ pub fn instantiate_builtin_with_index(
         )),
         "anysearch" => Some(Box::new(
             anysearch::AnysearchSource::default().with_instance_index(index),
+        )),
+        "volcengine_ark" => Some(Box::new(
+            volcengine_ark::VolcengineArkSource::default().with_instance_index(index),
         )),
         _ => None,
     }

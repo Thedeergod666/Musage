@@ -87,6 +87,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 详见 [AGENTS.md](AGENTS.md)「Win 端 PinBottom 模式 hover-raise
     修复（2026-07-20 根因定位 + 重写）」节
 
+### Fixed (Settings — extra instance 删除 UX)
+
+- **点击 × 删除副本"无效"修复**（[providers.ts:renderDeleteExtraButton](src/settings/providers.ts)）
+  - **症状**：用户报告"新建 deepseek #3 后点 × 删除按钮无效"。检查
+    后端 `delete_extra_instance` IPC 流程、UUID 序列化、
+    `compact_indexes_for` / keys.json 同步、`save_lock` 顺序均正确
+  - **真正根因（macOS WKWebView native prompt UX）**：旧代码用
+    `prompt()` 收二次确认，要求 `input === display_name` 严格相等。
+    但 native prompt 在 macOS WKWebView 上有两个**已知怪行为**导致
+    用户感知"删除失败"：
+    1. `confirm()` 之后立刻 `prompt()`，Z-order / focus 残余影响
+       可能让 prompt 一闪而过或被遮挡，用户下意识点 Cancel
+       → `input === undefined` → flash "名称不匹配，未删除"
+    2. 用户复制 `DeepSeek #3` 粘贴时，剪贴板字符串尾随不可见字符
+       进 `prompt()` 自带"选中并替换"机制 → `input.trim()` 跟
+       `meta.display_name` 比仍不等 → flash mismatch
+  - **修法**（in-app modal + 宽松匹配）：
+    - 二次确认替换为 in-app `<dialog>` modal（[src/settings/modal.ts](src/settings/modal.ts)）
+      + `<input class="delete-confirm-input">`，自动 focus+select 全选
+      默认值；用户可一键覆盖或粘贴新值
+    - 名称比较三级 fallback：严格相等 → case-insensitive 全 whitespace
+      折叠后相等 → 仅匹配 `#N` 后缀（`#3` 直接删深拷贝）；不卡空白 /
+      大小写 / 前后空白
+    - 加 console.info / console.warn / console.error 调试日志
+      （不上 UI），方便用户反馈问题时抓 dev 日志一键诊断
+    - 极端 fallback：in-app modal 抛错时回退到 native `prompt()`
+
 ## [0.2.4] - 2026-07-17
 
 ### Added

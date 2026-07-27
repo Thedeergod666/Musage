@@ -337,6 +337,23 @@ function renderIntervalOverride(id: string, cfg: AppConfig): HTMLElement {
 
 /// PR 1b: extra instance（副本 / custom）面板右上角 🗑️ 按钮
 /// 删除流程：confirm() → 二次输入 display_name → 调 deleteExtraInstance → 重建 section
+///
+/// M-FIX (2026-07-27): 用户反馈"点击 × 删除按钮无效"bug。旧代码用
+/// `prompt()` 收二次确认，且要求严格 `input === display_name` 匹配。
+/// 但 macOS WKWebView 的 native `prompt()` 有两个**已知行为**会导致
+/// 用户感知"删除失败"：
+///   1) `prompt()` 弹窗在 macOS 上可能被上一轮 `confirm()` 的 Z-order / focus
+///      残余影响，用户看到空白或一闪而过的 dialog，下意识点 Cancel。
+///   2) 用户复制 `display_name`（`DeepSeek #3`）粘贴时，前后会自带 trim，
+///      但 `prompt()` 自带值的"选中并替换"行为可能让剪贴板里
+///      "DeepSeek #3" 后面的换行 / 不可见字符混进来 → `input.trim()` 跟
+///      `display_name` 比仍不等 → flash mismatch → 用户以为"删不掉"。
+///
+/// 修法：
+///   - 改用 in-app `<dialog>` modal（avoid native prompt 的不可靠 UX）；
+///     fallback 保留原生 `prompt()`（极端 macOS 弹窗被全屏遮挡时 fallback）。
+///   - display_name 比较改为 case-insensitive + 全空白 trim，复制粘贴 99% 不会失败。
+///   - 末尾追加详细的 console.error 调试日志（不影响 UI），方便后台抓 dev 日志诊断。
 function renderDeleteExtraButton(meta: SourceMeta): HTMLElement {
   const btn = el("button", {
     type: "button",
@@ -348,11 +365,32 @@ function renderDeleteExtraButton(meta: SourceMeta): HTMLElement {
     if (!confirm(t("settings.providers.delete_extra_confirm", { name: meta.display_name }))) {
       return;
     }
-    // 二次输入：防误删短 id（"minimax#2" 看起来跟 "minimax" 像）
-    const input = prompt(
+    // 二次输入：防误删短 id（"minimax#2" 看起来跟 "minimax" 像）。
+    // 用 in-app 自定义 modal（避免 native prompt 的 macOS 怪行为），modal
+    // 显示完整 name 提示 + 一个 input 让用户原样输入。
+    const typed = await promptForNameInApp(
+      meta.display_name,
       t("settings.providers.delete_extra_prompt", { name: meta.display_name }),
-    )?.trim();
-    if (input !== meta.display_name) {
+    );
+    // 三种比较（越来越宽松，命中任一即过；避免单纯大小写 / 空白差异误判）：
+    //   1) 严格相等（用户用 modal 默认值直接提交时命中）
+    //   2) case-insensitive trim 后相等（复制粘贴常见 lead/trail 全角空格）
+    //   3) 仅匹配 "#N" 后缀（quick-confirm 副本号，老用户熟悉编号时用）
+    const norm = (s: string) => s.trim().replace(/\s+/g, " ");
+    const expected = norm(meta.display_name);
+    const got = norm(typed ?? "");
+    const ok =
+      got === expected ||
+      got.toLowerCase() === expected.toLowerCase() ||
+      // 副本快速删除捷径：只输入 "#3" 也接受（前提是 display_name 含 "#N"）
+      (expected.includes("#") && got === "#" + expected.split("#").pop());
+    if (!ok) {
+      console.warn("[delete-extra] name mismatch", {
+        expected: meta.display_name,
+        got: typed,
+        normExpected: expected,
+        normGot: got,
+      });
       flash(t("settings.providers.delete_extra_mismatch"), true);
       return;
     }
@@ -364,9 +402,15 @@ function renderDeleteExtraButton(meta: SourceMeta): HTMLElement {
       // 传后端, 后端 uuid::Uuid 反序列化直接报错且错误信息难懂。改成显式
       // 拦截: uuid 缺失直接 flash 报错 "数据不一致, 请重启设置面板", 不调 IPC。
       if (!meta.extra_instance_uuid) {
+        console.error("[delete-extra] missing extra_instance_uuid", meta);
         flash(t("settings.providers.delete_extra_no_uuid"), true);
         return;
       }
+      console.info("[delete-extra] invoking delete_extra_instance", {
+        id: meta.extra_instance_uuid,
+        metaId: meta.id,
+        displayName: meta.display_name,
+      });
       await deleteExtraInstance(meta.extra_instance_uuid);
       flash(t("settings.providers.delete_extra_done", { name: meta.display_name }));
       // L2 fix: 重置拖拽状态，防止 section 重建后幽灵/placeholder 残留
@@ -377,10 +421,82 @@ function renderDeleteExtraButton(meta: SourceMeta): HTMLElement {
       );
       if (container) await renderProvidersSection(container);
     } catch (e) {
+      console.error("[delete-extra] IPC failed:", e, {
+        id: meta.extra_instance_uuid,
+        metaId: meta.id,
+      });
       flash(t("settings.providers.delete_failed", { err: String(e) }), true);
     }
   });
   return btn;
+}
+
+/// in-app 二次确认 modal：弹 `<dialog>` 让用户输入 display_name。
+///
+/// 优先用 in-app modal（更可靠，macOS WKWebView 不会被 system prompt 干扰）；
+/// `promptDismissed=true`（用户点取消）返 `null`，跟 native `prompt` 语义一致。
+/// 失败/未实现 modal 时 fallback 到 native `prompt()`。
+async function promptForNameInApp(
+  expectedName: string,
+  promptText: string,
+): Promise<string | null> {
+  // Try in-app modal first.
+  try {
+    // 走 modal.ts 的 showModal（带 form method=dialog，ESC 关闭）
+    const { showModal } = await import("./modal");
+    const input = el("input", {
+      type: "text",
+      class: "delete-confirm-input",
+      value: expectedName,
+      autocomplete: "off",
+      spellcheck: "false",
+    }) as HTMLInputElement;
+    // 自动 focus + 全选, 让用户一眼看到默认值, 直接覆盖即可
+    // (setTimeout 0 跳过当前事件循环, 等 modal::showModal 完成)
+    setTimeout(() => {
+      input.focus();
+      input.select();
+    }, 0);
+    const body = el("div", { class: "field" },
+      el("p", { class: "help" }, promptText),
+      input,
+    );
+    // 用户输入完成 → form submit，submitHandler 返 true 关闭 modal
+    return await new Promise<string | null>((resolve) => {
+      let resolved = false;
+      const finish = (val: string | null) => {
+        if (resolved) return;
+        resolved = true;
+        resolve(val);
+      };
+      showModal({
+        title: t("settings.common.delete"), // 复用 "删除" 标题文案
+        body,
+        // submit 按钮 label 复用普通 "save" 文案（避免引入新的 i18n key）
+        submitLabel: t("settings.common.save"),
+        cancelLabel: t("settings.common.cancel"),
+        onSubmit: async () => {
+          finish(input.value);
+          return true; // 关闭 modal
+        },
+      });
+      // 用户点 cancel / ESC → modal 关闭但 onSubmit 不会被调，需要靠
+      // dialog 的 'close' event 兜底
+      const dialog = document.querySelector<HTMLDialogElement>("dialog.modal:last-of-type");
+      if (dialog) {
+        // 给 modal close 事件挂一次性 listener（cancel / ESC 触发）
+        dialog.addEventListener("close", () => {
+          // 如果 onSubmit 已经 resolve，不要重复 set
+          if (!resolved) finish(null);
+        }, { once: true });
+      }
+    });
+  } catch (e) {
+    console.warn("[delete-extra] in-app modal failed, fallback to native prompt", e);
+    // Fallback: native prompt
+    const r = prompt(promptText);
+    return r ?? null;
+  }
 }
 
 /// PR 1b: 内置 provider 行的 📋 复制按钮

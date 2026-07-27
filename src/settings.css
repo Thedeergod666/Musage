@@ -755,6 +755,26 @@ dialog.modal .modal-actions {
   margin-top: var(--sp-3, 12px);
 }
 
+/* ── 删除二次确认 modal（providers.ts renderDeleteExtraButton, 2026-07-27）
+ * In-app 替换 macOS WKWebView 的 native prompt()，避免 native dialog 的
+ * focus / 拷贝粘贴怪行为。input 默认 value=display_name 并自动 focus+select */
+.delete-confirm-input {
+  width: 100%;
+  padding: 6px 10px;
+  margin-top: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 14px;
+  background: var(--bg-2, rgba(255, 255, 255, 0.04));
+  color: inherit;
+  border: 1px solid var(--bg-3, rgba(255, 255, 255, 0.15));
+  border-radius: var(--r-sm, 4px);
+}
+.delete-confirm-input:focus {
+  outline: 2px solid var(--accent, #4a90e2);
+  outline-offset: -2px;
+  border-color: transparent;
+}
+
 /* ── Extra instance form 内部 (PR 1b: extra-instance-form.ts) ── */
 
 .extra-instance-form .field { margin-bottom: var(--sp-3, 10px); }

@@ -276,6 +276,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       （不上 UI），方便用户反馈问题时抓 dev 日志一键诊断
     - 极端 fallback：in-app modal 抛错时回退到 native `prompt()`
 
+### Fixed (2026-07-28 全量审查接力 + 收口)
+
+承接另一个 CC agent 留下的 22 文件 / 78 条 catalog WIP，完成 4 个
+后端 commit + 1 个 docs commit。完整 false-positive 拒绝证据见
+[docs/codeplan/2026-07-28-wip-catalog-completion.md](docs/codeplan/2026-07-28-wip-catalog-completion.md)。
+
+- **fix(i18n)**：补 `commands.schema_override_duplicate_field`（rust）
+  + `settings.advanced.io_export_failed`（frontend）4 条缺失 key。
+  之前 `t!` / `t()` 引用编译期不报错（rust_i18n / 自写 helper 都返
+  raw key），用户触发对应分支时看到的会是原始 key 字符串。
+- **fix(login)**：把 `is_current_gen` + `WindowCloseGuard` 真正接到
+  xiaomi / anysearch / stepfun 三个 login 模块的 poll 循环和 emit
+  路径。WIP 中这两个机制只定义未使用（doc-only fix），老任务在用户
+  重复点登录时实际不会自检也不会 panic 兜底关窗。
+- **fix(providers)**：minimax 3 个错误返回路径（base_resp 业务错误 /
+  model_remains 缺失 / parse 全失败）改用调用方 `source_id` /
+  `display_name` 参数，跟成功路径对齐。副本 (`minimax#2`) fetch 失败
+  时不再错误地落 base id 覆盖基础实例的 snapshot。
+- **fix(providers)**：`enforce_body_limit` / `read_body_limited` /
+  `json_body_limited` / `text_body_limited` 一组 8 MiB body 上限 helper
+  之前 0 call site，stepfun × 2 + volcengine × 1 + minimax × 1 切到
+  受限路径。恶意/异常中转站无法再撑爆 reqwest 内部 buffer。
+- **chore**：4 个 v0.3+ 预留 helper（`default_enabled` /
+  `instantiate_builtin` / `display_label` / `Minimax::region`）标
+  `#[allow(dead_code)]` 并写明留作未来 v0.3 stub / API 暴露使用。
+
+### Validation
+
+- `cargo check --locked --all-targets` 0 error
+- `cargo test --locked --lib` **316 passed** / 0 failed
+- `cargo fmt --all -- --check` 0 diff
+- `cargo clippy --locked --all-targets` 0 error（warnings = pre-existing）
+- `pnpm tsc --noEmit` 0 error
+- `pnpm vitest run` 29/29 passed
+- `bash scripts/check-no-native-dialogs.sh` clean
+- `bash scripts/validate-i18n-keys.sh` consistent
+
 ## [0.2.4] - 2026-07-17
 
 ### Added

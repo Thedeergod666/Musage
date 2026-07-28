@@ -506,7 +506,8 @@ async function fitOnObserverTick() {
     if (contentH === lastFitContentH) return;
     lastFitContentH = contentH;
     const screenH = window.screen?.availHeight ?? 2400;
-    const maxH = Math.max(200, screenH - 80);
+    // 余量 30（availHeight 已扣菜单栏，仅留浮动边距；旧 80 在多 provider 时会把内容顶过 maxH 导致底部被裁）
+    const maxH = Math.max(200, screenH - 30);
     const target = Math.round(Math.min(contentH, maxH));
     if (Math.abs(window.innerHeight - target) <= 1) return;
     lastFitWindowH = target;
@@ -836,6 +837,56 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
     rowAnchor = rowEl;
   });
   for (const orphan of existing.values()) orphan.remove();
+
+  // 火山方舟：3 行 -> 2 行布局（5h 单独第一行 + 7d/月 并排第二行）。
+  // 副本（volcengine_ark#N）同走，baseId 已剥 #N 后缀。
+  if (baseId === "volcengine_ark") {
+    reflowVolcengineRows(rowsBox);
+  }
+}
+
+/// 火山方舟 Coding Plan 三窗口（5h / 7d / 月）默认各占一行，浮窗偏高。
+/// 改成两行：5h 单独第一行，7d + 月 并排包进 .row-pair 成第二行。
+/// 同时把 7d / 月 的 resetsPrefix 删掉，让它们走 label+reset_suffix fallback
+/// 前缀（"7d重置"/"月重置"），而不是 weekly_prefix/monthly_prefix（"周重置"
+/// 里 label 是"周"而非"7d"）。5h 行保留 resetsPrefix="5h重置"。
+///
+/// **幂等**：结构已就位时跳过 DOM move，只重删 resetsPrefix（updateRow
+/// 每个 fetch 周期会重设，这里紧跟删掉）。用 dataset.resetPeriod 识别三行
+/// （label 跨 locale 会变，reset_period 稳定），所以 locale 切换重建行后
+/// 也能正确归位。
+function reflowVolcengineRows(rowsBox: HTMLElement): void {
+  const allRows = Array.from(rowsBox.querySelectorAll<HTMLElement>(".row[data-row-key]"));
+  if (allRows.length < 3) return; // 非 3 行态（error / loading）不动
+  const period = (r: HTMLElement) => r.dataset.resetPeriod ?? "";
+  const fiveH = allRows.find((r) => period(r) === "five_hour");
+  const sevenD = allRows.find((r) => period(r) === "weekly");
+  const monthly = allRows.find((r) => period(r) === "monthly");
+  if (!fiveH || !sevenD || !monthly) return; // 三行没凑齐，不动
+  // ── 结构：5h 在顶，7d+月 包进 .row-pair ──
+  let pair = rowsBox.querySelector<HTMLElement>(":scope > .row-pair");
+  const structured =
+    pair != null &&
+    rowsBox.firstElementChild === fiveH &&
+    fiveH.nextElementSibling === pair &&
+    pair.childElementCount === 2 &&
+    pair.firstElementChild === sevenD &&
+    pair.lastElementChild === monthly;
+  if (!structured) {
+    if (!pair) {
+      pair = document.createElement("div");
+      pair.className = "row-pair";
+    }
+    pair.appendChild(sevenD);
+    pair.appendChild(monthly);
+    rowsBox.insertBefore(fiveH, rowsBox.firstChild);
+    rowsBox.insertBefore(pair, fiveH.nextSibling);
+  }
+  // ── 前缀：删掉 7d / 月 的 resetsPrefix，让 updateCountdowns 走
+  //     label+reset_suffix fallback -> "7d重置"/"月重置"（而非"周重置"）。
+  for (const r of [sevenD, monthly]) {
+    if (r.dataset.resetsPrefix) delete r.dataset.resetsPrefix;
+  }
 }
 
 // ── 行 ──
@@ -964,6 +1015,9 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
     pct.className = "pct credits";
   } else if (r.utilization != null) {
     const cls = colorClass(r.utilization);
+    // reset_period 存 dataset，供 reflowVolcengineRows 按 five_hour/weekly/monthly
+    // 识别三行（label 跨 locale 变，reset_period 稳定）。
+    rowEl.dataset.resetPeriod = r.extra?.reset_period ?? "";
     const labelSpan = rowEl.querySelector<HTMLElement>(".row-label > span:first-child")!;
     labelSpan.textContent = r.label;
     const pct = rowEl.querySelector<HTMLElement>(".pct")!;
@@ -1078,7 +1132,8 @@ function updateCountdowns() {
     const foot = row.querySelector<HTMLElement>(".row-foot");
     if (!foot) return;
     // 优先用 data-resets-prefix（Tavily 用 t("floating.countdown.monthly_prefix")），
-    // 否则用 label + reset suffix（Kimi / MiniMax / GLM 等窗口行）
+    // 否则用 label + reset suffix（Kimi / MiniMax / GLM 等窗口行；
+    // 火山方舟 7d / 月 行也走这条 fallback —— reflow 删了它们的 resetsPrefix）
     const prefix = row.dataset.resetsPrefix
       ?? (row.querySelector<HTMLElement>(".row-label > span:first-child")?.textContent ?? "") + t("floating.countdown.reset_suffix");
     foot.textContent = formatResetWithCountdown(ms, prefix, row.dataset.resetsDone);

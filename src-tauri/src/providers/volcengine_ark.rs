@@ -691,7 +691,7 @@ mod tests {
     fn sign_uses_ark_service_cn_beijing_region() {
         // 锁定 region/service —— 写错就 401
         let _x_date = "20260727T100000Z";
-        let body_hash = sha256_hex(b"{}");
+        let _body_hash = sha256_hex(b"{}"); // 实际签名链会用到,这里只验函数名能跑
         let k_date = hmac_sha256(b"sk", "20260727");
         let k_region = hmac_sha256(&k_date, REGION); // cn-beijing
         let k_service = hmac_sha256(&k_region, SERVICE); // ark

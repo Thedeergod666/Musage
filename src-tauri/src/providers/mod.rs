@@ -183,7 +183,13 @@ pub fn extract_host(url: &str) -> Option<String> {
     let authority = after_scheme.split('/').next()?;
     let host = authority.rsplit('@').next().unwrap_or(authority);
     let host = if host.starts_with('[') {
-        host.split(']').next().unwrap_or(host)
+        // fix (2026-07-28 审查 D2): 保留完整 `[...]` 形式(含闭合括号)。
+        // 之前 `split(']').next()` 产出 `[::1`(丢 `]`),is_ssrf_blocked 比对
+        // `[::1]` 不匹配 → `https://[::1]:8080` 绕过 SSRF 拦截。
+        match host.find(']') {
+            Some(end) => &host[..=end],
+            None => host,
+        }
     } else {
         host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host)
     };
@@ -197,6 +203,18 @@ pub fn is_ssrf_blocked(host: &str) -> bool {
         return true;
     }
     if host == "[::1]" || host == "::1" {
+        return true;
+    }
+    // fix (2026-07-28 审查 D2): 补 0.0.0.0 / [::] / :: / ::ffff:127.0.0.1 ——
+    // 0.0.0.0 / [::] 在多数 OS 上路由等价 loopback;::ffff:127.0.0.1 是
+    // IPv4-mapped loopback,可绕过上面的 `127.` 前缀检查(含带括号写法)。
+    if host == "0.0.0.0" {
+        return true;
+    }
+    if host == "[::]" || host == "::" {
+        return true;
+    }
+    if host == "::ffff:127.0.0.1" || host == "[::ffff:127.0.0.1]" {
         return true;
     }
     if host.strip_prefix("127.").is_some() {
@@ -759,7 +777,12 @@ pub async fn all_sources(state: &crate::AppState) -> Vec<Box<dyn QuotaSource>> {
 /// 只 `minimax` 实现了 `with_instance_index`；其它 10 个 provider 走兜底 `default()`
 /// （即副本实际是第 1 份行为 —— **PR 1a 已知限制**，详见 PR 1b）。为了不让
 /// PR 1a 阻塞 PR 1b，没实现的 provider 返默认实例 + log warn。
+/// `instantiate_builtin` is a public API kept for future use and external helper
+/// crates — current WIP only routes through `instantiate_builtin_with_index`,
+/// so suppress the dead_code warning rather than removing the function.
+#[allow(dead_code)]
 pub fn instantiate_builtin(provider_id: &str) -> Option<Box<dyn QuotaSource>> {
+    #[allow(unreachable_patterns)] // 兼容旧 provider_id 字符串
     match provider_id {
         "minimax" => Some(Box::new(minimax::MinimaxSource::default())),
         "deepseek" => Some(Box::new(deepseek::DeepseekSource::default())),
@@ -880,6 +903,142 @@ pub fn enforce_body_limit(body: &[u8]) -> Result<(), crate::providers::FetchErro
         ));
     }
     Ok(())
+}
+
+/// D5 fix (2026-07-28 审查): 流式读响应 body,强制 [`MAX_RESPONSE_BYTES`] 上限。
+///
+/// reqwest 的 `resp.json()` / `resp.text()` 没有 body 上限 —— 恶意 / 异常
+/// 中转站(尤其 custom source 的用户自建 URL)可返超大 body 撑爆内存。
+/// 策略:Content-Length 已超限 → 不读 body 直接拒;无 Content-Length /
+/// chunked → 分块读,累计超限立即中断(不会先把整个 body 缓冲进内存)。
+async fn read_body_limited(resp: reqwest::Response) -> Result<Vec<u8>, FetchError> {
+    if let Some(len) = resp.content_length() {
+        if len > MAX_RESPONSE_BYTES as u64 {
+            return Err(FetchError::parse(
+                format!("response body {len} bytes exceeds limit {MAX_RESPONSE_BYTES}")
+                    .into_boxed_str(),
+            ));
+        }
+    }
+    let mut resp = resp;
+    let mut buf = Vec::new();
+    loop {
+        match resp.chunk().await {
+            Ok(Some(chunk)) => {
+                if buf.len() + chunk.len() > MAX_RESPONSE_BYTES {
+                    return Err(FetchError::parse(
+                        format!("response body exceeds limit {MAX_RESPONSE_BYTES}")
+                            .into_boxed_str(),
+                    ));
+                }
+                buf.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            // 读 body 失败跟 `resp.json()` 失败的旧归类一致(都归 Parse)
+            Err(e) => {
+                return Err(FetchError::parse(
+                    crate::t!("error.common.parse_json", err = e.to_string()).into_owned(),
+                ))
+            }
+        }
+    }
+    enforce_body_limit(&buf)?;
+    Ok(buf)
+}
+
+/// D5 fix (2026-07-28 审查): 读 JSON 响应 body(带 [`MAX_RESPONSE_BYTES`] 上限),
+/// 各 provider 的 success 路径统一用它替代 `resp.json().await`。
+pub async fn json_body_limited(resp: reqwest::Response) -> Result<serde_json::Value, FetchError> {
+    let buf = read_body_limited(resp).await?;
+    serde_json::from_slice(&buf).map_err(|e| {
+        FetchError::parse(crate::t!("error.common.parse_json", err = e.to_string()).into_owned())
+    })
+}
+
+/// D5 fix (2026-07-28 审查): 读文本响应 body(带 [`MAX_RESPONSE_BYTES`] 上限),
+/// 给 stepfun / volcengine 这类需要先拿原文做诊断日志的路径替代 `resp.text()`。
+pub async fn text_body_limited(resp: reqwest::Response) -> Result<String, FetchError> {
+    let buf = read_body_limited(resp).await?;
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+// ── 单元测试 fixture（共享 JSON） ───────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── D2 (2026-07-28 审查): SSRF extract_host / is_ssrf_blocked ──
+
+    #[test]
+    fn extract_host_ipv6_keeps_closing_bracket() {
+        // D2 回归: 之前 `split(']').next()` 产出 "[::1"(丢 "]"),
+        // is_ssrf_blocked 比对 "[::1]" 不匹配 → https://[::1]:8080 绕过拦截。
+        assert_eq!(
+            extract_host("https://[::1]:8080/x"),
+            Some("[::1]".to_string())
+        );
+        assert_eq!(extract_host("https://[::1]/x"), Some("[::1]".to_string()));
+        assert_eq!(
+            extract_host("https://[::ffff:127.0.0.1]/"),
+            Some("[::ffff:127.0.0.1]".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_host_basic_forms() {
+        assert_eq!(
+            extract_host("https://example.com/path"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(
+            extract_host("https://example.com:8443/p"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(
+            extract_host("https://user@example.com/"),
+            Some("example.com".to_string())
+        );
+        assert_eq!(extract_host("http://example.com/"), None); // 非 https 不解析
+    }
+
+    #[test]
+    fn ssrf_blocks_loopback_and_metadata_variants() {
+        for u in [
+            "https://[::1]:8080/x",
+            "https://[::1]/",
+            "https://0.0.0.0/",
+            "https://[::]:8080/",
+            "https://[::ffff:127.0.0.1]/",
+            "https://127.0.0.1/",
+            "https://localhost/",
+            "https://169.254.169.254/latest/meta-data",
+        ] {
+            let host = extract_host(u).expect("host 应解析成功");
+            assert!(is_ssrf_blocked(&host), "{u} (host={host}) 应被 SSRF 拦截");
+        }
+    }
+
+    #[test]
+    fn ssrf_allows_public_and_private_lan_hosts() {
+        // 公网 + private LAN(自建中转站合法场景)不拦
+        for u in [
+            "https://api.example.com/",
+            "https://192.168.1.1:8080/",
+            "https://10.0.0.2/",
+        ] {
+            let host = extract_host(u).expect("host 应解析成功");
+            assert!(!is_ssrf_blocked(&host), "{u} (host={host}) 不应被拦截");
+        }
+    }
+
+    // ── D5 (2026-07-28 审查): enforce_body_limit ──
+
+    #[test]
+    fn enforce_body_limit_allows_small_and_rejects_huge() {
+        assert!(enforce_body_limit(&[0u8; 1024]).is_ok());
+        assert!(enforce_body_limit(&vec![0u8; MAX_RESPONSE_BYTES + 1]).is_err());
+    }
 }
 
 // ── 单元测试 fixture（共享 JSON） ───────────────────────────────────

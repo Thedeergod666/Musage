@@ -226,6 +226,11 @@ impl QuotaSource for MinimaxSource {
 #[derive(Debug, Default)]
 pub struct Minimax {
     /// 默认 CN；commands 层在调 fetch 前先从 config 复制一份给 Minimax
+    ///
+    /// 当前 `dump` CLI / 旧 ProviderImpl 兼容层都不读这个字段(走
+    /// `MinimaxSource` trait 拿 region),但保留字段避免破坏外部
+    /// 自定义 helper。`#[allow(dead_code)]` 抑制 v0.2.5 警告。
+    #[allow(dead_code)]
     pub region: Region,
 }
 
@@ -330,7 +335,7 @@ fn parse(
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
             return ProviderSnapshot {
-                // v0.3: 用 source_id ("minimax") 替代旧 enum 占位
+                // v0.3: 用 source_id 替代旧 enum 占位
                 provider: "minimax".to_string(),
                 success: false,
                 rows: vec![],
@@ -348,9 +353,12 @@ fn parse(
                 next_fetch_at: None,
                 raw: Some(raw.clone()),
                 is_healthy: false,
-                source_id: Some("minimax".to_string()),
+                // 副本(PR 1b)路径: error 时也要带调用方 source_id /
+                // display_name,否则 refresh_single_inner 用 base_id 匹配会
+                // 错误地覆盖基础 minimax 实例的 snapshot(2026-07-28 审查 D-源)
+                source_id: Some(source_id.to_string()),
                 unique_id: None,
-                source_display_name: Some("MiniMax".to_string()),
+                source_display_name: Some(display_name.to_string()),
                 plan_name: None,
                 transient: None,
             };
@@ -391,9 +399,10 @@ fn parse(
             next_fetch_at: None,
             raw: Some(raw.clone()),
             is_healthy: false,
-            source_id: Some("minimax".to_string()),
+            // 副本路径同 fix: 用调用方 source_id / display_name
+            source_id: Some(source_id.to_string()),
             unique_id: None,
-            source_display_name: Some("MiniMax".to_string()),
+            source_display_name: Some(display_name.to_string()),
             plan_name: None,
             transient: None,
         };

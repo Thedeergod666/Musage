@@ -652,6 +652,10 @@ pub async fn test_extra_instance(
 
 #[cfg(test)]
 mod tests {
+    // 测试模块 import super::* 是为了让 test fn 引用 crate 内的 helper;
+    // 某些 fn (snapshot_key / list_picker_providers) 在 test 路径里通过
+    // super::* 引入,本字段未直接命名引用时 Rust 会报 unused import。
+    #[allow(unused_imports)]
     use super::*;
 
     #[test]

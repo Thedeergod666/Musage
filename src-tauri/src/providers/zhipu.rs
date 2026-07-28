@@ -89,6 +89,10 @@ impl ZhipuRegion {
     /// 短显示名（用于 source_display_name），区分国区/国际。
     // M8 fix: 之前硬编码中文 "智谱 GLM" / "Z.ai" 破坏 en locale 的 i18n 链路。
     // 改走 t!()，让 Rust → frontend 的 display_name 走正常 i18n 路径。
+    //
+    // 当前 WIP 没有调用方(enum variant 直接在 `id()`/`display_name()` 里
+    // 拼 i18n key);保留以便 v0.3 公开 API 暴露给前端。
+    #[allow(dead_code)]
     fn display_label(&self) -> String {
         match self {
             ZhipuRegion::Cn => t!("provider_name.zhipu_cn").into_owned(),

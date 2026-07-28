@@ -152,6 +152,7 @@
     "parse_keys": "parse keys.json: %{err}",
     "keys_io": "%{op} keys: %{err}",
     "schema_override_empty_field": "%{id}.%{tier}[%{idx}]: total / remaining 不能为空字符串",
+    "schema_override_duplicate_field": "%{id}.%{tier}[%{idx}]: total 和 remaining 不能是同一字段（自指 override）",
     "custom_method_invalid": "method 必须是 GET 或 POST，当前: %{method}",
     "extra": {
       "provider_id_empty": "provider_id 不能为空",

@@ -251,7 +251,8 @@
       "import_btn": "Import from JSON",
       "io_exported": "Exported config to file.",
       "io_imported": "Imported config — reloading settings panel.",
-      "io_import_failed": "Import failed: {err}"
+      "io_import_failed": "Import failed: {err}",
+      "io_export_failed": "Export failed: {err}"
     },
     "logs": {
       "section_title": "Logs",

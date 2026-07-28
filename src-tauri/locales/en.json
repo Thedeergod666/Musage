@@ -152,6 +152,7 @@
     "parse_keys": "parse keys.json: %{err}",
     "keys_io": "%{op} keys: %{err}",
     "schema_override_empty_field": "%{id}.%{tier}[%{idx}]: total/remaining must be non-empty strings",
+    "schema_override_duplicate_field": "%{id}.%{tier}[%{idx}]: total and remaining cannot be the same field (self-reference)",
     "custom_method_invalid": "method must be GET or POST, current: %{method}",
     "extra": {
       "provider_id_empty": "provider_id must not be empty",

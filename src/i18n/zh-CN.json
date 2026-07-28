@@ -251,7 +251,8 @@
       "import_btn": "从 JSON 导入",
       "io_exported": "配置已导出到文件。",
       "io_imported": "配置已导入 —— 设置面板即将刷新。",
-      "io_import_failed": "导入失败：{err}"
+      "io_import_failed": "导入失败：{err}",
+      "io_export_failed": "导出失败：{err}"
     },
     "logs": {
       "section_title": "日志",

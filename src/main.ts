@@ -234,6 +234,13 @@ const app = document.getElementById("app")!;
 let countdownTimer: number | null = null;
 /// 最后一次 render 的 snapshot —— locale 变化时用来重新渲染。
 let lastRenderedSnap: QuotaSnapshot | null = null;
+/// **2026-07-28 fix**：用户是否曾经进入过「有数据」的渲染场景（placeholder、
+/// 真实 success 或非 unconfigured_key 错误）。一旦为 true,即便所有 provider
+/// 又回到 unconfigured_key(placeholder 2-5s 后被真 unconfigured 替换 / 用户
+/// 清掉所有 key),也不再回到首启空态引导页 —— 继续展示卡片让用户去配。
+/// app 首次启动、用户从未操作过任何 provider 时,这个 flag 保持 false,
+/// `render()` 走空态引导页。详见 render() 注释。
+let hasSeenData = false;
 
 /// 瞬态错误：网络抖动 / 限流 / 服务端错误 → 浮窗只翻红点 + 写日志，
 /// **不**覆盖 rows（保留最后一次成功的数据让用户能继续看用量）。
@@ -317,9 +324,34 @@ function render(snap: QuotaSnapshot) {
   }
   // 首启空态:所有 provider 都未配 key → 不显示假 Loading,直接展示引导页
   // (大按钮「打开设置面板」)。比"⏳ Loading..."更明确告诉新用户干嘛。
+  //
+  // **2026-07-28 fix**：之前用 `every(...)` 判断「全部未配 key」即进空态,但
+  // 用户首次添加 provider 时(set_provider_enabled 乐观 emit placeholder,
+  // transient=true + error_kind=unconfigured_key) → placeholder 期间 snap 里
+  // 所有 enabled provider 都 unconfigured_key → 误进空态,看到「打开设置」
+  // 而不是新卡。
+  //
+  // 修法:把判断从「严格 all unconfigured」放宽成「用户从未进入过有数据的
+  // 场景」。一旦 snap 里出现任何「用户交互信号」(transient=true placeholder、
+  // 或非 unconfigured_key 的真实数据/错误、或 success),就锁定 `hasSeenData=true`
+  // —— 之后即便所有 provider 又回到 unconfigured_key(placeholder 2-5s 后被真
+  // unconfigured 替换、或用户清掉所有 key),也不回到空态引导页,继续展示
+  // 卡片(每张带「打开设置」按钮)。用户只有「app 第一次启动,从未操作过任何
+  // provider」时才会看到空态 —— 这是设计意图。
   if (snap.providers.every((p) => !p.success && p.error_kind === "unconfigured_key")) {
-    renderEmptyState();
-    return;
+    const hasInteracted = snap.providers.some(
+      (p) => p.transient === true
+        || p.error_kind !== "unconfigured_key"
+        || p.success,
+    );
+    if (hasInteracted) hasSeenData = true;
+    if (!hasSeenData) {
+      renderEmptyState();
+      return;
+    }
+  } else {
+    // 至少有一个 provider 处于「非全 unconfigured」状态 → 用户已经在看真数据
+    hasSeenData = true;
   }
 
   // 真数据到达 → 清掉首屏的「加载中…」占位，避免它一直挂在 DOM 里

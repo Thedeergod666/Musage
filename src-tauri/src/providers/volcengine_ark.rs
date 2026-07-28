@@ -459,13 +459,12 @@ fn parse(
         } else {
             0.0
         };
-        let remaining = (total - used).max(0.0);
 
-        let label = match level.as_str() {
-            "session" => t!("row.five_hour").to_string(),
-            "daily" => t!("row.daily").to_string(),
-            "weekly" => t!("row.weekly_7d").to_string(),
-            "monthly" => t!("row.monthly").to_string(),
+        let (label, reset_period) = match level.as_str() {
+            "session" => (t!("row.five_hour").to_string(), "five_hour"),
+            "daily" => (t!("row.daily").to_string(), "daily"),
+            "weekly" => (t!("row.weekly_7d").to_string(), "weekly"),
+            "monthly" => (t!("row.monthly").to_string(), "monthly"),
             // 未知 Level → 跳过（schema 漂移保护，不让单条坏数据炸整个 snapshot）
             _ => continue,
         };
@@ -473,12 +472,12 @@ fn parse(
         rows.push(QuotaRow {
             label,
             utilization: Some(utilization),
-            remaining: Some(remaining),
-            used: Some(used),
-            total: Some(total),
+            remaining: None,
+            used: None,
+            total: None,
             resets_at,
             unit: None, // Coding Plan 是次数，无单位
-            extra: None,
+            extra: Some(serde_json::json!({ "reset_period": reset_period })),
             kind: None,
         });
     }
@@ -764,19 +763,19 @@ mod tests {
         // 排序后：Session (5h) → Weekly (7d) → Monthly
         let five_h = &snap.rows[0];
         assert_eq!(five_h.label, t!("row.five_hour").as_ref());
-        assert_eq!(five_h.used, Some(100.0));
-        assert_eq!(five_h.total, Some(1200.0));
-        assert_eq!(five_h.remaining, Some(1100.0));
+        assert_eq!(five_h.used, None);
+        assert_eq!(five_h.total, None);
+        assert_eq!(five_h.remaining, None);
         assert!((five_h.utilization.unwrap() - 8.333).abs() < 0.01);
         assert_eq!(five_h.resets_at, Some(1753603200000));
 
         let week = &snap.rows[1];
         assert_eq!(week.label, t!("row.weekly_7d").as_ref());
-        assert_eq!(week.used, Some(500.0));
+        assert_eq!(week.used, None);
 
         let month = &snap.rows[2];
         assert_eq!(month.label, t!("row.monthly").as_ref());
-        assert_eq!(month.used, Some(1000.0));
+        assert_eq!(month.used, None);
         assert!((month.utilization.unwrap() - 5.555).abs() < 0.01);
     }
 
@@ -838,10 +837,10 @@ mod tests {
         let snap = parse(&raw, "volcengine_ark", "Volcengine Ark").expect("parse");
         let r = &snap.rows[0];
         // used = (1200 - 1250).max(0) = 0 → utilization = 0%
-        assert_eq!(r.used, Some(0.0));
-        assert_eq!(r.total, Some(1200.0));
+        assert_eq!(r.used, None);
+        assert_eq!(r.total, None);
         // remaining 字段保留 total-used 推导值(>=0),超用时钳到 0
-        assert_eq!(r.remaining, Some(1200.0));
+        assert_eq!(r.remaining, None);
         assert_eq!(r.utilization, Some(0.0));
     }
 

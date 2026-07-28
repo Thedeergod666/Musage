@@ -70,6 +70,8 @@
       "reset_suffix": "reset",
       "monthly_prefix": "Monthly reset",
       "daily_prefix": "Daily reset",
+      "five_hour_prefix": "5h reset",
+      "weekly_prefix": "Weekly reset",
       "reset_done": "(reset)",
       "days_left": "({days}d)",
       "days_hours_left": "({days}d {hours}h)",

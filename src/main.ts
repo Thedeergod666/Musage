@@ -936,7 +936,11 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
         rowEl.dataset.resetsPrefix =
           period === "daily"
             ? t("floating.countdown.daily_prefix")
-            : t("floating.countdown.monthly_prefix");
+            : period === "five_hour"
+              ? t("floating.countdown.five_hour_prefix")
+              : period === "weekly"
+                ? t("floating.countdown.weekly_prefix")
+                : t("floating.countdown.monthly_prefix");
       }
     } else {
       delete rowEl.dataset.resetsAt;

@@ -70,6 +70,8 @@
       "reset_suffix": "重置",
       "monthly_prefix": "月重置",
       "daily_prefix": "日重置",
+      "five_hour_prefix": "5h 重置",
+      "weekly_prefix": "周重置",
       "reset_done": "（已重置）",
       "days_left": "（{days}天）",
       "days_hours_left": "（{days}天{hours}h）",

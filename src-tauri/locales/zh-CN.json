@@ -10,11 +10,11 @@
     "tooltip": {
       "loading": "Musage - 加载中…",
       "title": "Musage",
-      "updated_at": "更新于 {time}",
-      "provider_error": "{provider}: {error}",
-      "row_pct": "{label} {pct}%",
-      "provider_rows": "{provider} {rows}",
-      "provider_balance": "{provider} {amount}{unit}"
+      "updated_at": "更新于 %{time}",
+      "provider_error": "%{provider}: %{error}",
+      "row_pct": "%{label} %{pct}%",
+      "provider_rows": "%{provider} %{rows}",
+      "provider_balance": "%{provider} %{amount}%{unit}"
     }
   },
   "row": {
@@ -38,31 +38,31 @@
   "error": {
     "common": {
       "api_key_empty": "API key 为空",
-      "auth_failed": "鉴权失败，请检查 {provider} API key",
-      "forbidden": "无权限访问 {provider}（HTTP 403）",
-      "network": "网络错误 [{url}]: {err}",
-      "parse_json": "响应不是 JSON: {err}",
-      "http_error": "{provider} 服务异常 (HTTP {status}): {body}",
-      "http_error_simple": "HTTP {status}（{provider}）",
-      "business_code": "{provider} API error (code {code}): {msg}",
-      "missing_field": "{provider} 响应缺少 {field}",
-      "rate_limited": "{provider} 请求过于频繁，请稍后再试",
-      "rate_limited_with_retry": "{provider} 请求过于频繁，约 {retry_secs} 秒后可重试",
-      "url_scheme_invalid": "URL 必须以 https:// 开头（拒绝明文 / file:// / javascript: 等）。当前值：{url}",
-      "ssrf_blocked": "URL 主机 '{host}' 被拦截（不允许 loopback / link-local / 云元数据端点，防止通过分享的配置泄露凭据）",
+      "auth_failed": "鉴权失败，请检查 %{provider} API key",
+      "forbidden": "无权限访问 %{provider}（HTTP 403）",
+      "network": "网络错误 [%{url}]: %{err}",
+      "parse_json": "响应不是 JSON: %{err}",
+      "http_error": "%{provider} 服务异常 (HTTP %{status}): %{body}",
+      "http_error_simple": "HTTP %{status}（%{provider}）",
+      "business_code": "%{provider} API error (code %{code}): %{msg}",
+      "missing_field": "%{provider} 响应缺少 %{field}",
+      "rate_limited": "%{provider} 请求过于频繁，请稍后再试",
+      "rate_limited_with_retry": "%{provider} 请求过于频繁，约 %{retry_secs} 秒后可重试",
+      "url_scheme_invalid": "URL 必须以 https:// 开头（拒绝明文 / file:// / javascript: 等）。当前值：%{url}",
+      "ssrf_blocked": "URL 主机 '%{host}' 被拦截（不允许 loopback / link-local / 云元数据端点，防止通过分享的配置泄露凭据）",
       "no_credential": "未配置凭据（设置面板填入）",
-      "no_credential_with_provider": "未配置 {provider} 凭据（设置面板填入）",
-      "missing_data_field": "{provider} 响应缺少 data 字段",
-      "missing_field_generic": "响应缺少 {field} 字段",
-      "read_keys_failed": "读 keys.json 失败: {err}",
-      "join_task_failed": "任务调度失败: {err}",
-      "unknown_source_id": "未知的 source id: {id}"
+      "no_credential_with_provider": "未配置 %{provider} 凭据（设置面板填入）",
+      "missing_data_field": "%{provider} 响应缺少 data 字段",
+      "missing_field_generic": "响应缺少 %{field} 字段",
+      "read_keys_failed": "读 keys.json 失败: %{err}",
+      "join_task_failed": "任务调度失败: %{err}",
+      "unknown_source_id": "未知的 source id: %{id}"
     },
     "parse": {
       "no_rows_found": "响应中未找到任何用量行 —— schema 可能已变更"
     },
     "provider": {
-      "unconfigured_key": "未配置 {provider} 的 API key（设置面板填入）",
+      "unconfigured_key": "未配置 %{provider} 的 API key（设置面板填入）",
       "schema_unknown_hint": "未识别 schema — 去设置面板 Schema overrides 加候选字段名",
       "minimax_403": "无权限访问 MiniMax 用量接口（HTTP 403）"
     },
@@ -73,10 +73,10 @@
       "api_key_unauthorized_hint": "Xiaomi API key 鉴权失败 (HTTP 401) — 当前用量 API 仅对 dashboard cookie 放行，请改填 Cookie 或两者都填（401 会自动退到 Cookie 路径）",
       "cookie_invalid_hint": "Cookie 失效或无效 —— 请重新登录 platform.xiaomimimo.com → DevTools 复制新 Cookie",
       "cookie_empty": "Dashboard cookie 为空（设置面板 · Xiaomi · Dashboard Cookie）",
-      "cookie_format_invalid": "Cookie 格式无效（包含非法字符 {ch}）。请重新从浏览器 DevTools Application → Cookies 复制整段 Cookie 字符串（不要带换行）",
-      "http_error": "Xiaomi dashboard API 异常 (HTTP {status}): {body}",
-      "business_code": "Xiaomi dashboard API code {code}: {msg}",
-      "plan_expired_hint": "套餐已过期（{plan} · 至 {end}）。请到 platform.xiaomimimo.com → 订阅管理 续费，续费后浮窗会在下次轮询（≤60s）恢复",
+      "cookie_format_invalid": "Cookie 格式无效（包含非法字符 %{ch}）。请重新从浏览器 DevTools Application → Cookies 复制整段 Cookie 字符串（不要带换行）",
+      "http_error": "Xiaomi dashboard API 异常 (HTTP %{status}): %{body}",
+      "business_code": "Xiaomi dashboard API code %{code}: %{msg}",
+      "plan_expired_hint": "套餐已过期（%{plan} · 至 %{end}）。请到 platform.xiaomimimo.com → 订阅管理 续费，续费后浮窗会在下次轮询（≤60s）恢复",
       "schema_unknown_hint": "响应里找不到 plan_total_token / compensation_total_token / month_total_token 任何一项（schema 改名？去设置面板 schema_overrides 配新名）",
       "data_field_missing": "响应缺少 data 字段"
     },
@@ -84,10 +84,10 @@
       "auth_failed_hint": "鉴权失败 —— 智谱 GLM API key 无效（注意 key 不要加 Bearer 前缀；CN/EN 区域 key 不通用）"
     },
     "stepfun": {
-      "token_unconfigured_hint": "未配置 StepFun Oasis-Token（设置面板填入；从 platform.stepfun.com 浏览器 DevTools → Cookies → Oasis-Token 复制）",
-      "token_invalid_hint": "StepFun Oasis-Token 无效或已过期（去 platform.stepfun.com 重新登录并粘贴新 token）",
-      "token_expired_hint": "StepFun Oasis-Token 已过期 {mins} 分钟 — 去 platform.stepfun.com 重新登录并粘贴新 token",
-      "token_malformed_hint": "StepFun Oasis-Token 格式无法识别 — 请直接从 DevTools → Cookies → Oasis-Token 的 value 字段复制"
+      "token_unconfigured_hint": "未登录 StepFun —— 点设置面板「🔑 登录 StepFun」按钮，在弹窗里完成登录",
+      "token_invalid_hint": "StepFun 登录凭据无效 —— 点浮窗「重新登录 StepFun」或设置面板「🔑 登录 StepFun」重新登录",
+      "token_expired_hint": "StepFun 登录凭据已过期 %{mins} 分钟 —— 点浮窗「重新登录 StepFun」或设置面板「🔑 登录 StepFun」重新登录",
+      "token_malformed_hint": "StepFun 登录凭据格式无法识别 —— 点浮窗「重新登录 StepFun」或设置面板「🔑 登录 StepFun」重新登录"
     },
     "claude_official": {
       "cookie_invalid_hint": "Claude sessionKey Cookie 无效或已过期（claude.ai 登录 session 约 8h 失效，重新提取）",
@@ -102,8 +102,8 @@
       "schema_unknown_hint": "AnySearch 响应 schema 变更（data.used/total/next_reset_at 缺失）"
     },
     "custom": {
-      "network": "CustomSource 网络错误: {err}",
-      "http_error": "CustomSource HTTP {status}: {body}",
+      "network": "CustomSource 网络错误: %{err}",
+      "http_error": "CustomSource HTTP %{status}: %{body}",
       "rate_limited": "CustomSource 请求过于频繁，请稍后再试",
       "forbidden": "CustomSource 无权限访问（HTTP 403）",
       "auth_failed": "鉴权失败，请检查 API key",
@@ -111,7 +111,7 @@
       "newapi_divide_zero": "NewApi 模板：divide 不能为 0",
       "newapi_data_missing": "NewApi 模板：data.quota / data.used_quota 都缺失或非数字",
       "balance_divide_zero": "Balance 模板：divide 不能为 0",
-      "balance_path_invalid": "Balance 模板：路径 '{path}' 无效或非数字",
+      "balance_path_invalid": "Balance 模板：路径 '%{path}' 无效或非数字",
       "custom_path_no_match": "Custom 模板：所有 path 都没匹配到值",
       "custom_divide_zero": "Custom 模板：divide 不能为 0",
       "path_must_start_with_slash": "自定义来源的 path 必须以 '/' 开头（防止 URL 混淆攻击）"
@@ -124,54 +124,54 @@
     "claude_session_expired_body": "你的 Claude sessionKey 已失效。打开设置 → claude_official → 粘贴新 sessionKey。"
   },
   "commands": {
-    "region_invalid": "未知的 region: {other}（必须为 cn / global / custom）",
-    "source_unknown": "未知的 source id: {id}",
-    "field_unknown": "未知的 field 标识: {other}（应为 api_key 或 cookie）",
+    "region_invalid": "未知的 region: %{other}（必须为 cn / global / custom）",
+    "source_unknown": "未知的 source id: %{id}",
+    "field_unknown": "未知的 field 标识: %{other}（应为 api_key 或 cookie）",
     "credential_empty": "凭据不能为空",
     "api_key_empty": "key 不能为空",
-    "display_mode_unknown_xiaomi": "未知的 Xiaomi 显示模式: {other}（应为 all / plan_only / total_only）",
-    "region_unknown": "未知的区域: {other}（应为 cn / en）",
-    "xiaomi_region_unknown": "未知的 Xiaomi 区域: {other}（应为 cn / sgp / ams）",
-    "zenmux_mode_unknown": "未知的 ZenMux 模式: {other}（应为 payg / subscription）",
-    "zhipu_region_unknown": "未知的智谱区域: {other}（应为 cn / en）",
-    "pin_mode_unknown": "未知的浮窗置顶模式: {other}",
+    "display_mode_unknown_xiaomi": "未知的 Xiaomi 显示模式: %{other}（应为 all / plan_only / total_only）",
+    "region_unknown": "未知的区域: %{other}（应为 cn / en）",
+    "xiaomi_region_unknown": "未知的 Xiaomi 区域: %{other}（应为 cn / sgp / ams）",
+    "zenmux_mode_unknown": "未知的 ZenMux 模式: %{other}（应为 payg / subscription）",
+    "zhipu_region_unknown": "未知的智谱区域: %{other}（应为 cn / en）",
+    "pin_mode_unknown": "未知的浮窗置顶模式: %{other}",
     "interval_too_small": "轮询间隔不能小于 10 秒（避免触发 provider rate limit）",
-    "threshold_invalid": "色阈值必须满足 0 < t0 < t1 < t2 < 100（实际 {t0} / {t1} / {t2}）",
-    "wallet_threshold_negative": "钱包告警阈值必须 ≥ 0（实际 {n}）",
-    "color_key_unknown": "未知的色档 key: {other}（仅支持 ok / cyan / warn / alert）",
-    "color_value_invalid": "{k} 的颜色值必须是 #RGB / #RRGGBB 形式（实际 {v}）",
-    "create_settings": "create settings: {err}",
+    "threshold_invalid": "色阈值必须满足 0 < t0 < t1 < t2 < 100（实际 %{t0} / %{t1} / %{t2}）",
+    "wallet_threshold_negative": "钱包告警阈值必须 ≥ 0（实际 %{n}）",
+    "color_key_unknown": "未知的色档 key: %{other}（仅支持 ok / cyan / warn / alert）",
+    "color_value_invalid": "%{k} 的颜色值必须是 #RGB / #RRGGBB 形式（实际 %{v}）",
+    "create_settings": "create settings: %{err}",
     "floating_not_found": "找不到浮窗",
-    "center_failed": "center: {err}",
-    "size_failed": "size: {err}",
-    "config_mkdir": "mkdir: {err}",
-    "config_serialize": "serialize: {err}",
-    "config_write": "write config: {err}",
+    "center_failed": "center: %{err}",
+    "size_failed": "size: %{err}",
+    "config_mkdir": "mkdir: %{err}",
+    "config_serialize": "serialize: %{err}",
+    "config_write": "write config: %{err}",
     "config_dir_not_found": "无法定位配置目录",
-    "read_keys": "read keys: {err}",
-    "parse_keys": "parse keys.json: {err}",
-    "keys_io": "{op} keys: {err}",
-    "schema_override_empty_field": "{id}.{tier}[{idx}]: total / remaining 不能为空字符串",
-    "custom_method_invalid": "method 必须是 GET 或 POST，当前: {method}",
+    "read_keys": "read keys: %{err}",
+    "parse_keys": "parse keys.json: %{err}",
+    "keys_io": "%{op} keys: %{err}",
+    "schema_override_empty_field": "%{id}.%{tier}[%{idx}]: total / remaining 不能为空字符串",
+    "custom_method_invalid": "method 必须是 GET 或 POST，当前: %{method}",
     "extra": {
       "provider_id_empty": "provider_id 不能为空",
       "custom_spec_required": "provider_id == 'custom' 时必须填 custom 字段",
-      "unknown_provider": "未知的 provider_id: {id}",
-      "save_key_failed": "保存 key 失败: {err}",
+      "unknown_provider": "未知的 provider_id: %{id}",
+      "save_key_failed": "保存 key 失败: %{err}",
       "limit_reached": "已达 extra instance 上限 (50)",
-      "not_found": "extra instance '{id}' 不存在",
+      "not_found": "extra instance '%{id}' 不存在",
       "custom_only_for_custom_provider": "custom 字段只能在 provider_id == 'custom' 的 instance 上修改"
     }
   },
   "cli": {
-    "dump_unknown_source": "[dump] 未知 source id: {id}（可用: {known}）",
+    "dump_unknown_source": "[dump] 未知 source id: %{id}（可用: %{known}）",
     "dump_no_enabled": "[dump] 没有启用的 source",
-    "dump_header": "\n========== {display_name} ({id}) ==========",
+    "dump_header": "\n========== %{display_name} (%{id}) ==========",
     "dump_no_credentials": "[dump] 未配置凭据。请先在 GUI 设置面板配置。",
-    "dump_read_keys_failed": "[dump] 读 keys.json 失败: {err}",
+    "dump_read_keys_failed": "[dump] 读 keys.json 失败: %{err}",
     "dump_raw_response": "\n--- 原始响应 ---",
     "dump_parsed_result": "\n--- 解析结果 ---",
-    "dump_fetch_failed": "[dump] 拉取失败: {err}"
+    "dump_fetch_failed": "[dump] 拉取失败: %{err}"
   },
   "window": {
     "settings": "Musage · 设置",
@@ -207,33 +207,33 @@
     }
   },
   "xiaomi_login": {
-    "parse_login_url": "parse LOGIN_URL: {err}",
-    "build_webview": "build webview: {err}",
+    "parse_login_url": "parse LOGIN_URL: %{err}",
+    "build_webview": "build webview: %{err}",
     "another_task_done": "另一个提取任务已成功完成",
-    "read_url_failed": "读 webview URL 失败: {err}",
+    "read_url_failed": "读 webview URL 失败: %{err}",
     "cookie_extraction_failed": "Cookie 提取失败——多次重试后仍未在 cookie store 中找到预期的 dashboard cookie。请检查：1) 登录是否成功完成；2) 是否在 platform.xiaomimimo.com 的 dashboard 页面上。",
-    "parse_url": "parse url: {err}",
-    "cookies_for_url_failed": "webview.cookies_for_url 失败: {err}",
-    "cookies_not_found": "没找到 Xiaomi dashboard cookies（共 {count} 个 cookie，白名单期望 {expected} 个：{wanted}）。实际可用：{available}",
-    "cookies_incomplete": "提取的 cookie 不完整（api-platform_serviceToken={has_service_token}, userId={has_user_id}）。两者都必须存在才能调用 dashboard API —— 未写入，原有 cookie 保留。请重新登录。",
-    "save_keys_failed": "写 keys.json 失败: {err}"
+    "parse_url": "parse url: %{err}",
+    "cookies_for_url_failed": "webview.cookies_for_url 失败: %{err}",
+    "cookies_not_found": "没找到 Xiaomi dashboard cookies（共 %{count} 个 cookie，白名单期望 %{expected} 个：%{wanted}）。实际可用：%{available}",
+    "cookies_incomplete": "提取的 cookie 不完整（api-platform_serviceToken=%{has_service_token}, userId=%{has_user_id}）。两者都必须存在才能调用 dashboard API —— 未写入，原有 cookie 保留。请重新登录。",
+    "save_keys_failed": "写 keys.json 失败: %{err}"
   },
   "anysearch_login": {
-    "parse_login_url": "parse LOGIN_URL: {err}",
-    "build_webview": "build webview: {err}",
-    "save_keys_failed": "写 keys.json 失败: {err}"
+    "parse_login_url": "parse LOGIN_URL: %{err}",
+    "build_webview": "build webview: %{err}",
+    "save_keys_failed": "写 keys.json 失败: %{err}"
   },
   "stepfun_login": {
-    "parse_login_url": "parse LOGIN_URL: {err}",
-    "parse_url": "parse url: {err}",
-    "build_webview": "build webview: {err}",
+    "parse_login_url": "parse LOGIN_URL: %{err}",
+    "parse_url": "parse url: %{err}",
+    "build_webview": "build webview: %{err}",
     "another_task_done": "另一个提取任务已经完成",
-    "read_url_failed": "读 webview URL 失败: {err}",
+    "read_url_failed": "读 webview URL 失败: %{err}",
     "cookie_extraction_failed": "Cookie 提取失败 —— 多次重试后仍未找到 Oasis-Token。请检查: 1) 登录已成功完成; 2) 已到达 platform.stepfun.com dashboard 页面",
-    "cookies_for_url_failed": "webview.cookies_for_url 失败: {err}",
-    "cookies_not_found": "未找到 StepFun dashboard cookie（共 {count} 个，期望 {expected} 个: {wanted}）。实际可用: {available}",
-    "cookies_incomplete": "提取的 cookie 不完整（Oasis-Token={has_oasis_token}）。Oasis-Token 必须存在 —— 未写入，原有 cookie 保留。请重新登录。",
+    "cookies_for_url_failed": "webview.cookies_for_url 失败: %{err}",
+    "cookies_not_found": "未找到 StepFun dashboard cookie（共 %{count} 个，期望 %{expected} 个: %{wanted}）。实际可用: %{available}",
+    "cookies_incomplete": "提取的 cookie 不完整（Oasis-Token=%{has_oasis_token}）。Oasis-Token 必须存在 —— 未写入，原有 cookie 保留。请重新登录。",
     "handshake_not_ready": "init script MUSAGE_READY 握手未出现 —— webview 还没完成首次清理旧 cookie。等下次重试。",
-    "save_keys_failed": "写 keys.json 失败: {err}"
+    "save_keys_failed": "写 keys.json 失败: %{err}"
   }
 }

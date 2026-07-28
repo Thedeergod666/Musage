@@ -10,11 +10,11 @@
     "tooltip": {
       "loading": "Musage - loading...",
       "title": "Musage",
-      "updated_at": "Updated at {time}",
-      "provider_error": "{provider}: {error}",
-      "row_pct": "{label} {pct}%",
-      "provider_rows": "{provider} {rows}",
-      "provider_balance": "{provider} {amount}{unit}"
+      "updated_at": "Updated at %{time}",
+      "provider_error": "%{provider}: %{error}",
+      "row_pct": "%{label} %{pct}%",
+      "provider_rows": "%{provider} %{rows}",
+      "provider_balance": "%{provider} %{amount}%{unit}"
     }
   },
   "row": {
@@ -38,31 +38,31 @@
   "error": {
     "common": {
       "api_key_empty": "API key is empty",
-      "auth_failed": "Auth failed — please check {provider} API key",
-      "forbidden": "No permission to access {provider} (HTTP 403)",
-      "network": "Network error [{url}]: {err}",
-      "parse_json": "Response is not JSON: {err}",
-      "http_error": "{provider} service error (HTTP {status}): {body}",
-      "http_error_simple": "HTTP {status} ({provider})",
-      "business_code": "{provider} API error (code {code}): {msg}",
-      "missing_field": "{provider} response missing {field}",
-      "rate_limited": "{provider} rate limited, please try again later",
-      "rate_limited_with_retry": "{provider} rate limited, retry in about {retry_secs} seconds",
-      "url_scheme_invalid": "URL must start with https:// (rejects http://, file://, javascript:, etc). Current value: {url}",
-      "ssrf_blocked": "URL host '{host}' is blocked (loopback / link-local / cloud metadata endpoint not allowed to prevent credential leakage via shared config)",
+      "auth_failed": "Auth failed — please check %{provider} API key",
+      "forbidden": "No permission to access %{provider} (HTTP 403)",
+      "network": "Network error [%{url}]: %{err}",
+      "parse_json": "Response is not JSON: %{err}",
+      "http_error": "%{provider} service error (HTTP %{status}): %{body}",
+      "http_error_simple": "HTTP %{status} (%{provider})",
+      "business_code": "%{provider} API error (code %{code}): %{msg}",
+      "missing_field": "%{provider} response missing %{field}",
+      "rate_limited": "%{provider} rate limited, please try again later",
+      "rate_limited_with_retry": "%{provider} rate limited, retry in about %{retry_secs} seconds",
+      "url_scheme_invalid": "URL must start with https:// (rejects http://, file://, javascript:, etc). Current value: %{url}",
+      "ssrf_blocked": "URL host '%{host}' is blocked (loopback / link-local / cloud metadata endpoint not allowed to prevent credential leakage via shared config)",
       "no_credential": "No credentials configured (set in Settings panel)",
-      "no_credential_with_provider": "{provider} credentials not configured (set in Settings panel)",
-      "missing_data_field": "{provider} response missing 'data' field",
-      "missing_field_generic": "Response missing {field} field",
-      "read_keys_failed": "Failed to read keys.json: {err}",
-      "join_task_failed": "Failed to join task: {err}",
-      "unknown_source_id": "Unknown source id: {id}"
+      "no_credential_with_provider": "%{provider} credentials not configured (set in Settings panel)",
+      "missing_data_field": "%{provider} response missing 'data' field",
+      "missing_field_generic": "Response missing %{field} field",
+      "read_keys_failed": "Failed to read keys.json: %{err}",
+      "join_task_failed": "Failed to join task: %{err}",
+      "unknown_source_id": "Unknown source id: %{id}"
     },
     "parse": {
       "no_rows_found": "Response contains no usage rows — schema may have changed"
     },
     "provider": {
-      "unconfigured_key": "API key not configured for {provider} (set in Settings)",
+      "unconfigured_key": "API key not configured for %{provider} (set in Settings)",
       "schema_unknown_hint": "Schema not recognized — add candidate field names in Settings → Schema overrides",
       "minimax_403": "No permission to access MiniMax usage API (HTTP 403)"
     },
@@ -73,10 +73,10 @@
       "api_key_unauthorized_hint": "Xiaomi API key unauthorized (HTTP 401) — current usage API only allows dashboard cookies. Use Cookie or both (401 auto-falls back to Cookie path)",
       "cookie_invalid_hint": "Cookie expired or invalid — re-login at platform.xiaomimimo.com → DevTools → copy new Cookie",
       "cookie_empty": "Dashboard cookie is empty (Settings → Xiaomi → Dashboard Cookie)",
-      "cookie_format_invalid": "Cookie format invalid (contains illegal character {ch}). Please re-copy from browser DevTools Application → Cookies (no line breaks)",
-      "http_error": "Xiaomi dashboard API error (HTTP {status}): {body}",
-      "business_code": "Xiaomi dashboard API code {code}: {msg}",
-      "plan_expired_hint": "Plan expired ({plan} · until {end}). Renew at platform.xiaomimimo.com → Subscription. The floating window will recover on next poll (≤60s)",
+      "cookie_format_invalid": "Cookie format invalid (contains illegal character %{ch}). Please re-copy from browser DevTools Application → Cookies (no line breaks)",
+      "http_error": "Xiaomi dashboard API error (HTTP %{status}): %{body}",
+      "business_code": "Xiaomi dashboard API code %{code}: %{msg}",
+      "plan_expired_hint": "Plan expired (%{plan} · until %{end}). Renew at platform.xiaomimimo.com → Subscription. The floating window will recover on next poll (≤60s)",
       "schema_unknown_hint": "Response missing plan_total_token / compensation_total_token / month_total_token (schema changed? Add new names in Settings → schema_overrides)",
       "data_field_missing": "Response missing data field"
     },
@@ -84,10 +84,10 @@
       "auth_failed_hint": "Auth failed — Zhipu GLM API key invalid (note: no Bearer prefix; CN/EN keys are not interchangeable)"
     },
     "stepfun": {
-      "token_unconfigured_hint": "StepFun Oasis-Token not configured (copy from stepfun.ai → DevTools → Cookies → Oasis-Token)",
-      "token_invalid_hint": "StepFun Oasis-Token invalid or expired (re-login at stepfun.ai and paste new token)",
-      "token_expired_hint": "StepFun Oasis-Token already expired {mins} minutes ago — re-login at platform.stepfun.com and paste a fresh token",
-      "token_malformed_hint": "StepFun Oasis-Token format unrecognized — copy the value directly from the Oasis-Token cookie in DevTools"
+      "token_unconfigured_hint": "Not logged in to StepFun — click \"🔑 Login StepFun\" in Settings to complete login in the popup",
+      "token_invalid_hint": "StepFun login credential invalid — click \"Re-login StepFun\" in the floating window or \"🔑 Login StepFun\" in Settings to re-login",
+      "token_expired_hint": "StepFun login credential expired %{mins} minutes ago — click \"Re-login StepFun\" in the floating window or \"🔑 Login StepFun\" in Settings to re-login",
+      "token_malformed_hint": "StepFun login credential format unrecognized — click \"Re-login StepFun\" in the floating window or \"🔑 Login StepFun\" in Settings to re-login"
     },
     "claude_official": {
       "cookie_invalid_hint": "Claude sessionKey cookie invalid or expired (claude.ai login session expires after ~8h — re-extract)",
@@ -102,8 +102,8 @@
       "schema_unknown_hint": "AnySearch response schema changed (data.used/total/next_reset_at missing)"
     },
     "custom": {
-      "network": "CustomSource network error: {err}",
-      "http_error": "CustomSource HTTP {status}: {body}",
+      "network": "CustomSource network error: %{err}",
+      "http_error": "CustomSource HTTP %{status}: %{body}",
       "rate_limited": "CustomSource rate limited, please try again later",
       "forbidden": "CustomSource no permission (HTTP 403)",
       "auth_failed": "Auth failed — please check API key",
@@ -111,7 +111,7 @@
       "newapi_divide_zero": "NewApi template: divide cannot be 0",
       "newapi_data_missing": "NewApi template: data.quota / data.used_quota missing or non-numeric",
       "balance_divide_zero": "Balance template: divide cannot be 0",
-      "balance_path_invalid": "Balance template: path '{path}' invalid or non-numeric",
+      "balance_path_invalid": "Balance template: path '%{path}' invalid or non-numeric",
       "custom_path_no_match": "Custom template: no paths matched any value",
       "custom_divide_zero": "Custom template: divide cannot be 0",
       "path_must_start_with_slash": "Custom source path must start with '/' (prevents URL confusion)"
@@ -124,54 +124,54 @@
     "claude_session_expired_body": "Your Claude sessionKey has expired. Open Settings → claude_official → paste new sessionKey."
   },
   "commands": {
-    "region_invalid": "Invalid region: {other} (must be cn / global / custom)",
-    "source_unknown": "Unknown source id: {id}",
-    "field_unknown": "Unknown field identifier: {other} (expected api_key or cookie)",
+    "region_invalid": "Invalid region: %{other} (must be cn / global / custom)",
+    "source_unknown": "Unknown source id: %{id}",
+    "field_unknown": "Unknown field identifier: %{other} (expected api_key or cookie)",
     "credential_empty": "Credential cannot be empty",
     "api_key_empty": "API key cannot be empty",
-    "display_mode_unknown_xiaomi": "Unknown Xiaomi display mode: {other} (expected all / plan_only / total_only)",
-    "region_unknown": "Unknown region: {other} (expected cn / en)",
-    "xiaomi_region_unknown": "Unknown Xiaomi region: {other} (expected cn / sgp / ams)",
-    "zenmux_mode_unknown": "Unknown ZenMux mode: {other} (expected payg / subscription)",
-    "zhipu_region_unknown": "Unknown Zhipu region: {other} (expected cn / en)",
-    "pin_mode_unknown": "Unknown floating pin mode: {other}",
+    "display_mode_unknown_xiaomi": "Unknown Xiaomi display mode: %{other} (expected all / plan_only / total_only)",
+    "region_unknown": "Unknown region: %{other} (expected cn / en)",
+    "xiaomi_region_unknown": "Unknown Xiaomi region: %{other} (expected cn / sgp / ams)",
+    "zenmux_mode_unknown": "Unknown ZenMux mode: %{other} (expected payg / subscription)",
+    "zhipu_region_unknown": "Unknown Zhipu region: %{other} (expected cn / en)",
+    "pin_mode_unknown": "Unknown floating pin mode: %{other}",
     "interval_too_small": "Refresh interval cannot be less than 10 seconds (avoids provider rate limit)",
-    "threshold_invalid": "Color thresholds must satisfy 0 < t0 < t1 < t2 < 100 (actual {t0} / {t1} / {t2})",
-    "wallet_threshold_negative": "Wallet alert threshold must be >= 0 (actual {n})",
-    "color_key_unknown": "Unknown color tier key: {other} (only ok / cyan / warn / alert supported)",
-    "color_value_invalid": "{k} color value must be #RGB / #RRGGBB format (actual {v})",
-    "create_settings": "create settings: {err}",
+    "threshold_invalid": "Color thresholds must satisfy 0 < t0 < t1 < t2 < 100 (actual %{t0} / %{t1} / %{t2})",
+    "wallet_threshold_negative": "Wallet alert threshold must be >= 0 (actual %{n})",
+    "color_key_unknown": "Unknown color tier key: %{other} (only ok / cyan / warn / alert supported)",
+    "color_value_invalid": "%{k} color value must be #RGB / #RRGGBB format (actual %{v})",
+    "create_settings": "create settings: %{err}",
     "floating_not_found": "Floating window not found",
-    "center_failed": "center: {err}",
-    "size_failed": "size: {err}",
-    "config_mkdir": "mkdir: {err}",
-    "config_serialize": "serialize: {err}",
-    "config_write": "write config: {err}",
+    "center_failed": "center: %{err}",
+    "size_failed": "size: %{err}",
+    "config_mkdir": "mkdir: %{err}",
+    "config_serialize": "serialize: %{err}",
+    "config_write": "write config: %{err}",
     "config_dir_not_found": "Cannot locate config directory",
-    "read_keys": "read keys: {err}",
-    "parse_keys": "parse keys.json: {err}",
-    "keys_io": "{op} keys: {err}",
-    "schema_override_empty_field": "{id}.{tier}[{idx}]: total/remaining must be non-empty strings",
-    "custom_method_invalid": "method must be GET or POST, current: {method}",
+    "read_keys": "read keys: %{err}",
+    "parse_keys": "parse keys.json: %{err}",
+    "keys_io": "%{op} keys: %{err}",
+    "schema_override_empty_field": "%{id}.%{tier}[%{idx}]: total/remaining must be non-empty strings",
+    "custom_method_invalid": "method must be GET or POST, current: %{method}",
     "extra": {
       "provider_id_empty": "provider_id must not be empty",
       "custom_spec_required": "When provider_id == 'custom', the custom field is required",
-      "unknown_provider": "Unknown provider_id: {id}",
-      "save_key_failed": "Failed to save credential: {err}",
+      "unknown_provider": "Unknown provider_id: %{id}",
+      "save_key_failed": "Failed to save credential: %{err}",
       "limit_reached": "Extra instance limit reached (50)",
-      "not_found": "Extra instance '{id}' does not exist",
+      "not_found": "Extra instance '%{id}' does not exist",
       "custom_only_for_custom_provider": "custom field can only be modified on provider_id == 'custom' instances"
     }
   },
   "cli": {
-    "dump_unknown_source": "[dump] Unknown source id: {id} (available: {known})",
+    "dump_unknown_source": "[dump] Unknown source id: %{id} (available: %{known})",
     "dump_no_enabled": "[dump] No enabled sources",
-    "dump_header": "\n========== {display_name} ({id}) ==========",
+    "dump_header": "\n========== %{display_name} (%{id}) ==========",
     "dump_no_credentials": "[dump] No credentials configured. Set them in the GUI Settings panel first.",
-    "dump_read_keys_failed": "[dump] Failed to read keys.json: {err}",
+    "dump_read_keys_failed": "[dump] Failed to read keys.json: %{err}",
     "dump_raw_response": "\n--- Raw response ---",
     "dump_parsed_result": "\n--- Parsed result ---",
-    "dump_fetch_failed": "[dump] Fetch failed: {err}"
+    "dump_fetch_failed": "[dump] Fetch failed: %{err}"
   },
   "window": {
     "settings": "Musage · Settings",
@@ -207,33 +207,33 @@
     }
   },
   "xiaomi_login": {
-    "parse_login_url": "parse LOGIN_URL: {err}",
-    "build_webview": "build webview: {err}",
+    "parse_login_url": "parse LOGIN_URL: %{err}",
+    "build_webview": "build webview: %{err}",
     "another_task_done": "Another extraction task already completed",
-    "read_url_failed": "Failed to read webview URL: {err}",
+    "read_url_failed": "Failed to read webview URL: %{err}",
     "cookie_extraction_failed": "Cookie extraction failed — after multiple retries still could not find expected dashboard cookies. Please check: 1) login completed successfully; 2) you are on the platform.xiaomimimo.com dashboard page",
-    "parse_url": "parse url: {err}",
-    "cookies_for_url_failed": "webview.cookies_for_url failed: {err}",
-    "cookies_not_found": "No Xiaomi dashboard cookies found ({count} total, expected {expected}: {wanted}). Actually available: {available}",
-    "cookies_incomplete": "Extracted cookies incomplete (api-platform_serviceToken={has_service_token}, userId={has_user_id}). Both must be present to call the dashboard API — not saved, original cookie kept. Please log in again.",
-    "save_keys_failed": "Failed to write keys.json: {err}"
+    "parse_url": "parse url: %{err}",
+    "cookies_for_url_failed": "webview.cookies_for_url failed: %{err}",
+    "cookies_not_found": "No Xiaomi dashboard cookies found (%{count} total, expected %{expected}: %{wanted}). Actually available: %{available}",
+    "cookies_incomplete": "Extracted cookies incomplete (api-platform_serviceToken=%{has_service_token}, userId=%{has_user_id}). Both must be present to call the dashboard API — not saved, original cookie kept. Please log in again.",
+    "save_keys_failed": "Failed to write keys.json: %{err}"
   },
   "anysearch_login": {
-    "parse_login_url": "parse LOGIN_URL: {err}",
-    "build_webview": "build webview: {err}",
-    "save_keys_failed": "Failed to write keys.json: {err}"
+    "parse_login_url": "parse LOGIN_URL: %{err}",
+    "build_webview": "build webview: %{err}",
+    "save_keys_failed": "Failed to write keys.json: %{err}"
   },
   "stepfun_login": {
-    "parse_login_url": "parse LOGIN_URL: {err}",
-    "parse_url": "parse url: {err}",
-    "build_webview": "build webview: {err}",
+    "parse_login_url": "parse LOGIN_URL: %{err}",
+    "parse_url": "parse url: %{err}",
+    "build_webview": "build webview: %{err}",
     "another_task_done": "Another extraction task already completed",
-    "read_url_failed": "Failed to read webview URL: {err}",
+    "read_url_failed": "Failed to read webview URL: %{err}",
     "cookie_extraction_failed": "Cookie extraction failed — after multiple retries still could not find the Oasis-Token cookie. Please check: 1) login completed successfully; 2) you are on the platform.stepfun.com dashboard page",
-    "cookies_for_url_failed": "webview.cookies_for_url failed: {err}",
-    "cookies_not_found": "No StepFun dashboard cookies found ({count} total, expected {expected}: {wanted}). Actually available: {available}",
-    "cookies_incomplete": "Extracted cookies incomplete (Oasis-Token={has_oasis_token}). Oasis-Token must be present — not saved, original cookie kept. Please log in again.",
+    "cookies_for_url_failed": "webview.cookies_for_url failed: %{err}",
+    "cookies_not_found": "No StepFun dashboard cookies found (%{count} total, expected %{expected}: %{wanted}). Actually available: %{available}",
+    "cookies_incomplete": "Extracted cookies incomplete (Oasis-Token=%{has_oasis_token}). Oasis-Token must be present — not saved, original cookie kept. Please log in again.",
     "handshake_not_ready": "Init script MUSAGE_READY handshake not seen — webview did not finish initial cleanup of stale cookies yet. Waiting for next retry.",
-    "save_keys_failed": "Failed to write keys.json: {err}"
+    "save_keys_failed": "Failed to write keys.json: %{err}"
   }
 }

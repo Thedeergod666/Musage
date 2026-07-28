@@ -326,59 +326,72 @@ pub async fn open_stepfun_login_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 带重试的 cookie 提取。最多尝试 5 次，间隔递增。
+/// 轮询 webview cookie jar 直到抽到合法 Oasis-Token 或窗口消失 / 超时。
 ///
-/// macOS WKWebView 的 cookie store 可能延迟写入（登录后 SPA 跳
-/// 转链中 `on_page_load` 触发时 cookie 还没落定），所以需要多次
-/// 尝试。
+/// 改成跟 [anysearch_login.rs](crate::anysearch_login) 的 `poll_token_from_cookie`
+/// 同款轮询模式（旧版固定 5 次重试间隔 11s 太慢：首次成功要等 1s sleep
+/// 才检查，用户登录后 cookie 落定到 on_page_load 触发之间可能 <500ms，
+/// 但旧版要等 1s 才第一次检查 → 浪费 500ms+；更糟的是如果首次
+/// ready_seen 失败，要等 1+2+4+6+12=25s 才退出）。
+///
+/// 新策略：
+/// - 首次 sleep 300ms（给 init script document_start 跑完 + cookie 落定）
+/// - 然后每 700ms 轮询一次（跟 anysearch 一致）
+/// - 最多 40 次 = 28s 覆盖手机号+验证码+跨域 redirect 链
+/// - URL 不在 dashboard 时不消耗轮询次数（continue 不 increment）
 async fn extract_with_retry(
     window: &tauri::WebviewWindow,
     _app: &AppHandle,
 ) -> Result<usize, String> {
-    // 重试策略：1s, 2s, 4s, 6s, 12s（共 25s 覆盖手机号+验证码+OAuth
-    // 跨域 redirect 链；xiaomi_login.rs 11s 太短,StepFun 跨 account
-    // → platform 域的 redirect 链可能拖到 5-10s）。
-    let retry_delays = [1u64, 2, 4, 6, 12];
+    // 首次让出 300ms：等 init script document_start 跑完清旧 cookie +
+    // 置 MUSAGE_READY。webview profile 持久化上一次的 Oasis-Token
+    // cookie；若一开窗就立刻读，可能先于清理抓到过期 token
+    // （「弹出即消失 + 信息不更新」bug 的根因）。
+    sleep(Duration::from_millis(300)).await;
+    if DONE.load(Ordering::SeqCst) {
+        return Err(t!("stepfun_login.another_task_done").into_owned());
+    }
 
-    for (attempt, delay) in retry_delays.iter().enumerate() {
-        let attempt_num = attempt + 1;
+    // 安全上限：40 次 × 700ms = 28s，覆盖手机号+验证码+跨域 redirect
+    const MAX_ITERS: u32 = 40;
 
-        // 如果另一个任务已经成功，直接退出
+    for iter in 0..MAX_ITERS {
         if DONE.load(Ordering::SeqCst) {
             return Err(t!("stepfun_login.another_task_done").into_owned());
         }
-
-        sleep(Duration::from_secs(*delay)).await;
 
         // 检查 URL 是否还在 dashboard
         let current_url = match window.url() {
             Ok(u) => u,
             Err(e) => {
-                // webview 可能已被成功的任务关闭（"failed to receive message"），
-                // 这是预期行为，直接退出
-                tracing::debug!(error = %e, attempt_num, "读 webview URL 失败（窗口可能已关闭）");
+                tracing::debug!(error = %e, iter, "读 webview URL 失败（窗口可能已关闭）");
                 return Err(t!("stepfun_login.read_url_failed", err = e.to_string()).into_owned());
             }
         };
 
         if !is_dashboard_url(&current_url) {
-            tracing::debug!(%current_url, attempt_num, "URL 不在 dashboard，跳过");
+            // URL 不在 dashboard（还在 account 域登录页）→ 不消耗轮询
+            // 次数，等 700ms 后再看
+            tracing::debug!(%current_url, iter, "URL 不在 dashboard，等 700ms");
+            sleep(Duration::from_millis(700)).await;
             continue;
         }
 
         // 尝试提取
         match extract_and_save(window).await {
             Ok(saved_len) => {
-                tracing::info!(saved_len, attempt_num, "cookie 提取成功");
+                tracing::info!(saved_len, iter, "cookie 提取成功");
                 return Ok(saved_len);
             }
             Err(e) => {
-                tracing::debug!(error = %e, attempt_num, "cookie 提取失败，继续重试");
+                tracing::debug!(error = %e, iter, "cookie 提取失败，等 700ms 再试");
             }
         }
+
+        sleep(Duration::from_millis(700)).await;
     }
 
-    // 所有重试都失败
+    // 所有轮询都失败
     Err(t!("stepfun_login.cookie_extraction_failed").into_owned())
 }
 

@@ -24,6 +24,7 @@ import stepfunLogo from "./assets/stepfun-logo.svg?url";
 import siliconflowLogo from "./assets/siliconflow-logo.svg?url";
 import claudeLogo from "./assets/claude-logo.svg?url";
 import anysearchLogo from "./assets/anysearch-logo.svg?url";
+import volcengineArkLogo from "./assets/volcengine-ark-logo.svg?url";
 import "./styles.css";
 
 /// 静态映射：provider id → 官网 logo + 显示名 + accent 色
@@ -58,8 +59,8 @@ function buildProviderMeta(): Record<string, { name: string; logo: string; accen
     claude_official: { name: t("provider.claude_official.name"), logo: claudeLogo, accent: "#d97706" },
     // AnySearch logo：蓝底白 chevron；accent 同色，给 first-letter fallback 兜底
     anysearch: { name: t("provider.anysearch.name"), logo: anysearchLogo, accent: "#2563eb" },
-    // v0.2.5: 火山方舟 Coding Plan —— 无 logo 资产，走首字母 fallback（accent 蓝橙火山色）
-    volcengine_ark: { name: t("provider.volcengine_ark.name"), logo: "", accent: "#ff6633" },
+    // 火山方舟 Volcengine Ark：橙底白火山 mark（自绘，见 assets/volcengine-ark-logo.svg）
+    volcengine_ark: { name: t("provider.volcengine_ark.name"), logo: volcengineArkLogo, accent: "#ff6633" },
   };
 }
 
@@ -506,8 +507,11 @@ async function fitOnObserverTick() {
     if (contentH === lastFitContentH) return;
     lastFitContentH = contentH;
     const screenH = window.screen?.availHeight ?? 2400;
-    const maxH = Math.max(200, screenH - 80);
+    const maxH = Math.max(200, screenH);  // 余量 0 -- availHeight 已扣菜单栏/Dock，榨干每像素（旧 -80 在 stepfun 加入后内容顶过屏幕被裁）
     const target = Math.round(Math.min(contentH, maxH));
+    showFitDebug(contentH, maxH, screenH);  // 临时诊断：内容超屏时右上角红标，定位完删 showFitDebug + 调用处
+    // 临时诊断 -- 定 stepfun 显示不全的根因，定位完删
+    console.debug(`[fit] contentH=${contentH} maxH=${maxH} target=${target} screenAvail=${screenH} innerH=${window.innerHeight} ${contentH > maxH ? "OVERFLOW +" + (contentH - maxH) : "fits"}`);
     if (Math.abs(window.innerHeight - target) <= 1) return;
     lastFitWindowH = target;
     try {
@@ -524,6 +528,26 @@ async function fitOnObserverTick() {
 /// observer 自己盯住 #app 后续所有 contentBox 变化（rows 后插、切简洁
 /// 模式删 row、关 footer 等），不需要 fingerprint 协调。这里只确保
 /// observer 装上 + 清掉 lastFitContentH 让下次变化一定会触发 fit。
+/// 临时诊断：contentH 超过 maxH（内容放不进屏幕）时浮窗右上角红标显示数值。
+/// 不溢出则隐藏 -- 问题解决后红标自动消失。定位完删整段 + 调用处。
+function showFitDebug(contentH: number, maxH: number, screenH: number) {
+  let el = document.getElementById("__fitdbg");
+  if (contentH <= maxH) {
+    el?.remove();
+    return;
+  }
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "__fitdbg";
+    el.style.cssText =
+      "position:fixed;top:2px;right:2px;background:#ff453a;color:#fff;" +
+      "font-family:monospace;font-size:10px;z-index:99999;padding:2px 4px;" +
+      "border-radius:3px;pointer-events:none;";
+    document.body.appendChild(el);
+  }
+  el.textContent = `H=${contentH} max=${maxH} scr=${screenH} +${contentH - maxH}`;
+}
+
 function touchFitReason() {
   void installAutoResizeObserver();
   lastFitContentH = -1;

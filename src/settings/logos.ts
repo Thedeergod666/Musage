@@ -23,6 +23,7 @@ import zhipuEnLogo from "../assets/zhipu-en-logo.svg";
 import stepfunLogo from "../assets/stepfun-logo.svg";
 import siliconflowLogo from "../assets/siliconflow-logo.svg";
 import claudeLogo from "../assets/claude-logo.svg";
+import volcengineArkLogo from "../assets/volcengine-ark-logo.svg";
 
 export interface ProviderMeta {
   name: string;
@@ -70,8 +71,8 @@ export function buildProviderMeta(): Record<string, ProviderMeta> {
     siliconflow: { name: t("provider.siliconflow.name"), logo: siliconflowLogo, accent: "#ff6b35" },
     claude_official: { name: t("provider.claude_official.name"), logo: claudeLogo, accent: "#d97706" },
     anysearch: { name: t("provider.anysearch.name"), logo: anysearchLogo, accent: "#2563eb" },
-    // v0.2.5: 火山方舟 Coding Plan —— 无 logo 资产，走首字母 fallback（accent 火山橙）
-    volcengine_ark: { name: t("provider.volcengine_ark.name"), logo: "", accent: "#ff6633" },
+    // 火山方舟 Volcengine Ark：橙底白火山 mark（自绘，见 assets/volcengine-ark-logo.svg）
+    volcengine_ark: { name: t("provider.volcengine_ark.name"), logo: volcengineArkLogo, accent: "#ff6633" },
   };
 }
 

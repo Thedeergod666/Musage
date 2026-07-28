@@ -1047,7 +1047,7 @@ fn parse_pin_mode(s: &str) -> Result<FloatingPinMode, String> {
 ///
 /// **maxHeight 为什么是 2400**：8+ provider 全开（旧上限 800 装不下 → 用户
 /// 反馈底部卡片被截）。2400 logical 像素覆盖到 4K 工作区（2160p ≈ 2000+ 可用）。
-/// 真正"别超出屏幕"的兜底由前端 `screen.availHeight - 30` 处理 —— 后端这层只
+/// 真正"别超出屏幕"的兜底由前端 `screen.availHeight - 80` 处理 —— 后端这层只
 /// 是 OS 硬上限的镜像，避免 Tauri 把窗口拉到天文数字。
 ///
 /// **`height` 是 logical / CSS 像素**（前端读 `app.scrollHeight` 拿到的就是

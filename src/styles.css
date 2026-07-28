@@ -260,19 +260,6 @@ body[data-hover] #app {
   gap: 5px;
 }
 
-/* ── 火山方舟：7d + 月 并排成第二行（5h 仍单独第一行）──
- * .row-pair 是 .rows 的直接子节点（跟 .row 同级），内含两个 .row 各
- * flex:1 平分宽度。min-width:0 让 row-label 的 space-between 在窄宽下
- * 不撑破。row-foot 去前缀后只剩"日期（倒计时）"，半宽下也能放下。 */
-.row-pair {
-  display: flex;
-  gap: 14px;
-}
-.row-pair > .row {
-  flex: 1 1 0;
-  min-width: 0;
-}
-
 .row-label {
   display: flex;
   justify-content: space-between;

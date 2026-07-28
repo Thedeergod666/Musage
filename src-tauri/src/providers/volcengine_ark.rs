@@ -141,11 +141,25 @@ impl QuotaSource for VolcengineArkSource {
         credentials: &'a Credentials,
     ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>>
     {
+        // v0.2.5: 两个独立 input 字段 —— `api_key` = AccessKey ID,
+        // `secret_key` = SecretAccessKey（跟 ccswitch 1:1）。
+        let ak_raw = credentials.api_key.clone();
+        let sk_raw = credentials.secret_key.clone();
+        let source_id = self.unique_id();
+        let display_name = self.display_name().to_string();
         Box::pin(async move {
-            // v0.2.5: 两个独立 input 字段 —— `api_key` = AccessKey ID,
-            // `secret_key` = SecretAccessKey（跟 ccswitch 1:1）。
-            let ak = credentials.api_key.as_deref().unwrap_or("").trim();
-            let sk = credentials.secret_key.as_deref().unwrap_or("").trim();
+            // v0.2.5 迁移: 检测到 v0.2.4 老 keys.json —— `api_key` 槽存的是
+            // 整串 "AK...SK"（v0.2.4 拼格式,save_credential_for_id 当时
+            // 当一个值存),`secret_key` 槽空。一次性 split + 写回 keys.json,
+            // 下次 fetch 直接走新 2-字段路径,用户不需要手动重粘。
+            //
+            // 仅对**唯一**内置 provider `volcengine_ark` 触发 —— 副本
+            // (`volcengine_ark#2`) 的 keys.json 是用户后续通过 modal 加的,
+            // 走新 save 路径,不持老格式。extra instance 路径不影响。
+            //
+            // 注意:`migrate_if_needed` 是 sync std::fs 写盘,放 spawn_blocking
+            // 避免阻塞 tokio executor。
+            let (ak, sk) = migrate_if_needed(&source_id, ak_raw, sk_raw).await?;
             if ak.is_empty() {
                 return Err(FetchError::unconfigured(
                     t!("error.provider.unconfigured_key", provider = "Volcengine Ark").into_owned(),
@@ -156,9 +170,69 @@ impl QuotaSource for VolcengineArkSource {
                     t!("error.volcengine.unconfigured_secret_key").into_owned(),
                 ));
             }
-            do_fetch(ak, sk, &self.unique_id(), &self.display_name().to_string()).await
+            do_fetch(&ak, &sk, &source_id, &display_name).await
         })
     }
+}
+
+/// v0.2.5 一次性迁移:把 v0.2.4 存的 "AK...SK" 整串拆成 2 字段写回 keys.json。
+///
+/// 返回 `(ak, sk)` 元组(无论是否触发迁移,都返有效值)。
+/// 返回 `Err` 仅当 spawn_blocking 任务自身 join 失败(实际不会触发)。
+async fn migrate_if_needed(
+    source_id: &str,
+    ak: Option<String>,
+    sk: Option<String>,
+) -> Result<(String, String), FetchError> {
+    // 仅 v0.2.5 内置 1 份(provider 副本走 extra_instances 路径,新格式起步)
+    if source_id != "volcengine_ark" {
+        return Ok((
+            ak.unwrap_or_default().trim().to_string(),
+            sk.unwrap_or_default().trim().to_string(),
+        ));
+    }
+    let ak_trim = ak.as_deref().unwrap_or("").trim().to_string();
+    let sk_trim = sk.as_deref().unwrap_or("").trim().to_string();
+    // 三种状态:
+    // 1. ak 已有 + sk 已有 (新格式,直接走)         → 不迁移
+    // 2. ak 含 "..." 整串 + sk 空 (v0.2.4 老格式)   → 迁移写回
+    // 3. ak 空 + sk 空                                 → 走 fetch 的 unconfigured 分支
+    if !sk_trim.is_empty() || !ak_trim.contains("...") {
+        return Ok((ak_trim, sk_trim));
+    }
+    // 拆 "AK...SK" -> (ak, sk)。AK 部分不含 "...",SK 部分也不含,
+    // 第一个 "..." 之前的全给 ak,之后全给 sk(允许 SK 里再有 "..." 字符)。
+    let (new_ak, new_sk) = match ak_trim.split_once("...") {
+        Some((a, s)) => (a.trim().to_string(), s.trim().to_string()),
+        None => return Ok((ak_trim, sk_trim)), // 兜底:不应该到这里
+    };
+    tracing::info!(
+        source_id = %source_id,
+        "检测到 v0.2.4 老 \"AK...SK\" 整串格式,自动 split + 写回 keys.json"
+    );
+    // 写回 keys.json。spawn_blocking 因为 save_credential_for_id 是 std::fs 同步 IO。
+    // clone 出来一份给闭包消费(避免 spawn_blocking move 后无法 return)。
+    let (ak_for_save, sk_for_save) = (new_ak.clone(), new_sk.clone());
+    let write_result = tokio::task::spawn_blocking(move || {
+        crate::config::save_credential_for_id(
+            "volcengine_ark",
+            &crate::providers::Credentials {
+                api_key: Some(ak_for_save),
+                cookie: None,
+                secret_key: Some(sk_for_save),
+            },
+        )
+    })
+    .await
+    .map_err(|e| {
+        tracing::warn!(error = %e, "迁移 save_credential_for_id join 失败");
+        FetchError::server(format!("migrate join failed: {e}"))
+    })?;
+    if let Err(e) = write_result {
+        tracing::warn!(error = %e, "迁移写回 keys.json 失败(继续走 fetch,下次再试)");
+        // 不 fail fetch —— 写回失败不影响本次 fetch,只是下次还要再走迁移。
+    }
+    Ok((new_ak, new_sk))
 }
 
 async fn do_fetch(
@@ -512,6 +586,30 @@ mod tests {
         let creds = Credentials::default();
         let err = extract_ak_sk(&creds).unwrap_err();
         assert_eq!(err.kind, ErrorKind::UnconfiguredKey);
+    }
+
+    // ── v0.2.5 老数据迁移: 验"AK...SK"整串能 split_once 出 (ak, sk) ──
+
+    /// 测试 split_once 的纯函数部分（不调 keys.json 写回）。`migrate_if_needed`
+    /// 内部 split_once 走的是标准库,这里覆盖几种边界:
+    /// - 标准 "AK...SK" 形态 → 正确切两段
+    /// - SK 里含 "..." (如 sk-...secret...real) 不会重复切
+    /// - "..." 在最前/最后 → 退化
+    /// - 字符串不含 "..." → 走 fetch 的 unconfigured 分支（被上层挡住）
+    #[test]
+    fn split_combined_ak_sk_v0204() {
+        // 标准形态
+        let (a, s) = "AKLTz...sk-secret-xy".split_once("...").unwrap();
+        assert_eq!(a, "AKLTz");
+        assert_eq!(s, "sk-secret-xy");
+
+        // SK 里含 "..." 不应重复切（split_once 只切第一个）
+        let (a, s) = "AK...sk-with...dots".split_once("...").unwrap();
+        assert_eq!(a, "AK");
+        assert_eq!(s, "sk-with...dots");
+
+        // 退化:不包含
+        assert!("plainstring".split_once("...").is_none());
     }
 
     // ── 签名（不变性测试：固定时间签名，hex 字符串必须稳定） ──

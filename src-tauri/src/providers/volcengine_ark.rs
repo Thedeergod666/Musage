@@ -242,13 +242,19 @@ async fn do_fetch(
     display_name: &str,
 ) -> Result<ProviderSnapshot, FetchError> {
     // 1. 准备签名参数
+    // v0.2.5 fix: 火山 Coding Plan `GetCodingPlanUsage` 是 **GET**(只读),
+    // 不是 POST。cc-switch 走 GET 能通,POST 返 200 但 Result 空 →
+    // 我们走 "响应缺少 UsageList" 错误路径。
+    // 关键变化:canonical request METHOD=GET, body=空, 仍算 body_hash(空字节
+    // 串的 sha256,AWS SigV4 规定 GET 也必须有 x-content-sha256 header)。
+    // 删 Content-Type (GET 不需要;加上反而让火山 server 验证 body 类型)。
     let x_date = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
-    let body = b"{}";
+    let body: &[u8] = b"";
     let body_hash = sha256_hex(body);
 
     // 2. CanonicalRequest
     let canonical_request = format!(
-        "POST\n/\nAction={ACTION}&Version={VERSION}\nhost:{HOST}\nx-content-sha256:{body_hash}\nx-date:{x_date}\n\nhost;x-content-sha256;x-date\n{body_hash}",
+        "GET\n/\nAction={ACTION}&Version={VERSION}\nhost:{HOST}\nx-content-sha256:{body_hash}\nx-date:{x_date}\n\nhost;x-content-sha256;x-date\n{body_hash}",
         HOST = HOST,
         ACTION = ACTION,
         VERSION = VERSION,
@@ -276,16 +282,14 @@ async fn do_fetch(
         "HMAC-SHA256 Credential={ak}/{credential_scope}, SignedHeaders=host;x-content-sha256;x-date, Signature={signature}",
     );
 
-    // 6. 发送请求
+    // 6. 发送请求 (GET + 空 body, 不带 Content-Type)
     let client = super::shared_client();
     let resp = client
-        .post(URL)
+        .get(URL)
         .header("Host", HOST)
         .header("X-Date", &x_date)
         .header("X-Content-Sha256", &body_hash)
-        .header("Content-Type", "application/json; charset=UTF-8")
         .header("Authorization", authorization)
-        .body("{}")
         .send()
         .await
         .map_err(|e| {
@@ -369,16 +373,24 @@ fn parse(
         }
     }
 
-    let usage_list = result.get("UsageList").and_then(|v| v.as_array()).ok_or_else(|| {
-        FetchError::parse(
-            t!(
-                "error.common.missing_field",
-                provider = "Volcengine Ark",
-                field = "UsageList"
+    // 火山 Coding Plan schema 兼容性:
+    // - v0.2.5 我们读: Result.UsageList[] (Level: "Session"|"Weekly"|"Monthly", Remaining, Total)
+    // - CodexBar #1724 提到另一种: QuotaUsage[] (Level: "session"|"weekly"|"monthly", Percent, ResetTimestamp)
+    // 优先用 UsageList,fallback QuotaUsage;Level 统一转 lowercase 后 match。
+    let usage_list = result
+        .get("UsageList")
+        .and_then(|v| v.as_array())
+        .or_else(|| result.get("QuotaUsage").and_then(|v| v.as_array()))
+        .ok_or_else(|| {
+            FetchError::parse(
+                t!(
+                    "error.common.missing_field",
+                    provider = "Volcengine Ark",
+                    field = "UsageList"
+                )
+                .into_owned(),
             )
-            .into_owned(),
-        )
-    })?;
+        })?;
 
     if usage_list.is_empty() {
         return Err(FetchError::parse(
@@ -389,11 +401,10 @@ fn parse(
     let mut rows = Vec::new();
 
     for entry in usage_list {
-        let level = entry.get("Level").and_then(|v| v.as_str()).unwrap_or("");
-        let remaining = super::parse::num_f64(
-            entry.get("Remaining").unwrap_or(&Value::Null),
-        );
-        let total = super::parse::num_f64(entry.get("Total").unwrap_or(&Value::Null));
+        let level_raw = entry.get("Level").and_then(|v| v.as_str()).unwrap_or("");
+        // 大小写不敏感 —— CodexBar issue #1724 看到的 schema 是 "session"
+        // 小写,火山自家控制台实测是 "Session" 大写,两种都收。
+        let level = level_raw.to_ascii_lowercase();
         let resets_at = entry
             .get("ResetTimestamp")
             .and_then(|v| v.as_i64())
@@ -403,21 +414,34 @@ fn parse(
                     .and_then(|v| v.as_f64())
                     .map(|f| f as i64)
             });
-
-        // 缺失核心字段 → 跳过这条
-        let (remaining, total) = match (remaining, total) {
-            (Some(r), Some(t)) if t > 0.0 => (r, t),
-            _ => continue,
+        // CodexBar schema 用 Percent 字段(0.0~1.0),我们 v0.2.5 schema 用
+        // Remaining+Total 算 utilization。两种都支持。
+        let (remaining, total) = if let Some(percent) = super::parse::num_f64(
+            entry.get("Percent").unwrap_or(&Value::Null),
+        ) {
+            // Percent schema: percent 0.0~1.0,total=100,remaining=100-percent*100
+            let total = 100.0;
+            let remaining = ((1.0 - percent) * 100.0).max(0.0);
+            (remaining, total)
+        } else {
+            let remaining = super::parse::num_f64(
+                entry.get("Remaining").unwrap_or(&Value::Null),
+            );
+            let total = super::parse::num_f64(entry.get("Total").unwrap_or(&Value::Null));
+            match (remaining, total) {
+                (Some(r), Some(t)) if t > 0.0 => (r, t),
+                _ => continue,
+            }
         };
 
         let used = (total - remaining).max(0.0);
         let utilization = ((used / total) * 100.0).clamp(0.0, 100.0);
 
-        let label = match level {
-            "Session" => t!("row.five_hour").to_string(),
-            "Daily" => t!("row.daily").to_string(),
-            "Weekly" => t!("row.weekly_7d").to_string(),
-            "Monthly" => t!("row.monthly").to_string(),
+        let label = match level.as_str() {
+            "session" => t!("row.five_hour").to_string(),
+            "daily" => t!("row.daily").to_string(),
+            "weekly" => t!("row.weekly_7d").to_string(),
+            "monthly" => t!("row.monthly").to_string(),
             // 未知 Level → 跳过（schema 漂移保护，不让单条坏数据炸整个 snapshot）
             _ => continue,
         };
@@ -660,6 +684,32 @@ mod tests {
     }
 
     // ── parse 单元测试 ──
+
+    #[test]
+    fn parse_quota_usage_schema_lowercase() {
+        // CodexBar #1724 实测形态: Result.QuotaUsage[] + Level: "session" 小写 + Percent 0~1
+        let raw = json!({
+            "Result": {
+                "Code": "Success",
+                "PlanName": "Lite",
+                "QuotaUsage": [
+                    { "Level": "session", "Percent": 0.0833, "ResetTimestamp": 1753603200000_i64 },
+                    { "Level": "weekly",  "Percent": 0.0555, "ResetTimestamp": 1753761600000_i64 },
+                    { "Level": "monthly", "Percent": 0.05,   "ResetTimestamp": 1756180800000_i64 }
+                ]
+            }
+        });
+        let snap = parse(&raw, "volcengine_ark", "Volcengine Ark").expect("parse");
+        assert_eq!(snap.rows.len(), 3);
+        let five_h = &snap.rows[0];
+        assert_eq!(five_h.label, t!("row.five_hour").as_ref());
+        // 0.0833 used → total=100, remaining=100-8.33=91.67, util=8.33
+        assert_eq!(five_h.total, Some(100.0));
+        assert!((five_h.utilization.unwrap() - 8.33).abs() < 0.1);
+        let month = &snap.rows[2];
+        assert_eq!(month.label, t!("row.monthly").as_ref());
+        assert!((month.utilization.unwrap() - 5.0).abs() < 0.1);
+    }
 
     #[test]
     fn parse_full_response() {

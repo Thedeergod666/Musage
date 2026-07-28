@@ -323,6 +323,23 @@ pub async fn open_stepfun_login_window(app: AppHandle) -> Result<(), String> {
         .build()
         .map_err(|e| t!("stepfun_login.build_webview", err = e.to_string()).into_owned())?;
 
+    // 200ms 后清空 webview 的整个 cookie store（一次性清掉 webview
+    // profile 持久化的旧 Oasis-Token,避免 cookies_for_url 抓到过期
+    // token 存盘）。spawn 一个独立 task,不等 on_page_load 触发,这样
+    // 即使 on_page_load 时序怪异（实测 WKWebView 在 webview 刚创建时
+    // on_page_load 触发不可靠）,clear 一定能在用户登录前完成。
+    let app_for_clear = app.clone();
+    tauri::async_runtime::spawn(async move {
+        sleep(Duration::from_millis(200)).await;
+        if let Some(w) = app_for_clear.get_webview_window(WINDOW_LABEL) {
+            if let Err(e) = w.clear_all_browsing_data() {
+                tracing::warn!(error = %e, "clear_all_browsing_data 失败,继续走原流程");
+            } else {
+                tracing::info!("stepfun login webview cookie store 已清空");
+            }
+        }
+    });
+
     Ok(())
 }
 

@@ -45,15 +45,28 @@ use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
 
-// ── 凭据（统一存放 api_key + cookie）────────────────────────────────
+// ── 凭据（统一存放 api_key + cookie + secret_key）────────────────────
 
 /// 一个 quota source 需要的全部凭据。
 ///
-/// MiniMax / DeepSeek 只需要 `api_key`；Xiaomi 需要 `cookie`；未来可扩展。
+/// MiniMax / DeepSeek 只需要 `api_key`；Xiaomi 需要 `cookie`；火山方舟 Coding Plan
+/// 需要 `api_key` (AccessKey ID) + `secret_key` (SecretAccessKey) 双字段。
+/// 其它 provider 不用 `secret_key`（保持 None），不影响。
+///
+/// **v0.2.5 火山方舟增量**：v0.2.4 起火山用 `api_key` 槽拼接 `"AK...SK"`
+/// 形式，但 UX 反直觉（用户从控制台拿的 AK + SK 各是一行），且拼错无法救。
+/// v0.2.5 改跟 ccswitch 一致：`api_key` = AccessKey ID，`secret_key` = SecretAccessKey，
+/// 前端 settings panel 渲 2 个独立 input，**避免粘错**。
 #[derive(Debug, Clone, Default)]
 pub struct Credentials {
     pub api_key: Option<String>,
     pub cookie: Option<String>,
+    /// v0.2.5 新增：火山方舟等管控面鉴权需要的第二个 secret。
+    /// 不需要 `#[serde(default)]` —— `Credentials` 没 derive Serialize/Deserialize,
+    /// keys.json 是 `HashMap<String, String>`,字段在 `load_credential_for_id`
+    /// 显式从 `{id}:secret_key` 槽读出,新字段老 keys.json 缺失时走 `Default::default()`
+    /// 自然得到 None(老 users 11 provider 不受任何影响)。
+    pub secret_key: Option<String>,
 }
 
 /// 鉴权方式（前端 UI 用，决定显示"API Key"输入框还是"Cookie"输入框）。
@@ -70,6 +83,12 @@ pub enum AuthKind {
     /// 两个输入都展示在设置面板，用户可只填一个；fetch 路径按
     /// `decide_auth_strategy` 决定。
     ApiKeyOrCookie,
+    /// v0.2.5 新增：双字段鉴权，火山方舟 Coding Plan 用。
+    /// `api_key` = AccessKey ID，`secret_key` = SecretAccessKey（v0.2.5
+    /// 起两个独立 input，跟 ccswitch 一致）。前端 settings panel 渲
+    /// 2 个 password input，分别标 "AccessKey ID" / "SecretAccessKey"。
+    /// fetch 路径：两个 secret 走 HMAC-SHA256 v4 签名调管控面。
+    ApiKeyWithSecret,
 }
 
 // ── 错误分类（前端按 kind 选样式 + 操作按钮）───────────────────────────

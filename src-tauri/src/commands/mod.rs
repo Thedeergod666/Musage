@@ -644,6 +644,7 @@ pub async fn list_sources(state: State<'_, AppState>) -> Result<Vec<SourceMeta>,
                 AuthKind::ApiKey => "api_key",
                 AuthKind::Cookie => "cookie",
                 AuthKind::ApiKeyOrCookie => "api_key_or_cookie",
+                AuthKind::ApiKeyWithSecret => "api_key_with_secret",
             },
             enabled: cfg.is_enabled_id(s.id().as_ref()),
             // Xiaomi: API key (Bearer) 永远 401，手动 cookie 是兜底 → 都放高级 tab
@@ -712,6 +713,12 @@ pub async fn set_source_credential(
             Some(old) => Credentials {
                 api_key: cred.api_key.or(old.api_key),
                 cookie: cred.cookie.or(old.cookie),
+                // v0.2.5: ApiKeyOrCookie merge 块补 secret_key 字段。
+                // 实际上火山 (ApiKeyWithSecret) 不走这段(只 ApiKeyOrCookie 走),
+                // 但字面量必须补全字段,否则编译错。这里对 ApiKeyWithSecret
+                // 是无害 no-op:or(old.secret_key) 在 ApiKeyOrCookie 路径上
+                // old.secret_key 永远是 None(老用户没存过 secret_key 槽)。
+                secret_key: cred.secret_key.or(old.secret_key),
             },
             None => cred,
         }
@@ -749,20 +756,35 @@ fn build_credentials(
     let target = match field {
         Some("api_key") => "api_key",
         Some("cookie") => "cookie",
+        // v0.2.5: 火山方舟 Coding Plan 第二字段。跟 ccswitch 的 `getCodingPlanQuota`
+        // 一致：AK + SK 两个独立 secret 各自走自己的 setSourceCredential 调用。
+        Some("secret_key") => "secret_key",
         Some(other) => return Err(t!("commands.field_unknown", other = other).into_owned()),
         None => match src.auth_kind() {
             AuthKind::ApiKey | AuthKind::ApiKeyOrCookie => "api_key",
             AuthKind::Cookie => "cookie",
+            // v0.2.5: 双字段 AuthKind 走前端显式传 field（saveVolcengineTwoFields
+            // 调两次 setSourceCredential 显式带 "api_key" / "secret_key"），
+            // 不走 None 默认分支。给个保守 fallback = api_key（安全方向：
+            // 写错也只是把 SK 写到 api_key 槽，fetch 时签名失败 401，提示明确）。
+            AuthKind::ApiKeyWithSecret => "api_key",
         },
     };
     Ok(match target {
         "api_key" => Credentials {
             api_key: Some(value.to_string()),
             cookie: None,
+            secret_key: None,
         },
         "cookie" => Credentials {
             api_key: None,
             cookie: Some(value.to_string()),
+            secret_key: None,
+        },
+        "secret_key" => Credentials {
+            api_key: None,
+            cookie: None,
+            secret_key: Some(value.to_string()),
         },
         _ => unreachable!(),
     })
@@ -821,12 +843,26 @@ pub async fn delete_source_credential(
 pub async fn get_source_credential(
     state: State<'_, AppState>,
     id: String,
+    // 可选：明确读哪个字段（"api_key" / "cookie" / "secret_key"）。
+    // 不传时按 source 的 `auth_kind()` 默认：
+    //   ApiKey / ApiKeyOrCookie / ApiKeyWithSecret → api_key
+    //   Cookie → cookie
+    // 多字段 source（火山 Coding Plan）必须传 field，否则永远返 api_key。
+    // v0.2.5 火山 Coding Plan 需要 "secret_key" 才能拿到 SK。
+    field: Option<String>,
 ) -> Result<Option<String>, String> {
     let _ = find_source(&state, &id)
         .await
         .ok_or_else(|| t!("commands.source_unknown", id = id.as_str()).into_owned())?;
     let cred = config::load_credential_for_id(&id)?;
-    Ok(cred.and_then(|c| c.api_key.or(c.cookie)))
+    let target = match field.as_deref() {
+        Some("api_key") => cred.and_then(|c| c.api_key),
+        Some("cookie") => cred.and_then(|c| c.cookie),
+        Some("secret_key") => cred.and_then(|c| c.secret_key),
+        Some(other) => return Err(t!("commands.field_unknown", other = other).into_owned()),
+        None => cred.and_then(|c| c.api_key.or(c.cookie)),
+    };
+    Ok(target)
 }
 
 // 旧 enum-based IPC (has_api_key_for / set_api_key_for / delete_api_key_for /

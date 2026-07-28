@@ -16,12 +16,16 @@
 //!
 //! 固定参数：Service=ark / Region=cn-beijing
 //!
-//! ## 双凭证问题
+//! ## 双凭证（v0.2.5 改）
 //!
 //! Coding Plan 推理 API Key（`Bearer sk-...`，在方舟控制台订阅页拿）**不能**调管控面。
 //! 必须用账号级 IAM AK + SK（控制台右上角→"API 访问密钥"创建），推荐子账号 + 只读权限。
-//! Musage 把 AK/SK 合并存进 `api_key` 槽（`"AK...SK"` 形式，`...` 作分隔符，跟 AnySearch
-//! `access...refresh` 同款套路）。
+//!
+//! v0.2.4 之前用过 `api_key` 槽拼 `"AK...SK"` 复合凭据，但 UX 反直觉（用户从控制台拿的
+//! AK + SK 各是一行，三个英文句点分隔太陌生）。v0.2.5 改跟 ccswitch 一致：
+//! - `api_key` = **AccessKey ID**（形如 `AKLTz...`）
+//! - `secret_key` = **SecretAccessKey**（任意 base64）
+//! - 前端 settings panel 渲 2 个独立 input field，**避免粘错**
 //!
 //! ## 响应 schema（Coding Plan 三个窗口）
 //!
@@ -69,9 +73,6 @@ const VERSION: &str = "2024-01-01";
 const SERVICE: &str = "ark";
 const REGION: &str = "cn-beijing";
 const URL: &str = "https://ark.cn-beijing.volcengineapi.com/?Action=GetCodingPlanUsage&Version=2024-01-01";
-
-/// `api_key` 槽里 AK 和 SK 的分隔符（跟 AnySearch `access...refresh` 同款）
-const AK_SK_SEP: &str = "...";
 
 // ── QuotaSource 实现 ─────────────────────────────────────────────
 
@@ -121,7 +122,10 @@ impl QuotaSource for VolcengineArkSource {
         }
     }
     fn auth_kind(&self) -> AuthKind {
-        AuthKind::ApiKey
+        // v0.2.5: 两个独立 secret (AK + SK) 字段鉴权。
+        // 前端 settings panel 看到 `auth_kind: "api_key_with_secret"` → 渲 2 个
+        // password input，label 分别是 "AccessKey ID" / "SecretAccessKey"。
+        AuthKind::ApiKeyWithSecret
     }
 
     fn set_state<'a>(
@@ -138,35 +142,23 @@ impl QuotaSource for VolcengineArkSource {
     ) -> Pin<Box<dyn std::future::Future<Output = Result<ProviderSnapshot, FetchError>> + Send + 'a>>
     {
         Box::pin(async move {
-            let combined = credentials.api_key.as_deref().unwrap_or("").trim();
-            if combined.is_empty() {
+            // v0.2.5: 两个独立 input 字段 —— `api_key` = AccessKey ID,
+            // `secret_key` = SecretAccessKey（跟 ccswitch 1:1）。
+            let ak = credentials.api_key.as_deref().unwrap_or("").trim();
+            let sk = credentials.secret_key.as_deref().unwrap_or("").trim();
+            if ak.is_empty() {
                 return Err(FetchError::unconfigured(
                     t!("error.provider.unconfigured_key", provider = "Volcengine Ark").into_owned(),
                 ));
             }
-            let (ak, sk) = match split_ak_sk(combined) {
-                Some(pair) => pair,
-                None => {
-                    return Err(FetchError::auth(
-                        t!("error.volcengine.invalid_ak_sk_format").into_owned(),
-                    ));
-                }
-            };
+            if sk.is_empty() {
+                return Err(FetchError::unconfigured(
+                    t!("error.volcengine.unconfigured_secret_key").into_owned(),
+                ));
+            }
             do_fetch(ak, sk, &self.unique_id(), &self.display_name().to_string()).await
         })
     }
-}
-
-/// 把 `api_key` 槽里的 `"AK...SK"` 拆成 `(ak, sk)`。无 `...` = 退化（不报错，
-/// 走空 sk 触发签名失败 → 用户能看到明确错误）。
-fn split_ak_sk(combined: &str) -> Option<(&str, &str)> {
-    let idx = combined.find(AK_SK_SEP)?;
-    let ak = combined[..idx].trim();
-    let sk = combined[idx + AK_SK_SEP.len()..].trim();
-    if ak.is_empty() || sk.is_empty() {
-        return None;
-    }
-    Some((ak, sk))
 }
 
 async fn do_fetch(
@@ -444,35 +436,82 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    // ── AK/SK 拆分 ──
+    // ── 凭据校验逻辑 (v0.2.5 改: 2 字段 AK + SK 独立) ──
+    //
+    // 不再调 split_ak_sk（v0.2.4 那种 "AK...SK" 拼接形式）。
+    // 校验逻辑从 Rust 的 `fetch` 抽到本地函数，便于直接 unit test。
 
-    #[test]
-    fn split_ak_sk_basic() {
-        let (ak, sk) = split_ak_sk("AKID...SECRET_KEY").unwrap();
-        assert_eq!(ak, "AKID");
-        assert_eq!(sk, "SECRET_KEY");
+    /// fetch() 的"前门"：把 `Credentials { api_key, secret_key }` 拆成
+    /// `(ak, sk)` 或返 FetchError（empty / 缺 SK）。这是 v0.2.5 改的边界。
+    fn extract_ak_sk(creds: &Credentials) -> Result<(String, String), FetchError> {
+        let ak = creds.api_key.as_deref().unwrap_or("").trim().to_string();
+        let sk = creds.secret_key.as_deref().unwrap_or("").trim().to_string();
+        if ak.is_empty() {
+            return Err(FetchError::unconfigured(
+                t!("error.provider.unconfigured_key", provider = "Volcengine Ark").into_owned(),
+            ));
+        }
+        if sk.is_empty() {
+            return Err(FetchError::unconfigured(
+                t!("error.volcengine.unconfigured_secret_key").into_owned(),
+            ));
+        }
+        Ok((ak, sk))
     }
 
     #[test]
-    fn split_ak_sk_with_whitespace() {
-        let (ak, sk) = split_ak_sk("  AKID  ...  SECRET  ").unwrap();
-        assert_eq!(ak, "AKID");
-        assert_eq!(sk, "SECRET");
+    fn extract_ak_sk_basic() {
+        let creds = Credentials {
+            api_key: Some("AKLTz1234".into()),
+            secret_key: Some("sk-abc".into()),
+            cookie: None,
+        };
+        let (ak, sk) = extract_ak_sk(&creds).unwrap();
+        assert_eq!(ak, "AKLTz1234");
+        assert_eq!(sk, "sk-abc");
     }
 
     #[test]
-    fn split_ak_sk_no_separator() {
-        assert!(split_ak_sk("AKIDSECRET").is_none());
+    fn extract_ak_sk_trims_whitespace() {
+        let creds = Credentials {
+            api_key: Some("  AKLTz1234  ".into()),
+            secret_key: Some("  sk-abc  ".into()),
+            cookie: None,
+        };
+        let (ak, sk) = extract_ak_sk(&creds).unwrap();
+        assert_eq!(ak, "AKLTz1234");
+        assert_eq!(sk, "sk-abc");
     }
 
     #[test]
-    fn split_ak_sk_empty_ak() {
-        assert!(split_ak_sk("...SECRET").is_none());
+    fn extract_ak_sk_empty_ak() {
+        let creds = Credentials {
+            api_key: Some("".into()),
+            secret_key: Some("sk-abc".into()),
+            cookie: None,
+        };
+        let err = extract_ak_sk(&creds).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::UnconfiguredKey);
     }
 
     #[test]
-    fn split_ak_sk_empty_sk() {
-        assert!(split_ak_sk("AKID...").is_none());
+    fn extract_ak_sk_empty_sk() {
+        // v0.2.5 新场景：用户填了 AK 没填 SK（v0.2.4 老 keys.json 没
+        // :secret_key 槽会触发这个）→ 返明确 unconfigured 错误
+        let creds = Credentials {
+            api_key: Some("AKLTz1234".into()),
+            secret_key: Some("".into()),
+            cookie: None,
+        };
+        let err = extract_ak_sk(&creds).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::UnconfiguredKey);
+    }
+
+    #[test]
+    fn extract_ak_sk_both_none() {
+        let creds = Credentials::default();
+        let err = extract_ak_sk(&creds).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::UnconfiguredKey);
     }
 
     // ── 签名（不变性测试：固定时间签名，hex 字符串必须稳定） ──

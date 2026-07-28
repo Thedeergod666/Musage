@@ -94,7 +94,7 @@
       "missing_five_hour_seven_day": "Claude response missing five_hour / seven_day field"
     },
     "volcengine": {
-      "invalid_ak_sk_format": "Volcengine Ark credential format wrong — paste `AK...SK` (AccessKey ID, three dots, SecretAccessKey). Get them from console.volcengine.com → 账号菜单 → API 访问密钥"
+      "unconfigured_secret_key": "Volcengine Ark SecretAccessKey not configured (fill both AccessKey ID and SecretAccessKey in Settings → 火山方舟 Coding Plan)"
     },
     "anysearch": {
       "token_empty": "AnySearch session token not configured (Settings → AnySearch → click \"Login AnySearch\")",

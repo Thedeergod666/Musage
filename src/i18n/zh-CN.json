@@ -416,6 +416,11 @@
     "confirm_delete_key_tavily": "确认删除 Tavily 的 API key？",
     "confirm_delete_key_zenmux": "确认删除 ZenMux 的 API key？",
     "confirm_delete_cookie": "确认删除 {name} 的 Cookie？",
+    "volcengine_ak_label": "AccessKey ID",
+    "volcengine_sk_label": "SecretAccessKey",
+    "volcengine_ak_placeholder": "AKLT...",
+    "volcengine_sk_placeholder": "SecretAccessKey",
+    "volcengine_both_required": "AccessKey ID 和 SecretAccessKey 都必须填",
     "confirm_clear_xiaomi": "确认清除已保存的 Xiaomi Cookie？\n清除后需要重新登录。",
     "confirm_delete_key_with_extras": "确认删除 {name} 的 API key？\n同时会清掉 {count} 个副本的 key。",
     "xiaomi_login_only": "一键登录只对 Xiaomi 启用",
@@ -577,7 +582,7 @@
     "claude_official": "Claude Pro / Max 官方 OAuth 用量监控。<br><br><strong>鉴权特殊</strong>：用 Cookie <code>sessionKey=&lt;value&gt;</code>（不是 Bearer API key）。<br><br>获取方法：Chrome 登录 <a href=\"https://claude.ai\" target=\"_blank\" class=\"link-ext\">claude.ai</a> → F12 → Application → Cookies → <code>sessionKey</code> 整段 value 复制（或只粘纯 value 也行，程序自动补 <code>sessionKey=</code> 前缀）。<br><br><strong>已知限制</strong>：<ul style=\"margin: 4px 0; padding-left: 20px;\"><li>sessionKey 约 8h 过期（claude.ai 登录 session 失效）</li><li>OAuth usage API 偶发 429（<a href=\"https://github.com/anthropics/claude-code/issues/31021\" target=\"_blank\" class=\"link-ext\">claude-code#31021</a>），属 Anthropic 端问题，Musage 不重试</li></ul>",
     "xiaomi_cookie": "️ Xiaomi 用量走 dashboard admin API，需要浏览器登录态。<br><br><strong>获取方法</strong>：Chrome 登录 <a href=\"https://platform.xiaomimimo.com/console/plan-manage\" target=\"_blank\" class=\"link-ext\">platform.xiaomimimo.com</a> → F12 → Network → 任意 <code>/api/v1/tokenPlan/*</code> 请求 → 右键 → Copy → Copy request headers → 找 <code>cookie:</code> 这一行整段粘贴到上面。<br><br>Cookie 登出后失效，过期时 (HTTP 401) 错误信息会引导重粘。",
     "anysearch": "AnySearch 是面向 AI agent 的搜索 API（每天 1000 次免费调用）。Musage 通过 <strong>console 登录 token</strong> 跟踪其用量，<strong>不是</strong> <code>as_sk_</code> 那个 MCP API key（单独的 key 调用量端点会返 401）。<br><br><strong>推荐</strong>：点上方「登录 AnySearch」→ 弹窗里登录 → token 自动提取。<br><br><strong>手动兜底</strong>：Chrome 登录 <a href=\"https://www.anysearch.com/console/api-keys\" target=\"_blank\" class=\"link-ext\">anysearch.com/console</a> → F12 → Application → Local Storage → <code>search-template-auth-state</code> → 复制 <code>state.accessToken</code>（那段 <code>eyJ…</code> 的 JWT）粘到上面。<br><br>token 随网页登录态失效，过期时（HTTP 401）重新登录即可。",
-    "volcengine_ark": "火山方舟（Volcengine Ark）Coding Plan —— 5h / 7d / 月 三档窗口。<br><br><strong>鉴权特殊</strong>：这是<em>管控面</em> API，<strong>Coding Plan 推理 API key <u>不能用</u></strong>，必须用账号级 <strong>AccessKey ID + SecretAccessKey</strong>。<br><br><strong>粘贴格式</strong>：上面输入框里粘 <code>AK...SK</code>（三个英文句点隔开，无空格），Rust 端按句点切分。<br><br><strong>获取方法</strong>：<a href=\"https://console.volcengine.com/iam/keymanage\" target=\"_blank\" class=\"link-ext\">console.volcengine.com 右上角 → API 访问密钥</a>。建议用子账号 + 只读 <code>ark:GetCodingPlanUsage</code> 权限，遵循最小权限原则。<br><br><strong>套餐类型</strong>：当前仅支持 <em>Coding Plan</em>。如果你只有 <em>Agent Plan</em>，这张卡片会显示 0 行。",
+    "volcengine_ark": "火山方舟（Volcengine Ark）Coding Plan —— 5h / 7d / 月 三档窗口。<br><br><strong>鉴权特殊</strong>：这是<em>管控面</em> API，<strong>Coding Plan 推理 API key <u>不能用</u></strong>，必须用账号级 <strong>AccessKey ID + SecretAccessKey</strong>。<br><br><strong>填写方式</strong>：上面有两个独立的密码框（<em>AccessKey ID</em> + <em>SecretAccessKey</em>），分别填进去点保存，两个值会原子写进 <code>keys.json</code>。<br><br><strong>获取方法</strong>：<a href=\"https://console.volcengine.com/iam/keymanage\" target=\"_blank\" class=\"link-ext\">console.volcengine.com 右上角 → API 访问密钥</a>。建议用子账号 + 只读 <code>ark:GetCodingPlanUsage</code> 权限，遵循最小权限原则。<br><br><strong>套餐类型</strong>：当前仅支持 <em>Coding Plan</em>。如果你只有 <em>Agent Plan</em>，这张卡片会显示 0 行。",
     "default": "API key 存到本机 keys.json。"
   }
 }

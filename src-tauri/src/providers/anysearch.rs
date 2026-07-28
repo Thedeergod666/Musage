@@ -288,6 +288,7 @@ async fn refresh_token(refresh: &str, unique_id: &str) -> Result<String, FetchEr
     let cred = Credentials {
         api_key: None,
         cookie: Some(combined.clone()),
+        secret_key: None,
     };
     if let Err(e) = crate::config::save_credential_for_id(unique_id, &cred) {
         tracing::warn!(error = %e, unique_id, "anysearch refresh 后写回 keys.json 失败（本轮仍可用，下次可能需重登）");

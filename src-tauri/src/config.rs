@@ -1013,8 +1013,12 @@ pub fn load_credential_for_id(id: &str) -> Result<Option<Credentials>, String> {
     let map = read_keys()?;
     let api_key = map.get(id).cloned();
     let cookie = map.get(&format!("{id}:cookie")).cloned();
-    Ok(if api_key.is_some() || cookie.is_some() {
-        Some(Credentials { api_key, cookie })
+    // v0.2.5: 火山方舟 Coding Plan 需要 AK + SK 双字段。SK 存到 `{id}:secret_key` 槽。
+    // 老 keys.json（v0.2.4 之前用 `AK...SK` 拼接的）没这个槽 → 走 `None`，fetch 时返
+    // "secret_key 未配置" 明确错误，提示用户重新粘。
+    let secret_key = map.get(&format!("{id}:secret_key")).cloned();
+    Ok(if api_key.is_some() || cookie.is_some() || secret_key.is_some() {
+        Some(Credentials { api_key, cookie, secret_key })
     } else {
         None
     })
@@ -1023,7 +1027,7 @@ pub fn load_credential_for_id(id: &str) -> Result<Option<Credentials>, String> {
 pub fn save_credential_for_id(id: &str, cred: &Credentials) -> Result<(), String> {
     let _g = save_lock().lock().unwrap_or_else(lock_recover);
     let mut map = read_keys()?; // F3 fix
-                                // 防御性写法:分别处理 api_key / cookie 两个字段。
+                                // 防御性写法:分别处理 api_key / cookie / secret_key 三个字段。
                                 // 旧实现的 match 在 (Some, Some) 时只插 api_key,cookie 被静默丢弃——
                                 // 当前 build_credentials 强制二选一所以不会触发,但 API 是 public 的,
                                 // 未来给用户同时填两个 key 就会撞这里。改成 if-let 链就不会丢。
@@ -1036,10 +1040,15 @@ pub fn save_credential_for_id(id: &str, cred: &Credentials) -> Result<(), String
         map.insert(format!("{id}:cookie"), c.clone());
         wrote_any = true;
     }
+    if let Some(s) = &cred.secret_key {
+        map.insert(format!("{id}:secret_key"), s.clone());
+        wrote_any = true;
+    }
     if !wrote_any {
-        // 两个都 None → 删光 (跟 delete_credential_for_id 行为一致)
+        // 三个都 None → 删光 (跟 delete_credential_for_id 行为一致)
         map.remove(id);
         map.remove(&format!("{id}:cookie"));
+        map.remove(&format!("{id}:secret_key"));
     }
     write_keys_atomic(&map)
 }
@@ -1049,6 +1058,7 @@ pub fn delete_credential_for_id(id: &str) -> Result<(), String> {
     let mut map = read_keys()?; // F3 fix
     map.remove(id);
     map.remove(&format!("{id}:cookie"));
+    map.remove(&format!("{id}:secret_key"));
     if map.is_empty() {
         let path = keys_path()?;
         if path.exists() {

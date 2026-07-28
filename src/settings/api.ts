@@ -62,7 +62,7 @@ export async function hasSourceCredential(id: string): Promise<boolean> {
 export async function setSourceCredential(
   id: string,
   value: string,
-  field?: "api_key" | "cookie",
+  field?: "api_key" | "cookie" | "secret_key",
 ): Promise<void> {
   await invoke("set_source_credential", { id, value, field });
 }
@@ -85,10 +85,20 @@ export async function deleteSourceCredential(id: string): Promise<void> {
   await invoke("delete_source_credential", { id });
 }
 
+/**
+ * 读 source 凭据某个字段。
+ *
+ * @param id     source id
+ * @param field  "api_key" / "cookie" / "secret_key"。不传 = 走 source auth_kind 默认
+ *               (ApiKey → api_key, Cookie → cookie, ApiKeyOrCookie → api_key 先回退 cookie,
+ *                ApiKeyWithSecret → api_key)。多字段 source（火山 Coding Plan）必须
+ *                显式传 field="secret_key" 才能拿到 SK。
+ */
 export async function getSourceCredential(
   id: string,
+  field?: "api_key" | "cookie" | "secret_key",
 ): Promise<string | null> {
-  return invoke<string | null>("get_source_credential", { id });
+  return invoke<string | null>("get_source_credential", { id, field });
 }
 
 // v0.2 (2026-06-22) 删除 7 个旧 enum-based IPC wrapper:

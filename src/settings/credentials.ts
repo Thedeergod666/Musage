@@ -53,6 +53,24 @@ async function loadIdKeyStatus(id: string) {
       : t("credentials.cookie_status_unset");
     el.className = `status ${has ? "ok" : ""}`;
   }
+  // v0.2.5 火山方舟 Coding Plan: 第二个徽章独立读 secret_key 槽位。
+  // hasSourceCredential 查 api_key 槽,secret_key 独立。第二个 status id 是
+  // `api-secret-status-<id>`(renderCredentialBlock 渲的)。仅当元素存在(火山)
+  // 才尝试更新,其它 provider 跳过。
+  const skEl = document.getElementById(`api-secret-status-${id}`);
+  if (skEl) {
+    let hasSk = false;
+    try {
+      const sk = await getSourceCredential(id, "secret_key");
+      hasSk = !!sk && sk.length > 0;
+    } catch {
+      hasSk = false;
+    }
+    skEl.textContent = hasSk
+      ? t("credentials.cookie_status_saved")
+      : t("credentials.cookie_status_unset");
+    skEl.className = `status ${hasSk ? "ok" : ""}`;
+  }
 }
 
 export async function loadTavilyKeyStatus() {
@@ -185,6 +203,53 @@ export function renderCredentialBlock(meta: SourceMeta): HTMLElement {
         id: `api-key-status-${meta.id}`,
         "data-id": meta.id,
       }, t("credentials.cookie_status_placeholder")),
+    );
+    block.appendChild(
+      el("div", { class: "row" },
+        el("button", { class: "primary", id: `save-key-${meta.id}`, "data-id": meta.id, "data-action": "save-key" }, t("credentials.save")),
+        el("button", { class: "danger", id: `del-key-${meta.id}`, "data-id": meta.id, "data-action": "del-key" }, t("credentials.delete")),
+      ),
+    );
+    block.appendChild(
+      el("div", { class: "help" },
+        apiKeyHelpNode(meta.id),
+      ),
+    );
+  } else if (meta.auth_kind === "api_key_with_secret") {
+    // ── 双独立 input：AK + SK（v0.2.5 火山方舟 Coding Plan 用）──
+    // 跟 ccswitch 1:1：两个 password input + 2 个状态徽章 + 1 个 save / 1 个 del。
+    // save 时同时把 api_key + secret_key 都写进 keys.json。del 清两个。
+    // 单独保留 input ID 形态 `<field>-<id>` 跟 v0.6+ 一致（api-key-<id> /
+    // api-secret-<id>），document-level 事件委托走 data-id 路由。
+    const akInput = el("input", {
+      type: "password",
+      id: `api-key-${meta.id}`,
+      "data-id": meta.id,
+      "data-field": "api_key",
+      placeholder: t("credentials.volcengine_ak_placeholder"),
+      autocomplete: "off",
+    }) as HTMLInputElement;
+    const skInput = el("input", {
+      type: "password",
+      id: `api-secret-${meta.id}`,
+      "data-id": meta.id,
+      "data-field": "secret_key",
+      placeholder: t("credentials.volcengine_sk_placeholder"),
+      autocomplete: "off",
+    }) as HTMLInputElement;
+    block.appendChild(
+      el("div", { class: "field" },
+        el("label", { for: `api-key-${meta.id}` }, t("credentials.volcengine_ak_label")),
+        el("div", { class: "input-row" }, akInput),
+        el("div", { class: "status", id: `api-key-status-${meta.id}`, "data-id": meta.id, "data-field": "api_key" }, t("credentials.cookie_status_placeholder")),
+      ),
+    );
+    block.appendChild(
+      el("div", { class: "field" },
+        el("label", { for: `api-secret-${meta.id}` }, t("credentials.volcengine_sk_label")),
+        el("div", { class: "input-row" }, skInput),
+        el("div", { class: "status", id: `api-secret-status-${meta.id}`, "data-id": meta.id, "data-field": "secret_key" }, t("credentials.cookie_status_placeholder")),
+      ),
     );
     block.appendChild(
       el("div", { class: "row" },
@@ -547,10 +612,33 @@ export async function loadCredentialStatus(id: string) {
       status.textContent = text;
       status.className = cls;
     }
+    // v0.2.5 火山: 第二个徽章(api-secret-status)独立读 secret_key 槽
+    const skStatus = document.getElementById(`api-secret-status-${id}${suffix}`);
+    if (skStatus) {
+      let hasSk = false;
+      try {
+        const sk = await getSourceCredential(id, "secret_key");
+        hasSk = !!sk && sk.length > 0;
+      } catch {
+        hasSk = false;
+      }
+      skStatus.textContent = hasSk
+        ? t("credentials.cookie_status_saved")
+        : t("credentials.cookie_status_unset");
+      skStatus.className = `status ${hasSk ? "ok" : ""}`;
+    }
   }
 }
 
 export async function saveCredentialAction(id: string, action: "key" | "cookie", advInputId?: string) {
+  // v0.2.5: 火山方舟 Coding Plan 是 api_key_with_secret 模式 —— renderCredentialBlock
+  // 渲了 2 个 password input（`api-key-${id}` + `api-secret-${id}`）。一次点 save
+  // 两个都落 keys.json（分别存到 api_key 槽 + secret_key 槽）。
+  const skInputId = `api-secret-${id}`;
+  if (action === "key" && document.getElementById(skInputId) !== null) {
+    await saveVolcengineTwoFields(id, advInputId);
+    return;
+  }
   // advInputId: 高级 tab 用不同 ID（如 "api-key-xiaomimimo-adv"）
   const inputId = advInputId ?? (action === "key" ? `api-key-${id}` : `cookie-${id}`);
   const input = document.getElementById(inputId) as HTMLInputElement | HTMLTextAreaElement | null;
@@ -587,6 +675,52 @@ export async function saveCredentialAction(id: string, action: "key" | "cookie",
       if (status) {
         status.textContent = t("credentials.cookie_status_saved");
         status.className = "status ok";
+      }
+    }
+    flash(t("credentials.flash_saved_generic", { name: t(`provider.${id as ProviderId}.name`) }));
+    await refreshNow();
+  } catch (e) {
+    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
+  }
+}
+
+/// v0.2.5 火山专用：同时存 AK + SK 两个字段。
+///
+/// 流程：读两个 input → trim → 两个都非空才发两次 setSourceCredential（分别用
+/// "api_key" / "secret_key" field hint）→ 清空两个 input + 刷新两个状态徽章
+/// → flash 一次性提示。
+///
+/// 任一为空：直接 flash 提示，不调后端（避免半写半空）。
+async function saveVolcengineTwoFields(id: string, advInputId?: string) {
+  const akInputId = advInputId ?? `api-key-${id}`;
+  const skInputId = advInputId ?? `api-secret-${id}`;
+  const akInput = document.getElementById(akInputId) as HTMLInputElement | null;
+  const skInput = document.getElementById(skInputId) as HTMLInputElement | null;
+  if (!akInput || !skInput) return;
+  const ak = akInput.value.trim();
+  const sk = skInput.value.trim();
+  if (!ak || !sk) {
+    flash(t("credentials.volcengine_both_required"), true);
+    return;
+  }
+  try {
+    // 顺序无所谓：set_source_credential 是单字段写入，save_credential_for_id
+    // 用 if-let 链保留未触碰字段（v0.2.5 fix）。
+    await setSourceCredential(id, ak, "api_key");
+    await setSourceCredential(id, sk, "secret_key");
+    akInput.value = "";
+    skInput.value = "";
+    // 双 status 徽章:主面板 + 高级 tab 都要刷
+    for (const suffix of ["", "-adv"]) {
+      const akStatus = document.getElementById(`api-key-status-${id}${suffix}`);
+      if (akStatus) {
+        akStatus.textContent = t("credentials.cookie_status_saved");
+        akStatus.className = "status ok";
+      }
+      const skStatus = document.getElementById(`api-secret-status-${id}${suffix}`);
+      if (skStatus) {
+        skStatus.textContent = t("credentials.cookie_status_saved");
+        skStatus.className = "status ok";
       }
     }
     flash(t("credentials.flash_saved_generic", { name: t(`provider.${id as ProviderId}.name`) }));

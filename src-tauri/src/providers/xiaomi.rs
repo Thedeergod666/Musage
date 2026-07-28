@@ -904,6 +904,7 @@ mod tests {
         let c = Credentials {
             api_key: Some("tp-xxx".to_string()),
             cookie: Some("a=1; b=2".to_string()),
+            secret_key: None,
         };
         assert_eq!(decide_auth_strategy(&c), AuthStrategy::BearerThenCookie);
     }
@@ -913,6 +914,7 @@ mod tests {
         let c = Credentials {
             api_key: Some("tp-xxx".to_string()),
             cookie: None,
+            secret_key: None,
         };
         assert_eq!(decide_auth_strategy(&c), AuthStrategy::BearerOnly);
     }
@@ -922,6 +924,7 @@ mod tests {
         let c = Credentials {
             api_key: None,
             cookie: Some("a=1; b=2".to_string()),
+            secret_key: None,
         };
         assert_eq!(decide_auth_strategy(&c), AuthStrategy::CookieOnly);
     }
@@ -938,6 +941,7 @@ mod tests {
         let c = Credentials {
             api_key: Some("   ".to_string()),
             cookie: Some("\t\n".to_string()),
+            secret_key: None,
         };
         assert_eq!(decide_auth_strategy(&c), AuthStrategy::None);
     }
@@ -948,6 +952,7 @@ mod tests {
         let c = Credentials {
             api_key: Some("tp-xxx".to_string()),
             cookie: Some("   ".to_string()),
+            secret_key: None,
         };
         assert_eq!(decide_auth_strategy(&c), AuthStrategy::BearerOnly);
     }

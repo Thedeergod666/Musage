@@ -214,6 +214,7 @@ pub async fn add_extra_instance(
         let cred = Credentials {
             api_key: api_key_val.map(|s| s.to_string()),
             cookie: api_cookie_val.map(|s| s.to_string()),
+            secret_key: None,
         };
         save_credential_for_id(&temp_api_key_ref, &cred)
             .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
@@ -361,6 +362,7 @@ pub async fn update_extra_instance(
         let cred = Credentials {
             api_key: Some(k.clone()),
             cookie: None,
+            secret_key: None,
         };
         save_credential_for_id(&api_key_ref, &cred)
             .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
@@ -369,6 +371,7 @@ pub async fn update_extra_instance(
         let cred = Credentials {
             api_key: None,
             cookie: Some(c.clone()),
+            secret_key: None,
         };
         save_credential_for_id(&api_key_ref, &cred)
             .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
@@ -622,6 +625,7 @@ pub async fn test_extra_instance(
         } else {
             Some(api_cookie_trimmed.to_string())
         },
+        secret_key: None,
     };
 
     if req.provider_id == "custom" {

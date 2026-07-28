@@ -94,7 +94,7 @@
       "missing_five_hour_seven_day": "Claude 响应里没找到 five_hour / seven_day 字段"
     },
     "volcengine": {
-      "invalid_ak_sk_format": "火山方舟凭据格式错误 —— 请粘贴 `AK...SK` 形式（AccessKey ID、三个点、SecretAccessKey）。从 console.volcengine.com 右上角 → API 访问密钥 创建"
+      "unconfigured_secret_key": "火山方舟 SecretAccessKey 未配置（在设置面板 · 火山方舟 Coding Plan 同时填 AccessKey ID 和 SecretAccessKey）"
     },
     "anysearch": {
       "token_empty": "未配置 AnySearch 登录凭据（设置面板 · AnySearch · 点「登录 AnySearch」）",

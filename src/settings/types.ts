@@ -26,8 +26,12 @@ export interface ProviderConfig {
 export interface SourceMeta {
   id: string;
   display_name: string;
-  /** "api_key" / "cookie" / "api_key_or_cookie"（多鉴权，Xiaomi 用） */
-  auth_kind: "api_key" | "cookie" | "api_key_or_cookie";
+  /** "api_key" / "cookie" / "api_key_or_cookie"（多鉴权，Xiaomi 用）*/
+  /// v0.2.5: 加 "api_key_with_secret" 变体 —— 火山方舟 Coding Plan 这种管控面
+  /// 鉴权（AK + SK 两个独立 secret，HMAC-SHA256 v4 签名），前端渲 2 个 input。
+  /// Rust 端 QuotaSource::auth_kind 用同一字符串返（v0.2.5 之前 enum，加值需
+  /// 同步改 Rust —— 本次改用字符串直接对齐 `Settings::list_sources` 的 DTO）。
+  auth_kind: "api_key" | "cookie" | "api_key_or_cookie" | "api_key_with_secret";
   enabled: boolean;
   /** true = 主面板不渲染凭据字段（移至"高级"tab） */
   hide_credentials?: boolean;
@@ -224,6 +228,6 @@ export interface PickerProvider {
   id: string;
   name_key?: string;
   display_name: string;
-  auth_kind: "api_key" | "cookie" | "api_key_or_cookie";
+  auth_kind: "api_key" | "cookie" | "api_key_or_cookie" | "api_key_with_secret";
   is_builtin: boolean;
 }

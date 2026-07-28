@@ -373,6 +373,7 @@ fn save_token(token: &str) -> Result<usize, String> {
     let cred = Credentials {
         api_key: None,
         cookie: Some(token.to_string()),
+        secret_key: None,
     };
     config::save_credential_for_id("anysearch", &cred)
         .map_err(|e| t!("anysearch_login.save_keys_failed", err = e.to_string()).into_owned())?;

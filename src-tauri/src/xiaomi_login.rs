@@ -390,6 +390,7 @@ async fn extract_and_save(window: &tauri::WebviewWindow) -> Result<usize, String
     let cred = Credentials {
         api_key: None,
         cookie: Some(cookie_str.clone()),
+        secret_key: None,
     };
     config::save_credential_for_id("xiaomimimo", &cred)
         .map_err(|e| t!("xiaomi_login.save_keys_failed", err = e.to_string()).into_owned())?;

@@ -680,6 +680,7 @@ mod tests {
         let creds = Credentials {
             api_key: None,
             cookie: None,
+            secret_key: None,
         };
         let rt = tokio::runtime::Runtime::new().unwrap();
         let err = rt.block_on(src.fetch(&creds)).unwrap_err();

@@ -510,8 +510,6 @@ async function fitOnObserverTick() {
     const maxH = Math.max(200, screenH);  // 余量 0 -- availHeight 已扣菜单栏/Dock，榨干每像素（旧 -80 在 stepfun 加入后内容顶过屏幕被裁）
     const target = Math.round(Math.min(contentH, maxH));
     showFitDebug(contentH, maxH, screenH);  // 临时诊断：内容超屏时右上角红标，定位完删 showFitDebug + 调用处
-    // 临时诊断 -- 定 stepfun 显示不全的根因，定位完删
-    console.debug(`[fit] contentH=${contentH} maxH=${maxH} target=${target} screenAvail=${screenH} innerH=${window.innerHeight} ${contentH > maxH ? "OVERFLOW +" + (contentH - maxH) : "fits"}`);
     if (Math.abs(window.innerHeight - target) <= 1) return;
     lastFitWindowH = target;
     try {

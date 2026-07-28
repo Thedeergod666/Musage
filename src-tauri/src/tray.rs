@@ -901,7 +901,9 @@ fn tooltip(snap: &QuotaSnapshot) -> String {
             .unwrap_or_else(|| "?".to_string());
         parts.push(t!("tray.tooltip.updated_at", time = time_str).to_string());
     }
-    parts.join(" · ")
+    // 每个套餐独占一行(tray tooltip macOS NSStatusItem / Win11 SHGetTrayWindow 都
+    // 支持 \n 换行；多 provider 横向挤一行信息密度太低、易错行)。
+    parts.join("\n")
 }
 
 /// 提取 instance `#N` 后缀,instance_index == 1 或 None 时返空串。
@@ -941,14 +943,19 @@ fn provider_short_body(p: &ProviderSnapshot) -> String {
         )
         .to_string();
     }
-    // 按 source_id 字符串路由:
-    // - "deepseek" → 余额系 (balance 渲染)
-    // - "minimax" / "xiaomimimo" → 百分比系 (utilization 渲染)
-    // - 其它 (tavily / zenmux / kimi / zhipu / stepfun / siliconflow / claude_official / custom_*)
+    // 按 source_id base id (split('#') 取主名, 兼容 extra instance `minimax#2`) 路由:
+    // - 余额系 (deepseek / zenmux / openrouter) → balance 渲染
+    // - 百分比系 (minimax / xiaomimimo / ...) → row utilization 渲染
+    // - 其它 (tavily / kimi / zhipu / stepfun / siliconflow / claude_official / custom_*)
     //   → 通用 percent 渲染 (rows 第一条 utilization)
-    let id = p.source_id.as_deref().unwrap_or(&p.provider);
-    if id == "deepseek" {
-        // "DeepSeek ¥128.50"
+    let base_id = p
+        .source_id
+        .as_deref()
+        .map(|s| s.split('#').next().unwrap_or(s))
+        .unwrap_or(&p.provider);
+    let is_balance = matches!(base_id, "deepseek" | "zenmux" | "openrouter");
+    if is_balance {
+        // "DeepSeek ¥128.50" / "ZenMux $482.74USD" / "OpenRouter $74.75USD"
         if let Some(r) = p.rows.iter().find(|r| r.remaining.is_some()) {
             let amount = r
                 .remaining

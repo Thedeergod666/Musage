@@ -256,38 +256,19 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                 });
             }
             "force_top_floating" => {
-                // 走 Win 私有路径：先解锁前台锁定（ASFW_ANY 允许任何
-                // process 抢前台），再 SetForegroundWindow 抢前台。
-                // **会**把焦点抢过来 —— 这是用户**主动**点菜单触发的
-                // 操作，UX 上可接受（用户此刻在操作我们 app）。
-                if let Some(w) = app.get_webview_window("floating") {
-                    let _ = w.unminimize();
-                    let _ = w.show();
-                    // hwnd() / windows_sys crate 在 Tauri 2 里 cfg-gate 在 windows,
-                    // macos / linux 上不存在这两个 symbol。Win32 API 整块 cfg-gate。
-                    #[cfg(target_os = "windows")]
-                    {
-                        if let Ok(hwnd) = w.hwnd() {
-                            use windows_sys::Win32::UI::WindowsAndMessaging::{
-                                AllowSetForegroundWindow, SetForegroundWindow,
-                            };
-                            unsafe {
-                                let _ = AllowSetForegroundWindow(0x00000001); // ASFW_ANY
-                                let _ = SetForegroundWindow(hwnd.0);
-                            }
-                        }
-                    }
-                    // 同时把 WS_EX_TOPMOST 持久化（这样即便焦点之后
-                    // 丢失，level-trigger 也能在 16ms 内 re-assert）
-                    let _ = w.set_always_on_top(true);
-                }
-                // **L1 fix（2026-06-19）**：之前只在本会话抢一次前台，下次
-                // 重启 PinBottom hover-tick 又把窗口 demote 回去；用户感觉
-                // "点了没用"。现在显式把 floating_pin_mode 切到 PinTop 并落盘。
-                // 通过 IPC 走现有 set_floating_pin_mode handler（自动 save + emit
-                // musage://pin-mode-changed，让 lib.rs 重新应用 mode 到窗口）。
+                // fix (2026-07-28 审查): 两步收进同一个 async 块按序执行 ——
+                // 之前同步 set_always_on_top(true) + spawn 异步 set_floating_pin_mode，
+                // 中间窗口期 hover emitter 若采纳一次 exit edge（鼠标正离开浮窗），
+                // LEVEL_SWITCHING_ACTIVE 仍为 true，会把窗口 dispatch 回 Bottom
+                // （瞬态，随后被 pin_top 应用自愈，但肉眼可见闪一下）。先切
+                // pin_top（关 emitter 的 z-order/level 开关）再抢前台，消除中间态。
                 let app2 = app.clone();
                 tauri::async_runtime::spawn(async move {
+                    // **L1 fix（2026-06-19）**：之前只在本会话抢一次前台，下次
+                    // 重启 PinBottom hover-tick 又把窗口 demote 回去；用户感觉
+                    // "点了没用"。现在显式把 floating_pin_mode 切到 PinTop 并落盘。
+                    // 通过 IPC 走现有 set_floating_pin_mode handler（自动 save + emit
+                    // musage://pin-mode-changed，让 lib.rs 重新应用 mode 到窗口）。
                     if let Err(e) = crate::commands::set_floating_pin_mode(
                         app2.state::<crate::AppState>(),
                         app2.clone(),
@@ -296,6 +277,45 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                     .await
                     {
                         tracing::warn!(error = %e, "force_top_floating 持久化 pin_mode 失败");
+                    }
+                    if let Some(w) = app2.get_webview_window("floating") {
+                        let _ = w.unminimize();
+                        let _ = w.show();
+                        // hwnd() / windows_sys crate 在 Tauri 2 里 cfg-gate 在 windows,
+                        // macos / linux 上不存在这两个 symbol。Win32 API 整块 cfg-gate。
+                        #[cfg(target_os = "windows")]
+                        {
+                            if let Ok(hwnd) = w.hwnd() {
+                                use windows_sys::Win32::Foundation::GetLastError;
+                                use windows_sys::Win32::UI::WindowsAndMessaging::{
+                                    AllowSetForegroundWindow, SetForegroundWindow,
+                                };
+                                // 走 Win 私有路径：先解锁前台锁定（ASFW_ANY 允许任何
+                                // process 抢前台），再 SetForegroundWindow 抢前台。
+                                // **会**把焦点抢过来 —— 这是用户**主动**点菜单触发的
+                                // 操作，UX 上可接受（用户此刻在操作我们 app）。
+                                // fix (2026-07-28 审查): 不再静默吞失败，落 warn 日志。
+                                unsafe {
+                                    if AllowSetForegroundWindow(0x00000001) == 0 {
+                                        // ASFW_ANY
+                                        tracing::warn!(
+                                            error = GetLastError(),
+                                            "force_top_floating: AllowSetForegroundWindow 失败"
+                                        );
+                                    }
+                                    if SetForegroundWindow(hwnd.0) == 0 {
+                                        tracing::warn!(
+                                            error = GetLastError(),
+                                            "force_top_floating: SetForegroundWindow 失败"
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        // 同时立即把 WS_EX_TOPMOST 置上：pin_top 的应用走
+                        // pin-mode-changed 事件链异步落地，这里先生效一次；
+                        // topmost 是 sticky 的，焦点之后丢失窗口仍停在顶部。
+                        let _ = w.set_always_on_top(true);
                     }
                 });
             }
@@ -900,7 +920,11 @@ fn tooltip(snap: &QuotaSnapshot) -> String {
         // → 用户(macOS 北京时间)看到"更新于 08:53"以为当前时间是 08:53,实际本地 17:08,
         // 直接误导。改成 `.with_timezone(&Local)` 转本地时区。
         let time_str = chrono::DateTime::from_timestamp_millis(ms)
-            .map(|d| d.with_timezone(&chrono::Local).format("%H:%M:%S").to_string())
+            .map(|d| {
+                d.with_timezone(&chrono::Local)
+                    .format("%H:%M:%S")
+                    .to_string()
+            })
             .unwrap_or_else(|| "?".to_string());
         parts.push(t!("tray.tooltip.updated_at", time = time_str).to_string());
     }

@@ -99,7 +99,7 @@ use std::thread;
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager, Runtime};
-use windows_sys::Win32::Foundation::GetLastError;
+use windows_sys::Win32::Foundation::{GetLastError, SetLastError};
 use windows_sys::Win32::Foundation::{HWND as WIN_HWND, POINT, RECT};
 use windows_sys::Win32::UI::HiDpi::{
     SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
@@ -128,6 +128,14 @@ static TRACKER_RUNNING: AtomicBool = AtomicBool::new(false);
 /// 这个开关只影响 z-order 切换；hover 事件 emit 不受影响（**永远 emit**），
 /// 因为前端 iOS 26 玻璃 hover 效果需要它，不分 pin mode。
 static LEVEL_SWITCHING_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// fix (2026-07-28 审查): 请求 hover emitter 复位内部状态（last_inside /
+/// 防抖计数器 / raised / steady_ticks）。`set_window_pin_bottom` 切模式时置位，
+/// emitter 每 tick 开头消费（swap(false)）。
+/// 根因：PinTop→PinBottom 切换时若鼠标已在浮窗上方，emitter 的 `last_inside`
+/// 已是 true，`inside == last_inside` 命中 continue；而稳定 hover 的
+/// re-assert 又被 `raised == false` 短路 → 浮窗永久卡 HWND_BOTTOM。
+static HOVER_STATE_RESET: AtomicBool = AtomicBool::new(false);
 
 /// 浮窗的 z-order 模式。直接走 `SetWindowPos` 的 3 个目标值之一。
 #[derive(Debug, Clone, Copy)]
@@ -164,11 +172,29 @@ enum ZOrder {
 /// `SetWindowPos` + `SetWindowLongW` 都是 Win32 kernel call，文档
 /// 明确 thread-safe，可从任意线程调。
 unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
+    // fix (2026-07-28 审查, T9): null hwnd 防御 —— 正常路径拿不到 null，
+    // 但窗口销毁竞态下显式 early return 比依赖 Win32 失败返回更清楚。
+    debug_assert!(!hwnd.is_null());
+    if hwnd.is_null() {
+        return;
+    }
     let insert_after = match z {
         ZOrder::TopMost => HWND_TOPMOST,
         ZOrder::Bottom => HWND_BOTTOM,
         ZOrder::NotTopMost => HWND_NOTOPMOST,
     };
+
+    // fix (2026-07-28 审查, T5): GetWindowLongW 失败也返 0，与"窗口无扩展样式"
+    // 无法区分 —— 直接 `0 | WS_EX_TOPMOST` 写回会 wipe 掉 WS_EX_LAYERED /
+    // WS_EX_NOREDIRECTIONBITMAP 等既有 bit。按 Win32 文档用
+    // SetLastError(0) + GetLastError 区分：真失败（hwnd 失效等）提前返回，
+    // 样式和 z-order 都不动。
+    SetLastError(0);
+    let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+    if ex_style == 0 && GetLastError() != 0 {
+        tracing::trace!(?z, "apply_z_order: GetWindowLongW 失败，跳过本次切换");
+        return;
+    }
 
     // 路 B：直接改 style bit（OR 不能 wipe，AND 清除时不能保留其它 bit）
     //
@@ -179,7 +205,6 @@ unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
     //         自身会清 bit,不需要这里重复做)
     match z {
         ZOrder::TopMost => {
-            let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
             let new_style: i32 = ex_style | (WS_EX_TOPMOST as i32);
             SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
         }
@@ -188,7 +213,6 @@ unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
             // 自身会清 bit")。但 WebView2 会在自己的 message handler 里 re-assert
             // WS_EX_TOPMOST，导致 Normal 模式在 Win10/11 上不可靠。
             // 改为 Bottom 和 NotTopMost 都显式 AND-out WS_EX_TOPMOST。
-            let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
             let new_style: i32 = ex_style & !(WS_EX_TOPMOST as i32);
             SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
         }
@@ -225,6 +249,11 @@ pub fn set_window_pin_bottom<R: Runtime>(app: &AppHandle<R>) {
             }
         }
     });
+    // fix (2026-07-28 审查): 置位必须放在切 z-order 的 dispatch **之后** ——
+    // 保证 emitter 复位重评后 post 的 raise 在 main thread 队列里排在 demote
+    // 之后，最终 z-order 由 raise 决定；即使极罕见时序下 raise 先落地被
+    // demote 覆盖，下一 tick（≤50ms）复位后的重评也会自愈。
+    HOVER_STATE_RESET.store(true, Ordering::SeqCst);
     start_hover_emitter(app.clone());
 }
 
@@ -295,6 +324,18 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
             let mut steady_ticks: u8 = 0;
             loop {
                 thread::sleep(Duration::from_millis(50));
+
+                // fix (2026-07-28 审查): 模式切换（set_window_pin_bottom）请求
+                // 复位内部状态 —— 否则鼠标已在浮窗上方时 last_inside 已是 true，
+                // `inside == last_inside` 永远命中 continue；raised==false 又
+                // 短路 steady re-assert，hover-raise 不触发（浮窗永久卡底部）。
+                if HOVER_STATE_RESET.swap(false, Ordering::SeqCst) {
+                    last_inside = false;
+                    pending_ticks = 0;
+                    pending_value = false;
+                    raised = false;
+                    steady_ticks = 0;
+                }
 
                 let Some(hit) = hit_test_floating(&app) else {
                     continue;

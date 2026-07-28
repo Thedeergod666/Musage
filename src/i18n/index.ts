@@ -98,23 +98,36 @@ export const t = (key: string, params?: Record<string, string | number>): string
 };
 
 function lookup(key: string): any {
-  const parts = key.split(".");
-  let cur: any = dicts[current];
-  for (const p of parts) {
-    if (cur == null || typeof cur !== "object") return undefined;
-    cur = cur[p];
-  }
-  return cur;
+  return lookupInDict(dicts[current], key);
 }
 
 /// 在指定的 dict 上走点号路径查找（与 lookup 逻辑相同但不绑定 current locale）。
 /// 供跨 locale 回退使用。
+///
+/// **F2 fix（flat 带点 key）**：JSON 里存在 `"cookie_textarea_placeholder.claude_official"`
+/// 这种**整段带点的扁平 key**（嵌在 `credentials` 对象内，跟同名 string 兄弟
+/// 并存）。旧实现逐段 descend，走到 `cookie_textarea_placeholder`（string）就
+/// 卡住返 undefined → t() 落回 raw key。改为**贪心最长匹配**：每一层先把剩余
+/// 路径整段当 flat key 试，逐步缩短到单段。对现存纯嵌套 key 结果不变（实测
+/// en/zh-CN 无 flat key 与嵌套路径同名冲突）。
 function lookupInDict(dict: Record<string, any>, key: string): any {
   const parts = key.split(".");
   let cur: any = dict;
-  for (const p of parts) {
+  let i = 0;
+  while (i < parts.length) {
     if (cur == null || typeof cur !== "object") return undefined;
-    cur = cur[p];
+    let matched = false;
+    // 从最长（整段剩余）到最短（单段）尝试匹配 flat key
+    for (let j = parts.length; j > i; j--) {
+      const flat = parts.slice(i, j).join(".");
+      if (Object.prototype.hasOwnProperty.call(cur, flat)) {
+        cur = cur[flat];
+        i = j;
+        matched = true;
+        break;
+      }
+    }
+    if (!matched) return undefined;
   }
   return cur;
 }
@@ -129,6 +142,10 @@ export const setLocale = async (l: Locale): Promise<void> => {
     return;
   }
   await loadLocale(l);
+  // F4 fix: 先翻前端再调后端 —— current 必须先更新,否则后端 set_app_locale
+  // 广播 locale-changed 回来时,各窗口 listener 判 newLocale !== getLocale()
+  // 会再重入一次 setLocale 形成多余 IPC 循环。
+  const prev = current;
   current = l;
   document.documentElement.lang = l;
   // 通知后端 + 同步到 config.json
@@ -136,8 +153,12 @@ export const setLocale = async (l: Locale): Promise<void> => {
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("set_app_locale", { locale: l });
   } catch (e) {
-    // set_app_locale 命令在 P0 之前不存在；P0 之后会成功，错误可吞
-    if (dev) console.debug("[i18n] set_app_locale invoke failed (expected before backend ready)", e);
+    // 后端没切成 → 回滚前端 + 不通知 listeners,保持前后端语言一致
+    // （否则前端切了后端没切,后续 IPC 返回的字符串语言对不上）。
+    current = prev;
+    document.documentElement.lang = prev;
+    if (dev) console.debug("[i18n] set_app_locale invoke failed, rolled back", e);
+    return;
   }
   // 通知前端 listeners
   listeners.forEach((fn) => {

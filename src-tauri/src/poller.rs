@@ -29,6 +29,38 @@ fn in_flight() -> &'static std::sync::Mutex<JoinSet<()>> {
 /// 正在跑时直接返回 Ok,避免重复 fetch。
 static TICK_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// P6 fix (2026-07-28 审查): 全量刷新互斥位的 RAII guard —— drop 自动释放,
+/// tick() / refresh_now 无论成功失败都不会卡住 flag。
+pub(crate) struct TickGuard {
+    _priv: (),
+}
+
+impl Drop for TickGuard {
+    fn drop(&mut self) {
+        TICK_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// 尝试占有全量刷新互斥位。Some = 本调用方独占(guard drop 自动释放);
+/// None = 已有 tick/refresh 在跑,调用方应跳过本次(防双倍 fetch 风暴)。
+pub(crate) fn try_acquire_tick() -> Option<TickGuard> {
+    TICK_RUNNING
+        .compare_exchange(
+            false,
+            true,
+            std::sync::atomic::Ordering::SeqCst,
+            std::sync::atomic::Ordering::SeqCst,
+        )
+        .ok()?;
+    Some(TickGuard { _priv: () })
+}
+
+/// 全量刷新是否正在进行。P4 fix: poller spawn 的 per-provider 拉取入口
+/// 用它跳过与 tick 重叠的本次调度。
+pub(crate) fn tick_is_running() -> bool {
+    TICK_RUNNING.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 pub fn start(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
         // 启动后立即拉一次（全量）
@@ -48,6 +80,11 @@ pub fn start(app: AppHandle) {
         let state = app.state::<AppState>();
         let cfg0 = state.config.read().await.clone();
         let mut next_fetch: HashMap<String, Instant> = HashMap::new();
+        // P8 fix (2026-07-28 审查): 记录每个 provider 上次调度用的 cfg
+        // interval。初始 next_fetch 用启动时 cfg0 快照算 deadline,用户改
+        // interval 后第一轮 per-provider 调度仍按旧值到期 —— 主循环里
+        // 发现 interval 变化时把 entry 重排到 now + 新值。
+        let mut last_intervals: HashMap<String, u64> = HashMap::new();
         for src in all_sources(&state).await {
             // PR 1a：用 unique_id() 而不是 id()，否则 minimax #2 跟 minimax
             // 共享 map entry（id() 都返 "minimax"），#2 的 interval 会覆盖
@@ -62,6 +99,7 @@ pub fn start(app: AppHandle) {
                 .and_then(|p| p.refresh_interval_secs)
                 .unwrap_or(cfg0.refresh_interval_secs)
                 .max(10);
+            last_intervals.insert(unique.clone(), fallback_interval);
             next_fetch.insert(
                 unique,
                 Instant::now() + Duration::from_secs(fallback_interval),
@@ -115,18 +153,17 @@ pub fn start(app: AppHandle) {
 
             // H1: 同上,改用 all_sources(&state)——custom source 必须能被轮询
             //
+            // P5 fix (2026-07-28 审查): 之前 live_sources 算一次 all_sources、
+            // 下面 for 循环又算一次 —— 每秒 2 × (13+ 个 Box 分配 + RwLock
+            // read)。合并成一次调用复用结果。
+            let sources = all_sources(&state).await;
             // H2 fix: 清理 next_fetch 里已不存在的 source 条目。
             // delete_extra_instance 后 extras 列表少了条目,poller 不再调度
             // 它,但 next_fetch HashMap 里仍有该 unique_id 的 entry 只增不删,
             // 长时间频繁 add/delete 会泄漏。每次 tick 先算当前所有 unique_id,
             // 把不在 set 里的 entry 从 next_fetch 删掉 (用 retain 一次完成)。
-            let live_sources: std::collections::HashSet<String> = {
-                let mut set = std::collections::HashSet::new();
-                for src in all_sources(&state).await {
-                    set.insert(src.unique_id());
-                }
-                set
-            };
+            let live_sources: std::collections::HashSet<String> =
+                sources.iter().map(|s| s.unique_id()).collect();
             // L2 fix: 跟 try_join_next 的 lock 处理对称 ——
             // 单次 batch 删除所有 stale entries 后立刻 drop 锁,避免保留锁进
             // 长 for 循环(下面 for src 是大批量 source)。
@@ -140,7 +177,7 @@ pub fn start(app: AppHandle) {
                 backoff_guard.retain_live(&live_sources);
             }
 
-            for src in all_sources(&state).await {
+            for src in &sources {
                 // PR 1a：用 unique_id() 做 map key（决策 1：id() 共享 base）
                 //
                 // C1 fix (2026-07-03 audit): 之前 L137/L143/L146/L153 用 id_str
@@ -163,15 +200,6 @@ pub fn start(app: AppHandle) {
                 if !enabled {
                     continue; // 用户关了，不拉
                 }
-                // STUB 默认 disabled: 公开 API 无 quota endpoint 的 provider
-                // 拉一次就是 30 min 退避。用户没显式
-                // 启用 = 跳过,避免浮窗假死。extra instance 视为"用户显式启用"。
-                if !src.default_enabled()
-                    && !(cfg.providers.contains_key(unique_str)
-                        || cfg.providers.contains_key(base_str))
-                {
-                    continue;
-                }
                 let cfg_interval_secs = cfg
                     .providers
                     .get(unique_str)
@@ -179,6 +207,18 @@ pub fn start(app: AppHandle) {
                     .and_then(|p| p.refresh_interval_secs)
                     .unwrap_or(cfg.refresh_interval_secs)
                     .max(10);
+                // P8 fix: 用户改了 interval(全局或 per-provider)后,重排该
+                // provider 的 deadline —— 否则第一轮仍按启动时旧值到期,新值
+                // 要再等一轮才生效。用 cfg_interval_secs(不含 backoff)做变化
+                // 检测:backoff 波动不该触发重排,fire 时仍按 backoff 算下轮。
+                if last_intervals.get(unique_str).copied() != Some(cfg_interval_secs) {
+                    last_intervals.insert(unique.clone(), cfg_interval_secs);
+                    // 已存在的 entry 直接重排;还不存在的(新 source)交给下面
+                    // entry().or_insert(now) 立即 fire。
+                    if let Some(e) = next_fetch.get_mut(unique_str) {
+                        *e = now + Duration::from_secs(cfg_interval_secs);
+                    }
+                }
                 // 退避后的实际间隔：backoff 用 unique_id 写(见 refresh_single_inner),
                 // 这里也必须用 unique_id 读。base instance 的 unique_id == base_id,
                 // 自动兼容。
@@ -206,7 +246,12 @@ pub fn start(app: AppHandle) {
                         e.into_inner()
                     })
                     .spawn(async move {
-                        match crate::commands::refresh_single_inner(&app_clone, &unique_owned).await {
+                        // P4 fix (2026-07-28 审查): 走 poller 专用入口 ——
+                        // tick()/refresh_now 全量刷新在跑时跳过本次(之前
+                        // TICK_RUNNING 只防 tick vs tick,这里 spawn 的
+                        // refresh_single_inner 跟 tick 并发 → backoff.record
+                        // 双倍计数 + fetch 量翻倍)。
+                        match crate::commands::refresh_single_from_poller(&app_clone, &unique_owned).await {
                             Ok(()) => {}
                             Err(e) => tracing::warn!(error = %e, provider = %unique_owned, "per-provider 拉取失败"),
                         }
@@ -223,27 +268,12 @@ pub async fn tick_now(app: &AppHandle) -> Result<(), String> {
 }
 
 pub async fn tick(app: &AppHandle) -> Result<(), String> {
-    // M7 fix: 并发去重。CAS swap false→true 失败说明已有 tick 在跑,直接返回。
-    if TICK_RUNNING
-        .compare_exchange(
-            false,
-            true,
-            std::sync::atomic::Ordering::SeqCst,
-            std::sync::atomic::Ordering::SeqCst,
-        )
-        .is_err()
-    {
+    // M7 fix: 并发去重。CAS 已封装进 try_acquire_tick(P6 fix 抽出,
+    // refresh_now 复用同一位)。已有实例在跑时直接返回。
+    let Some(_guard) = try_acquire_tick() else {
         tracing::debug!("tick() 已有实例在跑,跳过本次并发触发");
         return Ok(());
-    }
-    // 无论成功失败都要释放 flag(scope guard pattern)
-    struct FlagGuard;
-    impl Drop for FlagGuard {
-        fn drop(&mut self) {
-            TICK_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
-        }
-    }
-    let _guard = FlagGuard;
+    };
 
     let cfg = {
         let state = app.state::<AppState>();
@@ -259,17 +289,21 @@ pub async fn tick(app: &AppHandle) -> Result<(), String> {
     // 已经把某个 provider 更新到 state.snapshot 里了，整块覆写会把那份新数据
     // 回滚成 refresh_inner 拿到的旧版本。
     //
-    // 正确做法：按 source_id 逐条合并——新数据覆盖旧的，但只动 fetch 到的
+    // 正确做法：按 snapshot_key 逐条合并——新数据覆盖旧的，但只动 fetch 到的
     // provider，不碰其他的。
     {
         let state = app.state::<AppState>();
         let mut guard = state.snapshot.write().await;
         for new_p in &new_snap.providers {
-            let new_id = new_p.source_id.as_deref().unwrap_or(&new_p.provider);
+            // P3 fix (2026-07-28 审查): 合并键统一为 snapshot_key(unique_id
+            // 优先)。之前只按 source_id 匹配 —— 副本 fetch 成功时 source_id
+            // 是 provider 侧硬编码的 base id("minimax"),unique_id 才是
+            // "minimax#2",按 source_id 合并会把副本数据覆盖基础实例条目。
+            let new_id = crate::commands::snapshot_key(new_p);
             if let Some(idx) = guard
                 .providers
                 .iter()
-                .position(|p| p.source_id.as_deref() == Some(new_id))
+                .position(|p| crate::commands::snapshot_key(p) == new_id)
             {
                 guard.providers[idx] = new_p.clone();
             } else {
@@ -278,7 +312,7 @@ pub async fn tick(app: &AppHandle) -> Result<(), String> {
         }
         guard.fetched_at = new_snap.fetched_at;
         // 顶层字段(钱包告警阈值)也要同步——refresh_inner 内部已 populate,
-        // 这里只是按 source_id 合并 providers,顶层字段会被忽略,所以手动搬过来。
+        // 这里只是按 snapshot_key 合并 providers,顶层字段会被忽略,所以手动搬过来。
         guard.wallet_alert_threshold = new_snap.wallet_alert_threshold;
     }
 

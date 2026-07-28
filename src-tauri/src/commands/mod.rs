@@ -43,6 +43,17 @@ pub async fn set_provider_order(
     app: AppHandle,
     order: Vec<String>,
 ) -> Result<(), String> {
+    // CM10 fix (2026-07-28 审查): 落盘前清洗 —— 之前不校验 order 字符串,
+    // 未知 id / 重复 / 超长直接落盘(前端 bug 或手搓 IPC 会写进垃圾顺序)。
+    // known = 当前全部 source 的 unique_id(内置 base id + 副本 "minimax#2"
+    // + custom_<uuid>)。注意在拿 config.write 之前调 all_sources(它内部
+    // 拿 extra_instances.read),避免锁嵌套。
+    let known: std::collections::HashSet<String> = all_sources(&state)
+        .await
+        .iter()
+        .map(|s| s.unique_id())
+        .collect();
+    let order = sanitize_provider_order(order, &known);
     // 锁顺序契约（**2026-06-20 audit fix**：之前注释描述的顺序跟实际代码
     // 不一致，误导未来维护者）：
     //
@@ -73,6 +84,24 @@ pub async fn set_provider_order(
     }
     let _ = app.emit("musage://config-changed", ());
     Ok(())
+}
+
+/// CM10 fix (2026-07-28 审查): provider_order 落盘前的基础清洗 ——
+/// 过滤未知 id + 去重(保留首次出现) + 限长。宽容策略:不 reject 整个
+/// 请求,只剔除坏条目,合法顺序完全不受影响。
+fn sanitize_provider_order(
+    order: Vec<String>,
+    known: &std::collections::HashSet<String>,
+) -> Vec<String> {
+    // 13 内置 + N extras,128 足够宽容(正常 order 长度 == known 数量)
+    const MAX_LEN: usize = 128;
+    let mut seen = std::collections::HashSet::new();
+    order
+        .into_iter()
+        .filter(|id| known.contains(id))
+        .filter(|id| seen.insert(id.clone()))
+        .take(MAX_LEN)
+        .collect()
 }
 
 /// 立即更新单个 provider 的 enabled 标志 + 落盘 + emit。供设置面板
@@ -270,6 +299,18 @@ pub async fn set_schema_overrides(
                     )
                     .into_owned());
                 }
+                // CM12 fix (2026-07-28 审查): total 与 remaining 同名字段是
+                // 自指 override —— 解析时 remaining == total,用量恒算成 0%,
+                // 保存后静默出错误数据。提前拒绝。
+                if ft.total.trim() == ft.remaining.trim() {
+                    return Err(t!(
+                        "commands.schema_override_duplicate_field",
+                        id = id,
+                        tier = tier_name,
+                        idx = i
+                    )
+                    .into_owned());
+                }
             }
         }
     }
@@ -288,7 +329,11 @@ pub async fn set_schema_overrides(
     };
     tokio::spawn(async move {
         for id in ids {
-            if matches!(id.as_str(), "minimax" | "xiaomimimo") {
+            // CM9 fix (2026-07-28 审查): ids 来自 cfg.providers 的 key,含
+            // 副本 unique_id("minimax#2") —— 之前 matches! 全串匹配永远
+            // 漏掉副本(副本跟 base 共享同一套 schema override,也该刷新)。
+            let base = id.split('#').next().unwrap_or(id.as_str());
+            if matches!(base, "minimax" | "xiaomimimo") {
                 let _ = refresh_single_inner(&app_clone, &id).await;
             }
         }
@@ -488,6 +533,15 @@ pub async fn refresh_now(
     state: State<'_, AppState>,
     app: AppHandle,
 ) -> Result<QuotaSnapshot, String> {
+    // P6 fix (2026-07-28 审查): 跟 poller::tick 共用全量刷新互斥位。
+    // 之前 refresh_now 不做去重直接 refresh_inner —— 启动初始 tick 还在
+    // 跑时用户点「立即刷新」→ 13+ provider 双倍并发 fetch。已有实例在跑
+    // 时返回当前 in-memory snapshot:在跑那轮完成时会 emit
+    // musage://snapshot + 刷新托盘,前端订阅者照常拿到最新数据。
+    let Some(_tick_guard) = crate::poller::try_acquire_tick() else {
+        tracing::debug!("refresh_now 已有全量刷新在跑,返回当前 snapshot");
+        return Ok(state.snapshot.read().await.clone());
+    };
     let cfg = state.config.read().await.clone();
     let snap = refresh_inner(&app, &cfg).await?;
     // 合并写回 state（而不是整块覆写）—— 跟 tick() 同理：
@@ -496,11 +550,13 @@ pub async fn refresh_now(
     {
         let mut guard = state.snapshot.write().await;
         for new_p in &snap.providers {
-            let new_id = new_p.source_id.as_deref().unwrap_or(&new_p.provider);
+            // P3 fix (2026-07-28 审查): 合并键统一为 snapshot_key(unique_id
+            // 优先),详见 tick() 同处注释。
+            let new_id = snapshot_key(new_p);
             if let Some(idx) = guard
                 .providers
                 .iter()
-                .position(|p| p.source_id.as_deref() == Some(new_id))
+                .position(|p| snapshot_key(p) == new_id)
             {
                 guard.providers[idx] = new_p.clone();
             } else {
@@ -652,7 +708,7 @@ pub async fn list_sources(state: State<'_, AppState>) -> Result<Vec<SourceMeta>,
                 let id = s.id();
                 id == "xiaomimimo"
                     || id == "claude_official" // sessionKey 约 8h 过期，不常改
-                    || id == "anysearch"      // 一键登录 banner 在主面板，cookie textarea 放高级
+                    || id == "anysearch" // 一键登录 banner 在主面板，cookie textarea 放高级
             },
             is_stub: s.is_stub(),
         })
@@ -734,9 +790,18 @@ pub async fn set_source_credential(
     let enabled = state.config.read().await.is_enabled_id(&id);
     tracing::debug!(provider = %id, enabled, "set_source_credential: refresh decision");
     if enabled {
-        if let Err(e) = refresh_single_inner(&app, &id).await {
-            tracing::warn!(error = %e, provider = %id, "set_source_credential 后立即拉取失败（不阻塞保存）");
-        }
+        // CM11 fix (2026-07-28 审查): 之前在这里 await refresh_single_inner,
+        // HTTP fetch 2-5s 全程阻塞 IPC(设置面板保存 key 按钮一直转圈)。
+        // 对齐 set_provider_enabled / set_xiaomi_display_mode 的 spawn 模式:
+        // 立即返回;fetch 完成后 refresh_single_inner 自己会 emit snapshot,
+        // 浮窗照常更新。
+        let app_clone = app.clone();
+        let id_owned = id.clone();
+        tokio::spawn(async move {
+            if let Err(e) = refresh_single_inner(&app_clone, &id_owned).await {
+                tracing::warn!(error = %e, provider = %id_owned, "set_source_credential 后立即拉取失败（不阻塞保存）");
+            }
+        });
     }
     let _ = app.emit("musage://config-changed", ());
     Ok(())
@@ -813,6 +878,30 @@ pub async fn delete_source_credential(
             .map(|e| e.api_key_ref.clone())
             .collect();
         drop(extras);
+        // CM4 fix (2026-07-28 审查): 兑现上方注释承诺的另一半 —— 级联
+        // disable 副本。之前只清 keys.json entry,副本 enabled 仍为 true,
+        // poller 继续调度 + 浮窗显示「未配置」死卡。api_key_ref
+        // ("minimax#2") 同时是 keys.json key 和 cfg.providers key,disable
+        // 是可逆操作(设置面板可重新打开);extra_instances 条目本身的删除
+        // 归 delete_extra_instance,这里不越权。
+        if !orphan_refs.is_empty() {
+            let mut cfg = state.config.write().await;
+            for r in &orphan_refs {
+                let entry = cfg.providers.entry(r.clone()).or_insert(ProviderConfig {
+                    enabled: true,
+                    region: None,
+                    xiaomi_region: None,
+                    refresh_interval_secs: None,
+                    xiaomi_display_mode: None,
+                });
+                entry.enabled = false;
+            }
+            if let Err(e) = cfg.save() {
+                // 级联落盘失败不阻断主流程(keys.json 主删除已成功)
+                tracing::warn!(error = %e, "delete 级联 disable 副本落盘失败");
+            }
+            drop(cfg);
+        }
         for r in &orphan_refs {
             if let Err(e) = config::delete_credential_for_id(r) {
                 tracing::warn!(error = %e, ref_ = %r, "delete 级联清孤儿 entry 失败");
@@ -1117,18 +1206,23 @@ pub async fn set_region(
         if cfg.provider_order.is_empty() {
             cfg.provider_order = default_order;
         }
-        // 2. apply 默认 endpoint（MiniMax 跟 region 走；zhipu 当前 schema
-        // 缺独立 field，靠 cfg.pointer(\"/providers/zhipu/region\") 读，
-        // 不在 ProviderConfig 里 —— TODO v2 加 zhipu_region 字段）
+        // 2. apply 默认 endpoint（MiniMax / Zhipu 都跟 region 走）。
+        // H10 fix (2026-07-28 审查): 之前只切 MiniMax —— 旧注释说 zhipu
+        // "缺独立 field" 已过时,cfg.zhipu_region 顶层字段早已存在
+        // (zhipu.rs set_state 读它,取值 "cn"/"en",同 set_zhipu_region 的
+        // 校验约定),Global 分支漏设导致首启向导选 global 后 Zhipu 仍走 CN。
         if parsed == UserRegion::Global {
             if let Some(mm) = cfg.providers.get_mut("minimax") {
                 mm.region = Some(MinimaxRegion::En);
             }
+            cfg.zhipu_region = Some("en".to_string());
         } else {
-            // Cn (默认) —— 显式归位 CN
+            // Cn (默认) —— 显式归位 CN（zhipu 同 minimax,防先选 global
+            // 再切回 cn 时残留 en）
             if let Some(mm) = cfg.providers.get_mut("minimax") {
                 mm.region = Some(MinimaxRegion::Cn);
             }
+            cfg.zhipu_region = Some("cn".to_string());
         }
         // 3. 标 user_region 为 Custom（之后用户手动改任何字段都不会触发 wizard）
         cfg.user_region = UserRegion::Custom;
@@ -1200,19 +1294,9 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
         if !cfg.is_enabled_id(id_str) {
             continue;
         }
-        // STUB 默认 disabled: 公开 API 无 quota endpoint 的 provider
-        // 用户没显式启用 → 跳过,避免 30 min 退避风暴。
-        // 用户可在设置面板手动勾选启用,显式覆盖默认值。
-        let base_id = src.id(); // Cow<'_, str>
-        if !src.default_enabled()
-            && !cfg.providers.contains_key(id_str)
-            && !cfg.providers.contains_key(base_id.as_ref())
-        {
-            continue;
-        }
-
         // 默认间隔（per-provider override 优先）—— backoff 写入时用。
         // extra instance 优先按 unique_id 查，否则 fallback 到 base id。
+        let base_id = src.id(); // Cow<'_, str>
         let default_interval_secs = cfg
             .providers
             .get(id_str)
@@ -1296,8 +1380,18 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
     for (id, default_interval_secs, task) in tasks {
         match task.await {
             Ok(Ok(s)) => {
-                // 写 backoff：成功 → reset 退避状态
                 let mut s = s;
+                // P1 fix (2026-07-28 审查): 兑现原注释"写 backoff:成功 →
+                // reset 退避状态"的承诺 —— 之前这里只有注释没有 record
+                // 调用(全工程只有 refresh_single_inner 调):手动「立即刷新」
+                // 成功后 per-provider 循环仍按旧退避间隔干等,本路径的
+                // 失败也不累加退避。write guard 只在 record 期间持有,
+                // drop 后再调 fill_next_fetch_at(内部 read),避免锁嵌套。
+                {
+                    let state = app.state::<AppState>();
+                    let mut backoff = state.backoff.write().await;
+                    backoff.record(&id, &s, default_interval_secs);
+                }
                 fill_next_fetch_at(app, &id, default_interval_secs, &mut s).await;
                 snap.providers.push(s);
             }
@@ -1313,7 +1407,12 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                     false, // L8: 真实错误,非 transient
                 )
                 .await;
-                // 写 backoff：失败（如果 kind 属于可退避类）→ 翻倍
+                // P1 fix: 同上 —— 失败(kind 属于可退避类时)翻倍退避。
+                {
+                    let state = app.state::<AppState>();
+                    let mut backoff = state.backoff.write().await;
+                    backoff.record(&id, &err_snap, default_interval_secs);
+                }
                 fill_next_fetch_at(app, &id, default_interval_secs, &mut err_snap).await;
                 snap.providers.push(err_snap);
             }
@@ -1330,6 +1429,13 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                     false, // L8: 真实错误
                 )
                 .await;
+                // P1 fix: 三条路径一致调 record —— Other 属不可退避类,
+                // record 对它 no-op;保持一致是为未来 kind 分类变化时自动正确。
+                {
+                    let state = app.state::<AppState>();
+                    let mut backoff = state.backoff.write().await;
+                    backoff.record(&id, &err_snap, default_interval_secs);
+                }
                 err_snap.next_fetch_at = Some(
                     chrono::Utc::now().timestamp_millis() + (default_interval_secs as i64) * 1000,
                 );
@@ -1363,12 +1469,8 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
     let state = app.state::<AppState>();
     let cfg_read = state.config.read().await;
     snap.providers.retain(|p| {
-        // extra instance fix：用 source_id(现在是 unique_id) 查 enabled
-        let id = p
-            .source_id
-            .as_deref()
-            .or(p.unique_id.as_deref())
-            .unwrap_or(&p.provider);
+        // P3 fix (2026-07-28 审查): 统一 snapshot_key 规则(unique_id 优先)。
+        let id = snapshot_key(p);
         cfg_read.is_enabled_id(id)
     });
     apply_provider_order(&mut snap, &cfg_read);
@@ -1383,6 +1485,21 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
     }
 
     Ok(snap)
+}
+
+/// P3 fix (2026-07-28 审查): snapshot 条目身份键的统一规则 ——
+/// `unique_id` 优先,fallback `source_id`,最后 `provider` 兼容字段。
+///
+/// 为什么必须 unique_id 优先:provider 的 do_fetch 成功路径把 `source_id`
+/// 硬编码为 base id("minimax"),`unique_id` 才由 caller 注入("minimax#2")。
+/// 按 source_id 匹配合并时,副本的 snapshot 会命中并覆盖基础实例的条目。
+/// tick() / refresh_now / refresh_single_inner 的合并 + 两处的 enabled
+/// retain 全部走这一条规则,与 apply_provider_order 的 order_key 口径一致。
+pub(crate) fn snapshot_key(p: &ProviderSnapshot) -> &str {
+    p.unique_id
+        .as_deref()
+        .or(p.source_id.as_deref())
+        .unwrap_or(&p.provider)
 }
 
 /// 按 AppConfig.provider_order 给 snapshot.providers 排序。
@@ -1494,9 +1611,15 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
 
     // 写 backoff：让 poller 下次调度知道这个 provider 是不是该延长间隔
     // (失败 → 翻倍；成功 → reset)。详见 `poller_backoff::BackoffState::record`。
+    //
+    // M18 fix (2026-07-28 审查): 查 interval 补 base_id fallback —— 副本
+    // ("minimax#2") 在 cfg.providers 里通常没独立 entry,之前直接用全局
+    // interval,忽略 base 的 per-provider 覆盖(poller 主循环和
+    // refresh_inner 都有 fallback,这里漏了)。
     let default_interval_secs = cfg
         .providers
         .get(id)
+        .or_else(|| cfg.providers.get(src.id().as_ref()))
         .and_then(|p| p.refresh_interval_secs)
         .unwrap_or(cfg.refresh_interval_secs)
         .max(10);
@@ -1509,24 +1632,18 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
     fill_next_fetch_at(app, id, default_interval_secs, &mut provider_snap).await;
 
     // 替换 in-memory snapshot 里对应那条。
-    // 匹配策略（2026-06-25 fix）：优先按 unique_id 匹配，再 fallback 到
-    // source_id。extra instance 的 source_id 现在 = unique_id() = "deepseek#2"，
-    // 直接按 source_id 匹配也正确；但要兼容老 snapshot（unique_id 存在但
-    // source_id 仍是 "deepseek"）需要把 unique_id 作为首要匹配键。
+    // P3 fix (2026-07-28 审查): 匹配规则统一为 snapshot_key(unique_id
+    // 优先) —— 之前的 4 条件交叉匹配(match_key/fallback_key ×
+    // unique_id/source_id)在"老条目 unique_id=None + 新副本错误 snapshot
+    // source_id=base id"场景会跨条目误命中,把副本错误盖到基础实例上。
     let state = app.state::<AppState>();
     let mut snap = state.snapshot.write().await;
-    let match_key = provider_snap
-        .unique_id
-        .as_deref()
-        .or(provider_snap.source_id.as_deref())
-        .unwrap_or(id);
-    let fallback_key = provider_snap.source_id.as_deref().unwrap_or(id);
-    if let Some(idx) = snap.providers.iter().position(|p| {
-        p.unique_id.as_deref() == Some(match_key)
-            || p.source_id.as_deref() == Some(match_key)
-            || p.unique_id.as_deref() == Some(fallback_key)
-            || p.source_id.as_deref() == Some(fallback_key)
-    }) {
+    let match_key = snapshot_key(&provider_snap);
+    if let Some(idx) = snap
+        .providers
+        .iter()
+        .position(|p| snapshot_key(p) == match_key)
+    {
         snap.providers[idx] = provider_snap;
     } else {
         snap.providers.push(provider_snap);
@@ -1542,15 +1659,9 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
     drop(cfg2);
     let mut snap = state.snapshot.write().await;
     snap.providers.retain(|p| {
-        // extra instance fix（2026-06-25）：
-        // p.source_id 现在是 unique_id("deepseek#2")，优先用它查 enabled；
-        // 再 fallback 到 p.provider（老兼容）。
-        let id = p
-            .source_id
-            .as_deref()
-            .or(p.unique_id.as_deref())
-            .unwrap_or(&p.provider);
-        cfg2_snapshot.is_enabled_id(id)
+        // P3 fix (2026-07-28 审查): 统一 snapshot_key 规则(unique_id 优先;
+        // 之前 source_id 优先,跟合并链的口径相反)。
+        cfg2_snapshot.is_enabled_id(snapshot_key(p))
     });
     apply_provider_order(&mut snap, &cfg2_snapshot);
     // 同步全局余额告警阈值(per-provider 调度只更一个 provider,不能丢顶层字段)
@@ -1578,6 +1689,24 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
         tracing::warn!(error = %e, "刷新托盘失败 (refresh_single)");
     }
     Ok(())
+}
+
+/// poller per-provider 调度专用入口（P4 fix, 2026-07-28 审查）。
+///
+/// tick()/refresh_now 的全量刷新在跑时跳过本次 —— 全量刷新本来就会拉到
+/// 这个 provider,并发再跑 refresh_single_inner 会让 backoff.record
+/// 双倍计数、fetch 量翻倍(TICK_RUNNING 只防 tick vs tick,堵不住
+/// tick vs per-provider 这对)。entry 在 spawn 前已推进,跳过不丢数据。
+///
+/// 手动触发路径(保存 key / 启用开关 / 设置面板各 setter)仍走
+/// [`refresh_single_inner`] 原入口,不受此跳过影响 —— 那些是用户动作,
+/// 必须立即生效。
+pub async fn refresh_single_from_poller(app: &AppHandle, id: &str) -> Result<(), String> {
+    if crate::poller::tick_is_running() {
+        tracing::debug!(provider = %id, "全量刷新进行中,跳过本次 per-provider 拉取");
+        return Ok(());
+    }
+    refresh_single_inner(app, id).await
 }
 
 /// 在 fetch 前把 cfg 里的 region / overrides 推给 source（如果 source 实现了的话）。
@@ -1703,10 +1832,16 @@ fn log_provider_error(app: &AppHandle, provider_id: &str, kind: ErrorKind, messa
     // dedup 60s 窗口已经保证一次失败 → 一条通知,poller 60s 一次轮询不会
     // 弹疯 (8h cookie 失效 → 60min 内最多 60 条通知)。其他 provider (minimax 等
     // Bearer key 失败) 不弹,减少干扰。
-    if matches!(kind, ErrorKind::AuthFailed)
-        && matches!(provider_id, "xiaomimimo" | "claude_official")
+    //
+    // H11 fix (2026-07-28 审查): provider_id 可能是副本 unique_id
+    // ("xiaomimimo#2"/"claude_official#2") —— 之前全串 matches! 让副本
+    // cookie 过期永远不弹通知;且内层 if 也用全串比较,"xiaomimimo#2"
+    // 会错拿 claude 文案。取 base id 再匹配/选文案;body 仍传完整
+    // unique_id,通知里能定位到具体副本。
+    let base_id = provider_id.split('#').next().unwrap_or(provider_id);
+    if matches!(kind, ErrorKind::AuthFailed) && matches!(base_id, "xiaomimimo" | "claude_official")
     {
-        let (title_key, body_key) = if provider_id == "xiaomimimo" {
+        let (title_key, body_key) = if base_id == "xiaomimimo" {
             (
                 "notification.xiaomi_cookie_expired_title",
                 "notification.xiaomi_cookie_expired_body",
@@ -2048,5 +2183,76 @@ mod dedup_cache_tests {
 
         // 65s 后同 key → 放过
         assert!(!is_dedup_window_hit(&cache, &key, t0 + 65_000));
+    }
+}
+
+/// P3 / CM10 fix (2026-07-28 审查) 的纯逻辑单测:snapshot_key 身份键规则
+/// + provider_order 清洗。
+#[cfg(test)]
+mod snapshot_key_tests {
+    use super::*;
+
+    fn snap(unique: Option<&str>, source: Option<&str>, provider: &str) -> ProviderSnapshot {
+        ProviderSnapshot {
+            provider: provider.to_string(),
+            unique_id: unique.map(|s| s.to_string()),
+            source_id: source.map(|s| s.to_string()),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn unique_id_wins_over_source_id() {
+        // 副本成功 snapshot: source_id 是 provider 侧硬编码的 base id,
+        // unique_id 由 caller 注入 —— 身份键必须取 unique_id,否则副本
+        // 合并时覆盖基础实例条目。
+        let p = snap(Some("minimax#2"), Some("minimax"), "minimax");
+        assert_eq!(snapshot_key(&p), "minimax#2");
+    }
+
+    #[test]
+    fn falls_back_to_source_id_then_provider() {
+        // 老 snapshot(无 unique_id) → source_id;两个都没 → provider 字段
+        let p = snap(None, Some("minimax"), "minimax");
+        assert_eq!(snapshot_key(&p), "minimax");
+        let p2 = snap(None, None, "deepseek");
+        assert_eq!(snapshot_key(&p2), "deepseek");
+    }
+
+    #[test]
+    fn base_and_dup_have_distinct_keys() {
+        // 基础实例 vs 副本错误 snapshot(source_id 同为 base)必须区分
+        let base = snap(Some("minimax"), Some("minimax"), "minimax");
+        let dup_err = snap(Some("minimax#2"), Some("minimax"), "minimax");
+        assert_ne!(snapshot_key(&base), snapshot_key(&dup_err));
+    }
+
+    #[test]
+    fn sanitize_order_filters_unknown_and_dupes() {
+        let known: std::collections::HashSet<String> = ["minimax", "deepseek", "minimax#2"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let out = sanitize_provider_order(
+            vec![
+                "minimax".into(),
+                "bogus".into(),   // 未知 id → 剔除
+                "minimax".into(), // 重复 → 剔除(保留首次出现)
+                "deepseek".into(),
+            ],
+            &known,
+        );
+        assert_eq!(out, vec!["minimax".to_string(), "deepseek".to_string()]);
+    }
+
+    #[test]
+    fn sanitize_order_keeps_extra_instance_ids() {
+        // 副本 unique_id 是合法条目,不能被当未知 id 剔掉
+        let known: std::collections::HashSet<String> = ["minimax", "minimax#2"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let out = sanitize_provider_order(vec!["minimax#2".into(), "minimax".into()], &known);
+        assert_eq!(out, vec!["minimax#2".to_string(), "minimax".to_string()]);
     }
 }

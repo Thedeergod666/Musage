@@ -18,7 +18,7 @@ import {
   setXiaomiDisplayMode,
   refreshNow,
 } from "./api";
-import { el, flash } from "./utils";
+import { el, flash, formatDisplayName } from "./utils";
 import { confirmInApp } from "./modal";
 import { t } from "../i18n";
 import { invoke } from "@tauri-apps/api/core";
@@ -631,6 +631,35 @@ export async function loadCredentialStatus(id: string) {
   }
 }
 
+/// 凭据操作 flash / confirm 消息里的 provider 显示名。
+///
+/// 事件委托传来的 id 是 api_key_ref 形式，直接查 `provider.<id>.name` 对
+/// 副本 / custom 必 miss（i18n 只有 base id 的 key）→ t() 回退成 raw key
+/// 字符串（如 "provider.minimax#2.name"）。这里统一解析：
+/// - 内置副本（"minimax#2"）→ 基名 + " #N"（复用 formatDisplayName，跟
+///   providers.ts 渲染副本行同款格式）
+/// - custom_<uuid> → extra_instances 里的 display_name（查不到回退原 id）
+/// - 其余（内置 base id）→ 正常 t(`provider.<id>.name`)
+async function credentialProviderName(id: string): Promise<string> {
+  const hashIdx = id.indexOf("#");
+  if (hashIdx > 0) {
+    const base = id.slice(0, hashIdx);
+    const n = Number(id.slice(hashIdx + 1));
+    return formatDisplayName(t(`provider.${base as ProviderId}.name`), n);
+  }
+  if (id.startsWith("custom_")) {
+    try {
+      const extras = await listExtraInstances();
+      const hit = extras.find((e) => e.api_key_ref === id);
+      if (hit?.custom?.display_name) return hit.custom.display_name;
+    } catch {
+      // 查询失败不阻塞凭据操作，回退原 id
+    }
+    return id;
+  }
+  return t(`provider.${id as ProviderId}.name`);
+}
+
 export async function saveCredentialAction(id: string, action: "key" | "cookie", advInputId?: string) {
   // v0.2.5: 火山方舟 Coding Plan 是 api_key_with_secret 模式 —— renderCredentialBlock
   // 渲了 2 个 password input（`api-key-${id}` + `api-secret-${id}`）。一次点 save
@@ -678,7 +707,7 @@ export async function saveCredentialAction(id: string, action: "key" | "cookie",
         status.className = "status ok";
       }
     }
-    flash(t("credentials.flash_saved_generic", { name: t(`provider.${id as ProviderId}.name`) }));
+    flash(t("credentials.flash_saved_generic", { name: await credentialProviderName(id) }));
     await refreshNow();
   } catch (e) {
     flash(t("credentials.flash_save_failed", { err: String(e) }), true);
@@ -694,7 +723,10 @@ export async function saveCredentialAction(id: string, action: "key" | "cookie",
 /// 任一为空：直接 flash 提示，不调后端（避免半写半空）。
 async function saveVolcengineTwoFields(id: string, advInputId?: string) {
   const akInputId = advInputId ?? `api-key-${id}`;
-  const skInputId = advInputId ?? `api-secret-${id}`;
+  // SK 输入框 id 不能复用 advInputId —— 否则 AK/SK 指向同一个 input，
+  // AK 的值会被同时写进 api_key 和 secret_key 两个槽位。
+  // 高级 tab 约定跟 AK 对应：api-key-<id>-adv ↔ api-secret-<id>-adv。
+  const skInputId = advInputId ? `api-secret-${id}-adv` : `api-secret-${id}`;
   const akInput = document.getElementById(akInputId) as HTMLInputElement | null;
   const skInput = document.getElementById(skInputId) as HTMLInputElement | null;
   if (!akInput || !skInput) return;
@@ -724,7 +756,7 @@ async function saveVolcengineTwoFields(id: string, advInputId?: string) {
         skStatus.className = "status ok";
       }
     }
-    flash(t("credentials.flash_saved_generic", { name: t(`provider.${id as ProviderId}.name`) }));
+    flash(t("credentials.flash_saved_generic", { name: await credentialProviderName(id) }));
     await refreshNow();
   } catch (e) {
     flash(t("credentials.flash_save_failed", { err: String(e) }), true);
@@ -735,7 +767,7 @@ export async function deleteCredentialAction(id: string, action: "key" | "cookie
   // P0 fix: 之前传 { name: "<provider> API key" } 给 confirm_delete_key，模板是
   // "Delete {name} API key?" → 渲染 "Delete Tavily API key API key?"（"API key" 重复）。
   // 改成只传 provider 名字，让模板自带 "API key" / "Cookie" 后缀。
-  const providerName = t(`provider.${id as ProviderId}.name`);
+  const providerName = await credentialProviderName(id);
   const baseKey = action === "key" ? "credentials.confirm_delete_key" : "credentials.confirm_delete_cookie";
   // M3 fix (2026-07-08 全量审查): builtin provider 删 key 会级联清空所有
   // 副本的 keys.json entry(H4 fix 设计),但用户看不到副作用 → 浮窗突然
@@ -769,11 +801,11 @@ export async function copyCredentialAction(id: string) {
   try {
     const value = await getSourceCredential(id);
     if (!value) {
-      flash(t("credentials.flash_unset_key", { name: t(`provider.${id as ProviderId}.name`) }), true);
+      flash(t("credentials.flash_unset_key", { name: await credentialProviderName(id) }), true);
       return;
     }
     await navigator.clipboard.writeText(value);
-    flash(t("credentials.flash_copy_ok", { name: t(`provider.${id as ProviderId}.name`) }));
+    flash(t("credentials.flash_copy_ok", { name: await credentialProviderName(id) }));
   } catch (e) {
     flash(t("credentials.flash_copy_failed", { err: String(e) }), true);
   }
@@ -1034,13 +1066,17 @@ async function xiaomiDisplayModeAction(
 /// → `unwrap_or_default()` 落到 TotalOnly → 这里 fallback 也走 total_only，
 /// 保持前后端默认值一致。
 export async function loadXiaomiDisplayMode(): Promise<void> {
-  const container = document.querySelector<HTMLElement>("[data-id='xiaomimimo']");
-  if (!container) return;  // Xiaomi panel 还没渲染
+  // 不能用 document.querySelector("[data-id='xiaomimimo']") 再找 select：
+  // 顺序 section 的 li.order-row 也带 data-id='xiaomimimo'（order.ts buildRow），
+  // 且在 providers.ts 里先于 provider panel 渲染 → querySelector 永远命中
+  // order-row（里面没有 select）→ 回显 no-op。select 元素本身 id 唯一
+  // （mode block 只在 meta.id === "xiaomimimo" 时渲，副本 #N 不渲），直接按 id 取。
+  const select = document.getElementById(
+    "xiaomi-display-mode-xiaomimimo"
+  ) as HTMLSelectElement | null;
+  if (!select) return;  // Xiaomi panel 还没渲染
   const mode = await getXiaomiDisplayMode().catch(() => "total_only");
-  const select = container.querySelector<HTMLSelectElement>(
-    "select[data-action='xiaomi-display-mode']"
-  );
-  if (select) select.value = mode;
+  select.value = mode;
 }
 
 // ── v0.2.1 commit 6：批量粘贴 key 自动匹配 ───────────────────────────

@@ -189,12 +189,7 @@ impl QuotaSource for AnysearchSource {
                     t!("error.anysearch.token_empty").into_owned(),
                 ));
             }
-            do_fetch(
-                token,
-                &self.unique_id(),
-                &self.display_name().to_string(),
-            )
-            .await
+            do_fetch(token, &self.unique_id(), &self.display_name().to_string()).await
         })
     }
 }
@@ -245,7 +240,12 @@ async fn refresh_token(refresh: &str, unique_id: &str) -> Result<String, FetchEr
         .await
         .map_err(|e| {
             FetchError::network(
-                t!("error.common.network", url = REFRESH_URL, err = e.to_string()).into_owned(),
+                t!(
+                    "error.common.network",
+                    url = REFRESH_URL,
+                    err = e.to_string()
+                )
+                .into_owned(),
             )
         })?;
 
@@ -263,9 +263,9 @@ async fn refresh_token(refresh: &str, unique_id: &str) -> Result<String, FetchEr
         ));
     }
 
-    let data = raw.get("data").ok_or_else(|| {
-        FetchError::auth(t!("error.anysearch.token_invalid_hint").into_owned())
-    })?;
+    let data = raw
+        .get("data")
+        .ok_or_else(|| FetchError::auth(t!("error.anysearch.token_invalid_hint").into_owned()))?;
     let new_access = data
         .get("access_token")
         .and_then(|v| v.as_str())
@@ -293,7 +293,10 @@ async fn refresh_token(refresh: &str, unique_id: &str) -> Result<String, FetchEr
     if let Err(e) = crate::config::save_credential_for_id(unique_id, &cred) {
         tracing::warn!(error = %e, unique_id, "anysearch refresh 后写回 keys.json 失败（本轮仍可用，下次可能需重登）");
     } else {
-        tracing::info!(unique_id, "anysearch access token 已通过 refresh 续期并写回");
+        tracing::info!(
+            unique_id,
+            "anysearch access token 已通过 refresh 续期并写回"
+        );
     }
 
     Ok(combined)
@@ -312,18 +315,24 @@ async fn do_fetch(
 
     let (access, refresh) = split_token(combined);
     let mut access = access.to_string();
+    // fix (2026-07-28 审查 D1): refresh 改 owned —— 主动续期成功后服务端已
+    // 作废旧 refresh(single-use rotation),后续 401 兜底重试必须拿新 combined
+    // 里的新 refresh,否则拿已作废的旧 refresh 调 refresh 端点必失败(40114)。
+    let mut refresh: Option<String> = refresh.map(str::to_string);
 
     // ── 主动续期：本地预检 access exp，快过期且有 refresh → 先换新 ──
-    if let Some(refresh) = refresh {
+    if let Some(r) = refresh.clone() {
         let should_refresh = match access_expires_in_secs(&access) {
             Some(remaining) => remaining <= SKEW_SECS, // 已过期或 SKEW 内将过期
             None => false, // 解析不出 exp → 不主动 refresh，交给 401 兜底
         };
         if should_refresh {
-            match refresh_token(refresh, unique_id).await {
+            match refresh_token(&r, unique_id).await {
                 Ok(new_combined) => {
-                    let (new_access, _) = split_token(&new_combined);
+                    let (new_access, new_refresh) = split_token(&new_combined);
                     access = new_access.to_string();
+                    // 新 refresh 同步给下面的 401 兜底路径用
+                    refresh = new_refresh.map(str::to_string);
                 }
                 // 主动 refresh 失败（refresh 也废了）→ 直接返 auth 错误引导重登
                 Err(e) => return Err(e),
@@ -336,8 +345,8 @@ async fn do_fetch(
         // 兜底：请求仍 401（本地预检没抓到 / access 实际已被服务端作废），
         // 且有 refresh → refresh 一次再重试一遍。
         Err(e) if e.kind == super::ErrorKind::AuthFailed => {
-            if let Some(refresh) = refresh {
-                let new_combined = refresh_token(refresh, unique_id).await?;
+            if let Some(r) = &refresh {
+                let new_combined = refresh_token(r, unique_id).await?;
                 let (new_access, _) = split_token(&new_combined);
                 do_fetch_once(new_access, unique_id, display_name).await
             } else {
@@ -412,8 +421,13 @@ async fn do_fetch_once(
         if code != 0 {
             let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
             return Err(FetchError::server(
-                t!("error.common.business_code", provider = "AnySearch", code = code, msg = msg)
-                    .into_owned(),
+                t!(
+                    "error.common.business_code",
+                    provider = "AnySearch",
+                    code = code,
+                    msg = msg
+                )
+                .into_owned(),
             ));
         }
     }
@@ -597,8 +611,7 @@ mod tests {
         // 构造一个 exp = now + 1000s 的极简 JWT（header.payload.sig，只 payload 有用）
         let future = chrono::Utc::now().timestamp() + 1000;
         let payload = json!({ "exp": future });
-        let payload_b64 =
-            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap());
+        let payload_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap());
         let jwt = format!("eyJhbGciOiJFZERTQSJ9.{payload_b64}.sig");
         let remaining = access_expires_in_secs(&jwt).expect("应解析出 exp");
         assert!(
@@ -611,8 +624,7 @@ mod tests {
     fn access_expires_in_secs_expired_is_negative() {
         let past = chrono::Utc::now().timestamp() - 500;
         let payload = json!({ "exp": past });
-        let payload_b64 =
-            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap());
+        let payload_b64 = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap());
         let jwt = format!("eyJhbGciOiJFZERTQSJ9.{payload_b64}.sig");
         let remaining = access_expires_in_secs(&jwt).expect("应解析出 exp");
         assert!(remaining < 0, "已过期应为负，实际 {remaining}");
@@ -673,7 +685,10 @@ mod tests {
         assert_eq!(main.resets_at, Some(expected));
         // reset_period=daily → 塞进主行 extra（浮窗据此显示「日重置」）
         assert_eq!(
-            main.extra.as_ref().and_then(|e| e.get("reset_period")).and_then(|v| v.as_str()),
+            main.extra
+                .as_ref()
+                .and_then(|e| e.get("reset_period"))
+                .and_then(|v| v.as_str()),
             Some("daily")
         );
     }
@@ -741,7 +756,10 @@ mod tests {
             .remove("next_reset_at");
         let snap = parse(&v, "anysearch", "AnySearch").expect("parse");
         assert!(snap.success);
-        assert!(snap.rows[0].resets_at.is_none(), "无 next_reset_at → resets_at=None");
+        assert!(
+            snap.rows[0].resets_at.is_none(),
+            "无 next_reset_at → resets_at=None"
+        );
     }
 
     #[test]

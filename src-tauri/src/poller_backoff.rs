@@ -91,7 +91,11 @@ impl BackoffState {
 
         entry.failure_streak = entry.failure_streak.saturating_add(1);
         let base = entry.current_interval_secs.unwrap_or(default_secs);
-        let new_interval = base.saturating_mul(2).min(MAX_BACKOFF_SECS);
+        // L-b1 fix (2026-07-28 审查): 之前 `base*2.min(MAX)` 在
+        // base > MAX/2 时结果反而 < base —— 用户配了 >900s 长间隔时,
+        // 失败一次后间隔被缩短,"退避变加速"。max(base) 保证退避单调
+        // 不减:超 cap 时保持现状,绝不缩短。
+        let new_interval = base.saturating_mul(2).min(MAX_BACKOFF_SECS).max(base);
         entry.current_interval_secs = Some(new_interval);
     }
 
@@ -292,5 +296,26 @@ mod tests {
     fn max_backoff_constant_sanity() {
         // 30 min = 1800s，不要被改坏
         assert_eq!(MAX_BACKOFF_SECS, 1800);
+    }
+
+    #[test]
+    fn backoff_never_shortens_when_default_exceeds_cap() {
+        // L-b1 fix: default_secs > MAX/2 时,之前 base*2.min(MAX) < base
+        // → 失败后间隔缩短("退避变加速")。现在必须保持不缩短。
+        let mut st = BackoffState::new();
+        // 用户配了 3600s 长间隔,失败后不得缩到 1800
+        st.record("minimax", &snap_fail(ErrorKind::ServerError), 3600);
+        assert_eq!(st.next_interval_secs("minimax", 3600), 3600);
+        // 再次失败仍不缩短
+        st.record("minimax", &snap_fail(ErrorKind::ServerError), 3600);
+        assert_eq!(st.next_interval_secs("minimax", 3600), 3600);
+    }
+
+    #[test]
+    fn backoff_still_doubles_at_cap_boundary() {
+        // base 恰好 = MAX/2 → 正常翻倍到 MAX(不触发 max(base) 保护)
+        let mut st = BackoffState::new();
+        st.record("minimax", &snap_fail(ErrorKind::ServerError), 900);
+        assert_eq!(st.next_interval_secs("minimax", 900), MAX_BACKOFF_SECS);
     }
 }

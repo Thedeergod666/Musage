@@ -108,6 +108,22 @@ function buildForm(providers: PickerProvider[], initialProviderId: string): HTML
   const dynamicFields = el("div", { id: "ei-dynamic-fields" });
   root.appendChild(dynamicFields);
 
+  // preset change → 重新渲染 dynamic fields + accent 选中。
+  // listener 只挂一次在这个常驻容器上：renderDynamicFields 每次只清
+  // host.innerHTML（清子元素），不清容器自身的 listener —— 之前挂在
+  // renderCustomFields 里，每次切到 custom 类型都重复挂一遍。
+  dynamicFields.addEventListener("change", (e) => {
+    // 变量名别叫 t：会遮蔽模块级 import 的 i18n t() 函数。
+    const target = e.target as HTMLInputElement;
+    if (target.name === "cs-preset") renderCustomPresetFields(target.value);
+    if (target.classList.contains("accent-swatch")) {
+      dynamicFields
+        .querySelectorAll<HTMLElement>(".accent-swatch")
+        .forEach((s) => s.classList.remove("selected"));
+      target.classList.add("selected");
+    }
+  });
+
   // 初始渲染（用 initialProviderId）
   renderDynamicFields(initialProviderId, providers, dynamicFields);
 
@@ -300,17 +316,10 @@ function renderCustomFields(host: HTMLElement): void {
     })),
   );
 
-  // preset change → 重新渲染 dynamic fields + accent 选中
-  host.addEventListener("change", (e) => {
-    const t = e.target as HTMLInputElement;
-    if (t.name === "cs-preset") renderCustomPresetFields(t.value);
-    if (t.classList.contains("accent-swatch")) {
-      host
-        .querySelectorAll<HTMLElement>(".accent-swatch")
-        .forEach((s) => s.classList.remove("selected"));
-      t.classList.add("selected");
-    }
-  });
+  // preset change → 重新渲染 dynamic fields + accent 选中的 change listener
+  // 挂在 buildForm 创建 host 的地方（只挂一次）—— 挂这里的话
+  // 每次切到 custom 类型都会重复累积（innerHTML="" 只清子元素不清 host
+  // 自身的 listener），change 一次触发 N 次。
 
   // 初始 NewApi 字段
   renderCustomPresetFields("new_api");

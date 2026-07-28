@@ -352,7 +352,7 @@ async function doExportConfig() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
     flash(t("settings.advanced.io_exported", { n: 1 }));
   } catch (e) {
-    flash(t("settings.advanced.io_import_failed", { err: String(e) }), true);
+    flash(t("settings.advanced.io_export_failed", { err: String(e) }), true);
   }
 }
 

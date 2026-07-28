@@ -370,9 +370,9 @@ async fn poll_token_from_cookie(
     // 安全上限：~14 分钟，防窗口句柄异常残留时任务永不退出。
     const MAX_ITERS: u32 = 1200;
     // cookies_for_url 需要一个 URL —— anysearch.com 任何 URL 都返同一 cookie jar
-    let probe_url: Url = LOGIN_URL
-        .parse()
-        .unwrap_or_else(|_| Url::parse("https://www.anysearch.com/").expect("hardcoded URL parses"));
+    let probe_url: Url = LOGIN_URL.parse().unwrap_or_else(|_| {
+        Url::parse("https://www.anysearch.com/").expect("hardcoded URL parses")
+    });
 
     // 首次读取前先让出 ~1.5s，等导航到 document_start、init script 跑完
     // 「清旧 MUSAGE_TOKEN + 置 MUSAGE_READY」。webview profile 会持久化上一次
@@ -429,7 +429,10 @@ async fn poll_token_from_cookie(
                 };
             }
             // cookie 在但不是 JWT（空 / 脏字符）—— 继续等
-            tracing::debug!(len = raw.len(), "MUSAGE_TOKEN cookie 存在但形态不合法，继续轮询");
+            tracing::debug!(
+                len = raw.len(),
+                "MUSAGE_TOKEN cookie 存在但形态不合法，继续轮询"
+            );
         }
         // 没有 MUSAGE_TOKEN cookie = 用户还没登录或 interval 还没写 —— 继续等
 

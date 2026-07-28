@@ -32,6 +32,10 @@ use std::thread;
 
 use serde::{Deserialize, Serialize};
 
+// C8 fix (2026-07-28 审查): mutex poison 恢复统一走 config 模块的
+// lock_recover helper,不再各处手写 `unwrap_or_else(|e| { warn; into_inner })`。
+use crate::config::lock_recover;
+
 /// Ring buffer 上限。够看一周左右的故障，避免文件无限增长。
 pub const MAX_ENTRIES: usize = 200;
 
@@ -135,10 +139,7 @@ impl LogStore {
     /// **L2 fix（2026-06-19）**：append / clear 走同一 channel —— 避免
     /// clear 删文件 + append 重建文件的"死而复生"竞态。
     pub fn push(&self, entry: LogEntry) {
-        let mut g = self.inner.lock().unwrap_or_else(|e| {
-            tracing::warn!("logstore mutex poisoned，自动恢复");
-            e.into_inner()
-        });
+        let mut g = self.inner.lock().unwrap_or_else(lock_recover);
         g.push_back(entry.clone());
         let needs_truncate = g.len() > MAX_ENTRIES;
         if needs_truncate {
@@ -150,10 +151,7 @@ impl LogStore {
 
     /// 快照：返回最近 n 条（按时间正序）。n == None → 全部。
     pub fn recent(&self, n: Option<usize>) -> Vec<LogEntry> {
-        let g = self.inner.lock().unwrap_or_else(|e| {
-            tracing::warn!("logstore mutex poisoned，自动恢复");
-            e.into_inner()
-        });
+        let g = self.inner.lock().unwrap_or_else(lock_recover);
         match n {
             None => g.iter().cloned().collect(),
             Some(k) => g
@@ -174,10 +172,7 @@ impl LogStore {
     /// 后被抢断 + clear 删文件造成的文件-内存不一致窗口。
     pub fn clear(&self) {
         {
-            let mut g = self.inner.lock().unwrap_or_else(|e| {
-                tracing::warn!("logstore mutex poisoned，自动恢复");
-                e.into_inner()
-            });
+            let mut g = self.inner.lock().unwrap_or_else(lock_recover);
             g.clear();
         }
         spawn_append_job(self.clone(), AppendJob::ClearMarker);
@@ -214,12 +209,7 @@ fn spawn_append_job(store: LogStore, job: AppendJob) {
                             if needs_truncate {
                                 // truncate:从 store clone 整份 ring,tmp + rename 重写
                                 let ring = {
-                                    let g = store.inner.lock().unwrap_or_else(|e| {
-                                        tracing::warn!(
-                                            "logstore mutex poisoned (truncate)，自动恢复"
-                                        );
-                                        e.into_inner()
-                                    });
+                                    let g = store.inner.lock().unwrap_or_else(lock_recover);
                                     g.iter().cloned().collect::<Vec<_>>()
                                 };
                                 if let Err(e) = truncate_file_from_ring(&ring) {
@@ -257,6 +247,15 @@ fn append_entry(entry: &LogEntry) -> std::io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let mut f = OpenOptions::new().create(true).append(true).open(&path)?;
+    // C4 fix (2026-07-28 审查): app_log.jsonl 的 message 字段可能带 API
+    // key / cookie 的错误串,跟 keys.json 同级别敏感。OpenOptions 默认 0644
+    // 会暴露给同机其他用户 —— 跟 write_keys_atomic / extra_instances::save
+    // 对齐,显式 0600(每次 append 都设一遍,顺带覆盖历史遗留的 0644 文件)。
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
     let s = serde_json::to_string(entry)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
     writeln!(f, "{}", s)?;
@@ -274,12 +273,39 @@ fn truncate_file_from_ring(ring: &[LogEntry]) -> Result<(), String> {
     let path = log_path()?;
     let tmp = path.with_extension("jsonl.tmp");
     let mut f = std::fs::File::create(&tmp).map_err(|e| format!("logstore truncate tmp: {e}"))?;
-    for entry in ring {
-        if let Ok(s) = serde_json::to_string(entry) {
-            let _ = writeln!(f, "{}", s);
+    let write_result = (|| -> Result<(), String> {
+        for entry in ring {
+            if let Ok(s) = serde_json::to_string(entry) {
+                // C5 fix (2026-07-28 审查): 之前 `let _ = writeln!(...)` 吞错误
+                // —— 磁盘满时静默写出截断文件,再 rename 覆盖掉完好的 log。
+                writeln!(f, "{}", s).map_err(|e| format!("logstore truncate write: {e}"))?;
+            }
         }
+        // C5 fix: rename 前 flush + sync_all,确保 tmp 数据落盘后再原子替换,
+        // 否则掉电可能留下 0 字节 / 半写文件覆盖好文件。
+        f.flush()
+            .map_err(|e| format!("logstore truncate flush: {e}"))?;
+        f.sync_all()
+            .map_err(|e| format!("logstore truncate sync: {e}"))?;
+        Ok(())
+    })();
+    if let Err(e) = write_result {
+        // 写 / 刷盘失败:清掉残缺 tmp,不 rename
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
     }
-    std::fs::rename(&tmp, &path).map_err(|e| format!("logstore truncate rename: {e}"))
+    // C4 fix (2026-07-28 审查): 跟 append_entry 同款 0600(默认 0644)。
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+    }
+    // C5 fix: rename 失败清理 tmp,避免孤儿残留(跟 write_keys_atomic 同款)。
+    if let Err(e) = std::fs::rename(&tmp, &path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("logstore truncate rename: {e}"));
+    }
+    Ok(())
 }
 
 fn log_path() -> Result<PathBuf, String> {

@@ -12,6 +12,7 @@
 //! - `dump`         : 拉一次全部 provider 并打印原始 JSON + 解析结果
 //! - `dump <id>`    : 只拉某个 provider（`minimax` / `deepseek`）
 
+mod anysearch_login;
 mod commands;
 mod config;
 mod logstore;
@@ -19,10 +20,9 @@ mod platform;
 mod poller;
 mod poller_backoff;
 mod providers;
+mod stepfun_login;
 mod tray;
 mod xiaomi_login;
-mod anysearch_login;
-mod stepfun_login;
 
 // P0 国际化：编译期展开 tr!() / t!() macro 时需要知道 locale 文件路径。
 // 必须在 `mod` 声明之后、其他文件 `use rust_i18n` 之前。
@@ -179,6 +179,16 @@ pub fn run() {
                         let title = t!("window.xiaomi_login").to_string();
                         let _ = w.set_title(&title);
                     }
+                    // fix (2026-07-28 审查 L10): 登录窗口 title 同步补齐
+                    // anysearch / stepfun（旧版只同步 xiaomi-login）
+                    if let Some(w) = app_for_locale.get_webview_window("anysearch-login") {
+                        let title = t!("window.anysearch_login").to_string();
+                        let _ = w.set_title(&title);
+                    }
+                    if let Some(w) = app_for_locale.get_webview_window("stepfun-login") {
+                        let title = t!("window.stepfun_login").to_string();
+                        let _ = w.set_title(&title);
+                    }
                     if let Some(w) = app_for_locale.get_webview_window("floating") {
                         let title = t!("window.floating").to_string();
                         let _ = w.set_title(&title);
@@ -292,8 +302,12 @@ pub fn run() {
                     .flatten()
                     .is_some()
             });
-            let custom_has_key = extra_instances::load_or_migrate()
-                .unwrap_or_default()
+            // fix (2026-07-28 审查 L14): 复用 .manage() 时已 load 进 state 的
+            // extra_instances，不再二次调 load_or_migrate（重复磁盘 IO +
+            // 重复迁移尝试）。
+            let custom_has_key = cfg_handle
+                .extra_instances
+                .blocking_read()
                 .iter()
                 .any(|inst| {
                     config::load_credential_for_id(&inst.api_key_ref)
@@ -424,6 +438,12 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
         tauri::WindowEvent::Moved(pos) => {
             if pos.x == 0 && pos.y == 0 {
                 // OS 默认值,不是用户拖动 → 丢弃
+                // 已知取舍 (2026-07-28 审查 L15): 这条过滤也会拒掉用户**真实**
+                // 拖到主屏物理 (0,0) 的场景（位置不落盘；重启后
+                // `position_is_visible` 同样拒 (0,0) → 回退右上角）。要放开
+                // 得区分「启动期合成 Moved」和「用户拖动」，基于时间窗的过滤
+                // 不可靠（合成事件时序不定），误放开会把 2026-07-08 修的
+                // macOS 启动位置污染 bug 请回来 —— 风险大于收益，维持现状。
                 return;
             }
             let mut g = latest_for_cb.lock().unwrap_or_else(|e| {

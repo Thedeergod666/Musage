@@ -54,13 +54,27 @@ static TRACKER_RUNNING: AtomicBool = AtomicBool::new(false);
 /// 因为前端的 iOS 26 玻璃 hover 效果需要它，不分 pin mode。
 static LEVEL_SWITCHING_ACTIVE: AtomicBool = AtomicBool::new(false);
 
+/// fix (2026-07-28 审查): 请求 hover emitter 复位内部状态（last_inside / 防抖计数器）。
+/// `set_window_pin_bottom` 切模式时置位，emitter 每 tick 开头消费（swap(false)）。
+/// 根因：PinTop→PinBottom 切换时若鼠标已在浮窗上方，emitter 的 `last_inside`
+/// 已是 true，`inside == last_inside` 命中 continue → hover-raise 的采纳 edge
+/// 永不触发，浮窗永久卡底部。复位后同 tick 重新走 enter 评估（阈值 1 tick）。
+static HOVER_STATE_RESET: AtomicBool = AtomicBool::new(false);
+
 // ── 公开 API ──
 
 /// PinBottom 模式启动时调：把 level 切到 below-normal，并开启 hover 切 level。
 /// tracker 已由 [`start_hover_emitter`] 在 app 启动时拉起，这里只翻开关。
 pub fn set_window_pin_bottom<R: Runtime>(app: &AppHandle<R>) {
-    set_window_level(app, LEVEL_BELOW_NORMAL, true); // M3 fix: true = is_pin_bottom
+    // fix (2026-07-28 审查, T8): 对齐 Windows —— 先 store 开关再 dispatch 切 level，
+    // 避免 emitter tick 在 dispatch 与 store 之间读到旧 mode。
     LEVEL_SWITCHING_ACTIVE.store(true, Ordering::SeqCst);
+    set_window_level(app, LEVEL_BELOW_NORMAL, true); // M3 fix: true = is_pin_bottom
+                                                     // fix (2026-07-28 审查, T1): 置位必须放在切 level 的 dispatch **之后** ——
+                                                     // 保证 emitter 复位重评后 post 的 raise 在 main thread 队列里排在 demote 之后，
+                                                     // 最终 level 由 raise 决定；即使极罕见时序下 raise 先落地被 demote 覆盖，
+                                                     // 下一 tick（≤50ms）复位后的重评也会自愈。
+    HOVER_STATE_RESET.store(true, Ordering::SeqCst);
     // 防御：如果 lib.rs setup 之外的路径走到这（理论上不会），保底拉起 tracker
     start_hover_emitter(app.clone());
 }
@@ -142,6 +156,15 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
             let mut pending_value = false;
             loop {
                 thread::sleep(Duration::from_millis(50));
+
+                // fix (2026-07-28 审查): 模式切换（set_window_pin_bottom）请求
+                // 复位内部状态 —— 否则鼠标已在浮窗上方时 last_inside 已是 true，
+                // `inside == last_inside` 永远命中 continue，hover-raise 不触发。
+                if HOVER_STATE_RESET.swap(false, Ordering::SeqCst) {
+                    last_inside = false;
+                    pending_ticks = 0;
+                    pending_value = false;
+                }
 
                 // mouseLocation 在 macOS 上是 thread-safe 的，可从任意线程调
                 let mouse = NSEvent::mouseLocation();
@@ -306,7 +329,10 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
             // **2026-06-20 audit**：MainThreadMarker 拿不到时改返 false 兜底，
             // 避免拿不到 → panic → hover emitter 永久停掉。
             let Some(mtm) = MainThreadMarker::new() else {
-                tracing::warn!("is_floating_topmost_at: MainThreadMarker 不可用，跳过本 tick");
+                // fix (2026-07-28 审查): 之前 warn! —— 此分支一旦进入会随
+                // hover emitter 20Hz 全天刷屏（≈172 万条/天）。降 trace，
+                // 与函数内其它失败路径（dispatch 失败等）的级别对齐。
+                tracing::trace!("is_floating_topmost_at: MainThreadMarker 不可用，跳过本 tick");
                 return Some(false);
             };
             let topmost = NSWindow::windowNumberAtPoint_belowWindowWithWindowNumber(point, 0, mtm);
@@ -354,7 +380,10 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
             .unwrap_or_else(|e| e.into_inner());
         guard = g;
     }
-    guard.unwrap_or(false)
+    // fix (2026-07-28 审查): 用 take() 消费 slot —— 之前 `guard.unwrap_or(false)`
+    // 只读不取，Some(value) 残留在槽里，下一调用进来直接命中 `!is_none()`
+    // 跳过等待，读到一拍前的旧值（每调用稳定滞后一个 tick）。
+    guard.take().unwrap_or(false)
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -250,9 +250,9 @@ async fn poll_token_from_cookie(
     // 安全上限：~14 分钟（1200 × 700ms），覆盖手动手机号 + 验证码登录；
     // 防窗口句柄异常残留时任务永不退出。
     const MAX_ITERS: u32 = 1200;
-    let probe_url: Url = PLATFORM_URL
-        .parse()
-        .unwrap_or_else(|_| Url::parse("https://platform.stepfun.com/").expect("hardcoded URL parses"));
+    let probe_url: Url = PLATFORM_URL.parse().unwrap_or_else(|_| {
+        Url::parse("https://platform.stepfun.com/").expect("hardcoded URL parses")
+    });
 
     // 首次读取前让出 1s：等窗口首个导航开始、cookie store 可用。
     sleep(Duration::from_millis(1000)).await;

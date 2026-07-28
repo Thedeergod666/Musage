@@ -132,20 +132,24 @@ pub fn read_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
 /// - `v` 是 null / object / array / bool → None
 ///
 /// 数字字符串容忍：前导 0 / 包含小数点 / 包含指数都接受。
+///
+/// **H12 fix (2026-07-28 审查)**：`"NaN"` / `"inf"` / `"-inf"` 字符串能
+/// parse 成功，且 `f64::clamp` 对 NaN 是透传（不钳制）——不过滤的话
+/// utilization=NaN 会一路进 QuotaRow，前端渲染 "NaN%" / "inf credits"，
+/// serde 还会把 NaN 序列化成 null。统一在这里做 `is_finite` 过滤。
 pub fn num_f64(v: &Value) -> Option<f64> {
-    if let Some(n) = v.as_f64() {
-        return Some(n);
-    }
-    if let Some(n) = v.as_i64() {
-        return Some(n as f64);
-    }
-    if let Some(n) = v.as_u64() {
-        return Some(n as f64);
-    }
-    if let Some(s) = v.as_str() {
-        return s.trim().parse().ok();
-    }
-    None
+    let n = if let Some(n) = v.as_f64() {
+        Some(n)
+    } else if let Some(n) = v.as_i64() {
+        Some(n as f64)
+    } else if let Some(n) = v.as_u64() {
+        Some(n as f64)
+    } else if let Some(s) = v.as_str() {
+        s.trim().parse().ok()
+    } else {
+        None
+    };
+    n.filter(|f| f.is_finite())
 }
 
 // ── 单元测试 ────────────────────────────────────────────────────────
@@ -272,5 +276,21 @@ mod tests {
     fn num_f64_handles_u64_large() {
         // 500000 是 New API 经典 quota 数值（u64）
         assert_eq!(num_f64(&json!(500_000_u64)), Some(500_000.0));
+    }
+
+    #[test]
+    fn num_f64_rejects_nan_and_inf_strings() {
+        // H12 fix (2026-07-28 审查): "NaN"/"inf"/"-inf" 字符串 parse 会成功,
+        // 必须被 is_finite 过滤 —— 否则穿透 clamp 渲染成 "NaN%" / "inf credits",
+        // serde 还会把 NaN 序列化成 null。
+        assert_eq!(num_f64(&json!("NaN")), None);
+        assert_eq!(num_f64(&json!("nan")), None);
+        assert_eq!(num_f64(&json!("inf")), None);
+        assert_eq!(num_f64(&json!("-inf")), None);
+        assert_eq!(num_f64(&json!("Infinity")), None);
+        // 正常字符串数字不受影响
+        assert_eq!(num_f64(&json!("100")), Some(100.0));
+        assert_eq!(num_f64(&json!("-5.5")), Some(-5.5));
+        assert_eq!(num_f64(&json!("1e3")), Some(1000.0));
     }
 }

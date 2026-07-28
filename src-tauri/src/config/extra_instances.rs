@@ -187,10 +187,10 @@ pub fn load() -> Result<Vec<ExtraInstance>, String> {
 ///
 /// 跟 keys.json 写路径共享 `save_lock` —— 保证两条写不会并发丢字段。
 pub fn save(instances: &[ExtraInstance]) -> Result<(), String> {
-    let _g = super::save_lock().lock().unwrap_or_else(|e| {
-        tracing::warn!("save_extra_instances save_lock poisoned, recovering");
-        e.into_inner()
-    });
+    // C8 fix (2026-07-28 审查): poison 恢复统一走 super::lock_recover helper。
+    let _g = super::save_lock()
+        .lock()
+        .unwrap_or_else(super::lock_recover);
     let path = extra_instances_path()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;

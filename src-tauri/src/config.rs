@@ -600,7 +600,11 @@ impl AppConfig {
         while self.schema_version < CURRENT_SCHEMA_VERSION {
             let next = self.schema_version + 1;
             match self.schema_version {
-                1 => {
+                // L-c2 fix (2026-07-28 审查): schema_version=0(手改 / 部分损坏
+                // 的 config.json)之前落入 `_` 兜底 arm 直接 break,版本永远卡在
+                // 0,每次 load 打 warn 且未来新增迁移永远轮不到它。0 视为
+                // v1 之前的格式,跟 1 走同一占位迁移。
+                0 | 1 => {
                     // v1 → v2: 加了 schema_version 字段本身（迁移占位，预留给未来）
                 }
                 _ => {
@@ -728,14 +732,6 @@ impl AppConfig {
         entry.xiaomi_region = Some(region);
     }
 
-    /// 启用的 provider id 列表（按 builtin 顺序）
-    pub fn enabled_providers(&self) -> Vec<&'static str> {
-        ["minimax", "deepseek", "xiaomimimo"]
-            .into_iter()
-            .filter(|id| self.is_enabled_id(id))
-            .collect()
-    }
-
     /// 按 source id 查 enabled（用于 registry 驱动的轮询循环）。
     /// 缺省视为 true（首次启动时还没这个 key 的 entry，按"启用"处理）。
     pub fn is_enabled_id(&self, id: &str) -> bool {
@@ -799,11 +795,6 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
             .filter_map(|x| x.as_str().map(|s| s.to_string()))
             .collect();
     }
-    if let Some(arr) = obj.get("enabled_providers").and_then(|x| x.as_array()) {
-        // enabled_providers 是方法不是字段（impl 中基于 providers 派生），
-        // best-effort 这里没 raw 字段可填，跳过。
-        let _ = arr;
-    }
     if let Some(map) = obj.get("providers").and_then(|x| x.as_object()) {
         let mut parsed: std::collections::BTreeMap<String, ProviderConfig> =
             std::collections::BTreeMap::new();
@@ -865,6 +856,64 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
             _ => cfg.tray_icon_style,
         };
     }
+    // C6 fix (2026-07-28 审查): 以下字段之前全部漏挑,一次 JSON typo 触发
+    // best-effort 恢复后这些设置被默认值静默覆盖。对照 AppConfig 定义补齐。
+    if let Some(x) = obj.get("schema_version").and_then(|x| x.as_u64()) {
+        cfg.schema_version = x as u32;
+    }
+    if let Some(b) = obj.get("low_power_mode").and_then(|x| x.as_bool()) {
+        cfg.low_power_mode = b;
+    }
+    if let Some(b) = obj.get("auto_hide_in_fullscreen").and_then(|x| x.as_bool()) {
+        cfg.auto_hide_in_fullscreen = b;
+    }
+    if let Some(b) = obj.get("tavily_concise_mode").and_then(|x| x.as_bool()) {
+        cfg.tavily_concise_mode = b;
+    }
+    if let Some(s) = obj.get("zenmux_base_url").and_then(|x| x.as_str()) {
+        cfg.zenmux_base_url = Some(s.to_string());
+    }
+    if let Some(s) = obj.get("zenmux_mode").and_then(|x| x.as_str()) {
+        cfg.zenmux_mode = Some(s.to_string());
+    }
+    if let Some(b) = obj
+        .get("zenmux_payg_concise_mode")
+        .and_then(|x| x.as_bool())
+    {
+        cfg.zenmux_payg_concise_mode = Some(b);
+    }
+    if let Some(s) = obj.get("zhipu_region").and_then(|x| x.as_str()) {
+        cfg.zhipu_region = Some(s.to_string());
+    }
+    if let Some(arr) = obj.get("color_thresholds").and_then(|x| x.as_array()) {
+        // [u8; 3] —— 长度 / 范围不对就保持默认,不强行截断
+        if arr.len() == 3 {
+            if let (Some(a), Some(b), Some(c)) = (arr[0].as_u64(), arr[1].as_u64(), arr[2].as_u64())
+            {
+                if a <= u8::MAX as u64 && b <= u8::MAX as u64 && c <= u8::MAX as u64 {
+                    cfg.color_thresholds = [a as u8, b as u8, c as u8];
+                }
+            }
+        }
+    }
+    if let Some(x) = obj.get("wallet_alert_threshold").and_then(|x| x.as_f64()) {
+        cfg.wallet_alert_threshold = Some(x);
+    }
+    if let Some(map) = obj.get("color_overrides").and_then(|x| x.as_object()) {
+        for (k, val) in map {
+            if let Some(s) = val.as_str() {
+                cfg.color_overrides.insert(k.clone(), s.to_string());
+            }
+        }
+    }
+    if let Some(map) = obj.get("schema_overrides").and_then(|x| x.as_object()) {
+        for (k, val) in map {
+            // 单条损坏不拖垮整张 map(跟 providers 字段同款容错)
+            if let Ok(po) = serde_json::from_value::<ProviderOverrides>(val.clone()) {
+                cfg.schema_overrides.insert(k.clone(), po);
+            }
+        }
+    }
     tracing::warn!("config.json 部分解析——已 best-effort 保留可知字段");
     Some(cfg)
 }
@@ -875,6 +924,12 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
 /// 但万一有的话,会一并删掉 —— 这是 bug 修法而不是 cleanup 收紧。
 pub fn cleanup_orphan_tmp_files() {
     let Ok(dir) = config_dir() else { return };
+    // C1 fix (2026-07-28 审查): 之前扫 `config_dir()` 根目录,但 config.json /
+    // keys.json / extra_instances.json / app_log.jsonl 的 .tmp 实际都写在
+    // `config_dir()/com.musage.app/` 子目录(对照 config_path / keys_path /
+    // extra_instances_path / log_path 的 join("com.musage.app"))
+    // → 孤儿 tmp 永久残留。改扫真正的写入目录。
+    let dir = dir.join("com.musage.app");
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return;
     };
@@ -1017,11 +1072,17 @@ pub fn load_credential_for_id(id: &str) -> Result<Option<Credentials>, String> {
     // 老 keys.json（v0.2.4 之前用 `AK...SK` 拼接的）没这个槽 → 走 `None`，fetch 时返
     // "secret_key 未配置" 明确错误，提示用户重新粘。
     let secret_key = map.get(&format!("{id}:secret_key")).cloned();
-    Ok(if api_key.is_some() || cookie.is_some() || secret_key.is_some() {
-        Some(Credentials { api_key, cookie, secret_key })
-    } else {
-        None
-    })
+    Ok(
+        if api_key.is_some() || cookie.is_some() || secret_key.is_some() {
+            Some(Credentials {
+                api_key,
+                cookie,
+                secret_key,
+            })
+        } else {
+            None
+        },
+    )
 }
 
 pub fn save_credential_for_id(id: &str, cred: &Credentials) -> Result<(), String> {
@@ -1078,4 +1139,93 @@ pub fn delete_credential_for_id(id: &str) -> Result<(), String> {
         write_keys_atomic(&map)?;
     }
     Ok(())
+}
+
+// ── 单元测试 ─────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrated_upgrades_schema_version_zero() {
+        // L-c2 fix: schema_version=0（手改 / 部分损坏的 config.json）也应
+        // 迁到 CURRENT，不再落入 `_` 兜底 arm 卡在 0。
+        let mut cfg = AppConfig::default();
+        cfg.schema_version = 0;
+        let cfg = cfg.migrated();
+        assert_eq!(cfg.schema_version, CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn best_effort_preserves_extended_fields() {
+        // C6 fix: 顶层反序列化失败走 best-effort 时,要保留
+        // schema_overrides / color_thresholds / wallet_alert_threshold /
+        // low_power_mode / auto_hide_in_fullscreen / tavily_concise_mode /
+        // zenmux_* / zhipu_region / color_overrides / schema_version 等字段。
+        let raw = serde_json::json!({
+            "schema_version": 1,
+            "providers": { "minimax": { "enabled": false } },
+            "refresh_interval_secs": 120,
+            "low_power_mode": true,
+            "auto_hide_in_fullscreen": true,
+            "tavily_concise_mode": false,
+            "zenmux_base_url": "https://zenmux.example.com/api",
+            "zenmux_mode": "subscription",
+            "zenmux_payg_concise_mode": false,
+            "zhipu_region": "en",
+            "color_thresholds": [40, 60, 80],
+            "wallet_alert_threshold": 3.5,
+            "color_overrides": { "warn": "#ffcc00" },
+            "schema_overrides": {
+                "minimax": {
+                    "five_hour": {
+                        "count_candidates": [{ "total": "t", "remaining": "r" }]
+                    }
+                }
+            }
+        });
+        let cfg = best_effort_from_value(&raw).expect("best-effort 应成功");
+        assert_eq!(cfg.schema_version, 1);
+        assert_eq!(cfg.refresh_interval_secs, 120);
+        assert!(cfg.low_power_mode);
+        assert!(cfg.auto_hide_in_fullscreen);
+        assert!(!cfg.tavily_concise_mode);
+        assert_eq!(
+            cfg.zenmux_base_url.as_deref(),
+            Some("https://zenmux.example.com/api")
+        );
+        assert_eq!(cfg.zenmux_mode.as_deref(), Some("subscription"));
+        assert_eq!(cfg.zenmux_payg_concise_mode, Some(false));
+        assert_eq!(cfg.zhipu_region.as_deref(), Some("en"));
+        assert_eq!(cfg.color_thresholds, [40, 60, 80]);
+        assert_eq!(cfg.wallet_alert_threshold, Some(3.5));
+        assert_eq!(
+            cfg.color_overrides.get("warn").map(|s| s.as_str()),
+            Some("#ffcc00")
+        );
+        assert!(cfg.schema_overrides.contains_key("minimax"));
+        assert!(!cfg
+            .providers
+            .get("minimax")
+            .map(|p| p.enabled)
+            .unwrap_or(true));
+    }
+
+    #[test]
+    fn best_effort_tolerates_partially_broken_maps() {
+        // C6 容错: schema_overrides 单条损坏不拖垮整张 map;
+        // color_thresholds 长度/类型不对保持默认。
+        let raw = serde_json::json!({
+            "schema_overrides": {
+                "minimax": { "five_hour": { "count_candidates": [] } },
+                "broken": "not-an-object"
+            },
+            "color_thresholds": [1, 2]
+        });
+        let cfg = best_effort_from_value(&raw).expect("best-effort 应成功");
+        assert!(cfg.schema_overrides.contains_key("minimax"));
+        assert!(!cfg.schema_overrides.contains_key("broken"));
+        assert_eq!(cfg.color_thresholds, default_color_thresholds());
+    }
 }

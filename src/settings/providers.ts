@@ -27,7 +27,7 @@ import { el, escapeHtml, setCurrentKnownIds, flash, currentProviderOrder, format
 import { getProviderExtras } from "./source-extras";
 import { renderOrderSection, withSuppress, resetDragState } from "./order";
 import { renderCredentialBlock, loadCredentialStatus, batchPasteKeys } from "./credentials";
-import { getProviderMeta } from "./logos";
+import { getProviderDisplay } from "./logos";
 import { getGroupDef, groupKeyFor } from "./groups";
 import { openAddExtraInstanceModal } from "./extra-instance-form";
 import { showModal } from "./modal";
@@ -190,16 +190,15 @@ export function createProviderPanel(meta: SourceMeta, cfg: AppConfig): HTMLEleme
     },
   );
 
-  // 拿 logo 资产（沿用浮窗 [src/main.ts:15-30] 同款 import）
-  const providerMeta = getProviderMeta(meta.id);
-  const logoImg = providerMeta
-    ? el("img", {
-        class: "provider-logo",
-        src: providerMeta.logo,
-        alt: providerMeta.name,
-        title: providerMeta.name,
-      })
-    : null;
+  // 拿 logo 资产：走 getProviderDisplay，无 logo 资产时 fallback 首字母 + accent data URL
+  // （对齐浮窗 [src/main.ts:672]），避免 settings 里 <img src=""> 裂图。
+  const providerDisplay = getProviderDisplay(meta.id, meta.display_name);
+  const logoImg = el("img", {
+    class: "provider-logo",
+    src: providerDisplay.logo,
+    alt: providerDisplay.name,
+    title: providerDisplay.name,
+  });
 
   // ── Header: [logo] [display_name] [group tag] ........ [在浮窗显示 checkbox] ──
   // 组标签（如 "Token Plan"）让用户一眼看出 provider 归属哪个类目，
@@ -236,7 +235,7 @@ export function createProviderPanel(meta: SourceMeta, cfg: AppConfig): HTMLEleme
     el(
       "div",
       { class: "provider-header" },
-      ...(logoImg ? [logoImg] : []),
+      logoImg,
       el("span", { class: "provider-name" }, meta.display_name),
       groupTag,
       // STUB 角标（2026-06-17 commit）：公开 API 无 quota endpoint 的

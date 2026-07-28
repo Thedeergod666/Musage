@@ -35,7 +35,7 @@ import {
   setCurrentKnownIds,
   setCurrentProviderOrder,
 } from "./utils";
-import { getProviderMeta } from "./logos";
+import { getProviderDisplay } from "./logos";
 import { t } from "../i18n";
 import type { AppConfig, ProviderId, SourceMeta } from "./types";
 
@@ -715,22 +715,22 @@ function buildDivider(): HTMLElement {
 
 function buildRow(id: string, idx: number, total: number, section: "enabled" | "disabled"): HTMLElement {
   const meta = orderSources.find((s) => s.id === id);
-  const providerMeta = getProviderMeta(id);
-  const logo = providerMeta
-    ? el("img", {
-        class: "order-logo",
-        src: providerMeta.logo,
-        alt: providerMeta.name,
-      })
-    : null;
-  const displayName = meta?.display_name ?? providerMeta?.name ?? id;
+  // 走 getProviderDisplay：无 logo 资产时 fallback 首字母 + accent data URL
+  // （对齐浮窗 [src/main.ts:672]），避免 settings 里 <img src=""> 裂图。
+  const providerDisplay = getProviderDisplay(id, meta?.display_name);
+  const logo = el("img", {
+    class: "order-logo",
+    src: providerDisplay.logo,
+    alt: providerDisplay.name,
+  });
+  const displayName = meta?.display_name ?? providerDisplay.name;
   const li = el(
     "li",
     { class: `order-row order-row-${section}`, "data-id": id },
     el(
       "div",
       { class: "order-row-left" },
-      ...(logo ? [logo] : []),
+      logo,
       el("span", { class: "order-pos", "data-id": id }, posLabel(idx)),
       el("span", { class: "order-name" }, displayName),
     ),

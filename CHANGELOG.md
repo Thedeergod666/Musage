@@ -7,6 +7,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (Critical — StepFun 一键登录永远抓不到 token)
+
+- **症状**：点「🔑 登录 StepFun」→ webview 里登录成功、页面停在
+  platform.stepfun.com 首页，但 token 始终没写进 keys.json，浮窗继续
+  报「StepFun 登录凭据已过期」，登录窗口也不会自动关闭
+- **根因**（4 个叠加 bug，详见 [stepfun_login.rs](src-tauri/src/stepfun_login.rs) 文件头）：
+  1. `cookies_for_url` 拿 `account.stepfun.com` 的 LOGIN_URL 探测，而
+     `Oasis-Token` 落在 **platform.stepfun.com** 域 —— 按域过滤下
+     100% 拿不到（xiaomi 没踩这坑是因为 LOGIN_URL 和 cookie 同域）
+  2. init script 在 platform 域 document_start 无差别清 `Oasis-Token`，
+     登录后跳回 platform 的首次页面加载把刚 Set-Cookie 的新 token
+     立刻删掉（非 HttpOnly 时）
+  3. init script 的 `Storage.getItem` 锁在非 platform 域一律返 null，
+     可能破坏 account 域登录 SPA 的 OIDC state 读取
+  4. 开窗后 200ms `clear_all_browsing_data` 与 SSO 秒跳竞态（可能清掉
+     刚落定的新 token），同时杀死「SSO 自动重登」零交互路径
+- **修法**（对齐 anysearch_login.rs 的成熟模式）：
+  - 删 init script / MUSAGE_READY 握手 / clear_all_browsing_data /
+    `on_page_load` 依赖，改独立轮询任务（700ms × 1200 ≈ 14 min）直接读
+    `cookies_for_url("https://platform.stepfun.com/")`
+  - **JWT exp 新鲜度门**替代握手：旧会话残留 token 必已过期（用户正是
+    因此才重登）→ 拒绝并继续等；新登录 token exp 在未来 → 接受。复用
+    provider 侧 `access_token_exp_seconds_ago`（改 `pub(crate)`），
+    「登录存盘」和「provider 预检」判定单一来源
+  - 保留 webview profile 的 SSO session → token 过期后重登可走
+    「点按钮 → SSO 秒跳 → 抓新 token → 自动关窗」零交互路径
+  - `Oasis-Token` 单段且存在 `Oasis-Refresh-Token` cookie 时拼
+    `<access>...<refresh>`（refresh 半段带 `device_id` claim，是
+    provider 组 `Oasis-Webid` 请求头的来源）
+  - 新增 8 个单元测试（exp 门 / combined 拼接 / probe URL 域回归防御）；
+    locale `stepfun_login.*` 瘦身为 3 key
+- **第二只 bug（真实账号二轮实测）**：登录已显示「提取 + 保存成功」，
+  浮窗却继续报「登录凭据已过期 N 分钟」（N 随时间涨 = 一直在用旧 token）。
+  根因：v0.2.4 手动粘贴时代在 keys.json 留了 `stepfun` api_key 槽位，
+  `save_credential_for_id` 对 None 字段是**跳过而非删除**（不清 legacy
+  槽），而 `stepfun.rs` fetch 是 `api_key.or(cookie)` **api_key 优先** ——
+  新登录写入 `stepfun:cookie` 的新鲜 token 被永远忽略。修法：fetch 改
+  **cookie 优先**（对齐 anysearch / claude_official 的 Cookie-kind 约定），
+  api_key 仅作 legacy 兜底
+
+### Fixed (Critical — StepFun 用量响应被误判为 code -1 + access 30 分钟过期无续期)
+
+- **症状**：第三只 bug。登录成功、token 新鲜，浮窗却报
+  「StepFun API error (code -1): 」（空 message）
+- **根因**（对照 CodexBar `StepFunUsageFetcher.swift` 源码 + 本机探针实测）：
+  1. **成功标记搞错**：现行成功响应是 `{"status": 1, 用量字段在顶层}`，
+     不是旧实现的 `{code: 0, data: {...}}`。旧代码 `code` 缺失 → 默认 -1 →
+     把**真实的成功用量数据**误判为业务错误
+  2. **access 半段仅 ~30 分钟寿命**（探针实测 exp-iat≈1800s），refresh
+     半段 ~30 天带 `device_id` claim —— 浏览器靠 `RefreshToken` 端点持续
+     续期，旧实现没有续期流程，登录 30 分钟后必掉线
+  3. 失败路径不带响应体，「code -1 + 空 message」等于盲猜
+- **修法**（[stepfun.rs](src-tauri/src/providers/stepfun.rs) 整体重写）：
+  - **双 schema 兼容解析**：`status == 1` 成功标记（字段顶层）+ 旧
+    `code == 0`（字段在 `data` 下）；数字字段 int/float/字符串通吃
+    （CodexBar `FlexibleNumber` 同款）；时间戳吃 ISO 8601 / epoch 秒 /
+    epoch 毫秒 / 数字字符串，`"0"` = 「无窗口配置」不再渲成 1970
+  - **RefreshToken 续期流**（对齐 anysearch 模式）：access 过期或 120s
+    SKEW 内且有 refresh 半段 → 调
+    `POST …/PassportService/RefreshToken`（CodexBar 逆向：body `{}` +
+    裸 `Oasis-Token` header + Cookie）换新 pair 并**原子写回
+    keys.json**；服务端没返新 refresh 半段时保留旧的；请求仍 401 /
+    业务层 auth 失败时兜底 refresh 一次再重试
+  - **业务错误 auth 感知**：失败消息含 "auth failed" / "unauth" /
+    "embezzled" / "illegal" → AuthFailed kind（让续期兜底接管）
+  - 失败路径全加 `[diag] stepfun ...` 响应体日志（截断 500-800 字符）
+  - 探针实锤的鉴权细节写进文件头：token 必须发 `<access>...<refresh>`
+    **整段 pair**（裸 access → `401 token is illegal`）；`oasis-webid`
+    必须等于 refresh 半段的 `device_id`（不匹配 → `401 embezzled`，
+    CodexBar 源码注释同款结论）
+  - 新增 18 个单元测试（新 schema / ensure_success 判定 / flex 数字 /
+    epoch 字符串时间戳 / refresh 响应解析），`cargo test --lib` 296 passed
+- **⚠ 已知未解**：本机 node 探针 replay 同一 token 被风控拒（401
+  embezzled/illegal），但 app（reqwest/rustls）拿到过 200 —— 疑似对
+  非浏览器 TLS 指纹有风控但 reqwest 目前放行。若后续 reqwest 也被风控，
+  备选方案是 usage 请求改在登录 webview 内发（JS fetch 走浏览器 TLS +
+  真实 cookie），按 `[diag]` 日志再定
+
+### Added (StepFun credit 套餐到期/重置时间)
+
+- 套餐用量行（credit 套餐）新增**到期/重置时间**显示（`musage dump`
+  真实响应实测字段）：
+  `subscription_credit_reset_time > 0` → 订阅制周期重置（「套餐用量重置」）；
+  否则 bucket 最早 `next_reset_at` → 重置；否则 bucket 最早 `expire_at`
+  → 一次性额度包**到期**（`extra.reset_period="expire"`，浮窗显示
+  「到期 8-4（7天xh）」，过期后显示「已到期」）
+- 前端：`resetsPrefixFor` helper 抽出共用（used/total 行行为
+  byte-for-byte 不变），utilization-only 行也支持 `resetsPrefix`；
+  `formatResetWithCountdown` 加 doneLabel 参数；新 i18n key
+  `floating.countdown.expire_prefix` / `expire_done`（中英）
+- `credit_plan_reset` 4 个单测（含真实响应 fixture），
+  `cargo test --lib` 300 passed
+- credit 行标签「额度」改「**套餐用量**」（`row.credit` value 变更，
+  key 名不动；英文 "Credit" → "Plan usage"）
+
 ### Fixed (Critical — macOS 设置面板所有确认操作静默失效)
 
 - **extra instance × 删除按钮点了没反应（含全局 7 处同类 bug）**

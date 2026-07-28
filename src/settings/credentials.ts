@@ -845,14 +845,15 @@ export async function anysearchClearTokenAction(id: string) {
   }
 }
 
-/// 一键登录 StepFun：弹 webview → 用户在 platform.stepfun.com 走
-/// 邮箱+密码登录 → 后端自动从 webview cookie jar 抽 Oasis-Token。
+/// 一键登录 StepFun：弹 webview → 用户在 account.stepfun.com 登录
+/// （或 SSO 秒跳）→ 后端轮询 platform.stepfun.com 域 cookie jar 抽
+/// Oasis-Token。
 ///
-/// 数据流(仿 xiaomi_login.rs / anysearch_login.rs):
+/// 数据流(仿 anysearch_login.rs):
 /// 1. `invoke("open_stepfun_login_window")` → 后端开 webview
 /// 2. 用户在 webview 里正常登录 StepFun
-/// 3. 后端 on_page_load 检测到 dashboard URL → 提 cookie → 写
-///    keys.json(`stepfun:cookie` 槽位) → 关 webview
+/// 3. 后端每 700ms 轮询 platform 域 cookie jar，见到 exp 未过期的
+///    Oasis-Token → 写 keys.json(`stepfun:cookie` 槽位) → 关 webview
 /// 4. 后端 emit `musage://stepfun-login-success` / `-failed`
 /// 5. 本函数在 init 时绑一次事件监听(见 `bindStepfunLoginEvents`)
 export async function stepfunLoginAction(id: string) {

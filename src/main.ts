@@ -167,7 +167,8 @@ interface QuotaRow {
   resets_at: number | null;
   unit: string | null;
   /** provider 特有扩展字段。AnySearch 主行带 `{reset_period: "daily"|"monthly"}`，
-   *  浮窗据此显示「日重置」/「月重置」前缀（缺省走月重置，跟旧行为一致）。 */
+   *  浮窗据此显示「日重置」/「月重置」前缀（缺省走月重置，跟旧行为一致）；
+   *  StepFun 一次性额度包带 `{reset_period: "expire"}` → 显示「到期」+「已到期」。 */
   extra?: { reset_period?: string } | null;
   /** 行的语义分类（与 locale 解耦，**L7 fix 2026-06-19**）。
    *  rowKey 优先用这个做 DOM 稳定 key，避免切 locale 后 key 变化导致全量重建。 */
@@ -928,23 +929,19 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
         // 窗口行：prefix 跟随左侧动态标签（"5h重置" / "7d重置"），
         // 走 updateCountdowns 的 fallback（label 文本 + reset_suffix）
         delete rowEl.dataset.resetsPrefix;
+        delete rowEl.dataset.resetsDone;
       } else {
         // 非窗口行的重置前缀：按 row.extra.reset_period 区分日 / 月重置。
         // AnySearch Free Plan = daily → 「日重置」；Tavily 等无 reset_period
         // 信号 → fallback 月重置（跟旧行为 byte-for-byte 一致）。
-        const period = r.extra?.reset_period;
         rowEl.dataset.resetsPrefix =
-          period === "daily"
-            ? t("floating.countdown.daily_prefix")
-            : period === "five_hour"
-              ? t("floating.countdown.five_hour_prefix")
-              : period === "weekly"
-                ? t("floating.countdown.weekly_prefix")
-                : t("floating.countdown.monthly_prefix");
+          resetsPrefixFor(r.extra?.reset_period) ?? t("floating.countdown.monthly_prefix");
+        applyResetsDone(rowEl, r.extra?.reset_period);
       }
     } else {
       delete rowEl.dataset.resetsAt;
       delete rowEl.dataset.resetsPrefix;
+      delete rowEl.dataset.resetsDone;
     }
   } else if (r.used != null) {
     // 只有 used 没有 total
@@ -963,10 +960,18 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
     const bar = rowEl.querySelector<HTMLElement>(".bar-fill")!;
     bar.className = `bar-fill ${cls}`;
     bar.style.width = `${barWidth(r.utilization)}%`;
-    if (r.resets_at) rowEl.dataset.resetsAt = String(r.resets_at);
-    else {
+    if (r.resets_at) {
+      rowEl.dataset.resetsAt = String(r.resets_at);
+      // utilization-only 行（StepFun credit 等）：extra.reset_period="expire"
+      // → 「到期」前缀 +「已到期」done label；否则走 label+「重置」fallback
+      const prefix = resetsPrefixFor(r.extra?.reset_period);
+      if (prefix) rowEl.dataset.resetsPrefix = prefix;
+      else delete rowEl.dataset.resetsPrefix;
+      applyResetsDone(rowEl, r.extra?.reset_period);
+    } else {
       delete rowEl.dataset.resetsAt;
       delete rowEl.dataset.resetsPrefix;
+      delete rowEl.dataset.resetsDone;
     }
   } else if (r.remaining != null) {
     const labelSpan = rowEl.querySelector<HTMLElement>(".row-label > span:first-child")!;
@@ -1030,6 +1035,27 @@ function startCountdown() {
   setInterval(purgeStaleLastGoodSnap, 60_000);
 }
 
+/// 非窗口行的重置前缀：按 row.extra.reset_period 区分。
+/// AnySearch Free Plan = daily → 「日重置」；StepFun 一次性额度包 = expire
+/// → 「到期」；Tavily 等无信号 → undefined（调用方决定 fallback：
+/// used/total 行 = 月重置，utilization-only 行 = label + 「重置」后缀）。
+function resetsPrefixFor(period: string | undefined): string | undefined {
+  switch (period) {
+    case "daily": return t("floating.countdown.daily_prefix");
+    case "five_hour": return t("floating.countdown.five_hour_prefix");
+    case "weekly": return t("floating.countdown.weekly_prefix");
+    case "monthly": return t("floating.countdown.monthly_prefix");
+    case "expire": return t("floating.countdown.expire_prefix");
+    default: return undefined;
+  }
+}
+
+/// expire 语义的倒计时结束文案（「已到期」vs 默认「已重置」）。
+function applyResetsDone(rowEl: HTMLElement, period: string | undefined): void {
+  if (period === "expire") rowEl.dataset.resetsDone = t("floating.countdown.expire_done");
+  else delete rowEl.dataset.resetsDone;
+}
+
 function updateCountdowns() {
   const rows = app.querySelectorAll<HTMLElement>(".row[data-resets-at]");
   rows.forEach((row) => {
@@ -1043,7 +1069,7 @@ function updateCountdowns() {
     // 否则用 label + reset suffix（Kimi / MiniMax / GLM 等窗口行）
     const prefix = row.dataset.resetsPrefix
       ?? (row.querySelector<HTMLElement>(".row-label > span:first-child")?.textContent ?? "") + t("floating.countdown.reset_suffix");
-    foot.textContent = formatResetWithCountdown(ms, prefix);
+    foot.textContent = formatResetWithCountdown(ms, prefix, row.dataset.resetsDone);
   });
 }
 
@@ -1090,13 +1116,13 @@ function barWidth(util: number | null | undefined): number {
 /// - 剩余 ≤ 0 → "(已重置)"
 /// 跨日边界：> 1 day 用日期，< 1 day 用时分 —— 跟用户对"剩多久"的认知一致
 /// 日期走本地时区，跟 getHours()/getMinutes() 一致（用户看的是自己时区里的时间）
-function formatResetWithCountdown(ms: number, prefix: string): string {
+function formatResetWithCountdown(ms: number, prefix: string, doneLabel?: string): string {
   const remainMs = ms - Date.now();
   const dt = new Date(ms);
   const days = Math.floor(remainMs / 86400000);
   if (remainMs <= 0) {
     const label = `${dt.getMonth() + 1}-${dt.getDate()}`;
-    return `${prefix} ${label}${t("floating.countdown.reset_done")}`;
+    return `${prefix} ${label}${doneLabel ?? t("floating.countdown.reset_done")}`;
   }
   if (days >= 1) {
     const label = `${dt.getMonth() + 1}-${dt.getDate()}`;

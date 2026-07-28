@@ -416,6 +416,9 @@ fn parse(
         // 大小写不敏感 —— CodexBar issue #1724 看到的 schema 是 "session"
         // 小写,火山自家控制台实测是 "Session" 大写,两种都收。
         let level = level_raw.to_ascii_lowercase();
+        // ResetTimestamp 单位: 火山 Coding Plan 实测返 epoch **seconds** (10 位数,
+        // 2026-xx 范围) —— 不是 ms。跟 minimax 5h schema 漂移保护同款:
+        // < 10^12 当 seconds × 1000,>= 10^12 当 ms 直用。
         let resets_at = entry
             .get("ResetTimestamp")
             .and_then(|v| v.as_i64())
@@ -424,18 +427,21 @@ fn parse(
                     .get("ResetTimestamp")
                     .and_then(|v| v.as_f64())
                     .map(|f| f as i64)
-            });
-        // CodexBar #1724 + ccswitch 实测 schema:
-        // - QuotaUsage[] 形态: Level="session"/"weekly"/"monthly"(小写) + Percent 字段
-        //   **语义是"已用百分比 0.0~1.0"**(不是剩余)。cc-switch 拿 Percent 直接
-        //   乘 100 显示 "5h: 0%"(已用 0%)。
-        // - UsageList[] 形态: Level="Session"/"Weekly"/"Monthly"(大写) + Remaining
-        //   + Total 字段(我们 v0.2.5 schema 假设这个,实测火山 Coding Plan 不返)。
+            })
+            .map(|ts| if ts < 1_000_000_000_000 { ts * 1000 } else { ts });
+        // CodexBar #1724 + ccswitch 实测 schema (火山 Coding Plan 真返):
+        // - QuotaUsage[] + Level="session"/"weekly"/"monthly"(小写) + Percent
+        //   字段 = **已用百分比, 0.0~100.0** (实测 Percent=0.3346 → 显示 0.33%,
+        //   ccswitch 也是)。**不是** 0~1。v0.2.5 我误乘 100 → 33.46% 错。
+        // - ResetTimestamp: epoch **seconds** (10 位) 上面 smart parse 转 ms。
+        // - 老 UsageList[] + Remaining/Total 形态保留(虽然火山不返),做
+        //   schema 漂移 fallback。
         let (used, total) = if let Some(percent) = super::parse::num_f64(
             entry.get("Percent").unwrap_or(&Value::Null),
         ) {
-            // Percent schema: percent 0.0~1.0,已用。total 兜底 100。
-            let used = (percent * 100.0).clamp(0.0, 100.0);
+            // Percent 已是 0~100(火山 Coding Plan 实测)。clamp 防止 >100
+            // 或负数(老 schema / 边界)。
+            let used = percent.clamp(0.0, 100.0);
             (used, 100.0)
         } else {
             let remaining = super::parse::num_f64(
@@ -705,15 +711,19 @@ mod tests {
 
     #[test]
     fn parse_quota_usage_schema_lowercase() {
-        // CodexBar #1724 实测形态: Result.QuotaUsage[] + Level: "session" 小写 + Percent 0~1
+        // 火山 Coding Plan 真返 schema (2026-07-28 实测):
+        // Result.QuotaUsage[] + Level: "session"/"weekly"/"monthly"(小写)
+        // + Percent 字段 = 已用百分比 0~100 (不是 0~1)
+        // + ResetTimestamp: epoch **seconds** (10 位) — smart parse 转 ms
+        // + 额外有 Status="Running" / UpdateTimestamp(seconds)
         let raw = json!({
             "Result": {
-                "Code": "Success",
-                "PlanName": "Lite",
+                "Status": "Running",
+                "UpdateTimestamp": 1785217273_i64,
                 "QuotaUsage": [
-                    { "Level": "session", "Percent": 0.0833, "ResetTimestamp": 1753603200000_i64 },
-                    { "Level": "weekly",  "Percent": 0.0555, "ResetTimestamp": 1753761600000_i64 },
-                    { "Level": "monthly", "Percent": 0.05,   "ResetTimestamp": 1756180800000_i64 }
+                    { "Level": "session", "Percent": 0.33462600000000003_f64, "ResetTimestamp": 1785221470_i64 },
+                    { "Level": "weekly",  "Percent": 2.408004733333333_f64,   "ResetTimestamp": 1785686400_i64 },
+                    { "Level": "monthly", "Percent": 11.356161100000001_f64,  "ResetTimestamp": 1787068799_i64 }
                 ]
             }
         });
@@ -721,12 +731,14 @@ mod tests {
         assert_eq!(snap.rows.len(), 3);
         let five_h = &snap.rows[0];
         assert_eq!(five_h.label, t!("row.five_hour").as_ref());
-        // 0.0833 used → total=100, remaining=100-8.33=91.67, util=8.33
-        assert_eq!(five_h.total, Some(100.0));
-        assert!((five_h.utilization.unwrap() - 8.33).abs() < 0.1);
+        // Percent=0.3346 → 0.33%(已 clamp 0~100,直接当百分比数值)
+        assert!((five_h.utilization.unwrap() - 0.3346).abs() < 0.001);
+        // ResetTimestamp 1785221470 是 seconds → smart parse 转 ms
+        assert_eq!(five_h.resets_at, Some(1785221470 * 1000));
         let month = &snap.rows[2];
         assert_eq!(month.label, t!("row.monthly").as_ref());
-        assert!((month.utilization.unwrap() - 5.0).abs() < 0.1);
+        // 11.356% 不是 1135.6% —— 修 v0.2.5 那个 * 100 错位 bug
+        assert!((month.utilization.unwrap() - 11.356).abs() < 0.01);
     }
 
     #[test]

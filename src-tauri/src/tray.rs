@@ -896,8 +896,11 @@ fn tooltip(snap: &QuotaSnapshot) -> String {
         parts.push(format!("{dot} {body}{suffix}"));
     }
     if let Some(ms) = snap.fetched_at {
+        // 之前 chrono::DateTime::from_timestamp_millis 默认走 UTC,tooltip 显示成 UTC 时间
+        // → 用户(macOS 北京时间)看到"更新于 08:53"以为当前时间是 08:53,实际本地 17:08,
+        // 直接误导。改成 `.with_timezone(&Local)` 转本地时区。
         let time_str = chrono::DateTime::from_timestamp_millis(ms)
-            .map(|d| d.format("%H:%M:%S").to_string())
+            .map(|d| d.with_timezone(&chrono::Local).format("%H:%M:%S").to_string())
             .unwrap_or_else(|| "?".to_string());
         parts.push(t!("tray.tooltip.updated_at", time = time_str).to_string());
     }

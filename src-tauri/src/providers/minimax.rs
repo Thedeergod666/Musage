@@ -36,8 +36,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use super::{
-    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
-    QuotaSource,
+    json_body_limited, shared_client, AuthKind, Credentials, ErrorKind, FetchError,
+    ProviderSnapshot, QuotaRow, QuotaSource,
 };
 
 use crate::config::ProviderOverrides;
@@ -302,9 +302,9 @@ impl Minimax {
             ));
         }
 
-        let raw: serde_json::Value = resp.json().await.map_err(|e| {
-            FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
-        })?;
+        // D5 fix (2026-07-28 审查): json_body_limited 替代 resp.json() —
+        // 8 MiB 上限 + 流式 chunked 读,挡恶意/异常中转站撑爆 reqwest 内部 buffer。
+        let raw = json_body_limited(resp).await?;
 
         let snap = parse(&raw, region, overrides, source_id, display_name);
         Ok((raw, snap))

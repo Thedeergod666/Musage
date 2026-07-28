@@ -63,7 +63,8 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use super::{
-    AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
+    text_body_limited, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
+    QuotaSource,
 };
 use crate::t;
 
@@ -72,7 +73,8 @@ const ACTION: &str = "GetCodingPlanUsage";
 const VERSION: &str = "2024-01-01";
 const SERVICE: &str = "ark";
 const REGION: &str = "cn-beijing";
-const URL: &str = "https://ark.cn-beijing.volcengineapi.com/?Action=GetCodingPlanUsage&Version=2024-01-01";
+const URL: &str =
+    "https://ark.cn-beijing.volcengineapi.com/?Action=GetCodingPlanUsage&Version=2024-01-01";
 
 // ── QuotaSource 实现 ─────────────────────────────────────────────
 
@@ -162,7 +164,11 @@ impl QuotaSource for VolcengineArkSource {
             let (ak, sk) = migrate_if_needed(&source_id, ak_raw, sk_raw).await?;
             if ak.is_empty() {
                 return Err(FetchError::unconfigured(
-                    t!("error.provider.unconfigured_key", provider = "Volcengine Ark").into_owned(),
+                    t!(
+                        "error.provider.unconfigured_key",
+                        provider = "Volcengine Ark"
+                    )
+                    .into_owned(),
                 ));
             }
             if sk.is_empty() {
@@ -300,9 +306,7 @@ async fn do_fetch(
 
     let status = resp.status();
     // 火山 v4 签名错误统一返 401 SignatureDoesNotMatch，错误信息不告诉哪字段错
-    if status == reqwest::StatusCode::UNAUTHORIZED
-        || status == reqwest::StatusCode::FORBIDDEN
-    {
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         return Err(FetchError::auth(
             t!("error.common.auth_failed", provider = "Volcengine Ark").into_owned(),
         ));
@@ -313,7 +317,11 @@ async fn do_fetch(
             t!("error.common.rate_limited", provider = "Volcengine Ark").into_owned(),
         ));
     }
-    let raw_text = resp.text().await.unwrap_or_default();
+    // D5 fix (2026-07-28 审查): text_body_limited 替代 resp.text() —
+    // 8 MiB 上限 + 错误归类 Parse 跟旧路径一致。
+    let raw_text = text_body_limited(resp).await.map_err(|e| {
+        FetchError::parse(t!("error.common.parse_json", err = e.message).into_owned())
+    })?;
     // v0.2.5 临时诊断: 无条件打火山原始响应 body (无论 status)。用户 dev
     // 重启后看 stderr 就能拿到真实 JSON,排查 schema 漂移。
     // 不打印 AK/SK 内容(只打长度)避免 secret 漏日志。
@@ -355,16 +363,17 @@ async fn do_fetch(
 /// - `Daily`    → 日窗口（Agent Plan 字段，Coding Plan 暂不返回；预留以应对 schema 加字段）
 ///
 /// 不认识的 Level 静默跳过（schema 漂移保护），不让单条坏数据炸整个 snapshot。
-fn parse(
-    raw: &Value,
-    source_id: &str,
-    display_name: &str,
-) -> Result<ProviderSnapshot, FetchError> {
+fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
     let result = raw.get("Result").ok_or_else(|| {
         FetchError::parse(
-            t!("error.common.missing_field", provider = "Volcengine Ark", field = "Result").into_owned(),
+            t!(
+                "error.common.missing_field",
+                provider = "Volcengine Ark",
+                field = "Result"
+            )
+            .into_owned(),
         )
     })?;
 
@@ -428,7 +437,13 @@ fn parse(
                     .and_then(|v| v.as_f64())
                     .map(|f| f as i64)
             })
-            .map(|ts| if ts < 1_000_000_000_000 { ts * 1000 } else { ts });
+            .map(|ts| {
+                if ts < 1_000_000_000_000 {
+                    ts * 1000
+                } else {
+                    ts
+                }
+            });
         // CodexBar #1724 + ccswitch 实测 schema (火山 Coding Plan 真返):
         // - QuotaUsage[] + Level="session"/"weekly"/"monthly"(小写) + Percent
         //   字段 = **已用百分比, 0.0~100.0** (实测 Percent=0.3346 → 显示 0.33%,
@@ -436,17 +451,15 @@ fn parse(
         // - ResetTimestamp: epoch **seconds** (10 位) 上面 smart parse 转 ms。
         // - 老 UsageList[] + Remaining/Total 形态保留(虽然火山不返),做
         //   schema 漂移 fallback。
-        let (used, total) = if let Some(percent) = super::parse::num_f64(
-            entry.get("Percent").unwrap_or(&Value::Null),
-        ) {
+        let (used, total) = if let Some(percent) =
+            super::parse::num_f64(entry.get("Percent").unwrap_or(&Value::Null))
+        {
             // Percent 已是 0~100(火山 Coding Plan 实测)。clamp 防止 >100
             // 或负数(老 schema / 边界)。
             let used = percent.clamp(0.0, 100.0);
             (used, 100.0)
         } else {
-            let remaining = super::parse::num_f64(
-                entry.get("Remaining").unwrap_or(&Value::Null),
-            );
+            let remaining = super::parse::num_f64(entry.get("Remaining").unwrap_or(&Value::Null));
             let total_v = super::parse::num_f64(entry.get("Total").unwrap_or(&Value::Null));
             match (remaining, total_v) {
                 (Some(r), Some(t)) if t > 0.0 => ((t - r).max(0.0), t),
@@ -569,7 +582,11 @@ mod tests {
         let sk = creds.secret_key.as_deref().unwrap_or("").trim().to_string();
         if ak.is_empty() {
             return Err(FetchError::unconfigured(
-                t!("error.provider.unconfigured_key", provider = "Volcengine Ark").into_owned(),
+                t!(
+                    "error.provider.unconfigured_key",
+                    provider = "Volcengine Ark"
+                )
+                .into_owned(),
             ));
         }
         if sk.is_empty() {

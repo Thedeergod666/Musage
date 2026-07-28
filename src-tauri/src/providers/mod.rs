@@ -616,6 +616,10 @@ pub trait QuotaSource: Send + Sync {
     /// 也想看其他卡片的布局"。
     ///
     /// 默认 `true`（绝大多数 provider 是真实现）。
+    ///
+    /// 当前 WIP 没有 STUB provider 调用此方法(poller/refresh_inner 直接
+    /// 走 `enabled` 字段)。保留供 v0.3 真正引入 STUB 标记时用。
+    #[allow(dead_code)]
     fn default_enabled(&self) -> bool {
         true
     }

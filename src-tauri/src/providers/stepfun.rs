@@ -101,8 +101,8 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::{
-    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
-    QuotaSource,
+    shared_client, text_body_limited, AuthKind, Credentials, ErrorKind, FetchError,
+    ProviderSnapshot, QuotaRow, QuotaSource,
 };
 use crate::config;
 use crate::t;
@@ -344,7 +344,12 @@ async fn fetch_rate_limit(token: &str) -> Result<Value, FetchError> {
     let status = resp.status();
     // 先拿 body 文本再 parse —— 失败路径能把原始响应写进诊断日志
     // （2026-07-28 教训：只报 "code -1" 不带 body 等于盲猜）。
-    let body = resp.text().await.unwrap_or_default();
+    // D5 fix (2026-07-28 审查): 走 text_body_limited —— 8 MiB 上限,
+    // 挡恶意/异常中转站撑爆 reqwest 内部 buffer。
+    let body = text_body_limited(resp).await.map_err(|e| {
+        // parse 错误保留诊断上下文
+        FetchError::parse(t!("error.common.parse_json", err = e.message).into_owned())
+    })?;
 
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         tracing::warn!(status = %status, body = %truncate_body(&body, 500),
@@ -513,7 +518,10 @@ async fn refresh_oasis_token(token: &str, unique_id: &str) -> Result<String, Fet
 
     let resp = client
         .post(URL_REFRESH)
-        .header("Cookie", format!("Oasis-Token={token}; Oasis-Webid={webid}"))
+        .header(
+            "Cookie",
+            format!("Oasis-Token={token}; Oasis-Webid={webid}"),
+        )
         // CodexBar 在 refresh 请求里额外发裸 Oasis-Token header（usage 查询不发）
         .header("Oasis-Token", token)
         .header("Oasis-Webid", webid.clone())
@@ -528,12 +536,20 @@ async fn refresh_oasis_token(token: &str, unique_id: &str) -> Result<String, Fet
         .await
         .map_err(|e| {
             FetchError::network(
-                t!("error.common.network", url = URL_REFRESH, err = e.to_string()).into_owned(),
+                t!(
+                    "error.common.network",
+                    url = URL_REFRESH,
+                    err = e.to_string()
+                )
+                .into_owned(),
             )
         })?;
 
     let status = resp.status();
-    let body = resp.text().await.unwrap_or_default();
+    // D5 fix (2026-07-28 审查): 同主 fetch —— text_body_limited
+    let body = text_body_limited(resp).await.map_err(|e| {
+        FetchError::parse(t!("error.common.parse_json", err = e.message).into_owned())
+    })?;
 
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
         tracing::warn!(status = %status, body = %truncate_body(&body, 500),
@@ -669,10 +685,7 @@ fn parse(
         // ── Rate-window 套餐：5h + 周双行 ──
 
         // 5h tier
-        if let Some(left) = data
-            .get("five_hour_usage_left_rate")
-            .and_then(flex_f64)
-        {
+        if let Some(left) = data.get("five_hour_usage_left_rate").and_then(flex_f64) {
             if (0.0..=1.0).contains(&left) {
                 let used_pct = (1.0 - left) * 100.0;
                 let reset = data
@@ -1250,7 +1263,9 @@ mod tests {
     fn build_request_includes_required_headers() {
         let client = reqwest::Client::new();
         let jwt = make_jwt_with_claims(r#"{"device_id":"dev-headers"}"#);
-        let req = build_request(&client, URL_RATE_LIMIT, &jwt).build().unwrap();
+        let req = build_request(&client, URL_RATE_LIMIT, &jwt)
+            .build()
+            .unwrap();
         let headers = req.headers();
 
         // 必发 headers
@@ -1279,7 +1294,10 @@ mod tests {
         // Cookie 头同时含 Oasis-Token= 和 Oasis-Webid=
         let cookie = headers.get("cookie").unwrap().to_str().unwrap();
         assert!(cookie.contains("Oasis-Token="), "cookie: {cookie}");
-        assert!(cookie.contains("Oasis-Webid=dev-headers"), "cookie: {cookie}");
+        assert!(
+            cookie.contains("Oasis-Webid=dev-headers"),
+            "cookie: {cookie}"
+        );
     }
 
     #[test]
@@ -1480,7 +1498,11 @@ mod tests {
         let raw = json!({ "status": 0, "message": "no plan configured" });
         let err = ensure_success(&raw, "{}").unwrap_err();
         assert_eq!(err.kind, ErrorKind::ServerError);
-        assert!(err.message.contains("no plan configured"), "msg: {}", err.message);
+        assert!(
+            err.message.contains("no plan configured"),
+            "msg: {}",
+            err.message
+        );
     }
 
     #[test]
@@ -1525,8 +1547,14 @@ mod tests {
 
     #[test]
     fn extract_reset_ms_handles_string_epoch() {
-        assert_eq!(extract_reset_ms(&json!("1785221470")), Some(1_785_221_470_000));
-        assert_eq!(extract_reset_ms(&json!("1785221470000")), Some(1_785_221_470_000));
+        assert_eq!(
+            extract_reset_ms(&json!("1785221470")),
+            Some(1_785_221_470_000)
+        );
+        assert_eq!(
+            extract_reset_ms(&json!("1785221470000")),
+            Some(1_785_221_470_000)
+        );
     }
 
     #[test]
@@ -1541,9 +1569,16 @@ mod tests {
 
     #[test]
     fn refresh_half_splits_combined() {
-        assert_eq!(refresh_half("aaa.bbb.ccc...ddd.eee.fff"), Some("ddd.eee.fff"));
+        assert_eq!(
+            refresh_half("aaa.bbb.ccc...ddd.eee.fff"),
+            Some("ddd.eee.fff")
+        );
         assert_eq!(refresh_half("aaa.bbb.ccc"), None);
-        assert_eq!(refresh_half("aaa.bbb.ccc..."), None, "空 refresh 半段 → None");
+        assert_eq!(
+            refresh_half("aaa.bbb.ccc..."),
+            None,
+            "空 refresh 半段 → None"
+        );
     }
 
     #[test]

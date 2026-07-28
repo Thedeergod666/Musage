@@ -29,8 +29,12 @@
 //!
 //! H3 fix: 任务 panic 时 EXTRACTING 永久留在 true → 用户再点登录按钮后
 //! compare_exchange 永远失败 → 登录永远卡住。修法:用 RAII `ExtractingGuard`
-//! 在 future 末尾 Drop 时无条件 reset EXTRACTING。tokio task panic 时 local
+//! 在 future 末尾 Drop 时 reset EXTRACTING。tokio task panic 时 local
 //! variables 仍然被 Drop(run by panic unwinding) → guard 兜底。
+//!
+//! L-gen fix (2026-07-28 审查): guard 携带本次流程的 generation，仅在 gen
+//! 未变时才清锁 —— 用户重复点登录时，老任务的 guard drop / emit 不会清掉
+//! 或误报新流程的状态（详见 `GEN` 注释）。
 //!
 //! ## Cookie 白名单
 //!
@@ -38,7 +42,7 @@
 //! dashboard API 实际依赖的就这 4 个（参考 `providers/xiaomi.rs` 的注释）。
 //! 平台如果改名 → 改这里就行，UI 不变。
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use tauri::webview::Cookie;
@@ -59,18 +63,43 @@ static EXTRACTING: AtomicBool = AtomicBool::new(false);
 /// 任务关闭后，后续回调不再尝试操作已销毁的 webview。
 static DONE: AtomicBool = AtomicBool::new(false);
 
-/// RAII guard: Drop 时无条件 reset `EXTRACTING`。
+/// generation 计数器：每次 `open_xiaomi_login_window` +1。
+///
+/// fix (2026-07-28 审查 L-gen/L8)：用户重复点登录时，旧实现有两个跨流程
+/// 竞态 —— ① 老任务的 `ExtractingGuard` drop 无条件清 EXTRACTING，会把
+/// 新流程的锁清掉 → 并发提取；② 失败分支只看 DONE，老任务可能在新流程
+/// 进行中误报 failed。引入 gen 后：老任务的 guard drop / 轮询 / emit 见
+/// 到 gen 不等即静默退出或跳过。
+static GEN: AtomicU64 = AtomicU64::new(0);
+
+/// 本次流程是否仍是最新一次开窗（gen 未变）。
+fn is_current_gen(my_gen: u64) -> bool {
+    GEN.load(Ordering::SeqCst) == my_gen
+}
+
+/// RAII guard: Drop 时 reset `EXTRACTING`（仅当 generation 未变）。
 ///
 /// H3 fix: tokio spawn 的 task panic 时,虽然 tokio 自己会打印 panic 信息 +
 /// propagate 给 spawn handle,但我们 spawn 时没 await handle → panic 后
 /// task 内部的局部变量仍被 Drop (Rust unwinding 时跑 Drop glue)。把
 /// EXTRACTING reset 放在 Drop 里 —— 任意路径退出(正常返回/Err/panic)
 /// 都会清掉锁,保证下次用户点登录能 compare_exchange 成功。
-struct ExtractingGuard;
+///
+/// L-gen fix (2026-07-28 审查): guard 携带本次流程的 generation —— 老流程
+/// 的 guard drop 不能清新流程的锁（否则用户重复点登录会出现并发提取任务）。
+struct ExtractingGuard(u64);
+
+impl ExtractingGuard {
+    fn new(gen: u64) -> Self {
+        Self(gen)
+    }
+}
 
 impl Drop for ExtractingGuard {
     fn drop(&mut self) {
-        EXTRACTING.store(false, Ordering::SeqCst);
+        if is_current_gen(self.0) {
+            EXTRACTING.store(false, Ordering::SeqCst);
+        }
     }
 }
 
@@ -114,9 +143,26 @@ const WANTED_COOKIES: &[&str] = &[
 /// macOS WKWebView 上 `on_page_load` 会多次触发（SSO 重定向链 +
 /// 页面内导航），用 `EXTRACTING` 保证只有一个任务在提取。
 ///
-/// 错误通过 `musage://xiaomi-login-failed` 事件返回给前端。
+/// 错误通过 `musage://xiaomi-login-failed` 事件返回给前端；用户主动关窗 /
+/// 被新一轮登录流程取代 → 静默退出（L2/L-gen fix），不弹错误条。
+///
+/// 等旧窗口真正关闭（`close()` 是异步的，慢机器上固定 sleep 100ms 未必够，
+/// 同 label build 可能失败 / 竞态）。50ms × 40 ≈ 2s 上限；超时兜底继续，
+/// build 失败会把错误透传给前端，不会卡死。
+/// fix (2026-07-28 审查 L7)。
+async fn wait_window_closed(app: &AppHandle, label: &str) {
+    for _ in 0..40 {
+        if app.get_webview_window(label).is_none() {
+            return;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+}
+
 #[tauri::command]
 pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
+    // 新一轮流程：gen+1（老任务的 guard / 轮询 / emit 见到不一致即失效）
+    let gen = GEN.fetch_add(1, Ordering::SeqCst) + 1;
     // 重置提取锁 + 完成标记（新窗口 = 全新流程）
     EXTRACTING.store(false, Ordering::SeqCst);
     DONE.store(false, Ordering::SeqCst);
@@ -124,7 +170,7 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
     // 已开过 → 先关（重新登录场景）
     if let Some(existing) = app.get_webview_window("xiaomi-login") {
         let _ = existing.close();
-        sleep(Duration::from_millis(100)).await;
+        wait_window_closed(&app, "xiaomi-login").await;
     }
 
     let url: Url = (LOGIN_URL.parse::<Url>())
@@ -196,16 +242,26 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
             tracing::info!(%url, "on_page_load: ✅ 命中 dashboard，启动 cookie 提取");
             let app2 = app_for_callback.clone();
             let window_clone = window.clone();
+            let my_gen = gen;
             tauri::async_runtime::spawn(async move {
                 // H3 fix: 用 RAII guard 兜底 —— spawn 的 task panic 时
                 // Rust 仍会跑局部变量的 Drop glue (除非 panic = abort 但
                 // tokio 默认 unwind)。guard 在任意路径退出(正常返回/Err/panic)
                 // 都会被 Drop,强制 reset EXTRACTING,保证下次用户点登录
                 // compare_exchange 永远能成功。
-                let _extracting_guard = ExtractingGuard;
-                let result = extract_with_retry(&window_clone, &app2).await;
+                //
+                // L-gen fix (2026-07-28 审查): guard 携带本次 gen —— 老流程
+                // 的 drop 不能清新流程的锁(否则用户重复点登录会出现并发提取)。
+                let _extracting_guard = ExtractingGuard::new(my_gen);
+                let result = extract_with_retry(&window_clone, &app2, my_gen).await;
                 // 显式 store 保留显式锁语义给阅读者,guard 是 panic 兜底。
                 EXTRACTING.store(false, Ordering::SeqCst);
+
+                // gen 已被新流程取代 → 静默退出,不发任何事件
+                if !is_current_gen(my_gen) {
+                    tracing::debug!(my_gen, "xiaomi 老轮询/提取流程被新流程取代，静默退出");
+                    return;
+                }
 
                 match result {
                     Ok(saved_len) => {
@@ -241,9 +297,13 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
 ///
 /// macOS WKWebView 的 cookie store 可能延迟写入（SSO 回调链中
 /// `on_page_load` 触发时 cookie 还没落定），所以需要多次尝试。
+///
+/// `my_gen` 透传本次开窗 generation —— 每轮重试前检查 `is_current_gen`，
+/// 已被新流程取代就静默退出，不写盘、不 emit。
 async fn extract_with_retry(
     window: &tauri::WebviewWindow,
     _app: &AppHandle,
+    my_gen: u64,
 ) -> Result<usize, String> {
     // 重试策略：1s, 2s, 2s, 3s, 3s（共 11s 覆盖大部分场景）
     let retry_delays = [1u64, 2, 2, 3, 3];
@@ -253,6 +313,12 @@ async fn extract_with_retry(
 
         // 如果另一个任务已经成功，直接退出
         if DONE.load(Ordering::SeqCst) {
+            return Err(t!("xiaomi_login.another_task_done").into_owned());
+        }
+
+        // gen 已被新流程取代 → 静默退出
+        if !is_current_gen(my_gen) {
+            tracing::debug!(my_gen, attempt_num, "xiaomi 提取流程 gen 失效，静默退出");
             return Err(t!("xiaomi_login.another_task_done").into_owned());
         }
 

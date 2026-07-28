@@ -51,9 +51,11 @@
 //!
 //! ## 并发 / 重入
 //!
-//! 用户重复点按钮 → 先关旧窗口（旧轮询任务因窗口句柄消失 /
-//! `cookies_for_url` 报错自然退出）→ 开新窗口 + 新任务。`DONE` 标记
-//! 保证成功后残留任务不再写盘。
+//! 用户重复点按钮 → gen+1 并先关旧窗口 → 开新窗口 + 新任务。旧轮询任务
+//! 每轮检查 generation（`GEN`），不等即静默退出（L1/L-gen fix：窗口同
+//! label 复用会让 `get_webview_window().is_none()` 检查命中新窗口，单靠
+//! 它旧任务不退出，可能把旧 token 存盘或误报 failed）。`DONE` 标记保证
+//! 成功后残留任务不再写盘。
 //!
 //! ## 已知取舍
 //!
@@ -63,7 +65,7 @@
 //! - 用户主动关窗 / 超时未登录 → 静默退出，不弹错误条（跟 anysearch
 //!   一致；只有写盘失败这类真错误才 emit `-failed`）。
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use tauri::webview::Cookie;
@@ -77,6 +79,48 @@ use crate::t;
 
 /// 全局完成标记：提取成功后置 true，轮询任务退出。
 static DONE: AtomicBool = AtomicBool::new(false);
+
+/// generation 计数器：每次 `open_stepfun_login_window` +1。
+///
+/// fix (2026-07-28 审查 L1/L-gen)：重新登录时旧窗口关闭、新窗口用**同
+/// label** build —— 旧轮询任务的 `get_webview_window(label).is_none()`
+/// 检查会命中新窗口（返 Some）→ 旧任务不退出，可能把旧 token 存盘 /
+/// 误报 failed / 跟新任务竞争。引入 gen：旧任务每轮轮询 + emit 前检查，
+/// 不等即静默退出。
+static GEN: AtomicU64 = AtomicU64::new(0);
+
+/// 本次流程是否仍是最新一次开窗（gen 未变）。
+fn is_current_gen(my_gen: u64) -> bool {
+    GEN.load(Ordering::SeqCst) == my_gen
+}
+
+/// fix (2026-07-28 审查 L9)：panic 兜底 guard —— 轮询任务任意退出路径
+/// （正常 / Cancelled / Failed / panic unwind）都确保窗口被关闭；panic 时
+/// 额外打 error 日志。正常路径各分支已显式 close（幂等），guard 主要在
+/// panic / 未来新增提前 return 的路径上兜底。
+struct WindowCloseGuard(tauri::WebviewWindow);
+
+impl Drop for WindowCloseGuard {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            tracing::error!("stepfun 登录轮询任务 panic，guard 兜底关窗");
+        }
+        let _ = self.0.close();
+    }
+}
+
+/// 等旧窗口真正关闭（`close()` 是异步的，慢机器上固定 sleep 100ms 未必够，
+/// 同 label build 可能失败 / 竞态）。50ms × 40 ≈ 2s 上限；超时兜底继续，
+/// build 失败会把错误透传给前端，不会卡死。
+/// fix (2026-07-28 审查 L7)。
+async fn wait_window_closed(app: &AppHandle, label: &str) {
+    for _ in 0..40 {
+        if app.get_webview_window(label).is_none() {
+            return;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+}
 
 /// 登录入口 URL。直接跳到 account.stepfun.com 登录页（携带 redirect
 /// 让登录后自动跳回 platform.stepfun.com，OIDC 风格的跨域 cookie 传递）。
@@ -109,15 +153,19 @@ const REFRESH_COOKIE: &str = "Oasis-Refresh-Token";
 ///    `Oasis-Token` → 拼 combined → 写 keys.json → 关窗口 → emit 成功
 ///
 /// 错误（仅“写盘失败”这类真错误）通过 `musage://stepfun-login-failed`
-/// 返回前端。用户主动关窗 / 没登录 / 超时 → 静默退出，不弹红条。
+/// 返回前端。用户主动关窗 / 没登录 / 超时 → 静默退出，不弹红条
+///（超时 / 写盘失败会补关窗口，L3/L4 fix）。
 #[tauri::command]
 pub async fn open_stepfun_login_window(app: AppHandle) -> Result<(), String> {
+    // 新一轮流程：gen+1（旧轮询任务见到 gen 不等即静默退出 —— 同 label
+    // 新窗口会让旧的 `get_webview_window().is_none()` 检查失效）
+    let gen = GEN.fetch_add(1, Ordering::SeqCst) + 1;
     DONE.store(false, Ordering::SeqCst);
 
-    // 已开过 → 先关（旧轮询任务会因窗口句柄消失自然退出）
+    // 已开过 → 先关（旧轮询任务因 gen 不等 / 窗口句柄失效退出）
     if let Some(existing) = app.get_webview_window(WINDOW_LABEL) {
         let _ = existing.close();
-        sleep(Duration::from_millis(100)).await;
+        wait_window_closed(&app, WINDOW_LABEL).await;
     }
 
     let url: Url = LOGIN_URL
@@ -137,8 +185,19 @@ pub async fn open_stepfun_login_window(app: AppHandle) -> Result<(), String> {
     // 轮询任务：读 platform 域 cookie jar 抽 Oasis-Token
     let app2 = app.clone();
     let window_clone = window.clone();
+    let my_gen = gen;
     tauri::async_runtime::spawn(async move {
-        let result = poll_token_from_cookie(&app2, &window_clone).await;
+        // L9 fix (2026-07-28 审查): panic 兜底 guard —— 任意退出路径(正常 /
+        // Cancelled / Failed / panic unwind)都确保窗口被关闭;panic 时额外打
+        // error 日志。正常路径各分支已显式 close(幂等),guard 主要在 panic /
+        // 未来新增提前 return 的路径上兜底。
+        let _close_guard = WindowCloseGuard(window_clone.clone());
+        let result = poll_token_from_cookie(&app2, &window_clone, my_gen).await;
+        // gen 已被新流程取代 → 静默退出,不发任何事件,不要 close(新窗口接管)
+        if !is_current_gen(my_gen) {
+            tracing::debug!(my_gen, "stepfun 老轮询流程被新流程取代,静默退出");
+            return;
+        }
         match result {
             PollOutcome::Saved(len) => {
                 DONE.store(true, Ordering::SeqCst);
@@ -186,6 +245,7 @@ enum PollOutcome {
 async fn poll_token_from_cookie(
     app: &AppHandle,
     window: &tauri::WebviewWindow,
+    my_gen: u64,
 ) -> PollOutcome {
     // 安全上限：~14 分钟（1200 × 700ms），覆盖手动手机号 + 验证码登录；
     // 防窗口句柄异常残留时任务永不退出。
@@ -206,6 +266,12 @@ async fn poll_token_from_cookie(
         }
         // 窗口已被关 → 用户取消
         if app.get_webview_window(WINDOW_LABEL).is_none() {
+            return PollOutcome::Cancelled;
+        }
+        // L-gen fix (2026-07-28 审查): gen 已被新流程取代 → 静默退出,
+        // 不写盘、不 emit,让 WindowCloseGuard 接管关窗
+        if !is_current_gen(my_gen) {
+            tracing::debug!(my_gen, "stepfun 轮询 gen 失效,静默退出");
             return PollOutcome::Cancelled;
         }
 

@@ -50,13 +50,18 @@
 //! 装在一次 document load 上后，整个 SPA 生命周期都活着，客户端跳转写 localStorage
 //! 也能在 500ms 内被捕获。
 //!
-//! init script 同时把 `document.cookie` / `Storage.getItem` 锁死在
-//! `www.anysearch.com`，挡掉页面上 Google / Facebook tracker 偷读 JWT。
+//! init script 的 `document.cookie` / `Storage.getItem` override 只在
+//! `www.anysearch.com` 域安装（L12 fix：非受信域保持原生行为 —— 旧版一律
+//! 返 null，会破坏 SSO/OAuth 页面读自己的 storage；跨域偷读本来就有同源
+//! 隔离）。
 //!
 //! ## 并发 / 重入
 //!
-//! 用户重复点按钮 → 先关旧窗口（旧轮询任务因 `cookies_for_url` 报错 / 窗口
-//! 句柄消失自然退出）→ 开新窗口 + 新任务。`DONE` 标记保证成功后不再处理残留读。
+//! 用户重复点按钮 → gen+1 并先关旧窗口 → 开新窗口 + 新任务。旧轮询任务
+//! 每轮检查 generation（`GEN`），不等即静默退出（L1/L-gen fix：窗口同
+//! label 复用会让 `get_webview_window().is_none()` 检查命中新窗口，单靠
+//! 它旧任务不退出，可能把旧 token 存盘或误报 failed）。`DONE` 标记保证
+//! 成功后不再处理残留读。
 //!
 //! ## 重新登录 / 过期 token
 //!
@@ -66,7 +71,7 @@
 //! auth state + 清旧 cookie，并置 `MUSAGE_READY` 标记；Rust 轮询见到 READY 才
 //! 接受 token，保证抓到的一定是清理后新登录的 JWT。
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use tauri::webview::Cookie;
@@ -79,6 +84,48 @@ use crate::t;
 
 /// 全局完成标记：提取成功后置 true，轮询任务退出。
 static DONE: AtomicBool = AtomicBool::new(false);
+
+/// generation 计数器：每次 `open_anysearch_login_window` +1。
+///
+/// fix (2026-07-28 审查 L1/L-gen)：重新登录时旧窗口关闭、新窗口用**同
+/// label** build —— 旧轮询任务的 `get_webview_window(label).is_none()`
+/// 检查会命中新窗口（返 Some）→ 旧任务不退出，可能把旧 token 存盘 /
+/// 误报 failed / 跟新任务竞争。引入 gen：旧任务每轮轮询 + emit 前检查，
+/// 不等即静默退出。
+static GEN: AtomicU64 = AtomicU64::new(0);
+
+/// 本次流程是否仍是最新一次开窗（gen 未变）。
+fn is_current_gen(my_gen: u64) -> bool {
+    GEN.load(Ordering::SeqCst) == my_gen
+}
+
+/// fix (2026-07-28 审查 L9)：panic 兜底 guard —— 轮询任务任意退出路径
+/// （正常 / Cancelled / Failed / panic unwind）都确保窗口被关闭；panic 时
+/// 额外打 error 日志。正常路径各分支已显式 close（幂等），guard 主要在
+/// panic / 未来新增提前 return 的路径上兜底。
+struct WindowCloseGuard(tauri::WebviewWindow);
+
+impl Drop for WindowCloseGuard {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            tracing::error!("anysearch 登录轮询任务 panic，guard 兜底关窗");
+        }
+        let _ = self.0.close();
+    }
+}
+
+/// 等旧窗口真正关闭（`close()` 是异步的，慢机器上固定 sleep 100ms 未必够，
+/// 同 label build 可能失败 / 竞态）。50ms × 40 ≈ 2s 上限；超时兜底继续，
+/// build 失败会把错误透传给前端，不会卡死。
+/// fix (2026-07-28 审查 L7)。
+async fn wait_window_closed(app: &AppHandle, label: &str) {
+    for _ in 0..40 {
+        if app.get_webview_window(label).is_none() {
+            return;
+        }
+        sleep(Duration::from_millis(50)).await;
+    }
+}
 
 /// 登录入口 URL。直接落到登录页；已登录时 SPA 会自行跳去 console。
 const LOGIN_URL: &str = "https://www.anysearch.com/login";
@@ -111,6 +158,10 @@ fn is_jwt_like(s: &str) -> bool {
         && s.len() >= 20
         && s.len() <= 4096
         && s.chars().all(|c| !c.is_whitespace() && !c.is_control())
+        // fix (2026-07-28 审查 L11): 至少两段 `.` 分隔（JWT 的
+        // header.payload.sig；combined token 的 `...` 哨兵分段更多），
+        // 挡掉无分段的脏 base64 串
+        && s.matches('.').count() >= 2
 }
 
 /// 注入页面的 init script：
@@ -230,12 +281,15 @@ fn init_script() -> String {
 /// 用户主动关窗 / 没登录不算错误，不弹红条。
 #[tauri::command]
 pub async fn open_anysearch_login_window(app: AppHandle) -> Result<(), String> {
+    // 新一轮流程：gen+1（老轮询任务见 gen 不等即静默退出 —— 同 label 新窗口
+    // 会让旧的 `get_webview_window().is_none()` 检查失效）
+    let gen = GEN.fetch_add(1, Ordering::SeqCst) + 1;
     DONE.store(false, Ordering::SeqCst);
 
-    // 已开过 → 先关（旧轮询任务会因 title() 报错自然退出）
+    // 已开过 → 先关（旧轮询任务因 gen 不等 / 窗口句柄失效退出）
     if let Some(existing) = app.get_webview_window(WINDOW_LABEL) {
         let _ = existing.close();
-        sleep(Duration::from_millis(100)).await;
+        wait_window_closed(&app, WINDOW_LABEL).await;
     }
 
     let url: Url = LOGIN_URL
@@ -257,7 +311,18 @@ pub async fn open_anysearch_login_window(app: AppHandle) -> Result<(), String> {
     let app2 = app.clone();
     let window_clone = window.clone();
     tauri::async_runtime::spawn(async move {
-        let result = poll_token_from_cookie(&app2, &window_clone).await;
+        // L9 fix (2026-07-28 审查): panic 兜底 guard —— 任意退出路径(正常 /
+        // Cancelled / Failed / panic unwind)都确保窗口被关闭;panic 时额外打
+        // error 日志。正常路径各分支已显式 close(幂等),guard 主要在 panic /
+        // 未来新增提前 return 的路径上兜底。
+        let _close_guard = WindowCloseGuard(window_clone.clone());
+        let my_gen = gen;
+        let result = poll_token_from_cookie(&app2, &window_clone, my_gen).await;
+        // gen 已被新流程取代 → 静默退出,不发任何事件,不要 close(新窗口接管)
+        if !is_current_gen(my_gen) {
+            tracing::debug!(my_gen, "anysearch 老轮询流程被新流程取代,静默退出");
+            return;
+        }
         match result {
             PollOutcome::Saved(len) => {
                 DONE.store(true, Ordering::SeqCst);
@@ -300,6 +365,7 @@ enum PollOutcome {
 async fn poll_token_from_cookie(
     app: &AppHandle,
     window: &tauri::WebviewWindow,
+    my_gen: u64,
 ) -> PollOutcome {
     // 安全上限：~14 分钟，防窗口句柄异常残留时任务永不退出。
     const MAX_ITERS: u32 = 1200;
@@ -324,6 +390,12 @@ async fn poll_token_from_cookie(
         }
         // 窗口已被关 → 用户取消
         if app.get_webview_window(WINDOW_LABEL).is_none() {
+            return PollOutcome::Cancelled;
+        }
+        // L-gen fix (2026-07-28 审查): gen 已被新流程取代 → 静默退出,
+        // 不写盘、不 emit,让 WindowCloseGuard 接管关窗
+        if !is_current_gen(my_gen) {
+            tracing::debug!(my_gen, "anysearch 轮询 gen 失效,静默退出");
             return PollOutcome::Cancelled;
         }
 

@@ -313,20 +313,31 @@ async fn do_fetch(
             t!("error.common.rate_limited", provider = "Volcengine Ark").into_owned(),
         ));
     }
+    let raw_text = resp.text().await.unwrap_or_default();
+    // v0.2.5 临时诊断: 无条件打火山原始响应 body (无论 status)。用户 dev
+    // 重启后看 stderr 就能拿到真实 JSON,排查 schema 漂移。
+    // 不打印 AK/SK 内容(只打长度)避免 secret 漏日志。
+    tracing::warn!(
+        status = status.as_u16(),
+        ak_len = ak.len(),
+        sk_len = sk.len(),
+        body = %raw_text.chars().take(2000).collect::<String>(),
+        "[v0.2.5 diag] volcengine raw response (paste me if data looks wrong)"
+    );
+
     if !status.is_success() {
-        let body_text = resp.text().await.unwrap_or_default();
         return Err(FetchError::server(
             t!(
                 "error.common.http_error",
                 provider = "Volcengine Ark",
                 status = status.as_u16(),
-                body = body_text.chars().take(200).collect::<String>()
+                body = raw_text.chars().take(200).collect::<String>()
             )
             .into_owned(),
         ));
     }
 
-    let raw: Value = resp.json().await.map_err(|e| {
+    let raw: Value = serde_json::from_str(&raw_text).map_err(|e| {
         FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
     })?;
 
@@ -414,28 +425,35 @@ fn parse(
                     .and_then(|v| v.as_f64())
                     .map(|f| f as i64)
             });
-        // CodexBar schema 用 Percent 字段(0.0~1.0),我们 v0.2.5 schema 用
-        // Remaining+Total 算 utilization。两种都支持。
-        let (remaining, total) = if let Some(percent) = super::parse::num_f64(
+        // CodexBar #1724 + ccswitch 实测 schema:
+        // - QuotaUsage[] 形态: Level="session"/"weekly"/"monthly"(小写) + Percent 字段
+        //   **语义是"已用百分比 0.0~1.0"**(不是剩余)。cc-switch 拿 Percent 直接
+        //   乘 100 显示 "5h: 0%"(已用 0%)。
+        // - UsageList[] 形态: Level="Session"/"Weekly"/"Monthly"(大写) + Remaining
+        //   + Total 字段(我们 v0.2.5 schema 假设这个,实测火山 Coding Plan 不返)。
+        let (used, total) = if let Some(percent) = super::parse::num_f64(
             entry.get("Percent").unwrap_or(&Value::Null),
         ) {
-            // Percent schema: percent 0.0~1.0,total=100,remaining=100-percent*100
-            let total = 100.0;
-            let remaining = ((1.0 - percent) * 100.0).max(0.0);
-            (remaining, total)
+            // Percent schema: percent 0.0~1.0,已用。total 兜底 100。
+            let used = (percent * 100.0).clamp(0.0, 100.0);
+            (used, 100.0)
         } else {
             let remaining = super::parse::num_f64(
                 entry.get("Remaining").unwrap_or(&Value::Null),
             );
-            let total = super::parse::num_f64(entry.get("Total").unwrap_or(&Value::Null));
-            match (remaining, total) {
-                (Some(r), Some(t)) if t > 0.0 => (r, t),
+            let total_v = super::parse::num_f64(entry.get("Total").unwrap_or(&Value::Null));
+            match (remaining, total_v) {
+                (Some(r), Some(t)) if t > 0.0 => ((t - r).max(0.0), t),
                 _ => continue,
             }
         };
 
-        let used = (total - remaining).max(0.0);
-        let utilization = ((used / total) * 100.0).clamp(0.0, 100.0);
+        let utilization = if total > 0.0 {
+            (used / total * 100.0).clamp(0.0, 100.0)
+        } else {
+            0.0
+        };
+        let remaining = (total - used).max(0.0);
 
         let label = match level.as_str() {
             "session" => t!("row.five_hour").to_string(),
@@ -793,6 +811,9 @@ mod tests {
     #[test]
     fn parse_handles_overshoot() {
         // remaining > total（超用恢复中）—— used clamp 不为负
+        // 浮窗不直接读 remaining 字段,显示的是 utilization + resets_at + label,
+        // 所以 parse 内部 `remaining = total - used` 是为前端兼容"used/total"
+        // 渲染模板;测试改成验 used/utilization 的 clamp 行为。
         let raw = json!({
             "Result": {
                 "Code": "Success",
@@ -804,8 +825,11 @@ mod tests {
         });
         let snap = parse(&raw, "volcengine_ark", "Volcengine Ark").expect("parse");
         let r = &snap.rows[0];
-        assert_eq!(r.used, Some(0.0)); // max(0)
-        assert_eq!(r.remaining, Some(1250.0));
+        // used = (1200 - 1250).max(0) = 0 → utilization = 0%
+        assert_eq!(r.used, Some(0.0));
+        assert_eq!(r.total, Some(1200.0));
+        // remaining 字段保留 total-used 推导值(>=0),超用时钳到 0
+        assert_eq!(r.remaining, Some(1200.0));
         assert_eq!(r.utilization, Some(0.0));
     }
 

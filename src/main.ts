@@ -539,12 +539,20 @@ function touchFitReason() {
 ///
 /// 用"首个 child 顶边 → 末个 child 底边"的跨度 + 上下 padding：
 /// 中间所有 gap / margin 都天然算进跨度里，不像逐个累加那样漏算而"吞掉"
-/// 最后一张卡（回归：Tavily 卡底部被裁）。首尾 rect 随滚动同步平移，差值
-/// 稳定，无需处理 scrollTop。
+/// 最后一张卡（回归：Tavily 卡底部被裁）。
+///
+/// **必须用 offsetTop/offsetHeight，不能用 getBoundingClientRect**：
+/// .card 有 `will-change: backdrop-filter` + heartbeat `transform: rotate()`
+/// + `backdrop-filter`，在 WKWebView 里是独立合成层。#app 是 overflow-y:auto
+/// 滚动容器，合成层子元素的 getBoundingClientRect()（视口坐标）在滚动时偶发
+/// 漂移（WebKit 合成层 + scroll 已知怪异），导致 span 随 scrollTop 变化 ->
+/// fit 反馈环发散 -> "鼠标越往下滚浮窗缩得越快、缩到一行"（回归：末卡
+/// error 态把内容拉到超出窗口可滚时，失焦后滚轮触发）。offsetTop/offsetHeight
+/// 是布局坐标，与 scroll / transform / 合成层完全无关，差值恒等于内容自然高度。
 ///
 /// **box-shadow 也要算**（[Tavily 底部被裁 - 第二次] 回归）：data-hover 切到
 /// true 时 .card 的 box-shadow 从 0 升到 `0 10px 30px rgba(0,0,0,.45)`，阴影
-/// 渲染到卡片**外**部 30px。getBoundingClientRect() 不含 shadow,最后一张卡
+/// 渲染到卡片**外**部 30px。offsetHeight 不含 shadow,最后一张卡
 /// 底下如果不预留 shadow 高度就被浮窗下沿裁了。手动从 box-shadow CSS 串
 /// 抽出第 3 个数(blur 半径)再加一点,既能 fit 到 shadow 边缘,又不会太宽。
 function measureContentHeight(appEl: HTMLElement): number {
@@ -553,19 +561,23 @@ function measureContentHeight(appEl: HTMLElement): number {
   const padBottom = parseFloat(cs.paddingBottom) || 0;
   const children = Array.from(appEl.children) as HTMLElement[];
   if (children.length === 0) return padTop + padBottom;
-  const first = children[0].getBoundingClientRect();
-  const last = children[children.length - 1].getBoundingClientRect();
-  const firstMt = parseFloat(getComputedStyle(children[0]).marginTop) || 0;
-  const lastMb = parseFloat(getComputedStyle(children[children.length - 1]).marginBottom) || 0;
+  const firstEl = children[0];
+  const lastEl = children[children.length - 1];
+  // offsetTop/offsetHeight 是布局坐标，与 scroll/transform/合成层无关（见上方
+  // 函数注释）。getBoundingClientRect() 在滚动合成层下漂移 -> fit 反馈环 -> 浮窗缩一行。
+  const firstTop = firstEl.offsetTop;
+  const lastBottom = lastEl.offsetTop + lastEl.offsetHeight;
+  const firstMt = parseFloat(getComputedStyle(firstEl).marginTop) || 0;
+  const lastMb = parseFloat(getComputedStyle(lastEl).marginBottom) || 0;
   // 末卡 box-shadow 向下延伸量。CSS 写 `0 Xpx Ypx rgba(...)`:
   //   - X = 横向 offset（这里都是 0）
   //   - Y = 纵向 offset（hover 时是 10）
   //   - 第三个 = blur 半径(hover 时是 30,会向下散开 30px)
   // 经验值:blur 之外还要加 ~10px 给阴影柔和边缘留余地,否则 sub-pixel
   // 舍入还是会把最外层 1-2px 阴影裁掉。
-  const lastShadow = getComputedStyle(children[children.length - 1]).boxShadow;
+  const lastShadow = getComputedStyle(lastEl).boxShadow;
   const shadowExtra = parseBoxShadowExtraBottom(lastShadow);
-  const span = last.bottom - first.top + firstMt + lastMb;
+  const span = lastBottom - firstTop + firstMt + lastMb;
   // 向上取整 1px，避免 sub-pixel 舍入把末卡底边裁掉
   return Math.ceil(padTop + span + padBottom + shadowExtra);
 }

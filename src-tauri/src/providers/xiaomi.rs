@@ -316,6 +316,20 @@ pub(crate) enum AuthStrategy {
     BearerThenCookie,
 }
 
+/// BUG-003 fix (2026-07-29 审查): 判断 HTTP 401 body 是否是 HTML 错误页
+/// (CDN/origin outage 而非真实 auth 失败)。仅当 body 明显是 HTML
+/// (DOCTYPE / `<html>` + error 关键字) 时才归 ServerError,其他所有情况
+/// (空 / 中文 / 短 JSON / 普通 text) 一律归 AuthFailed。
+///
+/// 返回 true 表示"这是 HTML 错误页,401 应该是 server 错",false 表示
+/// "401 是真 auth 失败,引导用户重新登录"。
+pub(crate) fn is_html_error_page(body: &str) -> bool {
+    let body_lc = body.to_lowercase();
+    body_lc.starts_with("<!doctype")
+        || body_lc.starts_with("<html")
+        || (body_lc.contains("<html") && body_lc.contains("error"))
+}
+
 pub(crate) fn decide_auth_strategy(creds: &Credentials) -> AuthStrategy {
     let has_key = creds
         .api_key
@@ -499,13 +513,24 @@ impl Xiaomimimo {
 
         let status = resp.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
-            // H15 fix: 401 可能是 CDN 短暂 origin outage（返 HTML login 页）而不是真实
-            // auth 失败。看 body 区分：含 login/session 关键字 = auth 类；其他 = server 类。
+            // BUG-003 fix (2026-07-29 审查): HTTP 401 是鉴权状态码,
+            // **默认**归 AuthFailed 而不是依赖 body 关键字嗅探。旧实现
+            // 要求 body 含 "login"/"session"/"token" 才判 auth,
+            // 但真实鉴权失败响应完全可能:
+            //   - body 为空 (cdn/edge 截断)
+            //   - body 为中文 (小米真实返回可能是 "登录已过期" 等)
+            //   - body 是 JSON {"code":40101,"msg":"未登录"} (无关键字)
+            // 这些全被错归为 ServerError,前端不展示重新登录入口,用户
+            // 不知道是 cookie 失效。
+            //
+            // 401 的语义就是 "auth missing/invalid",让前端触发
+            // relogin-xiaomi 引导用户走一键登录。只有 body 明确显示
+            // 是 CDN/HTML error page (整段 HTML) 时才视作 server 错。
             let body_preview = resp.text().await.unwrap_or_default();
-            let looks_like_auth = body_preview.to_lowercase().contains("login")
-                || body_preview.to_lowercase().contains("session")
-                || body_preview.to_lowercase().contains("token");
-            if looks_like_auth {
+            // 仅当 body 明显是 HTML 错误页 (非 auth 主题) 才判 server。
+            // JSON / 空 / 短文本 → 默认 auth (见 is_html_error_page helper)。
+            let looks_like_html_error = is_html_error_page(&body_preview);
+            if !looks_like_html_error {
                 return Err(FetchError::auth(
                     t!("error.xiaomi.cookie_invalid_hint").into_owned(),
                 ));
@@ -1027,6 +1052,42 @@ mod tests {
         assert_eq!(snap.rows.len(), 1, "套餐和总额度相等 → 只显示套餐 1 行");
         assert_eq!(snap.rows[0].label, t!("row.plan"));
         assert!((snap.rows[0].utilization.unwrap() - 13.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn is_html_error_page_basic_html() {
+        assert!(is_html_error_page("<!DOCTYPE html><html><body>403</body></html>"));
+        assert!(is_html_error_page("<html><body>error</body></html>"));
+    }
+
+    #[test]
+    fn is_html_error_page_rejects_json() {
+        // BUG-003: JSON 401 响应不能被当成 HTML 错误页
+        assert!(!is_html_error_page("{\"code\":40101,\"msg\":\"未登录\"}"));
+        assert!(!is_html_error_page(r#"{"error":"invalid_token"}"#));
+    }
+
+    #[test]
+    fn is_html_error_page_rejects_chinese() {
+        // BUG-003: 中文鉴权失败响应不能被当成 HTML 错误页
+        assert!(!is_html_error_page("登录已过期,请重新登录"));
+        assert!(!is_html_error_page("会话失效"));
+        assert!(!is_html_error_page("token 无效"));
+    }
+
+    #[test]
+    fn is_html_error_page_rejects_empty_and_short() {
+        // BUG-003: 空 body / 短 text 是 401 真 auth 失败的常见形态
+        assert!(!is_html_error_page(""));
+        assert!(!is_html_error_page("Unauthorized"));
+        assert!(!is_html_error_page("401"));
+    }
+
+    #[test]
+    fn is_html_error_page_handles_doctype_variants() {
+        // DOCTYPE 大小写不敏感 (HTML5 标准是小写,但实际 server 常返大写)
+        assert!(is_html_error_page("<!DOCTYPE html><body>...</body>"));
+        assert!(is_html_error_page("<!doctype html><body>...</body>"));
     }
 
     #[test]

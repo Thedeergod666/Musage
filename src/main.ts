@@ -547,7 +547,6 @@ async function fitOnObserverTick() {
     const screenH = window.screen?.availHeight ?? 2400;
     const maxH = Math.max(200, screenH);  // 余量 0 -- availHeight 已扣菜单栏/Dock，榨干每像素（旧 -80 在 stepfun 加入后内容顶过屏幕被裁）
     const target = Math.round(Math.min(contentH, maxH));
-    showFitDebug(contentH, maxH, screenH);  // 临时诊断：内容超屏时右上角红标，定位完删 showFitDebug + 调用处
     if (Math.abs(window.innerHeight - target) <= 1) return;
     lastFitWindowH = target;
     try {
@@ -564,26 +563,6 @@ async function fitOnObserverTick() {
 /// observer 自己盯住 #app 后续所有 contentBox 变化（rows 后插、切简洁
 /// 模式删 row、关 footer 等），不需要 fingerprint 协调。这里只确保
 /// observer 装上 + 清掉 lastFitContentH 让下次变化一定会触发 fit。
-/// 临时诊断：contentH 超过 maxH（内容放不进屏幕）时浮窗右上角红标显示数值。
-/// 不溢出则隐藏 -- 问题解决后红标自动消失。定位完删整段 + 调用处。
-function showFitDebug(contentH: number, maxH: number, screenH: number) {
-  let el = document.getElementById("__fitdbg");
-  if (contentH <= maxH) {
-    el?.remove();
-    return;
-  }
-  if (!el) {
-    el = document.createElement("div");
-    el.id = "__fitdbg";
-    el.style.cssText =
-      "position:fixed;top:2px;right:2px;background:#ff453a;color:#fff;" +
-      "font-family:monospace;font-size:10px;z-index:99999;padding:2px 4px;" +
-      "border-radius:3px;pointer-events:none;";
-    document.body.appendChild(el);
-  }
-  el.textContent = `H=${contentH} max=${maxH} scr=${screenH} +${contentH - maxH}`;
-}
-
 function touchFitReason() {
   void installAutoResizeObserver();
   lastFitContentH = -1;

@@ -254,8 +254,12 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
                 // 的 drop 不能清新流程的锁(否则用户重复点登录会出现并发提取)。
                 let _extracting_guard = ExtractingGuard::new(my_gen);
                 let result = extract_with_retry(&window_clone, &app2, my_gen).await;
-                // 显式 store 保留显式锁语义给阅读者,guard 是 panic 兜底。
-                EXTRACTING.store(false, Ordering::SeqCst);
+                // 注意: 不显式 EXTRACTING.store(false) —— ExtractingGuard
+                // 的 Drop 已经做这件事,而且带 gen 检查 (is_current_gen)。
+                // 显式 store 会无视 gen,老流程可能在新流程拿锁之后才跑到
+                // 这里 → 把新流程的锁清掉 → 两个流程并发提取 (audit H1
+                // 2026-07-29)。guard 在任意路径退出(正常/Err/panic)都跑
+                // Drop,这里不再需要额外兜底。
 
                 // gen 已被新流程取代 → 静默退出,不发任何事件
                 if !is_current_gen(my_gen) {

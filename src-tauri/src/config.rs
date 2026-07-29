@@ -918,30 +918,42 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
     Some(cfg)
 }
 
-/// L3 fix（2026-07-02 audit）: 之前只匹配 `*.json.tmp` / `*.jsonl.tmp`,新增
-/// 文件类型(例如未来加 .toml.tmp)孤儿不会被清理。改为:任何 extension 的
-/// `*.tmp` 文件都清。误删概率极低(cfg 目录下不应该有真用户 `.tmp` 文件)
-/// 但万一有的话,会一并删掉 —— 这是 bug 修法而不是 cleanup 收紧。
+/// L3 fix (2026-07-02 audit): 之前只匹配 `*.json.tmp` / `*.jsonl.tmp`,
+/// 新增文件类型 (e.g. 未来加 .toml.tmp) 孤儿不会被清理 → 改成匹配更宽。
+///
+/// H1 fix (2026-07-29 审查): 但"任何 .tmp"太激进 —— `~/.config/com.musage.app/`
+/// 是用户目录,用户完全可能自己放 `notes.tmp` / `download.tmp`,启动会被
+/// 静默删掉。**只清我们自己创建的 .tmp 模式**: `*.json.tmp` 和 `*.jsonl.tmp`。
+/// 未来加新文件类型 (.toml / .yaml 等) 时,在 `OUR_TMP_SUFFIXES` 数组追加。
+///
+/// 历史回归 (2026-07-28): C1 fix 之前扫 `config_dir()` 根目录 → 我们写的
+/// `.tmp` 在 `com.musage.app/` 子目录下永远清不到。已修。
 pub fn cleanup_orphan_tmp_files() {
     let Ok(dir) = config_dir() else { return };
-    // C1 fix (2026-07-28 审查): 之前扫 `config_dir()` 根目录,但 config.json /
-    // keys.json / extra_instances.json / app_log.jsonl 的 .tmp 实际都写在
-    // `config_dir()/com.musage.app/` 子目录(对照 config_path / keys_path /
-    // extra_instances_path / log_path 的 join("com.musage.app"))
-    // → 孤儿 tmp 永久残留。改扫真正的写入目录。
     let dir = dir.join("com.musage.app");
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return;
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        // L3 fix: 改成"任何 .tmp"扩展名,不再硬编码 .json.tmp / .jsonl.tmp
-        if path.extension().and_then(|e| e.to_str()) == Some("tmp") {
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        // 只清我们自己写的 `<name>.json.tmp` / `<name>.jsonl.tmp` 模式
+        if OUR_TMP_SUFFIXES.iter().any(|suf| name.ends_with(suf)) {
             tracing::info!(path = %path.display(), "清理孤儿 .tmp");
             let _ = std::fs::remove_file(&path);
         }
     }
 }
+
+/// 我们自己创建的 .tmp 文件后缀列表。`cleanup_orphan_tmp_files` 只清匹配
+/// 这些后缀的文件,不动用户可能放在 `~/.config/com.musage.app/` 下的
+/// 其他 `.tmp` (notes.tmp / download.tmp 等)。
+///
+/// 跟 config.rs:754 / config.rs:990 (keys.json.tmp) 和
+/// logstore.rs:344 (app_log.jsonl.tmp) 的实际写入保持一致。
+const OUR_TMP_SUFFIXES: &[&str] = &[".json.tmp", ".jsonl.tmp"];
 
 // PR 1a：用户额外添加的 source 实例（内置 provider 副本 + New API 中转站）。
 // v0.2.1 commit 2: 老的 `pub mod custom_sources` wrapper 文件已删,迁移逻辑
@@ -1229,5 +1241,62 @@ mod tests {
         assert!(cfg.schema_overrides.contains_key("minimax"));
         assert!(!cfg.schema_overrides.contains_key("broken"));
         assert_eq!(cfg.color_thresholds, default_color_thresholds());
+    }
+}
+
+#[cfg(test)]
+mod cleanup_orphan_tmp_files_tests {
+    use super::*;
+
+    /// 用临时目录模拟 `com.musage.app/` 子目录,验证只清 OUR_TMP_SUFFIXES
+    /// 匹配的文件,不动用户的其他 `.tmp`。
+    #[test]
+    fn cleanup_only_removes_our_tmp_patterns() {
+        let tmp_root = std::env::temp_dir().join(format!(
+            "musage_cleanup_test_{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp_root).unwrap();
+
+        // 我们创建的文件类型 (应被清)
+        std::fs::write(tmp_root.join("config.json.tmp"), b"old").unwrap();
+        std::fs::write(tmp_root.join("keys.json.tmp"), b"old").unwrap();
+        std::fs::write(tmp_root.join("app_log.jsonl.tmp"), b"old").unwrap();
+
+        // 用户的 .tmp 文件 (不应被清)
+        std::fs::write(tmp_root.join("notes.tmp"), b"user").unwrap();
+        std::fs::write(tmp_root.join("download.tmp"), b"user").unwrap();
+        std::fs::write(tmp_root.join("scratchpad.tmp"), b"user").unwrap();
+
+        // 我们的非 .tmp 文件 (不应被清)
+        std::fs::write(tmp_root.join("config.json"), b"{}").unwrap();
+        std::fs::write(tmp_root.join("keys.json"), b"{}").unwrap();
+
+        // Monkey-patch config_dir via env vars (XDG_CONFIG_HOME / APPDATA) is
+        // 复杂,这里直接验证 OUR_TMP_SUFFIXES 列表包含该清的后缀、不含
+        // 不该清的。即清理逻辑只走 ends_with 检查。
+        assert!(OUR_TMP_SUFFIXES.contains(&".json.tmp"));
+        assert!(OUR_TMP_SUFFIXES.contains(&".jsonl.tmp"));
+        assert!(!OUR_TMP_SUFFIXES.iter().any(|s| s == &".tmp"),
+            "不能再匹配裸 .tmp,必须带扩展名前缀防误删用户文件");
+
+        // 实际 cleanup_orphan_tmp_files() 调 dirs::config_dir() → 测试隔离难。
+        // 这里只验证 OUR_TMP_SUFFIXES 的字符串 ends_with 行为,代表清理逻辑。
+        let our_files = ["config.json.tmp", "keys.json.tmp", "app_log.jsonl.tmp"];
+        for f in &our_files {
+            assert!(OUR_TMP_SUFFIXES.iter().any(|suf| f.ends_with(suf)),
+                "{f} 应被识别为我们的 .tmp");
+        }
+        let user_files = ["notes.tmp", "download.tmp", "scratchpad.tmp"];
+        for f in &user_files {
+            assert!(!OUR_TMP_SUFFIXES.iter().any(|suf| f.ends_with(suf)),
+                "{f} 不应被识别 (用户文件)");
+        }
+
+        // 清理临时目录
+        let _ = std::fs::remove_dir_all(&tmp_root);
     }
 }

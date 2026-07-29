@@ -95,6 +95,7 @@
 //! 人眼不可感知。
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -137,6 +138,19 @@ static LEVEL_SWITCHING_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// re-assert 又被 `raised == false` 短路 → 浮窗永久卡 HWND_BOTTOM。
 static HOVER_STATE_RESET: AtomicBool = AtomicBool::new(false);
 
+/// T1 fix (2026-07-29 审查): serialize apply_z_order 内部的
+/// read-modify-write of GWL_EXSTYLE。Hover emitter 线程 (start_hover_emitter)
+/// 和 main thread (set_window_pin_bottom/top/normal 走 run_on_main_thread)
+/// 会并发调 apply_z_order —— 之前没人加锁，两个线程各自
+/// GetWindowLongW → 改 bit → SetWindowLongW,last writer wins,出现
+/// "TopMost 切 Bottom 后又被 TopMost 覆盖回来"或反向的中间态。
+/// 用全局 Mutex 串行化 RMW 段,SetWindowPos 那条路 A 仍在锁内
+/// (HWND_BOTTOM/TOPMOST z-order 也是要"最后调用的赢",锁一起更稳)。
+fn z_order_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
 /// 浮窗的 z-order 模式。直接走 `SetWindowPos` 的 3 个目标值之一。
 #[derive(Debug, Clone, Copy)]
 enum ZOrder {
@@ -172,6 +186,18 @@ enum ZOrder {
 /// `SetWindowPos` + `SetWindowLongW` 都是 Win32 kernel call，文档
 /// 明确 thread-safe，可从任意线程调。
 unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
+    // T1 fix (2026-07-29 审查): 全局锁串行化 RMW。Mutex 在跨线程使用
+    // 极短 (微秒级,Win32 API 都是 syscall 阻塞 <1ms),不会成为瓶颈。
+    // 用 lock_recover 风格 (unwrap_or_else) 防 hover emitter panic 毒化
+    // 后整个 z-order 切换永久死锁 —— apply_z_order poison 后 caller
+    // 应能继续正常工作 (只是不再有互斥保证)。
+    let _g = match z_order_lock().lock() {
+        Ok(g) => g,
+        Err(p) => {
+            tracing::warn!("apply_z_order: z-order 锁 poisoned,继续执行 (互斥保证失效)");
+            p.into_inner()
+        }
+    };
     // fix (2026-07-28 审查, T9): null hwnd 防御 —— 正常路径拿不到 null，
     // 但窗口销毁竞态下显式 early return 比依赖 Win32 失败返回更清楚。
     debug_assert!(!hwnd.is_null());

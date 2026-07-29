@@ -93,7 +93,9 @@
 //!    失败路径已加响应体诊断日志（`[diag] stepfun ...`）便于排查。
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::pin::Pin;
+use std::sync::{Arc, OnceLock};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -117,6 +119,16 @@ const URL_PLAN_STATUS: &str =
 /// 半段 ~30 天 —— 浏览器靠它持续续期，我们也一样。
 const URL_REFRESH: &str =
     "https://platform.stepfun.com/passport/proto.api.passport.v1.PassportService/RefreshToken";
+
+/// BUG-001 fix (2026-07-29 审查): per-unique_id 锁串行化 refresh。
+/// 同一 instance (e.g. stepfun#1) 的 refresh 调用必须互斥 —— 并发时
+/// 两次都拿同一旧 refresh 半段去 POST RefreshToken,服务端 rotate 后
+/// 第二次必败 (40114 revoked)。锁内跑 "读 keys.json → POST → 写回"
+/// 完整闭环,确保第二个 caller 看到的是已 rotate 的新 refresh。
+///
+/// 不同 unique_id 之间不互斥 (instance 独立 refresh 配额)。
+static REFRESH_LOCKS: OnceLock<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+    OnceLock::new();
 
 /// CodexBar 的 login/register 流使用的默认 Webid。
 ///
@@ -513,6 +525,18 @@ async fn fetch_plan_status(token: &str) -> Result<Option<String>, FetchError> {
 /// 响应 `{accessToken: {raw}, refreshToken: {raw}}`（顶层，兼容 `data` 嵌套）。
 /// 服务端没返新 refresh 半段时保留旧的（CodexBar 同款兜底）。
 async fn refresh_oasis_token(token: &str, unique_id: &str) -> Result<String, FetchError> {
+    // BUG-001 fix: 拿 per-unique_id 锁,跨 caller (poller tick / 手动刷
+    // 新 / 401 兜底) 串行化 refresh。锁拿不到时 (panic poison) 走
+    // recover 继续 —— 互斥保证失效但至少不永久死锁。
+    let _refresh_guard = {
+        let locks = REFRESH_LOCKS.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()));
+        let mut g = locks.lock().await;
+        let lock = g
+            .entry(unique_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        Arc::clone(&lock).lock_owned().await
+    };
     let client = shared_client();
     let webid = device_id_for_token(token).unwrap_or_else(|| DEFAULT_WEBID.to_string());
 

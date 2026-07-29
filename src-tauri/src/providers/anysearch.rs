@@ -75,7 +75,9 @@
 //! 注：速率限制（QPS）副行按产品要求**不展示**，只留主配额行。
 
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::pin::Pin;
+use std::sync::{Arc, OnceLock};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -86,6 +88,13 @@ use super::{
 };
 
 use crate::t;
+
+/// BUG-001 fix (2026-07-29 审查): per-unique_id 锁串行化 refresh。
+/// 同一 instance 的 refresh 调用必须互斥 —— 并发时两次都拿同一旧
+/// refresh_token 去 POST,服务端 revoke 旧的,第二次必败 (40114)。
+/// 不同 unique_id 之间不互斥 (instance 独立 refresh 配额)。
+static REFRESH_LOCKS: OnceLock<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
+    OnceLock::new();
 
 /// console 内部用量端点（需要 user session JWT，不接受 `as_sk_` API key）。
 /// 必须是 `/api/api/user/billing/overview` —— overview 页直接调它，
@@ -231,6 +240,17 @@ fn access_expires_in_secs(access: &str) -> Option<i64> {
 /// refresh token 单次轮换，不写回下一轮就废。写回失败只 warn 不阻塞（本轮拿到的
 /// 新 access 仍可用，只是下次得重登）。返回新的 combined token。
 async fn refresh_token(refresh: &str, unique_id: &str) -> Result<String, FetchError> {
+    // BUG-001 fix: per-unique_id 锁串行化 refresh。lock_recover 风格
+    // 处理 poison,保证 panic 后 caller 不永久死锁。
+    let _refresh_guard = {
+        let locks = REFRESH_LOCKS.get_or_init(|| tokio::sync::Mutex::new(HashMap::new()));
+        let mut g = locks.lock().await;
+        let lock = g
+            .entry(unique_id.to_string())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        Arc::clone(&lock).lock_owned().await
+    };
     let client = shared_client();
     let resp = client
         .post(REFRESH_URL)

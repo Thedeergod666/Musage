@@ -2457,6 +2457,7 @@ dependencies = [
  "objc2-app-kit",
  "objc2-core-graphics",
  "objc2-foundation",
+ "regex",
  "reqwest 0.12.28",
  "rust-i18n",
  "serde",

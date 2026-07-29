@@ -32,6 +32,10 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 imageproc = { version = "0.25", default-features = false }
 ab_glyph = "0.2"
 chrono = "0.4"
+# v0.2.5 (audit 2026-07-29 H3): logstore redact_message 用正则识别
+# Bearer / sk-* / JWT / Oasis-Token / Cookie 等敏感模式。regex 是 reqwest
+# 传递依赖但显式声明避免上层重构时传递依赖被去掉。
+regex = "1"
 anyhow = "1"
 thiserror = "1"
 clap = { version = "4", features = ["derive"] }

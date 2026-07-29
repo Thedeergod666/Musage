@@ -79,6 +79,68 @@ pub struct LogEntry {
     pub message: String,
 }
 
+/// 已知敏感模式 → `<redacted>`。
+///
+/// 覆盖：
+/// - `Bearer xxx` / `Basic xxx` HTTP 头
+/// - `sk-*` / `sk-or-v1-*` / `sk-cp-*` provider key 前缀
+/// - `tvly-*` / `tp-*` / `tk-*` 各家自定义前缀
+/// - `eyJ...` JWT 三段式
+/// - `Oasis-Token=` / `Oasis-Refresh-Token=` / `MUSAGE_TOKEN=` cookie 名
+/// - `Cookie:` / `Set-Cookie:` 整行（即便值不匹配上面也遮蔽，最保守）
+///
+/// **正则 caveat**：贪婪匹配到下一个分隔符（空格 / 引号 / 逗号 / 行尾），
+/// 不会跨越这些边界。多个 token 在同一行也会全部被替换。
+///
+/// 用于 [`LogEntry`] 三种构造器 + 写盘前的 `append_entry`，**两层防御**
+/// 防 caller 漏掉调用 redact。
+pub fn redact_message(s: &str) -> std::borrow::Cow<'_, str> {
+    use std::borrow::Cow;
+    use std::sync::OnceLock;
+    use regex::Regex;
+
+        static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        // 用 raw string 拼接 (concat!)，避免 Rust normal string 把 "\t" / "\s"
+        // 转义成字面 "\ + t/s"——regex 引擎收到错的字符类。raw string 里每一个
+        // "\t" "\s" "\b" 都是真的 regex 转义；字符类 "[ \t]" 才是真的「空格 或 tab」。
+        // 之前的 `(?ix)` 配 normal string 的写法因为双层转义全部错位：
+        //   - Bearer[ \t]+ 实际收到 "[\t]+"（单 \ + tab），regex 字符类变 "[\t]"，
+        //     只匹配 tab 不匹配 space → "Bearer xxx" 全行不命中
+        //   - \b 在 (?ix) 下仍是 word boundary，但 ?ix 把正常空格也吃掉 → 多余噪音
+        // 用 raw string 后这些全部回归正常。
+        Regex::new(concat!(
+            // 不开 (?i) —— 全局 case-insensitive 会让 "cookie:" (lowercase)
+            // 也匹配 `(?:Cookie|Set-Cookie):`,在 "; cookie: tk-xxx" 这种
+            // 业务错误串里误吞整行 → 后续 sk-/eyJ/等 pattern 全被吃掉。
+            // 改为局部 [Bb]earer/[Bb]asic (HTTP 头按 RFC 大小写不敏感,实际
+            // 日志里两种都见过),Cookie/Set-Cookie 保持字面 (HTTP 规范就是
+            // 这两个拼写,无歧义)。prefix (sk-/tvly-/tp-/tk-/eyJ) 全 case-
+            // sensitive (厂商 token 格式都是 lowercase)。
+            r"(?:",
+                r"[Bb]earer\s+[A-Za-z0-9._\-+/=]{8,}",
+                r"|[Bb]asic\s+[A-Za-z0-9._\-+/=]{4,}",
+                r"|\bsk-[A-Za-z0-9_\-]{8,}",
+                r"|\bsk-or-v1-[A-Za-z0-9_\-]{8,}",
+                r"|\bsk-cp-[A-Za-z0-9_\-]{8,}",
+                r"|\btvly-[A-Za-z0-9_\-]{8,}",
+                r"|\btp-[A-Za-z0-9_\-]{8,}",
+                r"|\btk-[A-Za-z0-9_\-]{8,}",
+                r"|\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{2,}\.[A-Za-z0-9_\-]{2,}",
+                r"|Oasis-Token=[^\s;,]+",
+                r"|Oasis-Refresh-Token=[^\s;,]+",
+                r"|MUSAGE_TOKEN=[^\s;,]+",
+                r"|(?:Cookie|Set-Cookie):[^\n]+",
+            r")",
+        ))
+        .expect("redact regex compile failed")
+    });
+    if !re.is_match(s) {
+        return Cow::Borrowed(s);
+    }
+    Cow::Owned(re.replace_all(s, "<redacted>").into_owned())
+}
+
 /// 进程内全局单例。`Arc<Mutex<VecDeque>>` 是 M1 fix 的核心 —— 让
 /// background worker 能 clone 一份共享引用做 disk I/O,主线程 push 的
 /// 锁段只覆盖 ring buffer 的内存更新,不阻塞任何 I/O。
@@ -256,8 +318,17 @@ fn append_entry(entry: &LogEntry) -> std::io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
     }
-    let s = serde_json::to_string(entry).map_err(std::io::Error::other)?;
-    writeln!(f, "{}", s)?;
+    // 双层 redact 防御:构造器已经过 redact,但 caller 也可能直接
+    // 构造 LogEntry{ message: raw_string } 绕过 → 写盘前再过一遍。
+    let safe_entry = LogEntry {
+        ts: entry.ts,
+        level: entry.level,
+        provider: entry.provider.clone(),
+        kind: entry.kind.clone(),
+        message: redact_message(&entry.message).into_owned(),
+    };
+    let json = serde_json::to_string(&safe_entry).map_err(std::io::Error::other)?;
+    writeln!(f, "{}", json)?;
     // M2 fix (2026-07-06 全量审查): flush + sync_all,确保崩溃后最关键
     // 错误日志不丢。否则 forensic 关键时刻(应用 crash 前最后一条 error)
     // 会因为 page cache 没刷盘而缺失 —— 留下"为什么崩溃"的无解之谜。
@@ -317,34 +388,136 @@ fn log_path() -> Result<PathBuf, String> {
 impl LogEntry {
     /// 错误事件 —— `level=Error`，`provider` + `kind` 必填。
     pub fn error(provider: &str, kind: &str, message: impl Into<String>) -> Self {
+        let msg = message.into();
         Self {
             ts: chrono::Utc::now().timestamp_millis(),
             level: LogLevel::Error,
             provider: Some(provider.to_string()),
             kind: Some(kind.to_string()),
-            message: message.into(),
+            // H3 fix (2026-07-29 审查): 跟 warn/info 一样走 redact_message,
+            // 否则 caller 直接构造 LogEntry::error 时带 Bearer/sk-/etc. 的
+            // 错误串会落盘到 app_log.jsonl。即使 append_entry 写盘前还有一层
+            // 兜底 (safe_entry),构造器层先 redact 能省一次分配,也防 caller
+            // 误把同一个 LogEntry 通过 IPC 直接吐给前端展示 (那层没双层兜底)。
+            message: redact_message(&msg).into_owned(),
         }
     }
 
-    /// 警告事件。其它字段按需填。
+    /// 警告事件。其它字段按需填。`message` 自动过 [`redact_message`]。
     pub fn warn(provider: Option<&str>, message: impl Into<String>) -> Self {
+        let msg = message.into();
         Self {
             ts: chrono::Utc::now().timestamp_millis(),
             level: LogLevel::Warn,
             provider: provider.map(|s| s.to_string()),
             kind: None,
-            message: message.into(),
+            message: redact_message(&msg).into_owned(),
         }
     }
 
-    /// 信息事件。
+    /// 信息事件。`message` 自动过 [`redact_message`]。
     pub fn info(provider: Option<&str>, message: impl Into<String>) -> Self {
+        let msg = message.into();
         Self {
             ts: chrono::Utc::now().timestamp_millis(),
             level: LogLevel::Info,
             provider: provider.map(|s| s.to_string()),
             kind: None,
-            message: message.into(),
+            message: redact_message(&msg).into_owned(),
         }
+    }
+}
+
+
+#[cfg(test)]
+mod redact_tests {
+    use super::*;
+
+    #[test]
+    fn bearer_token_redacted() {
+        let s = "HTTP 401: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig returned";
+        let r = redact_message(s);
+        assert!(r.contains("<redacted>"), "r = {r}");
+        assert!(!r.contains("eyJhbGciOiJIUzI1NiJ9"));
+    }
+
+    #[test]
+    fn sk_prefix_redacted() {
+        let r = redact_message("api_key=sk-or-v1-abcdefghij1234567890 not valid");
+        assert!(r.contains("<redacted>"));
+        assert!(!r.contains("sk-or-v1-abcdefghij"));
+    }
+
+    #[test]
+    fn tvly_prefix_redacted() {
+        let r = redact_message("Tavily: tvly-XYZ123abc456 not configured");
+        assert!(r.contains("<redacted>"));
+        assert!(!r.contains("tvly-XYZ"));
+    }
+
+    #[test]
+    fn tp_prefix_redacted() {
+        let r = redact_message("cookie: tp-abcdefgh1234 stored");
+        assert!(r.contains("<redacted>"));
+        assert!(!r.contains("tp-abcdefgh"));
+    }
+
+    #[test]
+    fn jwt_redacted() {
+        let r = redact_message("got token eyJzdWIiOiIxMjM0NTY3ODkwIn0.abc.signature_xyz");
+        assert!(r.contains("<redacted>"));
+        assert!(!r.contains("eyJzdWIiOi"));
+    }
+
+    #[test]
+    fn oasis_cookie_redacted() {
+        let r = redact_message("saved Oasis-Token=eyJabc.signature_x; expires 2030");
+        assert!(r.contains("<redacted>"));
+        assert!(!r.contains("eyJabc"));
+    }
+
+    #[test]
+    fn cookie_header_redacted() {
+        let r = redact_message("Cookie: api-platform_serviceToken=secret123; path=/");
+        assert!(r.contains("<redacted>"));
+        assert!(!r.contains("secret123"));
+    }
+
+    #[test]
+    fn multiple_sensitive_redacted() {
+        let s = "failed auth: Bearer xyz12345678aaa; cookie: tk-aaa111bbb; jwt: eyJabc12345.sig12345.q9";
+        let r = redact_message(s);
+        assert_eq!(r.matches("<redacted>").count(), 3, "r = {r}");
+    }
+
+    #[test]
+    fn plain_text_unchanged() {
+        let s = "provider minimax returned 503 server error";
+        assert_eq!(redact_message(s).as_ref(), s);
+    }
+
+    #[test]
+    fn log_entry_constructors_apply_redact() {
+        let e = LogEntry::error(
+            "minimax",
+            "auth_failed",
+            "Authorization: Bearer eyJhbGciOi.payload.sig invalid",
+        );
+        assert!(!e.message.contains("eyJhbGciOi"), "msg = {}", e.message);
+        assert!(e.message.contains("<redacted>"));
+
+        let w = LogEntry::warn(
+            Some("stepfun"),
+            "token tp-abcdef1234 expired",
+        );
+        assert!(!w.message.contains("tp-abcdef"));
+    }
+
+    #[test]
+    fn redact_is_idempotent() {
+        let s = "Bearer abc12345678xxx";
+        let r1 = redact_message(s);
+        let r2 = redact_message(&r1);
+        assert_eq!(r1.as_ref(), r2.as_ref(), "redact 必须幂等");
     }
 }

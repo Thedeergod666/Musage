@@ -811,9 +811,9 @@ fn draw_percent(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64, 
     };
 
     let s = ICON_SIZE as i32;
-    let scale = PxScale::from(s as f32 * 20.0 / 32.0); // 20 → 40
-                                                       // 两行贴边（间距 = 字号 = 20/40），Bold 数字 cap height ≈ 0.7×scale，
-                                                       // 第一行底 14/28 < 第二行顶 16/32 不重叠
+    let base_scale_f = s as f32 * 20.0 / 32.0; // 20 → 40
+                                               // 两行贴边（间距 = 字号 = 20/40），Bold 数字 cap height ≈ 0.7×scale，
+                                               // 第一行底 14/28 < 第二行顶 16/32 不重叠
     let y_top = 0; //  0 →  0
     let y_bot = s / 2; // 16 → 32
     let pad_right = s * 2 / 32; // 右边留 2px 内边距
@@ -822,8 +822,34 @@ fn draw_percent(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64, 
     let top = format!("{}%", util_top.round() as i64);
     let bot = format!("{}%", util_bot.round() as i64);
 
-    draw_right_text(img, &top, scale, y_top, pad_right, font, color);
-    draw_right_text(img, &bot, scale, y_bot, pad_right, font, color);
+    // H1 fix (2026-07-29 审查): 100% 时 3 位数字 + % 比 99% 多 1 字符,
+    // 原 scale 20/40 下文本宽度约 48/96 px,超出 ICON_SIZE 32/64 → 左边
+    // 被裁掉,看着像 "99" → "00"。按 base_scale 起步,如超宽则按比例缩。
+    // 缩放比例按"目标宽度 / 实际宽度"算,1 字符增量损失 ~20% 字号,
+    // 仍清晰可读。
+    let max_w = s - pad_right;
+    let top_scale = fit_scale(font, &top, base_scale_f, max_w);
+    let bot_scale = fit_scale(font, &bot, base_scale_f, max_w);
+
+    draw_right_text(img, &top, top_scale, y_top, pad_right, font, color);
+    draw_right_text(img, &bot, bot_scale, y_bot, pad_right, font, color);
+}
+
+/// 按给定文本 + 基准 scale 起步,自动缩小到能放进 max_w 像素。
+/// 若基准 scale 已经能放下 → 直接返 base。不会放大(只缩小)。
+fn fit_scale(font: &FontVec, text: &str, base_scale: f32, max_w: i32) -> PxScale {
+    let scaled = font.as_scaled(PxScale::from(base_scale));
+    let w = text
+        .chars()
+        .map(|c| scaled.h_advance(font.glyph_id(c)))
+        .sum::<f32>()
+        .round() as i32;
+    if w <= max_w || w == 0 {
+        return PxScale::from(base_scale);
+    }
+    // 缩放比例 = max_w / w (f32),再 round 到整 px
+    let ratio = max_w as f32 / w as f32;
+    PxScale::from(base_scale * ratio)
 }
 
 /// 在 ICON_SIZE 宽画布上**右对齐**画一行文字，距右边 `pad_right` 像素。
@@ -1031,5 +1057,29 @@ fn truncate(s: &str, max: usize) -> String {
         let mut out: String = s.chars().take(max).collect();
         out.push('…');
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fit_scale_returns_base_when_fits() {
+        let font = load_font().expect("test needs embedded font");
+        let scale = fit_scale(font, "5%", 20.0, 30);
+        assert!((scale.x - 20.0).abs() < 0.01, "短文本保持 base scale");
+    }
+
+    #[test]
+    fn fit_scale_shrinks_100_percent_to_fit() {
+        let font = load_font().expect("test needs embedded font");
+        let scale = fit_scale(font, "100%", 20.0, 30);
+        let scaled = font.as_scaled(scale);
+        let w = "100%".chars()
+            .map(|c| scaled.h_advance(font.glyph_id(c)))
+            .sum::<f32>()
+            .round() as i32;
+        assert!(w <= 30, "100% at fit_scale={} 宽度={w} > max_w=30", scale.x);
     }
 }

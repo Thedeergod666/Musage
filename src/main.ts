@@ -1214,6 +1214,23 @@ function cssEscape(s: string): string {
 // ── 启动 ──
 
 async function init() {
+  // 2026-07-29 audit (A-C1): 错误卡片的"打开设置"按钮必须随时能响应。
+  // 中段（原 line 1485）注册的完整 click handler 支持 .err-btn-retry / -advanced /
+  // -relogin / -copy / -logs 等，但若 init() 后段任何一处 await throw（catch 块没
+  // 覆盖到的代码，比如 listen() / invoke("get_config") / setupHoverRaise 等），
+  // 后续注册代码就 skip，错误卡片按钮死锁。
+  // 兜底：在 init() 顶部注册最小 click handler，只匹配 .err-btn.open-settings /
+  // .empty-state-cta.open-settings，确保无论如何用户都能跳出去修。
+  // 中段的完整 handler 会优先处理其他 .err-btn-* 路径，不冲突。
+  app.addEventListener("click", (e) => {
+    const target = (e.target as HTMLElement).closest<HTMLElement>(
+      ".err-btn.open-settings, .empty-state-cta.open-settings",
+    );
+    if (!target) return;
+    e.stopPropagation();
+    invoke("open_settings_window").catch((err) => console.error(err));
+  });
+
   // ── i18n 初始化：必须在任何 t() 调用前完成（加载 dict） ──
   await initLocale();
   PROVIDER_META = buildProviderMeta();
@@ -1666,4 +1683,13 @@ function setupHoverRaise(mode: FloatingPinMode) {
   document.body.addEventListener("mouseleave", hoverLeaveHandler);
 }
 
-init();
+
+init().catch((e) => {
+  // 2026-07-29 audit (A-C1) 兜底：init() 顶层 throw 时（中段 catch 都没接住），
+  // 渲染 fatal 错误卡片，确保用户能看到错误并跳到设置面板。
+  // 上面的兜底 click handler 已经先注册，所以 open-settings 按钮一定能响应。
+  console.error("[floating] init fatal:", e);
+  if (!document.querySelector(".err-fatal")) {
+    app.innerHTML = `<div class="err err-fatal"><div class="err-title">${escapeHtml(t("floating.loading_error_title"))}</div><div class="err-msg">${escapeHtml(String(e))}</div><button class="err-btn open-settings">${escapeHtml(t("floating.open_settings"))}</button></div>`;
+  }
+});

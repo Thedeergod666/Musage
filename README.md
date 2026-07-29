@@ -1,18 +1,44 @@
 # Musage
 
-> **Musage** = **My** + **Usage**，多 provider AI 套餐实时用量监控的桌面悬浮窗
+> **Musage** = **My** + **Usage**。跨平台 AI 套餐用量监控悬浮窗 —— 把 MiniMax / DeepSeek / Claude Code / Cursor / OpenRouter / 中转站 的 5h · 周限额 + 重置时间钉在桌面。
+>
+> Cross-platform AI quota monitor (Windows / macOS / Linux). Every AI plan limit — MiniMax, DeepSeek, Claude Code, Cursor, OpenRouter, relay stations — pinned on your desktop in a floating window + tray icon.
 
 ![platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-blue) ![tauri](https://img.shields.io/badge/Tauri-2-orange) ![rust](https://img.shields.io/badge/rust-1.77+-orange) ![license](https://img.shields.io/badge/license-MIT-green)
 
+<!-- 📸 TODO: 录一个 5-10s demo gif（浮窗拖动 + 托盘变色 + 多实例并排）放到 .github/assets/hero.gif，然后在上面这行 badges 下加一行 ![hero](.github/assets/hero.gif) -->
+
 ## 为什么做
 
-ccswitch 3.16 的 MiniMax Token Plan 模板在 **2026-06-01 MiniMax 改 schema 后失效**。
-切到 ccswitch 应用里看又繁琐，所以做了这个**常驻悬浮窗** + **托盘图标**，能盯 **11 内置 + 任意 New API 中转站** 的实时用量：
+很多 AI 用量监控工具只支持 macOS、只覆盖海外 coding 订阅（OpenAI Codex / Claude Code / Cursor）。但国内开发者大量在 **Windows** 上，用的是 **MiniMax Token Plan / DeepSeek / 小米 MiMo / 智谱 GLM / Kimi / StepFun** 和各种 **New API 中转站** —— 这块长期没人做好。
+
+Musage 补的就是这个缝：一个跑在 **Windows / macOS / Linux** 三端、**懂国内套餐 + 中转站**、支持**同 provider 多实例**的常驻悬浮窗 + 托盘图标。
 
 - 桌面右上**小卡片**，实时显示每个 provider 的用量 + 重置时间
-- 任务栏托盘**动态图标**，颜色随用量变（绿/橙/红）
+- 任务栏托盘**动态图标**，颜色随用量变（绿 / 橙 / 红）
 - **只需 API Key / Cookie**，不依赖浏览器 session
-- 支持**同 provider 多实例**（同时持 2 个 MiniMax 套餐 / 多个 New API 中转站时一次看完）
+- 支持**同 provider 多实例**（同时持 2 个 MiniMax 套餐 / 多个 New API 中转站一次看完）
+- 支持任意 **New API 中转站**（dmxapi / byteplus / lemondata / ctok / silicon …）自定义接入
+
+> 起因：ccswitch 的 MiniMax Token Plan 模板在 2026-06-01 MiniMax 改 schema 后失效，切应用看又繁琐，索性做了个常驻桌面的。
+
+## 下载安装
+
+直接下 GitHub Release 的现成安装包，不用自己编译：
+
+| 平台 | 安装包 |
+|---|---|
+| Windows | `Musage_*_x64-setup.exe`（NSIS，自动装 WebView2）|
+| macOS | `Musage_*.dmg`（aarch64 / x64 两个）|
+| Linux | `AppImage`（免安装）/ `deb` / `rpm` |
+
+→ [前往最新 Release 下载](https://github.com/Thedeergod666/Musage/releases/latest)
+
+> ⚠️ **macOS 首次安装**：当前是未签名构建，双击会弹「应用已损坏」。把 `Musage.app` 拖进 `/Applications` 后跑一行命令即可：
+> ```bash
+> xattr -cr /Applications/Musage.app && codesign --force --deep --options runtime --sign - /Applications/Musage.app
+> ```
+> 想免这步，等作者配好 Apple Developer ID 走真签名 + 公证（见 [RELEASING.md](RELEASING.md)）。
 
 ## 形态
 
@@ -266,3 +292,5 @@ Copyright (c) 2026 Thedeergod666
 ## Acknowledgements
 
 API schema parsing (MiniMax `coding_plan/remains` percent-based & count-based, DeepSeek `user/balance`) was reverse-engineered and adapted from [**farion1231/cc-switch**](https://github.com/farion1231/cc-switch) (MIT, Copyright (c) 2025 Jason Young). No code was copied — only schema field names, semantics, and the `isValid`-style error classification pattern were referenced.
+
+Several provider endpoints were referenced from [**steipete/CodexBar**](https://github.com/steipete/CodexBar) (MIT, Copyright (c) 2025 Peter Steinberger), including StepFun (`Oasis-Webid` extraction, `RefreshToken` renewal flow, response schema) and Alibaba Bailian (`sec_token` resolution, `GetSubscriptionSummary` endpoint shape). No code was copied - CodexBar is a native Swift / macOS-only app; Musage reimplements the same documented endpoints in Rust for cross-platform use.

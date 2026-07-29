@@ -882,7 +882,7 @@ fn parse_datetime_utc_ms(s: &str) -> Option<i64> {
 /// 显示成次日 07:59，跟 dashboard 上看到的时间不一致，调试时很迷）。
 /// None 时降级显示"(到期时间未知)"。
 fn format_end_utc(ms: Option<i64>) -> String {
-    match ms.and_then(|m| chrono::DateTime::<chrono::Utc>::from_timestamp_millis(m)) {
+    match ms.and_then(chrono::DateTime::<chrono::Utc>::from_timestamp_millis) {
         Some(dt) => dt.format("%Y-%m-%d %H:%M (UTC)").to_string(),
         None => "(到期时间未知)".to_string(),
     }

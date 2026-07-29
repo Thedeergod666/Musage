@@ -221,7 +221,7 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     let menu = build_tray_menu(app)?;
 
     let _tray = TrayIconBuilder::with_id("main-tray")
-        .tooltip(t!("tray.tooltip.loading").to_string())
+        .tooltip(&t!("tray.tooltip.loading"))
         .icon(make_placeholder_icon())
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -397,41 +397,24 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 /// 把浮窗真顶到最上面（**会**抢焦点，但用户点菜单那一瞬间本来就在
 /// 操作我们 app，UX 可接受）。
 fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
-    let toggle_i = MenuItem::with_id(
-        app,
-        "toggle",
-        t!("tray.menu.toggle").to_string(),
-        true,
-        None::<&str>,
-    )?;
+    let toggle_i = MenuItem::with_id(app, "toggle", &t!("tray.menu.toggle"), true, None::<&str>)?;
     let settings_i = MenuItem::with_id(
         app,
         "settings",
-        t!("tray.menu.settings").to_string(),
+        &t!("tray.menu.settings"),
         true,
         None::<&str>,
     )?;
-    let refresh_i = MenuItem::with_id(
-        app,
-        "refresh",
-        t!("tray.menu.refresh").to_string(),
-        true,
-        None::<&str>,
-    )?;
+    let refresh_i =
+        MenuItem::with_id(app, "refresh", &t!("tray.menu.refresh"), true, None::<&str>)?;
     let force_top_i = MenuItem::with_id(
         app,
         "force_top_floating",
-        t!("tray.menu.force_top").to_string(),
+        &t!("tray.menu.force_top"),
         cfg!(target_os = "windows"),
         None::<&str>,
     )?;
-    let quit_i = MenuItem::with_id(
-        app,
-        "quit",
-        t!("tray.menu.quit").to_string(),
-        true,
-        None::<&str>,
-    )?;
+    let quit_i = MenuItem::with_id(app, "quit", &t!("tray.menu.quit"), true, None::<&str>)?;
     Menu::with_items(
         app,
         &[&toggle_i, &settings_i, &refresh_i, &force_top_i, &quit_i],
@@ -737,6 +720,7 @@ fn draw_mini_bars(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64
 }
 
 /// 单条圆角水平进度条。先画整个轨道，再叠加按 % 裁宽的填充。
+#[allow(clippy::too_many_arguments)]
 fn draw_rounded_bar(
     img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>,
     x: i32,

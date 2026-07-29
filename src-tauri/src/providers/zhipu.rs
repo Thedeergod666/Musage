@@ -207,7 +207,7 @@ impl QuotaSource for ZhipuSource {
                 api_key,
                 region,
                 &self.unique_id(),
-                &self.display_name().to_string(),
+                self.display_name().as_ref(),
             )
             .await
         })
@@ -380,6 +380,7 @@ fn parse(
 /// - 未识别 unit 的条目进 unclassified 兜底：
 ///   - 优先把无 resetTime 的归 5h（5h 桶 0% 时可能没 reset）
 ///   - 其余按 reset 升序填入仍空缺的槽位
+#[allow(clippy::type_complexity)]
 fn classify_zhipu_limits(data: &Value) -> (Option<(f64, Option<i64>)>, Option<(f64, Option<i64>)>) {
     type Entry = (i64, f64, Option<i64>); // (reset_ms_or_MiN, percentage, resets_at_ms)
 

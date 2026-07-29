@@ -105,7 +105,7 @@ impl Default for ProviderConfig {
 ///
 /// - `PinTop`   ：浮窗一直在最上层（系统 always-on-top 模式）
 /// - `PinBottom`：默认在底部（不 always-on-top，会被其它窗口盖住），
-///                鼠标 hover 进浮窗时临时切到置顶，鼠标离开后回到置底
+///   鼠标 hover 进浮窗时临时切到置顶，鼠标离开后回到置底
 /// - `Normal`   ：不强制层级，跟普通窗口一样（被聚焦时在前，失焦后被盖住）
 ///
 /// 序列化用 snake_case 字符串，向后兼容旧 config（缺字段 → PinTop，老版本的默认行为）。
@@ -128,11 +128,11 @@ impl FloatingPinMode {
 /// 托盘图标渲染样式
 ///
 /// - `Logo`   ：画 [src-tauri/icons/tray-base.png](crate) 静态应用图标
-///              （白底 + 黑 M + 黑细环），不显示实时数据
+///   （白底 + 黑 M + 黑细环），不显示实时数据
 /// - `Bars`   ：MiniMax 双水平进度条（上 = 5h utilization，下 = 周 utilization）
-///              —— v0.5.x 唯一可用的样式
+///   —— v0.5.x 唯一可用的样式
 /// - `Percent`：MiniMax 双行百分比文本（上 "5h 45%"，下 "周 72%"）
-///              —— v0.6+ 默认
+///   —— v0.6+ 默认
 ///
 /// 序列化 snake_case 字符串。`#[serde(default)]` 让老 config.json 缺字段时
 /// 走 `Percent`（v0.6 起的行为变更）。
@@ -265,11 +265,11 @@ pub struct AppConfig {
 /// 用户的"主用区域"——影响默认 provider 顺序 + 部分 provider 的默认 endpoint。
 ///
 /// - `Cn`     ：中国用户。默认 provider 顺序把 MiniMax / Xiaomi MiMo / 智谱排前；
-///              MiniMax / Zhipu 默认 endpoint 走国内。
+///   MiniMax / Zhipu 默认 endpoint 走国内。
 /// - `Global` ：海外用户。默认 provider 顺序把 OpenRouter / Claude 官方排前；
-///              MiniMax / Zhipu 默认 endpoint 走国际。
+///   MiniMax / Zhipu 默认 endpoint 走国际。
 /// - `Custom` ：用户在设置面板手动调过顺序 / endpoint，**不要**再用区域默认值
-///              覆盖（避免"我刚改完结果被默认值拍回去"的体验坑）。
+///   覆盖（避免"我刚改完结果被默认值拍回去"的体验坑）。
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum UserRegion {
@@ -358,7 +358,7 @@ const fn default_show_in_tray_on_close() -> bool {
 /// - `minimax`     —— 保留 `region = Some(Cn)`（首次默认国内）
 /// - `xiaomimimo`  —— 保留 `xiaomi_region = Some(Cn)`
 /// - 其它          —— 默认值即可，endpoint 等顶层字段由各自 provider 的
-///                    默认值兜底（zenmux → Payg / zhipu → Cn 等）
+///   默认值兜底（zenmux → Payg / zhipu → Cn 等）
 fn default_provider_config(id: &str) -> ProviderConfig {
     match id {
         "minimax" => ProviderConfig {
@@ -1151,8 +1151,10 @@ mod tests {
     fn migrated_upgrades_schema_version_zero() {
         // L-c2 fix: schema_version=0（手改 / 部分损坏的 config.json）也应
         // 迁到 CURRENT，不再落入 `_` 兜底 arm 卡在 0。
-        let mut cfg = AppConfig::default();
-        cfg.schema_version = 0;
+        let cfg = AppConfig {
+            schema_version: 0,
+            ..AppConfig::default()
+        };
         let cfg = cfg.migrated();
         assert_eq!(cfg.schema_version, CURRENT_SCHEMA_VERSION);
     }

@@ -242,7 +242,7 @@ fn spawn_append_job(store: LogStore, job: AppendJob) {
 
 /// 后台线程实际写的 append 实现。
 fn append_entry(entry: &LogEntry) -> std::io::Result<()> {
-    let path = log_path().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let path = log_path().map_err(std::io::Error::other)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -256,8 +256,7 @@ fn append_entry(entry: &LogEntry) -> std::io::Result<()> {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
     }
-    let s = serde_json::to_string(entry)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let s = serde_json::to_string(entry).map_err(std::io::Error::other)?;
     writeln!(f, "{}", s)?;
     // M2 fix (2026-07-06 全量审查): flush + sync_all,确保崩溃后最关键
     // 错误日志不丢。否则 forensic 关键时刻(应用 crash 前最后一条 error)

@@ -206,7 +206,7 @@ impl QuotaSource for CustomSource {
                 api_key,
                 &spec,
                 &self.unique_id(),
-                &self.display_name().to_string(),
+                self.display_name().as_ref(),
             )
             .await
         })

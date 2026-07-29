@@ -156,7 +156,7 @@ impl QuotaSource for ClaudeOfficialSource {
             do_fetch(
                 &session_key,
                 &self.unique_id(),
-                &self.display_name().to_string(),
+                self.display_name().as_ref(),
             )
             .await
         })
@@ -281,16 +281,14 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
         // 等下游消费者按枚举匹配,不被 locale-bake-in 的 label 字符串困住
         // (切到 zh-CN 后 row.label = "5h" 还行,但 row.weekly = "周" 跟
         // tray 重新求值 t!() 拿到的 "Weekly" 不匹配,显示 0%)。
-        if let Some(row) =
-            build_tier_row(&t!("row.five_hour").to_string(), RowKind::FiveHour, five_h)
-        {
+        if let Some(row) = build_tier_row(t!("row.five_hour").as_ref(), RowKind::FiveHour, five_h) {
             rows.push(row);
         }
     }
 
     // 周 tier
     if let Some(weekly) = raw.get("seven_day") {
-        if let Some(row) = build_tier_row(&t!("row.weekly").to_string(), RowKind::Weekly, weekly) {
+        if let Some(row) = build_tier_row(t!("row.weekly").as_ref(), RowKind::Weekly, weekly) {
             rows.push(row);
         }
     }

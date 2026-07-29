@@ -126,7 +126,7 @@ impl QuotaSource for KimiSource {
                     t!("error.provider.unconfigured_key", provider = "Kimi").into_owned(),
                 ));
             }
-            do_fetch(api_key, &self.unique_id(), &self.display_name().to_string()).await
+            do_fetch(api_key, &self.unique_id(), self.display_name().as_ref()).await
         })
     }
 }

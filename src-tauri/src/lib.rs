@@ -49,6 +49,7 @@ pub struct AppState {
     /// Poller per-provider 指数退避状态。
     /// - 写：每次 fetch 完（`refresh_inner` / `refresh_single_inner`）
     /// - 读：poller 调度 tick 时算下次间隔
+    ///
     /// 详见 [`crate::poller_backoff`]
     pub backoff: Arc<RwLock<BackoffState>>,
     /// PR 1b：用户额外添加的 source 实例（内置 provider 副本 + New API 中转站）。
@@ -115,7 +116,7 @@ pub fn run() {
             // 启动时清理上次崩溃留下的孤儿 .tmp 文件（F2/M10 修复连带）
             config::cleanup_orphan_tmp_files();
             // 读取配置（load_from_disk 已会在损坏时备份到 .bak.<ts>，不再静默吞掉）
-            let config = AppConfig::load(&app.handle()).unwrap_or_default();
+            let config = AppConfig::load(app.handle()).unwrap_or_default();
 
             // P0：把 cfg.locale 推到 rust_i18n 的进程内 state，让 tr!() 立刻生效。
             // 必须在 .setup 里最早做（之后 tr!() 才会拿到正确 locale）。
@@ -288,7 +289,7 @@ pub fn run() {
 
             // 默认显示悬浮窗
             if let Some(win) = app.get_webview_window("floating") {
-                let _ = win.set_title(&t!("window.floating").to_string());
+                let _ = win.set_title(t!("window.floating").as_ref());
                 let _ = win.show();
                 let _ = win.set_focus();
             }
@@ -411,6 +412,7 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
+    #[allow(clippy::type_complexity)]
     let latest: Arc<Mutex<Option<(i32, i32, i32, i32)>>> = Arc::new(Mutex::new(None));
     let latest_for_cb = latest.clone();
     // 前端要按"逻辑像素"比对 fit 目标,所以在 on_window_event 之前 cache
@@ -678,6 +680,8 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
 }
 
 /// 给 dump CLI 推 source state（region / overrides）—— 走 commands 模块的共享逻辑。
+// borrowed_box false positive (dyn trait object): 见 commands::build_credentials 注释。
+#[allow(clippy::borrowed_box)]
 async fn update_source_state_for_dump(
     src: &Box<dyn crate::providers::QuotaSource>,
     cfg: &AppConfig,

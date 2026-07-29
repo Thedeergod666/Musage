@@ -238,7 +238,7 @@ impl QuotaSource for StepfunSource {
                 }
             };
 
-            do_fetch(&token, &self.unique_id(), &self.display_name().to_string()).await
+            do_fetch(&token, &self.unique_id(), self.display_name().as_ref()).await
         })
     }
 }
@@ -1318,7 +1318,7 @@ mod tests {
         let claims = format!(r#"{{"exp":{}}}"#, now - 600); // 10 min ago
         let jwt = make_jwt_with_claims(&claims);
         let secs = access_token_exp_seconds_ago(&jwt).expect("exp");
-        assert!(secs >= 590 && secs <= 620, "got {secs}");
+        assert!((590..=620).contains(&secs), "got {secs}");
     }
 
     #[test]
@@ -1344,7 +1344,7 @@ mod tests {
         let refresh = make_jwt_with_claims(&format!(r#"{{"exp":{}}}"#, now + 86400));
         let combined = format!("{access}...{refresh}");
         let secs = access_token_exp_seconds_ago(&combined).expect("exp");
-        assert!(secs >= 30 && secs <= 90, "got {secs}");
+        assert!((30..=90).contains(&secs), "got {secs}");
     }
 
     // ── Credit 套餐（plan_family == 2）──

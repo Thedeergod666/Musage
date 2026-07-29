@@ -125,7 +125,7 @@ impl QuotaSource for TavilySource {
                     t!("error.provider.unconfigured_key", provider = "Tavily").into_owned(),
                 ));
             }
-            do_fetch(api_key, &self.unique_id(), &self.display_name().to_string()).await
+            do_fetch(api_key, &self.unique_id(), self.display_name().as_ref()).await
         })
     }
 }

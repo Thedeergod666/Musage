@@ -213,7 +213,7 @@ impl QuotaSource for MinimaxSource {
                 state.region,
                 &state.overrides,
                 &self.unique_id(),
-                &self.display_name().to_string(),
+                self.display_name().as_ref(),
             )
             .await
             .map(|(_, snap)| snap)

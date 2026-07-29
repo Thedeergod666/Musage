@@ -288,7 +288,7 @@ mod tests {
         st.record("minimax", &snap_success(), 60);
         // 状态是空的（没有 entry）
         assert!(
-            st.per_source.get("minimax").is_none() || st.per_source["minimax"].failure_streak == 0
+            !st.per_source.contains_key("minimax") || st.per_source["minimax"].failure_streak == 0
         );
     }
 

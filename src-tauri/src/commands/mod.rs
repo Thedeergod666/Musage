@@ -589,7 +589,6 @@ pub async fn save_config(
     app: AppHandle,
     cfg: AppConfig,
 ) -> Result<(), String> {
-    let cfg = cfg;
     if cfg.refresh_interval_secs < 10 {
         return Err(t!("commands.interval_too_small").into_owned());
     }
@@ -813,6 +812,10 @@ pub async fn set_source_credential(
 /// - `Some("api_key")` / `Some("cookie")` → 强制指定
 /// - `None` → 按 source 的 auth_kind 默认
 /// - `Some(其他)` → 报错（避免 typo 默默走错字段）
+// clippy::borrowed_box 对 dyn trait object 是 false positive: 调用方传
+// &Box<dyn QuotaSource>,改签名 &dyn 后 &box 不自动 deref coerce 到 &dyn
+// (E0277) -- dyn 的 unsized coercion 走不通。保留 &Box 签名。
+#[allow(clippy::borrowed_box)]
 fn build_credentials(
     src: &Box<dyn QuotaSource>,
     value: &str,
@@ -1280,6 +1283,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
     let state = app.state::<AppState>();
     let sources = all_sources(&state).await;
     // P1 重构：closure 返 FetchError 而不是 String，kind 在 collect 时直接拿。
+    #[allow(clippy::type_complexity)]
     let mut tasks: Vec<(
         String,
         u64,
@@ -1712,6 +1716,7 @@ pub async fn refresh_single_from_poller(app: &AppHandle, id: &str) -> Result<(),
 /// 在 fetch 前把 cfg 里的 region / overrides 推给 source（如果 source 实现了的话）。
 ///
 /// 公开给 [`crate::lib::run_dump_subcommand`] 共享。
+#[allow(clippy::borrowed_box)]
 pub async fn update_source_state(src: &Box<dyn QuotaSource>, cfg: &AppConfig) {
     // 跳过无状态 source（deepseek / kimi / claude_official）的 set_state，
     // 避免每分钟 × 3 provider × ~2KB JSON 序列化 + alloc + drop 的无意义开销。
@@ -2051,6 +2056,7 @@ pub fn get_recent_logs(
 /// - dedup 保留 → 用户清完 log 1s 后 poller 跑出同 (provider, kind) 错误
 ///   会被 60s 去重窗口吞掉，不刷出新日志
 /// - 宽限期 60s → 期间所有新错误一律不写（即使不同 kind）
+///
 /// 两个机制叠加让用户真切看到「已清空」状态（1 分钟内），不被立刻涌出的
 /// 新错误淹没。
 const LOG_CLEAR_GRACE_MS: i64 = 60_000;

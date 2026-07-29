@@ -189,7 +189,7 @@ impl QuotaSource for AnysearchSource {
                     t!("error.anysearch.token_empty").into_owned(),
                 ));
             }
-            do_fetch(token, &self.unique_id(), &self.display_name().to_string()).await
+            do_fetch(token, &self.unique_id(), self.display_name().as_ref()).await
         })
     }
 }
@@ -438,7 +438,7 @@ async fn do_fetch_once(
 /// 解析 `/api/api/user/billing/overview` 响应。
 ///
 /// data 必含 `used` + `total` + `remaining` + `rate_limit_qps` + `next_reset_at`
-/// + `tier_name`。`next_reset_at` 是 ISO 8601 UTC 字符串（`"2026-07-23T00:00:00Z"`），
+/// 以及 `tier_name`。`next_reset_at` 是 ISO 8601 UTC 字符串（`"2026-07-23T00:00:00Z"`），
 /// 直接 RFC 3339 解析即可。
 fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();

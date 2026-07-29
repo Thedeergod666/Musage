@@ -194,7 +194,7 @@ impl QuotaSource for ZenmuxSource {
                 mode,
                 custom_url.as_deref(),
                 &self.unique_id(),
-                &self.display_name().to_string(),
+                self.display_name().as_ref(),
             )
             .await
         })
@@ -435,12 +435,12 @@ fn parse_subscription(
     let mut rows = Vec::new();
 
     if let Some(q) = data.get("quota_5_hour") {
-        if let Some(row) = parse_subscription_window(q, &t!("row.five_hour").to_string()) {
+        if let Some(row) = parse_subscription_window(q, t!("row.five_hour").as_ref()) {
             rows.push(row);
         }
     }
     if let Some(q) = data.get("quota_7_day") {
-        if let Some(row) = parse_subscription_window(q, &t!("row.weekly").to_string()) {
+        if let Some(row) = parse_subscription_window(q, t!("row.weekly").as_ref()) {
             rows.push(row);
         }
     }

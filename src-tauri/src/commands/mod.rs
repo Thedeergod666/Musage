@@ -583,12 +583,25 @@ pub async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, String>
     Ok(state.config.read().await.clone())
 }
 
+/// H4 fix (2026-07-29 审查): providers map size cap 防 DoS。
+/// 12 builtin + ~240 extra 是合理上限 (实际场景 < 50)。
+/// 前端绕过 set_provider_enabled / add_custom_source 直接 save_config
+/// 灌 100k 条空 entry → serde_json 序列化 + 写盘都慢,无意义。
+const PROVIDERS_MAP_MAX: usize = 256;
+
 #[tauri::command]
 pub async fn save_config(
     state: State<'_, AppState>,
     app: AppHandle,
     cfg: AppConfig,
 ) -> Result<(), String> {
+    if cfg.providers.len() > PROVIDERS_MAP_MAX {
+        return Err(t!(
+            "commands.providers_too_many",
+            count = cfg.providers.len(),
+            max = PROVIDERS_MAP_MAX
+        ).into_owned());
+    }
     if cfg.refresh_interval_secs < 10 {
         return Err(t!("commands.interval_too_small").into_owned());
     }

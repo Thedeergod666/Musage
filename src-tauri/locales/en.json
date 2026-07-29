@@ -138,6 +138,7 @@
     "interval_too_small": "Refresh interval cannot be less than 10 seconds (avoids provider rate limit)",
     "threshold_invalid": "Color thresholds must satisfy 0 < t0 < t1 < t2 < 100 (actual %{t0} / %{t1} / %{t2})",
     "wallet_threshold_negative": "Wallet alert threshold must be >= 0 (actual %{n})",
+    "providers_too_many": "Too many providers (%{count} > max %{max})",
     "color_key_unknown": "Unknown color tier key: %{other} (only ok / cyan / warn / alert supported)",
     "color_value_invalid": "%{k} color value must be #RGB / #RRGGBB format (actual %{v})",
     "create_settings": "create settings: %{err}",

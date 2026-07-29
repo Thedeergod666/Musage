@@ -138,6 +138,7 @@
     "interval_too_small": "轮询间隔不能小于 10 秒（避免触发 provider rate limit）",
     "threshold_invalid": "色阈值必须满足 0 < t0 < t1 < t2 < 100（实际 %{t0} / %{t1} / %{t2}）",
     "wallet_threshold_negative": "钱包告警阈值必须 ≥ 0（实际 %{n}）",
+    "providers_too_many": "Provider 数量过多（%{count} > 上限 %{max}）",
     "color_key_unknown": "未知的色档 key: %{other}（仅支持 ok / cyan / warn / alert）",
     "color_value_invalid": "%{k} 的颜色值必须是 #RGB / #RRGGBB 形式（实际 %{v}）",
     "create_settings": "create settings: %{err}",

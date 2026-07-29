@@ -403,11 +403,22 @@ async fn poll_token_from_cookie(
         // blocking call on platform thread → 我们包在 spawn_blocking 里，或直接
         // 接受其同步语义。参考 xiaomi_login.rs:302 是 .await 调用，是同步阻塞
         // 包装在 async fn 里，Tauri runtime 会处理）。
+        // H1 fix (2026-07-29 审查): cookies_for_url 失败不直接 Cancelled,
+        // 而是 continue 下一轮重试。Tauri 2 文档明确该调用可能在以下场景
+        // 暂态 Err:
+        //   - webview 刚创建、cookie store 还没初始化 (前 100ms)
+        //   - URL 解析 race (probe_url 在 webview 加载完成前)
+        //   - macOS WKWebView 短暂 unreachable (主线程 dispatch 延迟)
+        // 之前遇到就 Cancelled,常见「登录按钮点了但网页还没加载就报错」bug。
+        // 改成 continue: 下一轮会重新检查窗口是否还存在 (line 268),窗口
+        // 真没了再走 Cancelled;窗口还在 + Err 暂态 → sleep 700ms 重试。
+        // 注意: 用 sleep 而不是 continue 立即重试,避免错误循环 100% CPU。
         let cookies: Vec<Cookie<'static>> = match window.cookies_for_url(probe_url.clone()) {
             Ok(c) => c,
             Err(e) => {
-                tracing::debug!(error = %e, "读 webview cookies_for_url 失败（窗口可能已关闭）");
-                return PollOutcome::Cancelled;
+                tracing::debug!(error = %e, "读 webview cookies_for_url 暂态失败, 700ms 后重试");
+                sleep(Duration::from_millis(700)).await;
+                continue;
             }
         };
 

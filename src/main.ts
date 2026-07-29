@@ -358,6 +358,12 @@ function render(snap: QuotaSnapshot) {
   // 跟真卡片叠在一起（之前 [H8] 状态下的 bug：4 张 provider 卡 + 1 张残留 err）
   const errPlaceholder = app.querySelector<HTMLElement>(".err");
   if (errPlaceholder) errPlaceholder.remove();
+  // **2026-07-28 fix**：清掉首启空态引导页 (.empty-state)。renderEmptyState()
+  // 用 app.innerHTML 写入，normal render 走增量更新 (insertBefore 加卡) 永远
+  // 不碰它 -> 用户首次添加 provider 后真数据到达，「打开设置」引导页跟卡片
+  // 叠在一起赖着不掉。H8 修过 .err 残留，这里补 .empty-state 残留。
+  const emptyPlaceholder = app.querySelector<HTMLElement>(".empty-state");
+  if (emptyPlaceholder) emptyPlaceholder.remove();
 
   // **2026-06-20 audit**：lastGoodSnap 之前只 set() 不 delete()，用户禁掉
   // source 后 key 永久泄漏。趁每轮 render 把"已不在 snap 里"的 stale entry 清掉。

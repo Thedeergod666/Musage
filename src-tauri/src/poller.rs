@@ -14,6 +14,29 @@ use crate::commands::refresh_inner;
 use crate::providers::all_sources;
 use crate::AppState;
 
+/// H2 fix (2026-07-29 审查): 给定 provider id + interval,返 ±10% 范围的
+/// 确定性 jitter ms。确定性 (基于 provider id hash) → 同一 provider
+/// 每次拉取 jitter 都一样 (避免运行时漂移),不同 provider 散开。
+///
+/// 不引 rand 依赖 —— FNV-1a 64-bit hash 输出分散到 u64 全空间,再 map
+/// 到 ±10% interval 范围 (ms 范围 ~6s @ interval=60s)。21 bucket (旧版)
+/// 散 12 个 provider 只能 7-8 个不同 (实测撞概率高),后端看到的是
+/// 绝对 jitter ms,不是 percent,只要"不同 provider 不同毫秒偏移"即可,
+/// u64 空间足够。
+fn jitter_for(provider_id: &str, interval_secs: u64) -> u64 {
+    // FNV-1a 64-bit hash
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for b in provider_id.bytes() {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    let max_ms = (interval_secs as i64 * 1000) / 10;
+    let range = (max_ms * 2 + 1) as u64;
+    let offset = (hash as i64).rem_euclid(range as i64) - max_ms;
+    offset.unsigned_abs()
+}
+
+
 /// per-provider 拉取 task 集合。poller 每秒检查时把过期的 provider spawn 进来，
 /// task 完成或 panic 后自动从 set 里清理（JoinSet::join_next 移除）。当前
 /// 不在 quit_app 时主动 abort —— 浮窗最常见关闭是"窗口关闭"拦截（tray 隐藏），
@@ -256,7 +279,16 @@ pub fn start(app: AppHandle) {
                             Err(e) => tracing::warn!(error = %e, provider = %unique_owned, "per-provider 拉取失败"),
                         }
                     });
-                *entry = now + Duration::from_secs(interval_secs);
+                // H2 fix (2026-07-29 审查): 加 jitter 防 thundering herd。
+                // 12 个 provider 共享同一个全局 refresh_interval (默认 60s)
+                // 时,每个整分钟会有 12 个 provider 同时 fire → 同时拉 API →
+                // 后端 / 中转站瞬时压力尖刺,可能被风控。interval 的 ±10%
+                // jitter 把 12 个 provider 均匀散到整分钟内。
+                // 计算 jitter 时用 unique.clone() 而不是 moved unique_owned。
+                let jitter_ms = jitter_for(unique.as_str(), interval_secs);
+                *entry = now
+                    + Duration::from_secs(interval_secs)
+                    + Duration::from_millis(jitter_ms);
             }
         }
     });
@@ -323,4 +355,50 @@ pub async fn tick(app: &AppHandle) -> Result<(), String> {
     let _ = app.emit("musage://snapshot", &final_snap);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn jitter_for_is_deterministic() {
+        let a = jitter_for("minimax", 60);
+        let b = jitter_for("minimax", 60);
+        assert_eq!(a, b, "jitter 必须确定性");
+    }
+
+    #[test]
+    fn jitter_for_different_ids_scatter() {
+        let providers = ["minimax", "deepseek", "xiaomimimo", "tavily", "zenmux",
+                         "openrouter", "kimi", "zhipu", "claude_official",
+                         "siliconflow", "stepfun", "anysearch"];
+        let mut seen = std::collections::HashSet::new();
+        for id in &providers {
+            seen.insert(jitter_for(id, 60));
+        }
+        assert_eq!(seen.len(), providers.len(),
+            "12 个 provider jitter 应全部不同 (u64 空间), 实际 {} / {}",
+            seen.len(), providers.len());
+    }
+
+    #[test]
+    fn jitter_for_within_10_percent() {
+        let interval = 60u64;
+        let max_ms = (interval * 1000) / 10;
+        for id in ["minimax", "deepseek", "kimi", "zhipu", "stepfun"] {
+            let j = jitter_for(id, interval);
+            assert!(j <= max_ms as u64, "jitter={j} > ±10% ({max_ms}ms) for id={id}");
+        }
+    }
+
+    #[test]
+    fn jitter_for_scales_with_interval() {
+        let j60 = jitter_for("minimax", 60);
+        let j120 = jitter_for("minimax", 120);
+        let max60 = (60 * 1000) / 10;
+        let max120 = (120 * 1000) / 10;
+        assert!(j60 <= max60 as u64);
+        assert!(j120 <= max120 as u64);
+    }
 }

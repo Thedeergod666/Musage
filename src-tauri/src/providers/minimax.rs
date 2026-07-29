@@ -548,13 +548,18 @@ pub fn parse_tier_percent(
         return None;
     }
     let utilization = 100.0 - remain_pct;
-    // 2. status 字段：信息性，不影响"是否显示"，只影响"值是否可信"。
-    //    - status=1 或字段缺失：信任 percent
-    //    - status=2/3 + percent=0：5h 达 100% 上限的合法状态，照常返回
-    //    - status=2/3 + percent>0：percent 可能是"不在套餐"的哨兵 100，
-    //      也可能是 percent 真实但 status 标错。为安全仍按原语义 drop。
+    // 2. status 字段：严格门控 (BUG-002 fix, 2026-07-29 审查)。
+    //    ccswitch 逆向确认 status=2/3 语义是"不在套餐内" (header 文档也是
+    //    这么写的),percent 此时是哨兵 / 残留 / 标错 不可信。
+    //    - status == 1 或字段缺失：信任 percent (返回值)
+    //    - status == 2/3 (任何 percent)：percent schema 无效,直接 drop。
+    //      不要被"status=2/3 + percent=0 是 5h 达 100% 上限的合法状态"误导
+    //      ——schema 文档明示 2/3 = 不在套餐,跟"5h 限额达到"是两件事。
+    //      旧逻辑的"percent=0 时绕过门控"会让用户看到"100% used"
+    //      但实际根本没套餐 → 误导。前端应改用 *专门*的"未订阅 / 套餐外"
+    //      indicator (待 v0.3 UI),目前 drop 是最安全语义。
     if let Some(s) = item.get(k_status).and_then(|v| v.as_i64()) {
-        if s != 1 && remain_pct > 0.0 {
+        if s != 1 {
             return None;
         }
     }
@@ -675,13 +680,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_tier_percent_status_2_or_3_with_zero_percent_still_returns() {
-        // 回归：MiniMax 5h 达 100% 上限时，API 会把 status 翻成 2/3
-        // （exhausted / rate-limited 状态），但 percent 字段仍是 0。
-        // 旧逻辑因 status != 1 整行 drop，浮窗 5h 行消失。新逻辑：percent=0
-        // 时（无论 status 是什么）都返回 100% utilization，让用户看到上限 +
-        // 重置时间。status=4 是"未知状态"的兜底，按同样规则处理。
-        for status in [2, 3, 4] {
+    fn parse_tier_percent_status_2_or_3_with_zero_percent_drops() {
+        // BUG-002 fix (2026-07-29 审查): status=2/3 严格 drop,与 percent
+        // 无关。schema 文档明确 2/3 = "不在套餐内",percent 此时是哨兵 /
+        // 残留值,展示 "100% used" 会误导用户以为自己在套餐内只是用完。
+        // 真正 "5h 限额达到" 应配 status=1 + percent=0 (仍在套餐,正常返回)。
+        for status in [2, 3] {
             let item = serde_json::json!({
                 "current_interval_remaining_percent": 0,
                 "current_interval_status": status,
@@ -692,22 +696,37 @@ mod tests {
                 "current_interval_remaining_percent",
                 "current_interval_status",
                 "end_time",
-            )
-            .unwrap_or_else(|| panic!("status={status} + percent=0 must not drop"));
-            assert!(
-                (t.utilization - 100.0).abs() < 0.001,
-                "status={status} utilization={}",
-                t.utilization
             );
-            // reset 字段也要正常解析
             assert!(
-                t.resets_at.is_some(),
-                "status={status} resets_at should be Some"
+                t.is_none(),
+                "status={status} + percent=0 must drop (not in plan), got {t:?}"
             );
         }
     }
 
     #[test]
+    fn parse_tier_percent_status_1_with_zero_percent_still_returns() {
+        // 回归保护: status=1 (在套餐) + percent=0 (5h 真的用完) 必须正常
+        // 返回 tier,显示 100% utilization + 重置时间。不能因为 BUG-002 修复
+        // 把这种正常 case 也误 drop。
+        let item = serde_json::json!({
+            "current_interval_remaining_percent": 0,
+            "current_interval_status": 1,
+            "end_time": 14523
+        });
+        let t = parse_tier_percent(
+            &item,
+            "current_interval_remaining_percent",
+            "current_interval_status",
+            "end_time",
+        )
+        .expect("status=1 + percent=0 must return");
+        assert!((t.utilization - 100.0).abs() < 0.001);
+        assert!(t.resets_at.is_some());
+    }
+
+    #[test]
+    
     fn parse_tier_percent_missing_status_trusts_percent() {
         // 兼容：status 字段缺失（API 改名 / 老 schema）→ 直接信任 percent。
         // 旧逻辑会因 `let status = ...?` 早返 None，整行消失。

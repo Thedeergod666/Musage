@@ -691,7 +691,13 @@ fn draw_mini_bars(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64
     let top = s * 6 / 32; // 6  → 12
     let radius = s * 2 / 32; // 2  →  4
     let track = Rgba([60u8, 60, 60, 255]);
-    let fill = Rgba([255u8, 255, 255, 255]);
+    // H2 fix (2026-07-29 审查): macOS 浅色菜单栏下白字不可见 → 改黑字。
+    // Win/Linux tray 永远渲染在深色任务栏上,固定白字保持不变。
+    let fill = if cfg!(target_os = "macos") && crate::platform::macos::menu_bar_is_light() {
+        Rgba([0u8, 0, 0, 255])
+    } else {
+        Rgba([255u8, 255, 255, 255])
+    };
 
     let pct = |u: f64| -> u32 { (u.clamp(0.0, 100.0)).round() as u32 };
 
@@ -817,7 +823,12 @@ fn draw_percent(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64, 
     let y_top = 0; //  0 →  0
     let y_bot = s / 2; // 16 → 32
     let pad_right = s * 2 / 32; // 右边留 2px 内边距
-    let color = Rgba([255, 255, 255, 255]);
+    // H2 fix: 同 draw_mini_bars,浅色菜单栏改黑字
+    let color = if cfg!(target_os = "macos") && crate::platform::macos::menu_bar_is_light() {
+        Rgba([0u8, 0, 0, 255])
+    } else {
+        Rgba([255u8, 255, 255, 255])
+    };
 
     let top = format!("{}%", util_top.round() as i64);
     let bot = format!("{}%", util_bot.round() as i64);

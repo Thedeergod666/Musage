@@ -560,3 +560,69 @@ fn show_floating<R: Runtime>(app: &AppHandle<R>) {
         }
     });
 }
+
+
+/// H2 fix (2026-07-29 审查): 检测 macOS 菜单栏当前外观。菜单栏在
+/// "浅色"模式下背景接近白色,我们硬编码的白字 Rgba([255,255,255,255])
+/// 会变得完全不可见。返回 true 表示"菜单栏是浅色背景",caller 改用
+/// 黑色文字。返回 false 表示"菜单栏是深色背景",保持白色文字。
+///
+/// 实现: NSApp().effectiveAppearance() 拿当前应用 effective 外观,
+/// 跟 NSAppearanceNameAqua (light) 比对判断。effectiveAppearance 跟随
+/// 系统外观 (系统设置 → 外观 → 浅色/深色/自动),也跟随 NSApp override。
+///
+/// 必须 main thread (NSApp 需要 MainThreadMarker)。返回 false (保持
+/// 白字) 作为 fallback —— 深色菜单栏是 macOS 默认,绝大多数情况
+/// 正确,浅色菜单栏的 case 由 caller 重新调一次拿到 true 修复。
+#[cfg(target_os = "macos")]
+pub fn menu_bar_is_light() -> bool {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSApplication;
+
+    let Some(mtm) = MainThreadMarker::new() else {
+        return false; // 不在 main thread,保守返 false (保持白字,深色背景常见)
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    let appearance = app.effectiveAppearance();
+    let name = appearance.name();
+    // name 是 NSAppearanceName (NSString 包装)。转成 Rust &str 比较内容,
+    // 避免 objc2 0.6 的 NSString bridging 差异 (isEqual / isEqualTo /
+    // as_ref 行为各异)。
+    let name_str = name.to_string();
+    if name_str == "NSAppearanceNameAqua" || name_str == "Aqua" {
+        return true; // Aqua = 浅色背景
+    }
+    if name_str.contains("Dark") {
+        return false; // DarkAqua / DarkVibrantDark 等 = 深色背景
+    }
+    // 其他 (VibrantLight / HighContrastVibrantLight 等): 当浅色处理
+    true
+}
+
+#[cfg(not(target_os = "macos"))]
+#[inline]
+pub fn menu_bar_is_light() -> bool {
+    false
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn menu_bar_is_light_stub_returns_false_on_non_macos() {
+        // 非 macOS 平台 stub 必须返 false (保持白字,深色背景常见)
+        // Win/Linux tray 永远在深色任务栏上,白字是对的
+        assert!(!menu_bar_is_light());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "需要真机 macOS 测试,本机无 NSApp 环境"]
+    fn menu_bar_is_light_returns_bool() {
+        // 真 macOS 上必须返 bool (不 panic)。具体 true/false 取决于系统设置。
+        let _ = menu_bar_is_light();
+    }
+}

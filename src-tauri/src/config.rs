@@ -494,8 +494,16 @@ impl AppConfig {
         let path = config_path()?;
         // L4 fix (2026-07-30 audit): 启动时清理老 .bak 文件,只留最近 5 份。
         // path 不存在时也要清 —— 用户历史升级可能留了一坨,但 cfg 目录在。
+        //
+        // D4-007 fix (2026-07-30 audit): 之前只清 config.json.bak.<ts>,
+        // 不清 keys.json.bak.<ts> / app_log.jsonl.tmp 孤儿 —— 半年升级
+        // 用户可能堆出几百个 keys.json.bak 文件撑爆磁盘,以及 app_log.jsonl
+        // 在启动失败 (上一轮 SIGKILL / 写盘 EIO) 时残留 .tmp 半写副本。
+        // 三个清理都走 truncate_old_backups,每个前缀独立计数 5 份。
         if let Some(parent) = path.parent() {
             truncate_old_backups(parent, "config.json", 5);
+            truncate_old_backups(parent, "keys.json", 5);
+            // app_log.jsonl 不在 cfg 目录(在 app log dir),见 cleanup_orphan_tmp_files
         }
         if !path.exists() {
             return Ok(Self::default());

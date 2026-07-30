@@ -80,12 +80,19 @@ fn clear_endpoint_cache(source_id: &str) {
 }
 
 fn should_skip_endpoint(source_id: &str, ep: Endpoint) -> bool {
-    // 如果最近 5 分钟内有别的 endpoint 成功，跳过这个
-    let Ok(g) = last_successful().lock() else {
+    // D-009 fix (2026-07-30 audit): 之前 LAST_SUCCESSFUL HashMap 只增不删,
+    // 用户频繁 add/delete extra instance 时 entry 永久残留 → HashMap 缓慢
+    // 膨胀 (实操 low risk: source_id 是 provider_id + #index 形式, 实际
+    // 不超过 builtin_sources + extra 数量; 但清理窗口是 free)。 修法:
+    // 锁内顺便 prune 过期 entry (TTL = 5 分钟, 跟 should_skip 一致), 
+    // 每次 should_skip 调用都白嫖一次 GC, 不用额外 timer。
+    let Ok(mut g) = last_successful().lock() else {
         return false;
     };
+    let ttl = std::time::Duration::from_secs(300);
+    g.retain(|_, (ts, _)| ts.elapsed() < ttl);
     match g.get(source_id) {
-        Some((ts, last)) if ts.elapsed() < std::time::Duration::from_secs(300) => last != &ep,
+        Some((ts, last)) if ts.elapsed() < ttl => last != &ep,
         _ => false,
     }
 }

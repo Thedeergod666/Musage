@@ -1,11 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "xiaomi-login",
-  "description": "xiaomi-login window — needs create-webview-window capability to spawn the SSO login webview (cookie extractor in src/xiaomi_login.rs). Only this window label gets the permission; floating + settings do not.",
+  "description": "xiaomi-login window — permission for the login webview itself (window focus only). Window creation happens in Rust (src/xiaomi_login.rs) and does not use webview permission. The webview loads an external URL and does not call createWebviewWindow.",
   "windows": ["xiaomi-login"],
   "permissions": [
     "core:default",
-    "core:webview:allow-create-webview-window",
     "core:window:allow-set-focus"
   ]
 }

@@ -1,11 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "anysearch-login",
-  "description": "anysearch-login window — needs create-webview-window capability to spawn the SSO login webview (JWT extractor in src/anysearch_login.rs). Only this window label gets the permission; floating + settings do not.",
+  "description": "anysearch-login window — permission for the login webview itself (window focus only). Window creation happens in Rust (src/anysearch_login.rs) and does not use webview permission. The webview loads an external URL and does not call createWebviewWindow.",
   "windows": ["anysearch-login"],
   "permissions": [
     "core:default",
-    "core:webview:allow-create-webview-window",
     "core:window:allow-set-focus"
   ]
 }

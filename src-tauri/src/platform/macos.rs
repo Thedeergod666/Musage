@@ -187,6 +187,9 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
                 let inside = is_floating_topmost_at(&app, mouse);
 
                 if inside == last_inside {
+                    // D6-002 fix (2026-07-30 audit): 同步 Win 同款, 稳定态 reset
+                    // pending_value 防 Visible↔Outside 病态抖动击穿 EXIT_THRESHOLD=2.
+                    pending_value = last_inside;
                     pending_ticks = 0;
                     continue;
                 }

@@ -383,6 +383,12 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
                 let inside = hit != HitTest::Outside;
 
                 if inside == last_inside {
+                    // D6-002 fix (2026-07-30 audit): 稳定态同时 reset pending_value
+                    // 防 Visible↔Outside 病态抖动每 tick 击穿 EXIT_THRESHOLD=3.
+                    // 之前只 reset pending_ticks, pending_value 残留 → 下一轮
+                    // 非稳定分支 "pending_value != inside" 误判不成立 → ticks
+                    // 从 1 起不到 3 → 退场防抖永远不采纳, hover-raise 不 demote.
+                    pending_value = last_inside;
                     pending_ticks = 0;
                     // 稳定 hover 中：每 20 tick（1s）safety re-assert TopMost。
                     // WS_EX_TOPMOST 是 sticky 的，这只是兜底"万一被顶掉"；

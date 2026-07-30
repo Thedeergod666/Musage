@@ -28,8 +28,8 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use super::{
-    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
-    QuotaSource,
+    json_body_limited, shared_client, text_body_limited, AuthKind, Credentials, ErrorKind,
+    FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
 };
 use crate::t;
 
@@ -247,9 +247,7 @@ async fn fetch_credits(
         ));
     }
 
-    let raw: Value = resp.json().await.map_err(|e| {
-        FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
-    })?;
+    let raw = json_body_limited(resp).await?;
 
     parse_credits(&raw, source_id, display_name)
 }
@@ -287,7 +285,7 @@ async fn fetch_key(
         ));
     }
     if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
+        let body = text_body_limited(resp).await.unwrap_or_default();
         return Err(FetchError::server(
             t!(
                 "error.common.http_error",
@@ -299,9 +297,7 @@ async fn fetch_key(
         ));
     }
 
-    let raw: Value = resp.json().await.map_err(|e| {
-        FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
-    })?;
+    let raw = json_body_limited(resp).await?;
 
     parse_key(&raw, source_id, display_name)
 }

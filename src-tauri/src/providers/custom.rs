@@ -43,8 +43,8 @@ use serde_json::Value;
 
 use super::parse::{num_f64, read_path};
 use super::{
-    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
-    QuotaSource,
+    json_body_limited, shared_client, text_body_limited, AuthKind, Credentials, ErrorKind,
+    FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
 };
 use crate::t;
 
@@ -288,7 +288,7 @@ async fn do_fetch(
         ));
     }
     if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
+        let body = text_body_limited(resp).await.unwrap_or_default();
         return Err(FetchError::server(
             t!(
                 "error.custom.http_error",
@@ -299,9 +299,7 @@ async fn do_fetch(
         ));
     }
 
-    let raw: Value = resp.json().await.map_err(|e| {
-        FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
-    })?;
+    let raw = json_body_limited(resp).await?;
 
     let (rows, plan_name) =
         parse_with_extract(&raw, &spec.extract, spec.plan_name_path.as_deref())?;

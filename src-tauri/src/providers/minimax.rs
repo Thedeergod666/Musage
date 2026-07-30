@@ -36,8 +36,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use super::{
-    json_body_limited, shared_client, AuthKind, Credentials, ErrorKind, FetchError,
-    ProviderSnapshot, QuotaRow, QuotaSource,
+    json_body_limited, shared_client, text_body_limited, AuthKind, Credentials, ErrorKind,
+    FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
 };
 
 use crate::config::ProviderOverrides;
@@ -290,7 +290,7 @@ impl Minimax {
             ));
         }
         if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
+            let body = text_body_limited(resp).await.unwrap_or_default();
             return Err(FetchError::server(
                 t!(
                     "error.common.http_error",
@@ -726,7 +726,7 @@ mod tests {
     }
 
     #[test]
-    
+
     fn parse_tier_percent_missing_status_trusts_percent() {
         // 兼容：status 字段缺失（API 改名 / 老 schema）→ 直接信任 percent。
         // 旧逻辑会因 `let status = ...?` 早返 None，整行消失。

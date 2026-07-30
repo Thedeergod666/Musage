@@ -84,7 +84,8 @@ use base64::Engine;
 use serde_json::{json, Value};
 
 use super::{
-    shared_client, AuthKind, Credentials, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
+    json_body_limited, shared_client, text_body_limited, AuthKind, Credentials, FetchError,
+    ProviderSnapshot, QuotaRow, QuotaSource,
 };
 
 use crate::t;
@@ -270,9 +271,7 @@ async fn refresh_token(refresh: &str, unique_id: &str) -> Result<String, FetchEr
         })?;
 
     let status = resp.status();
-    let raw: Value = resp.json().await.map_err(|e| {
-        FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
-    })?;
+    let raw = json_body_limited(resp).await?;
 
     // 业务级 code（0 = 成功；40114 = refresh token 已作废 → 需重新登录）
     let code = raw.get("code").and_then(|v| v.as_i64()).unwrap_or(0);
@@ -420,7 +419,7 @@ async fn do_fetch_once(
         ));
     }
     if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
+        let body = text_body_limited(resp).await.unwrap_or_default();
         return Err(FetchError::server(
             t!(
                 "error.common.http_error",
@@ -432,9 +431,7 @@ async fn do_fetch_once(
         ));
     }
 
-    let raw: Value = resp.json().await.map_err(|e| {
-        FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
-    })?;
+    let raw = json_body_limited(resp).await?;
 
     // 业务级 code（0 = 成功）
     if let Some(code) = raw.get("code").and_then(|v| v.as_i64()) {

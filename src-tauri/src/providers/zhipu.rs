@@ -55,8 +55,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
-    shared_client, AuthKind, Credentials, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
-    RowKind,
+    json_body_limited, shared_client, text_body_limited, AuthKind, Credentials, FetchError,
+    ProviderSnapshot, QuotaRow, QuotaSource, RowKind,
 };
 use crate::t;
 
@@ -244,7 +244,7 @@ async fn do_fetch(
         ));
     }
     if !status.is_success() {
-        let body = resp.text().await.unwrap_or_default();
+        let body = text_body_limited(resp).await.unwrap_or_default();
         let region_label = match region {
             ZhipuRegion::Cn => "国区",
             ZhipuRegion::En => "国际",
@@ -260,9 +260,7 @@ async fn do_fetch(
         ));
     }
 
-    let raw: Value = resp.json().await.map_err(|e| {
-        FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
-    })?;
+    let raw = json_body_limited(resp).await?;
 
     // 业务级 success 检查
     if raw.get("success").and_then(|v| v.as_bool()) == Some(false) {

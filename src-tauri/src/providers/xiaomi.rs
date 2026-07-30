@@ -27,8 +27,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use super::{
-    shared_client, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
-    QuotaSource, RowKind,
+    json_body_limited, shared_client, text_body_limited, AuthKind, Credentials, ErrorKind,
+    FetchError, ProviderSnapshot, QuotaRow, QuotaSource, RowKind,
 };
 
 use crate::config::ProviderOverrides;
@@ -404,7 +404,7 @@ impl Xiaomimimo {
             ));
         }
         if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
+            let body = text_body_limited(resp).await.unwrap_or_default();
             return Err(FetchError::server(
                 t!(
                     "error.xiaomi.http_error",
@@ -414,9 +414,7 @@ impl Xiaomimimo {
                 .into_owned(),
             ));
         }
-        let raw: serde_json::Value = resp.json().await.map_err(|e| {
-            FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
-        })?;
+        let raw = json_body_limited(resp).await?;
         if let Some(code) = raw.get("code").and_then(|v| v.as_i64()) {
             if code != 0 {
                 let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
@@ -437,7 +435,7 @@ impl Xiaomimimo {
                 // M1 fix: 之前 r.json().await.unwrap_or(Value::Null) 静默吞掉 parse 失败。
                 // 用户看到 plan_name=None / no resets_at 时完全无诊断。
                 // 改成 log warn 然后 fallback Null，dev 模式至少能看见。
-                match r.json().await {
+                match json_body_limited(r).await {
                     Ok(v) => v,
                     Err(e) => {
                         tracing::warn!(
@@ -526,7 +524,7 @@ impl Xiaomimimo {
             // 401 的语义就是 "auth missing/invalid",让前端触发
             // relogin-xiaomi 引导用户走一键登录。只有 body 明确显示
             // 是 CDN/HTML error page (整段 HTML) 时才视作 server 错。
-            let body_preview = resp.text().await.unwrap_or_default();
+            let body_preview = text_body_limited(resp).await.unwrap_or_default();
             // 仅当 body 明显是 HTML 错误页 (非 auth 主题) 才判 server。
             // JSON / 空 / 短文本 → 默认 auth (见 is_html_error_page helper)。
             let looks_like_html_error = is_html_error_page(&body_preview);
@@ -551,7 +549,7 @@ impl Xiaomimimo {
             ));
         }
         if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
+            let body = text_body_limited(resp).await.unwrap_or_default();
             return Err(FetchError::server(
                 t!(
                     "error.xiaomi.http_error",
@@ -562,9 +560,7 @@ impl Xiaomimimo {
             ));
         }
 
-        let raw: serde_json::Value = resp.json().await.map_err(|e| {
-            FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
-        })?;
+        let raw = json_body_limited(resp).await?;
 
         // 业务级 code
         if let Some(code) = raw.get("code").and_then(|v| v.as_i64()) {
@@ -584,7 +580,9 @@ impl Xiaomimimo {
             .send()
             .await
         {
-            Ok(r) if r.status().is_success() => r.json().await.unwrap_or(serde_json::Value::Null),
+            Ok(r) if r.status().is_success() => json_body_limited(r)
+                .await
+                .unwrap_or(serde_json::Value::Null),
             _ => serde_json::Value::Null,
         };
 
@@ -1056,7 +1054,9 @@ mod tests {
 
     #[test]
     fn is_html_error_page_basic_html() {
-        assert!(is_html_error_page("<!DOCTYPE html><html><body>403</body></html>"));
+        assert!(is_html_error_page(
+            "<!DOCTYPE html><html><body>403</body></html>"
+        ));
         assert!(is_html_error_page("<html><body>error</body></html>"));
     }
 

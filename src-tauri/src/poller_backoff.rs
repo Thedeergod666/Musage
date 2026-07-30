@@ -88,14 +88,9 @@ impl BackoffState {
         default_secs: u64,
         caller: RefreshSource,
     ) {
-        let entry = self.per_source.entry(id.to_string()).or_default();
-
         if snapshot.success {
-            // 成功 → 完整 reset（streak + interval 都归零, Poller + Manual 都用)
-            if entry.failure_streak > 0 || entry.current_interval_secs.is_some() {
-                entry.failure_streak = 0;
-                entry.current_interval_secs = None;
-            }
+            // 成功 → 完整 reset。直接删 entry,避免长期保留全零空状态。
+            self.per_source.remove(id);
             return;
         }
 
@@ -115,6 +110,7 @@ impl BackoffState {
             return;
         }
 
+        let entry = self.per_source.entry(id.to_string()).or_default();
         entry.failure_streak = entry.failure_streak.saturating_add(1);
         let base = entry.current_interval_secs.unwrap_or(default_secs);
         // L-b1 fix (2026-07-28 审查): 之前 `base*2.min(MAX)` 在
@@ -125,12 +121,9 @@ impl BackoffState {
         entry.current_interval_secs = Some(new_interval);
     }
 
-    /// 测试/调试用：清掉某个 source 的退避状态（不删 entry 的 id，只是 reset）
+    /// 测试/调试用：清掉某个 source 的退避状态。
     pub fn reset(&mut self, id: &str) {
-        if let Some(entry) = self.per_source.get_mut(id) {
-            entry.failure_streak = 0;
-            entry.current_interval_secs = None;
-        }
+        self.per_source.remove(id);
     }
 
     /// M6 fix (2026-07-03 audit): 清理已删除 source 的 backoff entry。
@@ -263,26 +256,25 @@ mod tests {
     }
 
     #[test]
-#[test]
-fn manual_refresh_failure_does_not_bump_streak() {
-    // H5 fix (2026-07-30 audit): 用户主动点「立即刷新」失败不能让 poller
-    // 间隔被推到 30min cap,看起来像"软件坏了没自动刷新"。
-    // Manual 路径失败 = no-op,success = reset。
-    use super::RefreshSource;
-    let mut st = BackoffState::new();
-    st.record("minimax", &snap_fail(ErrorKind::ServerError), 60, RefreshSource::Poller);
-    assert_eq!(st.per_source["minimax"].failure_streak, 1);
-    assert_eq!(st.per_source["minimax"].current_interval_secs, Some(120));
-    for _ in 0..5 {
-        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60, RefreshSource::Manual);
+    fn manual_refresh_failure_does_not_bump_streak() {
+        // H5 fix (2026-07-30 audit): 用户主动点「立即刷新」失败不能让 poller
+        // 间隔被推到 30min cap,看起来像"软件坏了没自动刷新"。
+        // Manual 路径失败 = no-op,success = reset。
+        use super::RefreshSource;
+        let mut st = BackoffState::new();
+        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60, RefreshSource::Poller);
+        assert_eq!(st.per_source["minimax"].failure_streak, 1);
+        assert_eq!(st.per_source["minimax"].current_interval_secs, Some(120));
+        for _ in 0..5 {
+            st.record("minimax", &snap_fail(ErrorKind::ServerError), 60, RefreshSource::Manual);
+        }
+        assert_eq!(st.per_source["minimax"].failure_streak, 1);
+        assert_eq!(st.per_source["minimax"].current_interval_secs, Some(120));
+        st.record("minimax", &snap_success(), 60, RefreshSource::Manual);
+        assert!(!st.per_source.contains_key("minimax"));
     }
-    assert_eq!(st.per_source["minimax"].failure_streak, 1);
-    assert_eq!(st.per_source["minimax"].current_interval_secs, Some(120));
-    st.record("minimax", &snap_success(), 60, RefreshSource::Manual);
-    assert_eq!(st.per_source["minimax"].failure_streak, 0);
-    assert!(st.per_source["minimax"].current_interval_secs.is_none());
-}
 
+    #[test]
     fn backoff_does_not_reset_on_user_config_failure() {
         // 第一次服务端失败 → 退避到 120
         // 第二次配置失败（AuthFailed）→ 不动 interval
@@ -333,9 +325,7 @@ fn manual_refresh_failure_does_not_bump_streak() {
         st.record("minimax", &snap_success(), 60, crate::poller_backoff::RefreshSource::Poller);
         st.record("minimax", &snap_success(), 60, crate::poller_backoff::RefreshSource::Poller);
         // 状态是空的（没有 entry）
-        assert!(
-            !st.per_source.contains_key("minimax") || st.per_source["minimax"].failure_streak == 0
-        );
+        assert!(!st.per_source.contains_key("minimax"));
     }
 
     #[test]

@@ -65,7 +65,13 @@ pub(crate) fn save_lock() -> &'static Mutex<()> {
 /// let _g = save_lock().lock().unwrap_or_else(lock_recover);
 /// ```
 pub(crate) fn lock_recover<T>(poisoned: std::sync::PoisonError<T>) -> T {
-    tracing::warn!("mutex poisoned, recovering");
+    // M14 fix (2026-07-30 audit): mutex 中毒说明上一个持锁线程 panic 了,
+    // 后续 lock 会永久返 Err —— 不是「正常可恢复的 warn 级」场景。
+    // 升 ERROR 触发告警;backtrace 在 RUST_BACKTRACE=1 时打印调用链。
+    tracing::error!(
+        backtrace = ?std::backtrace::Backtrace::capture(),
+        "save_lock mutex poisoned, recovering via into_inner"
+    );
     poisoned.into_inner()
 }
 

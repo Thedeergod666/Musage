@@ -176,6 +176,19 @@ impl LogStore {
                     let drop = buf.len() - MAX_ENTRIES;
                     buf.drain(..drop);
                 }
+                // B-H3 fix (2026-07-30 audit): 升级场景下老 app_log.jsonl 可能
+                // 保留 0644 权限,append_entry 的 0600 设置只在下次写时才生效。
+                // 启动期先 force 一遍,关闭「历史文件权限泄漏同机其他用户可读
+                // history 错误日志」的窗口 —— message 字段可能含 API key /
+                // cookie(redact 后还是会泄漏结构)。
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(
+                        &path,
+                        std::fs::Permissions::from_mode(0o600),
+                    );
+                }
             }
         }
         Self {

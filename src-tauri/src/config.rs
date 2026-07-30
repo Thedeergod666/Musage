@@ -577,18 +577,35 @@ impl AppConfig {
         // display_mode / 浮窗位置)在下次 save() 时被默认值覆盖——历史
         // 上一次 JSON typo 就能丢全部自定义。改为:即使顶层解析失败,也
         // 抽取 raw Value 并尝试提取已知字段(H5-best-effort)。
+        //
+        // D4-001 fix (2026-07-30 audit): 之前用 std::fs::copy 留原文件 +
+        // .bak.<ts>, 后续任意 save() 触发都会把损坏原文件直接覆盖成
+        // 全默认 —— 即便 backup 还在, 用户损失的是"配置的所有状态",
+        // 不只是损坏那一刻。改为 std::fs::rename 原子移动:原文件立刻消失,
+        // 后续 save() 创建的新文件是干净的默认,损坏版本永久保留在
+        // .bak.<ts>。rename 失败(权限/跨设备)兜底回 copy + warn。
         let ts = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let backup = path.with_extension(format!("json.bak.{ts}"));
-        if let Err(e) = std::fs::copy(&path, &backup) {
-            tracing::error!(error = %e, path = %path.display(), "config.json 损坏且备份失败");
-        } else {
-            tracing::error!(
-                backup = %backup.display(),
-                "config.json 无法解析，已备份到 .bak.<ts>，尝试 best-effort 保留"
-            );
+        match std::fs::rename(&path, &backup) {
+            Ok(()) => {
+                tracing::error!(
+                    backup = %backup.display(),
+                    "config.json 无法解析, 已原子移动到 .bak.<ts>, 后续 save() 不会再覆盖损坏版本;                      用户应手动恢复或编辑该备份后改名回 config.json"
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    path = %path.display(),
+                    "config.json 损坏且 rename 失败, 兜底用 copy (注意:原文件仍可能被下次 save() 覆盖)"
+                );
+                if let Err(e2) = std::fs::copy(&path, &backup) {
+                    tracing::error!(error = %e2, path = %path.display(), "config.json 损坏且备份失败");
+                }
+            }
         }
         // best-effort: 从 raw JSON 挑出能解析的字段
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(&s) {

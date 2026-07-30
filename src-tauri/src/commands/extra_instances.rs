@@ -371,13 +371,30 @@ pub async fn delete_extra_instance(
         // H14 fix: save 失败时回滚该 instance 的 api_key_ref 到 old_ref,
         // 让它继续指向有凭据的旧 key(否则 instance 指向新 key 但新 key 无凭据,
         // fetch 永远报"未配置")。
+        //
+        // D4-004 fix (2026-07-30 audit): 之前 H13 只回滚 extras (内存)
+        // 不回滚 keys.json (磁盘)。失败后状态不一致: extras 含被删实例
+        // (snapshot 恢复) 但 keys.json 已缺它的 key + 其他实例的 key
+        // 已被 compact 迁移到新值,下一次 fetch 全部 "未配置" 报错。
+        // 解决: 记录所有对 keys.json 的修改 (migrations_done + target_deleted),
+        // save extras 失败时反向操作:
+        //   1. 把 target_api_key_ref 凭据重新写回 keys.json (如果原本有)
+        //   2. 对每个 migration_done 反向: save_credential_for_id(old_ref)
+        //      + delete_credential_for_id(new_ref)
+        //   3. 重建到 snapshot 时的 keys.json 状态
         let mut migration_failures: Vec<(uuid::Uuid, String)> = Vec::new();
+        // D4-004: 跟踪成功的迁移 + 原 credential, 用于 save 失败反向操作
+        let mut migrations_done: Vec<(String, Credentials)> = Vec::new();
+        // D4-004: target_cred_backup 在后面 save_credential_for_id 调用前赋值
+        let target_cred_backup: Option<Credentials>;
         for (inst_id, old_ref) in &old_refs {
             if let Some(inst) = extras.iter_mut().find(|e| &e.id == inst_id) {
                 if inst.api_key_ref != *old_ref {
                     match load_credential_for_id(old_ref) {
                         Ok(Some(cred)) => match save_credential_for_id(&inst.api_key_ref, &cred) {
                             Ok(()) => {
+                                // D4-004: 记下成功的迁移,用于失败回滚
+                                migrations_done.push((old_ref.clone(), cred.clone()));
                                 delete_credential_for_id(old_ref).ok();
                             }
                             Err(e) => {
@@ -416,11 +433,33 @@ pub async fn delete_extra_instance(
         }
 
         // 删被删除实例的旧 key(target_api_key_ref 是锁内读取的当前值)
+        // D4-004: 先备份一份凭据(save 失败时反向写回)
+        target_cred_backup = load_credential_for_id(&target_api_key_ref).ok().flatten();
+        let target_cred_backup = target_cred_backup;
         delete_credential_for_id(&target_api_key_ref).ok();
 
-        // H13: save 失败时回滚 extras 到删除前快照
+        // H13 + D4-004: save 失败时回滚 extras (内存) + keys.json (磁盘)
         if let Err(e) = extra_instances::save(&extras) {
+            // D4-004: 先 clone snapshot 用于 keys.json 反向 rollback, 再 move
+            // 进 extras (顺序重要: 必须先 clone)
+            let snapshot_for_rollback = extras_snapshot.clone();
             *extras = extras_snapshot;
+            // keys.json 反向操作:
+            // 1. 先撤销 compact migrations (后做的先撤销 → LIFO)
+            // 2. 最后恢复 target_api_key_ref 凭据
+            for (old_ref, cred) in migrations_done.iter().rev() {
+                if let Some(inst) = snapshot_for_rollback
+                    .iter()
+                    .find(|e| e.api_key_ref == *old_ref)
+                {
+                    // 找到原本指向 old_ref 的 instance,把凭据写回 old_ref
+                    let _ = save_credential_for_id(old_ref, cred);
+                    let _ = delete_credential_for_id(&inst.api_key_ref);
+                }
+            }
+            if let Some(cred) = target_cred_backup {
+                let _ = save_credential_for_id(&target_api_key_ref, &cred);
+            }
             return Err(e);
         }
     }

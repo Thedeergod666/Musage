@@ -243,6 +243,13 @@ async fn do_fetch(
             t!("error.zhipu.auth_failed_hint").into_owned(),
         ));
     }
+    // D-015 fix (2026-07-30 audit): 429 单独走 RateLimited
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(FetchError::new(
+            super::ErrorKind::RateLimited,
+            t!("error.common.rate_limited", provider = "智谱 GLM").into_owned(),
+        ));
+    }
     if !status.is_success() {
         let body = text_body_limited(resp).await.unwrap_or_default();
         let region_label = match region {

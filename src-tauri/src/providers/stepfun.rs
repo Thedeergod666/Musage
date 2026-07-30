@@ -376,6 +376,14 @@ async fn fetch_rate_limit(token: &str) -> Result<Value, FetchError> {
             t!("error.common.rate_limited", provider = "StepFun").into_owned(),
         ));
     }
+    // D-015 fix (2026-07-30 audit): 429 单独走 RateLimited
+    // (poller_backoff 30min 退避), 别跟其他 5xx 一起走 Server (5min 退避)
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(FetchError::new(
+            super::ErrorKind::RateLimited,
+            t!("error.common.rate_limited", provider = "StepFun").into_owned(),
+        ));
+    }
     if !status.is_success() {
         return Err(FetchError::server(
             t!(
@@ -579,6 +587,14 @@ async fn refresh_oasis_token(token: &str, unique_id: &str) -> Result<String, Fet
             "[diag] stepfun refresh 401/403 raw response（refresh 半段也废了 → 引导重登）");
         return Err(FetchError::auth(
             t!("error.stepfun.token_invalid_hint").into_owned(),
+        ));
+    }
+    // D-015 fix (2026-07-30 audit): 429 单独走 RateLimited
+    // (poller_backoff 30min 退避), 别跟其他 5xx 一起走 Server (5min 退避)
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(FetchError::new(
+            super::ErrorKind::RateLimited,
+            t!("error.common.rate_limited", provider = "StepFun").into_owned(),
         ));
     }
     if !status.is_success() {

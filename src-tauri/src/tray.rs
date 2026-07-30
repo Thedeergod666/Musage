@@ -970,7 +970,43 @@ fn tooltip(snap: &QuotaSnapshot) -> String {
     }
     // 每个套餐独占一行(tray tooltip macOS NSStatusItem / Win11 SHGetTrayWindow 都
     // 支持 \n 换行；多 provider 横向挤一行信息密度太低、易错行)。
-    parts.join("\n")
+    let raw = parts.join("\n");
+    // M4 fix (2026-07-30 audit): Windows NOTIFYICONDATAW.szTip 限制 128 UTF-16
+    // 单元,超过会**静默截断** (tray-icon crate 不报错),emoji surrogate pair
+    // 还可能被切成乱码。12+ provider 必然超 128;按 Unicode scalar 边界
+    // 截断到 127 单元 + 拼接 "…"(\\u2026,1 UTF-16 单元)。非 Win 平台无此限制。
+    if cfg!(target_os = "windows") {
+        truncate_to_utf16_units(&raw, 127)
+    } else {
+        raw
+    }
+}
+
+/// 按 UTF-16 单元数截断字符串到 <= `max_units` UTF-16 单元,末尾加 "…"。
+/// 严格在 unicode scalar 边界对齐 —— emoji 🟢/🟡/🔴 是 surrogate pair,
+/// 在 unit 边界切开会导致 tray 显示乱码。max_units <= 1 时返 "…"。
+pub(crate) fn truncate_to_utf16_units(s: &str, max_units: usize) -> String {
+    if max_units == 0 {
+        return String::new();
+    }
+    // fast path
+    if s.encode_utf16().count() <= max_units {
+        return s.to_string();
+    }
+    const ELLIPSIS: &str = "…"; // U+2026,1 UTF-16 单元
+    let budget = max_units.saturating_sub(1);
+    let mut out = String::with_capacity(s.len());
+    let mut used = 0usize;
+    for ch in s.chars() {
+        let units = ch.len_utf16();
+        if used + units > budget {
+            break;
+        }
+        out.push(ch);
+        used += units;
+    }
+    out.push_str(ELLIPSIS);
+    out
 }
 
 /// 提取 instance `#N` 后缀,instance_index == 1 或 None 时返空串。
@@ -1113,6 +1149,30 @@ mod tests {
         assert_eq!(sanitize_percent(50.4), 50);
         assert_eq!(sanitize_percent(100.0), 100);
         assert_eq!(sanitize_percent(99.99), 100);
+    }
+
+    #[test]
+    fn truncate_to_utf16_units_caps_windows_tooltip() {
+        // M4 fix (2026-07-30 audit): Win NOTIFYICONDATAW.szTip 上限 128 UTF-16
+        // 单元,超过会静默截断 + emoji surrogate pair 可能被切坏。
+        use super::truncate_to_utf16_units;
+        // 普通 ASCII:180 chars → 截到 127 + "…"
+        let s = "a".repeat(180);
+        let out = truncate_to_utf16_units(&s, 127);
+        assert_eq!(out.encode_utf16().count(), 127);
+        assert!(out.ends_with('…'));
+        // emoji (1 unicode scalar = 2 UTF-16 unit surrogate pair) 必须成对保留
+        let s = "🟢🟡🔴abc"; // 3 emoji * 2 unit + "abc" * 1 unit = 9 unit
+        assert_eq!(s.encode_utf16().count(), 9);
+        let out = truncate_to_utf16_units(&s, 5); // budget 4
+        assert!(out.ends_with('…'));
+        // 边界:equal 返回原值(不加 …)
+        let s = "abc"; // 3 unit
+        assert_eq!(truncate_to_utf16_units(&s, 3), "abc");
+        // 边界:max=0 返空串
+        assert_eq!(truncate_to_utf16_units("hello", 0), "");
+        // 边界:max=1 返 "…"(无原文)
+        assert_eq!(truncate_to_utf16_units("hello", 1), "…");
     }
 
     #[test]

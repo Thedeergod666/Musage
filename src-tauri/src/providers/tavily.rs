@@ -382,8 +382,12 @@ mod tests {
         assert_eq!(snap.rows.len(), 6);
         // First row: 150/1000 credits, 15% used
         let main = &snap.rows[0];
-        assert_eq!(main.label, "Free tier");
-        assert_eq!(main.unit.as_deref(), Some("credits"));
+        // D-007 fix (2026-07-30 audit): 之前硬编码 "Free tier" / "credits"
+        // 英文, 测试不跟 i18n 走 — 当前 en/zh-CN 都用 "credits" 所以碰巧
+        // 不失败, 但 "Free tier" 在 zh-CN 是 "免费版" 时必炸。 改为 t!()
+        // 对齐生产代码。
+        assert_eq!(main.label, t!("row.free_tier").to_string());
+        assert_eq!(main.unit.as_deref(), Some(t!("row.credits").as_ref()));
         assert_eq!(main.used, Some(150.0));
         assert_eq!(main.total, Some(1000.0));
         assert!((main.utilization.unwrap() - 15.0).abs() < 0.001);

@@ -481,9 +481,45 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
     });
 
     // 落盘线程：每 500ms 检查 latest 是否有变化，有就写一次
+    //
+    // D5-101 fix (2026-07-30 audit): 之前永久循环不监听 shutdown, 用户
+    // 拖完浮窗最后 100ms 内 quit → 500ms 落盘循环还没跑 → tokio runtime
+    // drop 取消 task → Mutex<Option<(x,y,w,h)>> 里的最新值丢失,下次启动
+    // 浮窗回到拖之前位置。 修复: 监听 poller::SHUTDOWN (跟 quit_app 共用
+    // 一个 signal), 主循环里 select 选 sleep 或 notified,退出前最后一次
+    // tick 把 latest 落盘 (quit_app 已 sleep 150ms 让出 task, 这里再 flush
+    // 一次保险)。
     tauri::async_runtime::spawn(async move {
         loop {
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(500)) => {}
+                _ = crate::poller::SHUTDOWN.notified() => {
+                    tracing::info!("geom_persister 收到 SHUTDOWN,最后 flush 一次后退出");
+                    // 最后一次 flush, 把 latest 落盘
+                    let pending = {
+                        let mut g = latest.lock().unwrap_or_else(|e| {
+                            tracing::warn!("geom_persister latest poisoned (shutdown), recovering");
+                            e.into_inner()
+                        });
+                        g.take()
+                    };
+                    if let Some((x, y, w, h)) = pending {
+                        let state = app.state::<AppState>();
+                        let mut cfg = state.config.write().await;
+                        let mut dirty = false;
+                        if cfg.floating_x != Some(x) { cfg.floating_x = Some(x); dirty = true; }
+                        if cfg.floating_y != Some(y) { cfg.floating_y = Some(y); dirty = true; }
+                        if w > 0 && cfg.floating_w != Some(w) { cfg.floating_w = Some(w); dirty = true; }
+                        if h > 0 && cfg.floating_h != Some(h) { cfg.floating_h = Some(h); dirty = true; }
+                        if dirty {
+                            if let Err(e) = cfg.save() {
+                                tracing::warn!(error = %e, "保存浮窗几何失败 (shutdown flush)");
+                            }
+                        }
+                    }
+                    break;
+                }
+            }
             let pending = {
                 let mut g = latest.lock().unwrap_or_else(|e| {
                     tracing::warn!("geom_persister latest poisoned (tick), recovering");

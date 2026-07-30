@@ -811,6 +811,20 @@ fn fill_rounded_rect(
 ///
 /// font 缺失时 fallback 到 `draw_mini_bars`（保持信息密度，不留空让用户
 /// 困惑 "是不是没数据"）。
+// M5 fix (2026-07-30 audit): 把可能 NaN/Infinity/越界的浮点百分比归一成
+// 0..=100 的 u32 percent。draw_percent 和 draw_mini_bars 都通过 pct
+// closure 复用同款 clamp,但 draw_percent 之前是 `format!("{}%",
+// util_top.round() as i64)` 直接 round 不 clamp → 不一致;统一走 helper。
+// 仅用于**显示百分比**,不参与实际 usage / bar 长度计算(那两个在
+// compute_utilization 阶段就该被 fence 住,这里是最后兜底)。
+#[inline]
+pub(crate) fn sanitize_percent(v: f64) -> u32 {
+    if !v.is_finite() {
+        return 0;
+    }
+    v.clamp(0.0, 100.0).round() as u32
+}
+
 fn draw_percent(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64, util_bot: f64) {
     let Some(font) = load_font() else {
         return draw_mini_bars(img, util_top, util_bot);
@@ -830,8 +844,13 @@ fn draw_percent(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64, 
         Rgba([255u8, 255, 255, 255])
     };
 
-    let top = format!("{}%", util_top.round() as i64);
-    let bot = format!("{}%", util_bot.round() as i64);
+    // M5 fix (2026-07-30 audit): util_top/utility 可能 NaN/负值/>100
+    // (MiniMax 旧 count schema 在 remaining>total 时算出负百分比,某些 provider
+    // 返 Infinity).round()/.round() as i64 都 unsound 行为,直接 format 会显示
+    // "-25%" / "NaN%" / "999%" 触发 H1 严重裁切。
+    // sanitize_percent 先 NaN/Infinity → 0,再 clamp 到 0..=100,再 round。
+    let top = format!("{}%", sanitize_percent(util_top));
+    let bot = format!("{}%", sanitize_percent(util_bot));
 
     // H1 fix (2026-07-29 审查): 100% 时 3 位数字 + % 比 99% 多 1 字符,
     // 原 scale 20/40 下文本宽度约 48/96 px,超出 ICON_SIZE 32/64 → 左边
@@ -1074,6 +1093,27 @@ fn truncate(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sanitize_percent_fences_nan_infinity_and_overflow() {
+        // M5 fix (2026-07-30 audit): NaN / -Infinity / +Infinity / 越界值
+        // 必须归一成 0..=100 的 u32,避免 percent 文本显示 "-25%" / "NaN%" /
+        // "999%" 触发 H1 严重裁切。
+        use super::sanitize_percent;
+        // 任何 non-finite（含 NaN / ±Infinity）一律视为"无效数据" → 0%。
+        // 比"+Infinity → 100%"更安全:provider 返 NaN / Inf 多为 schema 漂移
+        // 或服务端 bug,显示"已用完"会误导用户去找充值入口。
+        assert_eq!(sanitize_percent(f64::NAN), 0);
+        assert_eq!(sanitize_percent(f64::INFINITY), 0);
+        assert_eq!(sanitize_percent(f64::NEG_INFINITY), 0);
+        assert_eq!(sanitize_percent(-25.0), 0);
+        assert_eq!(sanitize_percent(999.0), 100);
+        assert_eq!(sanitize_percent(0.0), 0);
+        assert_eq!(sanitize_percent(50.5), 51); // round to nearest
+        assert_eq!(sanitize_percent(50.4), 50);
+        assert_eq!(sanitize_percent(100.0), 100);
+        assert_eq!(sanitize_percent(99.99), 100);
+    }
 
     #[test]
     fn fit_scale_returns_base_when_fits() {

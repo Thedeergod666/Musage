@@ -251,10 +251,13 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
 
 // ── 内部 ──
 
-/// 把浮窗的 NSWindow level 切到 `level`。dispatch 到 main thread（AppKit 强制要求）。
-/// M3 fix: 加 `is_pin_bottom` 参数。PinBottom 模式设 hidesOnDeactivate(false)
-/// (否则鼠标一离开焦点窗口就消失)；PinTop / Normal 走默认值(true)，
-/// Normal 模式失焦时窗口应被隐藏(跟普通窗口一致)。
+/// 把浮窗的 NSWindow level 切到 `level`,dispatch 到 main thread(AppKit 强制要求)。
+///
+/// **D6-004 fix (2026-07-30 audit)**: doc 跟 H15 fix (2026-07-03, commit d5612ab) 实际
+/// 行为对齐 —— 所有模式都强制 `setHidesOnDeactivate(false)`,让浮窗失焦时仍可见
+/// (macOS 普通窗口失焦只是被其他 app 遮盖, level 切换已实现该语义, hide() 不属于
+/// "始终可见的用量悬浮窗"产品定义)。`is_pin_bottom` 参数保留仅为调用方签名兼容,
+/// 不参与运行时分支(见函数体内 `let _ = is_pin_bottom;` 注释)。
 pub fn set_window_level<R: Runtime>(app: &AppHandle<R>, level: CGWindowLevel, is_pin_bottom: bool) {
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {

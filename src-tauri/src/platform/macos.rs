@@ -333,8 +333,14 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
             if ptr.is_null() {
                 return None;
             }
-            // SAFETY: ptr 来自 webview_window 的 NSWindow，整个 app 生命周期有效。
-            let window: &NSWindow = unsafe { &*ptr.cast::<NSWindow>() };
+            // D6-003 fix (2026-07-30 audit): 改用 Retained::retain() 拿 NSWindow,
+            // 对齐 H2 fix (set_window_level) 的安全模式, 防止 future footgun.
+            // 之前裸 &*ptr.cast 借 raw pointer 引用, 若浮窗在引用期间被 close,
+            // 后续 windowNumber() 调 dispatch use-after-free. Retained 增加
+            // 一次 retain 引用计数, 闭包内一直 hold 住, 闭包结束自动 release.
+            let window: Retained<NSWindow> = unsafe {
+                Retained::retain(ptr.cast::<NSWindow>())
+            }?;
             let our_id = window.windowNumber();
             if our_id == 0 {
                 // 窗口还没上屏（极少见，初始化竞态）→ 直接 false

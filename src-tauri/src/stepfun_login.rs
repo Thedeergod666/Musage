@@ -188,13 +188,20 @@ pub async fn open_stepfun_login_window(app: AppHandle) -> Result<(), String> {
         .parse::<Url>()
         .map_err(|e| t!("stepfun_login.parse_login_url", err = e.to_string()).into_owned())?;
 
-    let window = WebviewWindowBuilder::new(&app, WINDOW_LABEL, WebviewUrl::External(url))
+    // D3-003 fix (2026-07-30 audit): 同 xiaomi/anysearch
+    let b = WebviewWindowBuilder::new(&app, WINDOW_LABEL, WebviewUrl::External(url))
         .title(t!("window.stepfun_login").to_string())
         .inner_size(960.0, 720.0)
         .min_inner_size(640.0, 540.0)
         .resizable(true)
         .decorations(true)
         .center()
+        .skip_taskbar(true);
+    let b = match app.get_webview_window("settings") {
+        Some(p) => b.parent(&p).map_err(|e| format!("stepfun login parent: {e}"))?,
+        None => b,
+    };
+    let window = b
         .build()
         .map_err(|e| t!("stepfun_login.build_webview", err = e.to_string()).into_owned())?;
 

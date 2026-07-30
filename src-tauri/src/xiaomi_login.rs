@@ -210,13 +210,23 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
     // 闭包必须 'static + Send + Sync → 克隆 AppHandle（内部 Arc 包装，廉价）
     let app_for_callback = app.clone();
 
-    WebviewWindowBuilder::new(&app, "xiaomi-login", WebviewUrl::External(url))
+    // D3-003 fix (2026-07-30 audit): parent 让登录窗附属设置窗(关设置
+    // 窗 → 关登录窗 + 避免被设置窗完全遮挡), skip_taskbar(true) 因为
+    // 登录是 transient dialog. settings 窗可能还没建(用户从系统托盘
+    // 直接进登录), 这种情况降级到无 parent.
+    let b = WebviewWindowBuilder::new(&app, "xiaomi-login", WebviewUrl::External(url))
         .title(t!("window.xiaomi_login").to_string())
         .inner_size(960.0, 720.0)
         .min_inner_size(640.0, 540.0)
         .resizable(true)
         .decorations(true)
         .center()
+        .skip_taskbar(true);
+    let b = match app.get_webview_window("settings") {
+        Some(p) => b.parent(&p).map_err(|e| format!("xiaomi login parent: {e}"))?,
+        None => b,
+    };
+    b
         // H8 fix (2026-07-06 全量审查): 在 webview 里注入 init script,挡住
         // dashboard 域之外的 cookie 读取 + 第三方 widget 在受信 webview
         // 上下文里跑 JS 偷 session。

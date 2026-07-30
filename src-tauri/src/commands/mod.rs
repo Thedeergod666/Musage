@@ -32,6 +32,7 @@ use crate::providers::{
     all_sources, builtin_sources, find_source, AuthKind, Credentials, ErrorKind, FetchError,
     ProviderSnapshot, QuotaSnapshot, QuotaSource,
 };
+use crate::poller_backoff::RefreshSource;
 use crate::t;
 use crate::AppState;
 
@@ -543,7 +544,7 @@ pub async fn refresh_now(
         return Ok(state.snapshot.read().await.clone());
     };
     let cfg = state.config.read().await.clone();
-    let snap = refresh_inner(&app, &cfg).await?;
+    let snap = refresh_inner(&app, &cfg, RefreshSource::Manual).await?;
     // 合并写回 state（而不是整块覆写）—— 跟 tick() 同理：
     // refresh_inner 并发拉所有 provider 的过程中，per-provider poller 可能已经
     // 把某个 provider 更新到 state.snapshot 里了；整块覆写会把那份新数据回滚。
@@ -1305,7 +1306,11 @@ async fn fill_next_fetch_at(
 /// 被 [`refresh_now`] 和 [`crate::poller::tick`] 共用。
 ///
 /// Phase 1：每个 source 自己负责鉴权和 fetch，commands.rs 不再 `match provider`。
-pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnapshot, String> {
+pub async fn refresh_inner(
+    app: &AppHandle,
+    cfg: &AppConfig,
+    caller: RefreshSource,
+) -> Result<QuotaSnapshot, String> {
     // H1: builtin_sources() 不含 custom sources。refresh_inner 必须走 all_sources
     // 才能让用户添加的 New API 中转站出现在全量刷新里。lock 顺序:
     // state.config.read() 先拿+释放,再调 all_sources(state) 拿+释放 customs.read(),
@@ -1424,7 +1429,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                 {
                     let state = app.state::<AppState>();
                     let mut backoff = state.backoff.write().await;
-                    backoff.record(&id, &s, default_interval_secs, crate::poller_backoff::RefreshSource::Poller);
+                    backoff.record(&id, &s, default_interval_secs, caller);
                 }
                 fill_next_fetch_at(app, &id, default_interval_secs, &mut s).await;
                 snap.providers.push(s);
@@ -1445,7 +1450,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                 {
                     let state = app.state::<AppState>();
                     let mut backoff = state.backoff.write().await;
-                    backoff.record(&id, &err_snap, default_interval_secs, crate::poller_backoff::RefreshSource::Poller);
+                    backoff.record(&id, &err_snap, default_interval_secs, caller);
                 }
                 fill_next_fetch_at(app, &id, default_interval_secs, &mut err_snap).await;
                 snap.providers.push(err_snap);
@@ -1468,7 +1473,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                 {
                     let state = app.state::<AppState>();
                     let mut backoff = state.backoff.write().await;
-                    backoff.record(&id, &err_snap, default_interval_secs, crate::poller_backoff::RefreshSource::Poller);
+                    backoff.record(&id, &err_snap, default_interval_secs, caller);
                 }
                 err_snap.next_fetch_at = Some(
                     chrono::Utc::now().timestamp_millis() + (default_interval_secs as i64) * 1000,

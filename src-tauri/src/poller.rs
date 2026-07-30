@@ -332,10 +332,17 @@ pub fn start(app: AppHandle) {
 
 /// 手动触发一次（供 tray 菜单和 commands::refresh_now 调用）
 pub async fn tick_now(app: &AppHandle) -> Result<(), String> {
-    tick(app).await
+    tick_with_source(app, crate::poller_backoff::RefreshSource::Manual).await
 }
 
 pub async fn tick(app: &AppHandle) -> Result<(), String> {
+    tick_with_source(app, crate::poller_backoff::RefreshSource::Poller).await
+}
+
+async fn tick_with_source(
+    app: &AppHandle,
+    caller: crate::poller_backoff::RefreshSource,
+) -> Result<(), String> {
     // M7 fix: 并发去重。CAS 已封装进 try_acquire_tick(P6 fix 抽出,
     // refresh_now 复用同一位)。已有实例在跑时直接返回。
     let Some(_guard) = try_acquire_tick() else {
@@ -349,7 +356,7 @@ pub async fn tick(app: &AppHandle) -> Result<(), String> {
         cfg
     };
 
-    let new_snap = refresh_inner(app, &cfg).await?;
+    let new_snap = refresh_inner(app, &cfg, caller).await?;
 
     // 合并写回 state（而不是整块覆写）——
     // refresh_inner 会在内部 emit 一次快照，但那个快照是在 fetch 各 provider

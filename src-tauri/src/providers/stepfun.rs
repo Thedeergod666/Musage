@@ -992,8 +992,10 @@ pub(crate) fn access_token_exp_seconds_ago(token: &str) -> Option<i64> {
 /// 序列化成字符串，如 `"400000000"` —— CodexBar `StepFunFlexibleNumber`
 /// 同款防御）。
 fn flex_f64(v: &Value) -> Option<f64> {
+    // D-014 fix (2026-07-30 audit): 过滤 NaN/inf 字符串. 对齐 H12 fix.
     v.as_f64()
         .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+        .filter(|f| f.is_finite())
 }
 
 /// 宽松整数解析：int / 数字字符串（`status` / `code` / `plan_family` 用）。

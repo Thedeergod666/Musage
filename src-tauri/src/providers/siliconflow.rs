@@ -277,9 +277,11 @@ fn parse(
 
 /// 兼容数字和字符串两种 JSON 表示（SiliconFlow 余额字段是字符串）。
 fn parse_f64(v: Option<&serde_json::Value>) -> Option<f64> {
+    // D-014 fix (2026-07-30 audit): 过滤 NaN/inf 字符串. 对齐 H12 fix.
     v.and_then(|x| {
         x.as_f64()
             .or_else(|| x.as_str().and_then(|s| s.trim().parse().ok()))
+            .filter(|f| f.is_finite())
     })
 }
 

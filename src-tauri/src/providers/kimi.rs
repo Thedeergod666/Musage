@@ -303,10 +303,14 @@ fn build_window_row(
 
 /// 解析 JSON 值为 f64，兼容数字和字符串格式（如 `100` 和 `"100"`）。
 fn parse_f64(v: Option<&Value>) -> Option<f64> {
+    // D-014 fix (2026-07-30 audit): 过滤 NaN/inf 字符串 ("NaN" / "inf"
+    // / "-inf" / "Infinity") → f64::clamp 对 NaN 是透传,前端会渲染
+    // 诡异百分比 / 余额. 对齐共享 parse::num_f64 (H12 fix).
     v.and_then(|x| {
         x.as_f64()
             .or_else(|| x.as_i64().map(|i| i as f64))
             .or_else(|| x.as_str().and_then(|s| s.trim().parse().ok()))
+            .filter(|f| f.is_finite())
     })
 }
 

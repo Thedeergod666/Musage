@@ -615,10 +615,12 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
 }
 
 fn num_f64(obj: &Value, field: &str) -> Option<f64> {
+    // D-014 fix (2026-07-30 audit): 过滤 NaN/inf 字符串. 对齐 H12 fix.
     obj.get(field).and_then(|v| {
         v.as_f64()
             .or_else(|| v.as_i64().map(|i| i as f64))
             .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+            .filter(|f| f.is_finite())
     })
 }
 

@@ -385,7 +385,9 @@ pub async fn delete_extra_instance(
         let mut migration_failures: Vec<(uuid::Uuid, String)> = Vec::new();
         // D4-004: 跟踪成功的迁移 + 原 credential, 用于 save 失败反向操作
         let mut migrations_done: Vec<(String, Credentials)> = Vec::new();
-        // D4-004: target_cred_backup 在后面 save_credential_for_id 调用前赋值
+        // D4-004 + D4-006: target_cred_backup 在后面 save_credential_for_id
+        // 调用前赋值; D4-006 可能后续清成 None (target_api_key_ref 被 compact 占用时)。
+        // 下面用 let mut 影子赋值, 后续 D4-006 才能 target_cred_backup = None。
         let target_cred_backup: Option<Credentials>;
         for (inst_id, old_ref) in &old_refs {
             if let Some(inst) = extras.iter_mut().find(|e| &e.id == inst_id) {
@@ -435,8 +437,26 @@ pub async fn delete_extra_instance(
         // 删被删除实例的旧 key(target_api_key_ref 是锁内读取的当前值)
         // D4-004: 先备份一份凭据(save 失败时反向写回)
         target_cred_backup = load_credential_for_id(&target_api_key_ref).ok().flatten();
-        let target_cred_backup = target_cred_backup;
-        delete_credential_for_id(&target_api_key_ref).ok();
+        let mut target_cred_backup = target_cred_backup;
+        // D4-006 fix (2026-07-30 audit): 之前无脑 delete_credential_for_id(&target_api_key_ref)
+        // 有 gap-filling bug。场景: 初始 [deepseek#1, deepseek#2, deepseek#3],
+        // 删 deepseek#2 时 target_api_key_ref="deepseek#2", 但 compact 会把
+        // deepseek#3 迁移到 deepseek#2 (填洞)。 migrations 循环把 d#3 的凭据
+        // 写到 deepseek#2 槽位 → 紧接着 delete_credential_for_id("deepseek#2")
+        // 误删刚写进来的 d#3 凭据。 修复: 删前确认 compact 之后 target_api_key_ref
+        // 是否已被其他 instance 占用, 是则跳过删除 (该 key 已被迁移覆盖,
+        // 不能再清; 凭据所有权转给 compacted instance)。
+        let target_ref_now_used = extras
+            .iter()
+            .any(|e| e.api_key_ref == target_api_key_ref);
+        if !target_ref_now_used {
+            delete_credential_for_id(&target_api_key_ref).ok();
+        } else {
+            // D4-006: target_api_key_ref 已被 compact 占用, 不删。
+            // target_cred_backup 此时是迁移前的旧值, 不需要回滚 (它会被
+            // 新 compacted instance 覆盖, 跟本次 delete 无关)。
+            target_cred_backup = None;
+        }
 
         // H13 + D4-004: save 失败时回滚 extras (内存) + keys.json (磁盘)
         if let Err(e) = extra_instances::save(&extras) {

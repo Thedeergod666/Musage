@@ -31,6 +31,7 @@ use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
 
+use objc2::rc::Retained;
 use objc2::MainThreadMarker;
 use objc2_app_kit::{NSEvent, NSMenu, NSWindow};
 use objc2_core_graphics::{kCGFloatingWindowLevel, kCGNormalWindowLevel, CGWindowLevel};
@@ -247,22 +248,23 @@ pub fn set_window_level<R: Runtime>(app: &AppHandle<R>, level: CGWindowLevel, is
         if let Some(win) = app2.get_webview_window("floating") {
             if let Ok(ptr) = win.ns_window() {
                 if !ptr.is_null() {
-                    // SAFETY: `ptr` 来自 webview_window 的 NSWindow，整个 app 生命周期有效。
-                    let window: &NSWindow = unsafe { &*ptr.cast::<NSWindow>() };
+                    // H2 fix (2026-07-30 audit): 用 Retained<NSWindow> 包一层。
+                    // 之前裸 `&*ptr.cast::<NSWindow>()` 在 dispatch 任务里 deref
+                    // 裸指针;若 webview_window 在 dispatch 排队 → 执行期间并发
+                    // 销毁(应用退出 / Tauri 关 webview / 用户手动关浮窗),raw
+                    // ptr 指向已释放内存 → segfault。Retained balance +1 retain
+                    // count,closure 结束 Drop 时 -1,即使 Tauri 端已 Drop 也能
+                    // 保证 NSWindow 在闭包执行期间存活。
+                    let window: Retained<NSWindow> = unsafe {
+                        match Retained::retain(ptr.cast::<NSWindow>()) {
+                            Some(w) => w,
+                            None => return,
+                        }
+                    };
                     window.setLevel(level as _);
-                    // H15 fix (2026-07-03 audit): 之前 setHidesOnDeactivate(!is_pin_bottom),
-                    // Normal/PinTop 模式下设 true → app 失焦时浮窗完全 hide()(不是"被
-                    // 遮盖"而是"消失"),违反"始终可见的用量悬浮窗"产品定义。
-                    // macOS 普通窗口失焦只是被其他 app 遮盖(level=0 已实现该语义),
-                    // 不是 hide()。所有模式都设 false,让浮窗始终可见。
                     let _ = is_pin_bottom; // 保留参数兼容现有调用,语义不再依赖
                     window.setHidesOnDeactivate(false);
-                    // **2026-07-20（移植 Usticky L3 / P2-4 fix）**：切 level 后立刻
-                    // emit backdrop-refresh，前端 force-reflow 击穿 WKWebView
-                    // ~2s 的 backdrop sample 失效窗口。emit 必须放在 setLevel
-                    // **之后**（同一 main thread dispatch 任务内，顺序保证）——
-                    // 在 dispatch 前同步 emit 会让前端 reflow 击穿旧 z-order
-                    // 的 sample 窗口，对新 z-order 完全无效。
+                    // backdrop-refresh emit:在 setLevel 之后(同 main thread dispatch)
                     let _ = app2.emit("musage://backdrop-refresh", ());
                 }
             }

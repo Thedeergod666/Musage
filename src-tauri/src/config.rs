@@ -492,6 +492,11 @@ impl AppConfig {
     /// 跟"损坏"路径一样先备份到 .bak.<ts>，至少留一份 forensic 副本。
     pub fn load_from_disk() -> Result<Self, String> {
         let path = config_path()?;
+        // L4 fix (2026-07-30 audit): 启动时清理老 .bak 文件,只留最近 5 份。
+        // path 不存在时也要清 —— 用户历史升级可能留了一坨,但 cfg 目录在。
+        if let Some(parent) = path.parent() {
+            truncate_old_backups(parent, "config.json", 5);
+        }
         if !path.exists() {
             return Ok(Self::default());
         }
@@ -993,6 +998,49 @@ fn keys_path() -> Result<PathBuf, String> {
 /// ## 锁契约（重要！不要在这里加 save_lock()）
 ///
 /// 调用方（save_api_key_for / save_cookie_for / save_credential_for_id 等 6 处）
+
+// L4 fix (2026-07-30 audit): 之前 keys.json.bak.<ts> / config.json.bak.<ts>
+// 永久累积,1 年升级用户可能堆出几百个 .bak 文件。改为只保留最近 N=5 份。
+//
+// 在 read 路径(load_from_disk)开头调一次:既清历史垃圾,又保证下次升级后
+// 老 .bak 也在保留期内。
+//
+// # 用法
+/// 扫描 `parent_dir` 下形如 `<basename>.<ext>.bak.<digits>` 的文件,
+/// 删除同一前缀的所有超过 `keep` 个的最新文件之外的全部文件。
+/// 返回删除的文件数。
+pub(crate) fn truncate_old_backups(parent_dir: &std::path::Path, prefix: &str, keep: usize) -> usize {
+    let mut matched: Vec<(std::path::PathBuf, std::time::SystemTime)> = Vec::new();
+    let entries = match std::fs::read_dir(parent_dir) {
+        Ok(e) => e,
+        Err(_) => return 0,
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        // 例: prefix = "keys.json",匹配 "keys.json.bak.1712975891"
+        let pat = format!("{prefix}.bak.");
+        if !name.starts_with(&pat) {
+            continue;
+        }
+        let mtime = entry.metadata().and_then(|m| m.modified()).ok();
+        let mtime = match mtime {
+            Some(t) => t,
+            None => continue,
+        };
+        matched.push((entry.path(), mtime));
+    }
+    // 按 mtime 倒序(最新在前),保留前 keep 个,删后面
+    matched.sort_by(|a, b| b.1.cmp(&a.1));
+    let mut removed = 0usize;
+    for (path, _) in matched.into_iter().skip(keep) {
+        if std::fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
+}
+
 /// **已经**在外层持有 save_lock()，把 read_keys → modify → write_keys_atomic
 /// 的整个非原子序列包成一个临界区。
 ///
@@ -1230,6 +1278,54 @@ mod tests {
             .get("minimax")
             .map(|p| p.enabled)
             .unwrap_or(true));
+    }
+
+
+    #[test]
+    fn truncate_old_backups_keeps_only_n_most_recent() {
+        use std::time::Duration;
+        let tmpdir = tempdir_for_test();
+        // 创建 8 个 backups,prefix "keys.json",时间递增
+        for i in 0..8 {
+            let p = tmpdir.join(format!("keys.json.bak.{:010}", 1_700_000_000 + i));
+            std::fs::write(&p, b"{}").unwrap();
+            // mtime 必须递增,否则 sort_by 不动 === 删错
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        // 不动 keys.json 本身
+        std::fs::write(tmpdir.join("keys.json"), b"{}").unwrap();
+        // 留 3 份
+        let removed = truncate_old_backups(&tmpdir, "keys.json", 3);
+        assert_eq!(removed, 5);
+        // 残留 3 个,但 mtime 最大的那个 mtime>=剩 5 个删 5 个的数量
+        let mut count = 0;
+        for entry in std::fs::read_dir(&tmpdir).unwrap().flatten() {
+            let name = entry.file_name();
+            let s = name.to_string_lossy();
+            if s.starts_with("keys.json.bak.") {
+                count += 1;
+            }
+        }
+        assert_eq!(count, 3, "应保留 3 个 .bak 文件");
+        // keys.json 主体没被删
+        assert!(tmpdir.join("keys.json").exists());
+        // 其他 prefix 不动
+        std::fs::write(tmpdir.join("config.json.bak.111"), b"{}").unwrap();
+        let removed = truncate_old_backups(&tmpdir, "keys.json", 3);
+        assert_eq!(removed, 0);
+        assert!(tmpdir.join("config.json.bak.111").exists());
+    }
+
+    fn tempdir_for_test() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "musage-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 
     #[test]

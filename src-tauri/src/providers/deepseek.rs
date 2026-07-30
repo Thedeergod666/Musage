@@ -192,20 +192,13 @@ async fn do_fetch(
                 .and_then(|v| v.as_str())
                 .unwrap_or("CNY")
                 .to_string();
-            let total_balance = parse_f64(info, "total_balance")
-                // 兜底：granted + topped_up
-                .or_else(|| {
-                    let g = parse_f64(info, "granted_balance").unwrap_or(0.0);
-                    let t = parse_f64(info, "topped_up_balance").unwrap_or(0.0);
-                    // H5 fix (2026-07-03 audit): 之前 g+t>0.0 才返 Some,
-                    // 余额真为 0 时返 None → 浮窗空白行。改为返 Some(0.0)
-                    // 让用户看到"余额:0.00"而非"字段缺失"。
-                    Some(g + t)
-                });
+            let Some(total_balance) = total_balance(info) else {
+                continue;
+            };
             rows.push(QuotaRow {
                 label: t!("row.balance").to_string(),
                 utilization: None,
-                remaining: total_balance,
+                remaining: Some(total_balance),
                 used: None,
                 total: None,
                 resets_at: None,
@@ -260,6 +253,19 @@ fn parse_f64(obj: &serde_json::Value, field: &str) -> Option<f64> {
     obj.get(field).and_then(super::parse::num_f64)
 }
 
+fn total_balance(info: &serde_json::Value) -> Option<f64> {
+    parse_f64(info, "total_balance").or_else(|| {
+        let granted = parse_f64(info, "granted_balance");
+        let topped_up = parse_f64(info, "topped_up_balance");
+        match (granted, topped_up) {
+            (Some(granted), Some(topped_up)) => Some(granted + topped_up),
+            (Some(granted), None) => Some(granted),
+            (None, Some(topped_up)) => Some(topped_up),
+            (None, None) => None,
+        }
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,5 +276,18 @@ mod tests {
         let raw = json!({ "value": "NaN", "infinite": "inf" });
         assert_eq!(parse_f64(&raw, "value"), None);
         assert_eq!(parse_f64(&raw, "infinite"), None);
+    }
+
+    #[test]
+    fn total_balance_distinguishes_zero_from_missing_fields() {
+        assert_eq!(total_balance(&json!({})), None);
+        assert_eq!(
+            total_balance(&json!({ "granted_balance": "0", "topped_up_balance": 0 })),
+            Some(0.0),
+        );
+        assert_eq!(
+            total_balance(&json!({ "granted_balance": "12.5" })),
+            Some(12.5),
+        );
     }
 }

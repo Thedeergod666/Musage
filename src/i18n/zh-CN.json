@@ -593,5 +593,13 @@
     "anysearch": "AnySearch 是面向 AI agent 的搜索 API（每天 1000 次免费调用）。Musage 通过 <strong>console 登录 token</strong> 跟踪其用量，<strong>不是</strong> <code>as_sk_</code> 那个 MCP API key（单独的 key 调用量端点会返 401）。<br><br><strong>推荐</strong>：点上方「登录 AnySearch」→ 弹窗里登录 → token 自动提取。<br><br><strong>手动兜底</strong>：Chrome 登录 <a href=\"https://www.anysearch.com/console/api-keys\" target=\"_blank\" class=\"link-ext\">anysearch.com/console</a> → F12 → Application → Local Storage → <code>search-template-auth-state</code> → 复制 <code>state.accessToken</code>（那段 <code>eyJ…</code> 的 JWT）粘到上面。<br><br>token 随网页登录态失效，过期时（HTTP 401）重新登录即可。",
     "volcengine_ark": "火山方舟（Volcengine Ark）Coding Plan —— 5h / 7d / 月 三档窗口。<br><br><strong>鉴权特殊</strong>：这是<em>管控面</em> API，<strong>Coding Plan 推理 API key <u>不能用</u></strong>，必须用账号级 <strong>AccessKey ID + SecretAccessKey</strong>。<br><br><strong>填写方式</strong>：上面有两个独立的密码框（<em>AccessKey ID</em> + <em>SecretAccessKey</em>），分别填进去点保存，两个值会原子写进 <code>keys.json</code>。<br><br><strong>获取方法</strong>：<a href=\"https://console.volcengine.com/iam/keymanage\" target=\"_blank\" class=\"link-ext\">console.volcengine.com 右上角 → API 访问密钥</a>。建议用子账号 + 只读 <code>ark:GetCodingPlanUsage</code> 权限，遵循最小权限原则。<br><br><strong>套餐类型</strong>：当前仅支持 <em>Coding Plan</em>。如果你只有 <em>Agent Plan</em>，这张卡片会显示 0 行。",
     "default": "API key 存到本机 keys.json。"
+  },
+  "login": {
+    "anysearch": {
+      "timeout": "AnySearch 登录超时（{secs} 秒未完成）。请重试。"
+    },
+    "stepfun": {
+      "timeout": "StepFun 登录超时（{secs} 秒未完成）。请重试。"
+    }
   }
 }

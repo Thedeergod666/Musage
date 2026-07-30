@@ -355,9 +355,16 @@ pub async fn open_anysearch_login_window(app: AppHandle) -> Result<(), String> {
                 let _ = window_clone.close();
                 let _ = app2.emit("musage://anysearch-login-success", len);
             }
-            // 用户关窗 / 没登录 / 超时 —— 静默退出，不弹红条
+            // 用户关窗 / 窗口被新流程取代 —— 静默退出
             PollOutcome::Cancelled => {
-                tracing::debug!("anysearch 登录窗口已关闭或超时，未提取到 token");
+                tracing::debug!("anysearch 登录窗口已关闭或被取代，未提取到 token");
+            }
+            // D3-002 fix (2026-07-30 audit): 超时 emit failed 让前端弹 toast
+            PollOutcome::Timeout(reason) => {
+                if !DONE.load(Ordering::SeqCst) {
+                    tracing::warn!(reason = %reason, "anysearch 登录超时");
+                    let _ = app2.emit("musage://anysearch-login-failed", reason);
+                }
             }
             PollOutcome::Failed(e) => {
                 if !DONE.load(Ordering::SeqCst) {
@@ -373,7 +380,11 @@ pub async fn open_anysearch_login_window(app: AppHandle) -> Result<(), String> {
 
 enum PollOutcome {
     Saved(usize),
+    /// 用户主动关窗 / 窗口被新流程取代 —— 静默退出
     Cancelled,
+    /// D3-002 fix (2026-07-30 audit): 14min 硬上限达到 —— emit failed
+    /// 让前端能区分"超时"和"用户主动关",否则用户被静默丢下
+    Timeout(String),
     Failed(String),
 }
 
@@ -471,8 +482,20 @@ async fn poll_token_from_cookie(
         sleep(Duration::from_millis(700)).await;
     }
 
-    tracing::debug!("anysearch 登录轮询达到安全上限，静默退出");
-    PollOutcome::Cancelled
+    // D3-002 fix (2026-07-30 audit): 返 Timeout 而不是 Cancelled, 让上层 emit
+    // failed event 给前端。Max iters 14 min 是为了防止窗口句柄异常残留
+    // 时任务永不退出; 真超时场景用户应该看到反馈而不是窗口消失无任何提示。
+    tracing::warn!("anysearch 登录轮询达到 14min 安全上限, 通知前端");
+    PollOutcome::Timeout(anysearch_timeout_reason())
+}
+
+/// D3-002 fix (2026-07-30 audit): 超时原因走 i18n, 复用现有 key + 拼具体秒数
+fn anysearch_timeout_reason() -> String {
+    t!(
+        "login.anysearch.timeout",
+        secs = 14 * 60
+    )
+    .into_owned()
 }
 
 /// 把抽到的 JWT 写进 keys.json 的 cookie 槽位。返回写入字节数。

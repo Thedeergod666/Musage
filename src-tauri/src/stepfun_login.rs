@@ -226,6 +226,13 @@ pub async fn open_stepfun_login_window(app: AppHandle) -> Result<(), String> {
                 let _ = app2.emit("musage://stepfun-login-success", len);
             }
             // 用户关窗 / 没登录 / 超时 —— 静默退出，不弹红条
+            // D3-002 fix (2026-07-30 audit): 超时 emit failed 让前端弹 toast
+            PollOutcome::Timeout(reason) => {
+                if !DONE.load(Ordering::SeqCst) {
+                    tracing::warn!(reason = %reason, "stepfun 登录超时");
+                    let _ = app2.emit("musage://stepfun-login-failed", reason);
+                }
+            }
             PollOutcome::Cancelled => {
                 tracing::debug!("stepfun 登录窗口已关闭或超时，未提取到 token");
             }
@@ -243,7 +250,11 @@ pub async fn open_stepfun_login_window(app: AppHandle) -> Result<(), String> {
 
 enum PollOutcome {
     Saved(usize),
+    /// 用户主动关窗 / 窗口被新流程取代 —— 静默退出
     Cancelled,
+    /// D3-002 fix (2026-07-30 audit): 14min 硬上限达到 —— emit failed
+    /// 让前端能区分"超时"和"用户主动关",否则用户被静默丢下
+    Timeout(String),
     Failed(String),
 }
 
@@ -333,8 +344,20 @@ async fn poll_token_from_cookie(
         sleep(Duration::from_millis(700)).await;
     }
 
-    tracing::debug!("stepfun 登录轮询达到安全上限，静默退出");
-    PollOutcome::Cancelled
+    // D3-002 fix (2026-07-30 audit): 返 Timeout 而不是 Cancelled, 让上层 emit
+    // failed event 给前端。Max iters 14 min 是为了防止窗口句柄异常残留
+    // 时任务永不退出; 真超时场景用户应该看到反馈而不是窗口消失无任何提示。
+    tracing::warn!("stepfun 登录轮询达到 14min 安全上限, 通知前端");
+    PollOutcome::Timeout(stepfun_timeout_reason())
+}
+
+/// D3-002 fix (2026-07-30 audit): 超时原因走 i18n
+fn stepfun_timeout_reason() -> String {
+    t!(
+        "login.stepfun.timeout",
+        secs = 14 * 60
+    )
+    .into_owned()
 }
 
 /// 判断抽到的 Oasis-Token 是否「新鲜可用」。

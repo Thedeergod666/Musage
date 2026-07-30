@@ -232,6 +232,7 @@ interface QuotaSnapshot {
 
 const app = document.getElementById("app")!;
 let countdownTimer: number | null = null;
+let stalePurgeTimer: number | null = null;
 /// 最后一次 render 的 snapshot —— locale 变化时用来重新渲染。
 let lastRenderedSnap: QuotaSnapshot | null = null;
 /// **2026-07-28 fix**：用户是否曾经进入过「有数据」的渲染场景（placeholder、
@@ -1077,13 +1078,16 @@ function updateFoot(snap: QuotaSnapshot) {
 // ── 倒计时（每秒就地更新 .row-foot，不动其他 DOM） ──
 
 function startCountdown() {
-  if (countdownTimer !== null) clearInterval(countdownTimer);
-  countdownTimer = window.setInterval(updateCountdowns, 1000);
+  if (countdownTimer === null) {
+    countdownTimer = window.setInterval(updateCountdowns, 1000);
+  }
   // M5 fix: 周期性清理 lastGoodSnap 里 TTL 过期的 stale entries。
   // 与 render() 的 presentKeys 删除互补 —— setInterval 跑在没 render() 的
   // 退避期间也工作。60s 间隔,典型 lastGoodSnap < 12 provider,
   // 每次扫 ~微秒级。
-  setInterval(purgeStaleLastGoodSnap, 60_000);
+  if (stalePurgeTimer === null) {
+    stalePurgeTimer = window.setInterval(purgeStaleLastGoodSnap, 60_000);
+  }
 }
 
 /// 非窗口行的重置前缀：按 row.extra.reset_period 区分。
@@ -1639,7 +1643,14 @@ async function init() {
     if (unlistenPinMode) unlistenPinMode();
     if (unlistenBackdropRefresh) unlistenBackdropRefresh();
     if (backdropRefreshTimer !== null) clearTimeout(backdropRefreshTimer);
-    if (countdownTimer !== null) clearInterval(countdownTimer);
+    if (countdownTimer !== null) {
+      clearInterval(countdownTimer);
+      countdownTimer = null;
+    }
+    if (stalePurgeTimer !== null) {
+      clearInterval(stalePurgeTimer);
+      stalePurgeTimer = null;
+    }
     // 2026-07-03 fix: 配对清理 hover debounce timer（避免 unhandled timer）
     // 2026-07-09: hover debounce 已移除,timer 恒为 null;保留 if 块防回归。
     if (hoverEnterTimer !== null) {

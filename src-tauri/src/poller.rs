@@ -298,6 +298,17 @@ pub fn start(app: AppHandle) {
                 if now < *entry {
                     continue; // 还没到点
                 }
+                // D5-074 fix (2026-07-30 audit): 长暂停 (sleep / 长时间不交互)
+                // 后唤醒时,12 个 next_fetch entry 全部过期, 同步连续 spawn 12
+                // 个 task → 12 个并发 HTTP 同时打出去。 之前的 jitter (H2 fix)
+                // 只影响 next deadline, 不影响本次 spawn 时间。修复: spawn 前
+                // await jitter 延迟,让本次 fire 也散开,后端 / 中转站不会瞬时
+                // 12 倍并发压力。
+                //
+                // cap jitter 到 interval 的 10% (跟 jitter_for 一致), wake-up
+                // 路径下 spawn 总等待时长 ≤ 1.2 * interval,用户体感仍是"立刻刷新"。
+                let jitter_ms = jitter_for(unique.as_str(), interval_secs);
+                tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
                 // 到点 → 拉这个 provider（独立 task，并发）
                 let app_clone = app.clone();
                 let unique_owned = unique.clone();
@@ -322,13 +333,9 @@ pub fn start(app: AppHandle) {
                             Err(e) => tracing::warn!(error = %e, provider = %unique_owned, "per-provider 拉取失败"),
                         }
                     });
-                // H2 fix (2026-07-29 审查): 加 jitter 防 thundering herd。
-                // 12 个 provider 共享同一个全局 refresh_interval (默认 60s)
-                // 时,每个整分钟会有 12 个 provider 同时 fire → 同时拉 API →
-                // 后端 / 中转站瞬时压力尖刺,可能被风控。interval 的 ±10%
-                // jitter 把 12 个 provider 均匀散到整分钟内。
-                // 计算 jitter 时用 unique.clone() 而不是 moved unique_owned。
-                let jitter_ms = jitter_for(unique.as_str(), interval_secs);
+                // H2 fix (2026-07-29 审查): jitter 已用于 spawn 前 sleep,next
+                // entry 仍按 interval + jitter 排,但本次 fire 已在 sleep 时分散。
+                // jitter 已在 spawn 前消费,此处不再重复计算。
                 *entry = now
                     + Duration::from_secs(interval_secs)
                     + Duration::from_millis(jitter_ms);

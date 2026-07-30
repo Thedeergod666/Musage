@@ -157,6 +157,22 @@ async fn wait_window_closed(app: &AppHandle, label: &str) {
         }
         sleep(Duration::from_millis(50)).await;
     }
+    // M1 fix (2026-07-30 audit): 超时兜底再走 2s 后,若窗口仍存在则强制
+    // destroy(WebView2 异步 close 在 sandbox / DevTools 关掉等场景下可能拖
+    // >2s)。不 destroy 会泄露 WebView2 process + profile 目录(每次重新登录
+    // 都堆一份),且下次 build 同 label 返 Err → 用户看到红色 toast 不明所以。
+    // destroy 是同步 drop,不 await,百毫秒内必回收。
+    if let Some(w) = app.get_webview_window(label) {
+        tracing::warn!(label = label, "wait_window_closed 超时 2s,强制 destroy 防 webview 泄漏");
+        let _ = w.destroy();
+        // 重建后极短时间再确认一次,有些平台 destroy 后句柄还没完全 drop
+        for _ in 0..10 {
+            if app.get_webview_window(label).is_none() {
+                return;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    }
 }
 
 #[tauri::command]

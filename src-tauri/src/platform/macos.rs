@@ -158,6 +158,16 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
             loop {
                 thread::sleep(Duration::from_millis(50));
 
+                // D5-102 fix (2026-07-30 audit): macOS hover emitter OS 线程
+                // 同样永久循环, quit_app 同步 SHUTDOWN_NATIVE_THREADS atomic,
+                // 此线程每 tick 检查后退出。 50ms 延迟用户无感知。
+                if crate::poller::SHUTDOWN_NATIVE_THREADS
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    tracing::debug!("macOS hover emitter 收到 SHUTDOWN, 退出");
+                    break;
+                }
+
                 // fix (2026-07-28 审查): 模式切换（set_window_pin_bottom）请求
                 // 复位内部状态 —— 否则鼠标已在浮窗上方时 last_inside 已是 true，
                 // `inside == last_inside` 永远命中 continue，hover-raise 不触发。

@@ -1162,6 +1162,11 @@ pub async fn quit_app(app: AppHandle) {
     //   2) 短暂 yield 一次让它真有机会跑完
     //   3) 才 app.exit(0)
     crate::poller::SHUTDOWN.notify_waiters();
+    // D5-102 fix (2026-07-30 audit): OS 线程 (Win hover emitter / macOS
+    // 全屏监听) 用 std::thread::spawn, 不能 await tokio Notify。设
+    // SHUTDOWN_NATIVE_THREADS atomic, OS 线程每个 tick 检查一次退出。
+    crate::poller::SHUTDOWN_NATIVE_THREADS
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     // 让出当前 task 让 poller 主循环调度起来跑 drain (通常 <100ms 完成)
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     app.exit(0);

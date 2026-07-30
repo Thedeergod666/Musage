@@ -19,6 +19,16 @@ use tokio::sync::Notify;
 /// JoinSet abort + drain,然后 app.exit(0)。
 pub(crate) static SHUTDOWN: Notify = Notify::const_new();
 
+/// D5-102 fix (2026-07-30 audit): tokio::sync::Notify 不能跨 std::thread
+/// 用 (Windows / macOS 的 hover emitter 是 std::thread::spawn, 等不了
+/// notified().await)。改用 std::sync::atomic::AtomicBool, quit_app 同步
+/// store(true), OS 线程每个 50ms tick 检查一次, 检测到就 break 退出。
+///
+/// SHUTDOWN (Notify) 仍保留给 tokio task (poller 主循环 + geom_persister),
+/// 二者并存, 各自用途。
+pub(crate) static SHUTDOWN_NATIVE_THREADS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 use crate::commands::refresh_inner;
 use crate::providers::all_sources;
 use crate::AppState;

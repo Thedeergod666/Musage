@@ -351,6 +351,17 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
             loop {
                 thread::sleep(Duration::from_millis(50));
 
+                // D5-102 fix (2026-07-30 audit): OS 线程之前永久循环, 进程退出
+                // 硬杀线程 (std::thread 无优雅退出)。 检查 quit_app 同步设的
+                // SHUTDOWN_NATIVE_THREADS atomic, 退出循环。 50ms 延迟用户
+                // 无感知, 不引入新信号量。
+                if crate::poller::SHUTDOWN_NATIVE_THREADS
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    tracing::debug!("Win hover emitter 收到 SHUTDOWN, 退出");
+                    break;
+                }
+
                 // fix (2026-07-28 审查): 模式切换（set_window_pin_bottom）请求
                 // 复位内部状态 —— 否则鼠标已在浮窗上方时 last_inside 已是 true，
                 // `inside == last_inside` 永远命中 continue；raised==false 又

@@ -29,3 +29,11 @@ declare module "*.png?url" {
   const src: string;
   export default src;
 }
+
+// JSON 模块声明（缺这个时 tsc 报 "Cannot find module"）。
+// Vite 支持 `import data from "./x.json"` 但 tsc 不认。
+// 用 unknown 而不是 any，让调用方明确断言 / 类型守卫。
+declare module "*.json" {
+  const src: unknown;
+  export default src;
+}

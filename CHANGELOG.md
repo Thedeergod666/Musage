@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **D5-038**：`refresh_inner` + `refresh_single_inner` 重复"填 source_display_name + emit snapshot + 刷新托盘" → 抽 `publish_snapshot` helper 共用。
 - **D5-074**：长暂停（macOS sleep / 长时间不交互）唤醒时 12 个 `next_fetch` entry 全过期 → 同步连续 spawn 12 个 task，12 个并发 HTTP 同时打出去。spawn 前 `await jitter_for(...)` 让本次 fire 也散开，cap 到 interval 的 10%。
 - **D5-101**：`spawn_debounced_geom_persister` 500ms 循环永久跑、不监听 shutdown，用户拖完最后 100ms 内 quit → tokio runtime drop 取消 task → latest 几何值丢失。select 加 `poller::SHUTDOWN.notified()` 分支，收到 signal 最后 flush 一次后 break。
+- **D-006**：`zenmux::parse_iso8601_ms` 之前只接 RFC3339，拒掉 naive 字符串（如中转站返 `"2026-03-24T08:35:09"` 无 TZ）→ `resets_at=None` 浮窗不显倒计时。加 `NaiveDateTime` fallback（假定 UTC），新增 `parse_iso8601_naive_fallback` 单测覆盖 RFC3339 / 带 sub-second 无 TZ / 纯秒级无 TZ / 无效字符串 4 条路径。
+- **D-007**：`tavily` 测试之前硬编码 `"Free tier"` / `"credits"` 英文 assert，当前 en/zh-CN 碰巧相同所以不炸，未来 zh-CN 翻译"免费版"时必误报。改 `t!("row.free_tier")` / `t!("row.credits")` 对齐生产代码。
+- **D-009**：`openrouter::LAST_SUCCESSFUL` HashMap 只增不删（之前 `should_skip_endpoint` 只读不 prune）→ 用户频繁 add/delete extra instance 时 entry 永久残留。锁内顺便 `retain(|_, (ts, _)| ts.elapsed() < ttl)` 白嫖 GC，TTL=5min 跟 should_skip 一致。
+- **D-010**：`tavily::parse` 的 `resets_at` 之前只接 `NaiveDate "%Y-%m-%d"`，Tavily 部分账号（老 enterprise / 海外区）返 RFC3339 完整时间戳或 naive datetime → `resets_at=None`。加 RFC3339 + NaiveDateTime 两条 fallback，3 条路径按精度排。
+- **D-011**：`minimax::smart_reset_to_ms` duration 路径之前不检查 `raw<0`，minimax API 异常负数（如客户端时钟漂移 / 中转站 schema 漂移）→ `resets_at` 落到过去 → 浮窗"下次重置"倒计时负值但 usage 数据未真正刷新。负 duration 视为"已过期" clamp 到 `now`，frontend 走"立即刷新"路径恢复；防 i64::MIN * 1000 溢出。
 
 新增单测：`openrouter::tests::display_name_uses_i18n_key`。
 

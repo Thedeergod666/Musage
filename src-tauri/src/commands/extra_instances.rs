@@ -295,7 +295,7 @@ pub async fn add_extra_instance(
     // 5. emit + refresh
     let _ = app.emit("musage://config-changed", ());
     let unique = new_instance.api_key_ref.clone();
-    if let Err(e) = crate::commands::refresh_single_inner(&app, &unique).await {
+    if let Err(e) = crate::commands::refresh_single_inner(&app, &unique, crate::poller_backoff::RefreshSource::Manual).await {
         tracing::warn!(error = %e, provider = %unique, "add_extra_instance 后立即拉取失败");
     }
     Ok(new_instance)
@@ -379,7 +379,7 @@ pub async fn update_extra_instance(
 
     let _ = app.emit("musage://config-changed", ());
     let unique = updated.api_key_ref.clone();
-    if let Err(e) = crate::commands::refresh_single_inner(&app, &unique).await {
+    if let Err(e) = crate::commands::refresh_single_inner(&app, &unique, crate::poller_backoff::RefreshSource::Manual).await {
         tracing::warn!(error = %e, provider = %unique, "update_extra_instance 后立即拉取失败");
     }
     Ok(updated)

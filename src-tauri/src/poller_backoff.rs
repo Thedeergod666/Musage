@@ -35,6 +35,15 @@ pub struct BackoffState {
     per_source: HashMap<String, SourceBackoff>,
 }
 
+/// H5 fix (2026-07-30 audit): 区分 poller 自动轮询 vs 用户手动刷新。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefreshSource {
+    /// 1Hz 主循环自动拉取 —— 失败应当退避 + 累加 streak
+    Poller,
+    /// 用户点击「立即刷新」按钮 —— 失败 no-op,只 reset on success
+    Manual,
+}
+
 impl BackoffState {
     pub fn new() -> Self {
         Self::default()
@@ -66,11 +75,23 @@ impl BackoffState {
     ///   同一 key 失败不会让服务端压力变大）
     /// - `error_kind ∈ {RateLimited, ServerError, Network}` → 翻倍 interval，
     ///   streak +1
-    pub fn record(&mut self, id: &str, snapshot: &ProviderSnapshot, default_secs: u64) {
+    /// H5 fix (2026-07-30 audit): `caller` 区分失败行为:
+    /// - `Poller`: 默认行为,失败按 kind 退避 + 累加 streak(也就是改既有 streak)
+    /// - `Manual`: 用户主动点「立即刷新」失败,no-op ——
+    ///   不改 streak 也不改 interval(避免用户几次手动失败就把 poller
+    ///   推到 30min cap,看起来"软件坏了没自动刷新"),但成功仍 reset
+    ///   streak(用户重试通了就该回到正常节奏)
+    pub fn record(
+        &mut self,
+        id: &str,
+        snapshot: &ProviderSnapshot,
+        default_secs: u64,
+        caller: RefreshSource,
+    ) {
         let entry = self.per_source.entry(id.to_string()).or_default();
 
         if snapshot.success {
-            // 成功 → 完整 reset（streak + interval 都归零）
+            // 成功 → 完整 reset（streak + interval 都归零, Poller + Manual 都用)
             if entry.failure_streak > 0 || entry.current_interval_secs.is_some() {
                 entry.failure_streak = 0;
                 entry.current_interval_secs = None;
@@ -78,7 +99,12 @@ impl BackoffState {
             return;
         }
 
-        // 失败
+        // H5 fix: 手动失败 = no-op, 不改 backoff
+        if matches!(caller, RefreshSource::Manual) {
+            return;
+        }
+
+        // 失败 (Poller 路径)
         let should_backoff = matches!(
             snapshot.error_kind,
             Some(ErrorKind::RateLimited | ErrorKind::ServerError | ErrorKind::Network)
@@ -170,9 +196,9 @@ mod tests {
     fn backoff_doubles_on_server_error() {
         let mut st = BackoffState::new();
         // 60 → 120 → 240
-        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60);
+        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60, crate::poller_backoff::RefreshSource::Poller);
         assert_eq!(st.next_interval_secs("minimax", 60), 120);
-        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60);
+        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60, crate::poller_backoff::RefreshSource::Poller);
         assert_eq!(st.next_interval_secs("minimax", 60), 240);
     }
 
@@ -188,29 +214,29 @@ mod tests {
             },
         );
         // 翻倍后应 cap 到 MAX
-        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60);
+        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60, crate::poller_backoff::RefreshSource::Poller);
         assert_eq!(st.next_interval_secs("minimax", 60), MAX_BACKOFF_SECS);
         // 继续翻倍仍 cap
-        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60);
+        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60, crate::poller_backoff::RefreshSource::Poller);
         assert_eq!(st.next_interval_secs("minimax", 60), MAX_BACKOFF_SECS);
     }
 
     #[test]
     fn backoff_resets_on_success() {
         let mut st = BackoffState::new();
-        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60);
+        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60, crate::poller_backoff::RefreshSource::Poller);
         assert_eq!(st.next_interval_secs("minimax", 60), 120);
-        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60);
+        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60, crate::poller_backoff::RefreshSource::Poller);
         assert_eq!(st.next_interval_secs("minimax", 60), 240);
         // 成功一次 → 立即 reset
-        st.record("minimax", &snap_success(), 60);
+        st.record("minimax", &snap_success(), 60, crate::poller_backoff::RefreshSource::Poller);
         assert_eq!(st.next_interval_secs("minimax", 60), 60);
     }
 
     #[test]
     fn backoff_does_not_trigger_on_auth_failed() {
         let mut st = BackoffState::new();
-        st.record("minimax", &snap_fail(ErrorKind::AuthFailed), 60);
+        st.record("minimax", &snap_fail(ErrorKind::AuthFailed), 60, crate::poller_backoff::RefreshSource::Poller);
         // AuthFailed 是用户配置类，**不**退避
         assert_eq!(st.next_interval_secs("minimax", 60), 60);
     }
@@ -218,46 +244,66 @@ mod tests {
     #[test]
     fn backoff_does_not_trigger_on_unconfigured_key() {
         let mut st = BackoffState::new();
-        st.record("minimax", &snap_fail(ErrorKind::UnconfiguredKey), 60);
+        st.record("minimax", &snap_fail(ErrorKind::UnconfiguredKey), 60, crate::poller_backoff::RefreshSource::Poller);
         assert_eq!(st.next_interval_secs("minimax", 60), 60);
     }
 
     #[test]
     fn backoff_does_not_trigger_on_schema_unknown() {
         let mut st = BackoffState::new();
-        st.record("minimax", &snap_fail(ErrorKind::SchemaUnknown), 60);
+        st.record("minimax", &snap_fail(ErrorKind::SchemaUnknown), 60, crate::poller_backoff::RefreshSource::Poller);
         assert_eq!(st.next_interval_secs("minimax", 60), 60);
     }
 
     #[test]
     fn backoff_does_not_trigger_on_parse() {
         let mut st = BackoffState::new();
-        st.record("minimax", &snap_fail(ErrorKind::Parse), 60);
+        st.record("minimax", &snap_fail(ErrorKind::Parse), 60, crate::poller_backoff::RefreshSource::Poller);
         assert_eq!(st.next_interval_secs("minimax", 60), 60);
     }
 
     #[test]
+#[test]
+fn manual_refresh_failure_does_not_bump_streak() {
+    // H5 fix (2026-07-30 audit): 用户主动点「立即刷新」失败不能让 poller
+    // 间隔被推到 30min cap,看起来像"软件坏了没自动刷新"。
+    // Manual 路径失败 = no-op,success = reset。
+    use super::RefreshSource;
+    let mut st = BackoffState::new();
+    st.record("minimax", &snap_fail(ErrorKind::ServerError), 60, RefreshSource::Poller);
+    assert_eq!(st.per_source["minimax"].failure_streak, 1);
+    assert_eq!(st.per_source["minimax"].current_interval_secs, Some(120));
+    for _ in 0..5 {
+        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60, RefreshSource::Manual);
+    }
+    assert_eq!(st.per_source["minimax"].failure_streak, 1);
+    assert_eq!(st.per_source["minimax"].current_interval_secs, Some(120));
+    st.record("minimax", &snap_success(), 60, RefreshSource::Manual);
+    assert_eq!(st.per_source["minimax"].failure_streak, 0);
+    assert!(st.per_source["minimax"].current_interval_secs.is_none());
+}
+
     fn backoff_does_not_reset_on_user_config_failure() {
         // 第一次服务端失败 → 退避到 120
         // 第二次配置失败（AuthFailed）→ 不动 interval
         let mut st = BackoffState::new();
-        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60);
+        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60, crate::poller_backoff::RefreshSource::Poller);
         assert_eq!(st.next_interval_secs("minimax", 60), 120);
-        st.record("minimax", &snap_fail(ErrorKind::AuthFailed), 60);
+        st.record("minimax", &snap_fail(ErrorKind::AuthFailed), 60, crate::poller_backoff::RefreshSource::Poller);
         assert_eq!(st.next_interval_secs("minimax", 60), 120);
     }
 
     #[test]
     fn backoff_triggers_on_rate_limited() {
         let mut st = BackoffState::new();
-        st.record("minimax", &snap_fail(ErrorKind::RateLimited), 60);
+        st.record("minimax", &snap_fail(ErrorKind::RateLimited), 60, crate::poller_backoff::RefreshSource::Poller);
         assert_eq!(st.next_interval_secs("minimax", 60), 120);
     }
 
     #[test]
     fn backoff_triggers_on_network() {
         let mut st = BackoffState::new();
-        st.record("minimax", &snap_fail(ErrorKind::Network), 60);
+        st.record("minimax", &snap_fail(ErrorKind::Network), 60, crate::poller_backoff::RefreshSource::Poller);
         assert_eq!(st.next_interval_secs("minimax", 60), 120);
     }
 
@@ -265,7 +311,7 @@ mod tests {
     fn backoff_per_source_independent() {
         // 改了 minimax，不应影响 deepseek
         let mut st = BackoffState::new();
-        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60);
+        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60, crate::poller_backoff::RefreshSource::Poller);
         assert_eq!(st.next_interval_secs("minimax", 60), 120);
         assert_eq!(st.next_interval_secs("deepseek", 60), 60);
     }
@@ -273,8 +319,8 @@ mod tests {
     #[test]
     fn backoff_reset_method_clears() {
         let mut st = BackoffState::new();
-        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60);
-        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60);
+        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60, crate::poller_backoff::RefreshSource::Poller);
+        st.record("minimax", &snap_fail(ErrorKind::ServerError), 60, crate::poller_backoff::RefreshSource::Poller);
         assert_eq!(st.next_interval_secs("minimax", 60), 240);
         st.reset("minimax");
         assert_eq!(st.next_interval_secs("minimax", 60), 60);
@@ -284,8 +330,8 @@ mod tests {
     fn backoff_idle_success_does_not_touch_state() {
         // 连续成功不应该 modify entry（避免无意义写）
         let mut st = BackoffState::new();
-        st.record("minimax", &snap_success(), 60);
-        st.record("minimax", &snap_success(), 60);
+        st.record("minimax", &snap_success(), 60, crate::poller_backoff::RefreshSource::Poller);
+        st.record("minimax", &snap_success(), 60, crate::poller_backoff::RefreshSource::Poller);
         // 状态是空的（没有 entry）
         assert!(
             !st.per_source.contains_key("minimax") || st.per_source["minimax"].failure_streak == 0
@@ -304,10 +350,10 @@ mod tests {
         // → 失败后间隔缩短("退避变加速")。现在必须保持不缩短。
         let mut st = BackoffState::new();
         // 用户配了 3600s 长间隔,失败后不得缩到 1800
-        st.record("minimax", &snap_fail(ErrorKind::ServerError), 3600);
+        st.record("minimax", &snap_fail(ErrorKind::ServerError), 3600, crate::poller_backoff::RefreshSource::Poller);
         assert_eq!(st.next_interval_secs("minimax", 3600), 3600);
         // 再次失败仍不缩短
-        st.record("minimax", &snap_fail(ErrorKind::ServerError), 3600);
+        st.record("minimax", &snap_fail(ErrorKind::ServerError), 3600, crate::poller_backoff::RefreshSource::Poller);
         assert_eq!(st.next_interval_secs("minimax", 3600), 3600);
     }
 
@@ -315,7 +361,7 @@ mod tests {
     fn backoff_still_doubles_at_cap_boundary() {
         // base 恰好 = MAX/2 → 正常翻倍到 MAX(不触发 max(base) 保护)
         let mut st = BackoffState::new();
-        st.record("minimax", &snap_fail(ErrorKind::ServerError), 900);
+        st.record("minimax", &snap_fail(ErrorKind::ServerError), 900, crate::poller_backoff::RefreshSource::Poller);
         assert_eq!(st.next_interval_secs("minimax", 900), MAX_BACKOFF_SECS);
     }
 }

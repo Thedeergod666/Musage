@@ -208,7 +208,7 @@ pub async fn set_provider_enabled(
         let app_clone = app.clone();
         let id_owned = id.clone();
         tokio::spawn(async move {
-            let _ = refresh_single_inner(&app_clone, &id_owned).await;
+            let _ = refresh_single_inner(&app_clone, &id_owned, crate::poller_backoff::RefreshSource::Manual).await;
         });
     }
     let _ = app.emit("musage://config-changed", ());
@@ -253,7 +253,7 @@ pub async fn set_xiaomi_display_mode(
     // 模式时浮窗在 ~100ms 内就有响应。
     let app_clone = app.clone();
     tokio::spawn(async move {
-        let _ = refresh_single_inner(&app_clone, "xiaomimimo").await;
+        let _ = refresh_single_inner(&app_clone, "xiaomimimo", crate::poller_backoff::RefreshSource::Manual).await;
     });
     let _ = app.emit("musage://config-changed", ());
     Ok(())
@@ -334,7 +334,7 @@ pub async fn set_schema_overrides(
             // 漏掉副本(副本跟 base 共享同一套 schema override,也该刷新)。
             let base = id.split('#').next().unwrap_or(id.as_str());
             if matches!(base, "minimax" | "xiaomimimo") {
-                let _ = refresh_single_inner(&app_clone, &id).await;
+                let _ = refresh_single_inner(&app_clone, &id, crate::poller_backoff::RefreshSource::Manual).await;
             }
         }
     });
@@ -385,7 +385,7 @@ pub async fn set_minimax_region(
         entry.region = Some(parsed);
         cfg.save()?;
     }
-    let _ = refresh_single_inner(&app, "minimax").await;
+    let _ = refresh_single_inner(&app, "minimax", crate::poller_backoff::RefreshSource::Manual).await;
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -412,7 +412,7 @@ pub async fn set_xiaomi_region_field(
         entry.xiaomi_region = Some(parsed);
         cfg.save()?;
     }
-    let _ = refresh_single_inner(&app, "xiaomimimo").await;
+    let _ = refresh_single_inner(&app, "xiaomimimo", crate::poller_backoff::RefreshSource::Manual).await;
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -428,7 +428,7 @@ pub async fn set_tavily_concise_mode(
         cfg.tavily_concise_mode = enabled;
         cfg.save()?;
     }
-    let _ = refresh_single_inner(&app, "tavily").await;
+    let _ = refresh_single_inner(&app, "tavily", crate::poller_backoff::RefreshSource::Manual).await;
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -452,7 +452,7 @@ pub async fn set_zenmux_base_url(
         };
         cfg.save()?;
     }
-    let _ = refresh_single_inner(&app, "zenmux").await;
+    let _ = refresh_single_inner(&app, "zenmux", crate::poller_backoff::RefreshSource::Manual).await;
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -471,7 +471,7 @@ pub async fn set_zenmux_mode(
         cfg.zenmux_mode = Some(mode.clone());
         cfg.save()?;
     }
-    let _ = refresh_single_inner(&app, "zenmux").await;
+    let _ = refresh_single_inner(&app, "zenmux", crate::poller_backoff::RefreshSource::Manual).await;
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -487,7 +487,7 @@ pub async fn set_zenmux_payg_concise(
         cfg.zenmux_payg_concise_mode = Some(enabled);
         cfg.save()?;
     }
-    let _ = refresh_single_inner(&app, "zenmux").await;
+    let _ = refresh_single_inner(&app, "zenmux", crate::poller_backoff::RefreshSource::Manual).await;
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -506,7 +506,7 @@ pub async fn set_zhipu_region(
         cfg.zhipu_region = Some(region);
         cfg.save()?;
     }
-    let _ = refresh_single_inner(&app, "zhipu").await;
+    let _ = refresh_single_inner(&app, "zhipu", crate::poller_backoff::RefreshSource::Manual).await;
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -818,7 +818,7 @@ pub async fn set_source_credential(
         let app_clone = app.clone();
         let id_owned = id.clone();
         tokio::spawn(async move {
-            if let Err(e) = refresh_single_inner(&app_clone, &id_owned).await {
+            if let Err(e) = refresh_single_inner(&app_clone, &id_owned, crate::poller_backoff::RefreshSource::Manual).await {
                 tracing::warn!(error = %e, provider = %id_owned, "set_source_credential 后立即拉取失败（不阻塞保存）");
             }
         });
@@ -943,7 +943,7 @@ pub async fn delete_source_credential(
     // 错误态，而不是等下一次 poller 周期。
     let enabled = state.config.read().await.is_enabled_id(&id);
     if enabled {
-        if let Err(e) = refresh_single_inner(&app, &id).await {
+        if let Err(e) = refresh_single_inner(&app, &id, crate::poller_backoff::RefreshSource::Manual).await {
             tracing::warn!(error = %e, provider = %id, "delete 后立即拉取失败");
         }
     }
@@ -1424,7 +1424,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                 {
                     let state = app.state::<AppState>();
                     let mut backoff = state.backoff.write().await;
-                    backoff.record(&id, &s, default_interval_secs);
+                    backoff.record(&id, &s, default_interval_secs, crate::poller_backoff::RefreshSource::Poller);
                 }
                 fill_next_fetch_at(app, &id, default_interval_secs, &mut s).await;
                 snap.providers.push(s);
@@ -1445,7 +1445,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                 {
                     let state = app.state::<AppState>();
                     let mut backoff = state.backoff.write().await;
-                    backoff.record(&id, &err_snap, default_interval_secs);
+                    backoff.record(&id, &err_snap, default_interval_secs, crate::poller_backoff::RefreshSource::Poller);
                 }
                 fill_next_fetch_at(app, &id, default_interval_secs, &mut err_snap).await;
                 snap.providers.push(err_snap);
@@ -1468,7 +1468,7 @@ pub async fn refresh_inner(app: &AppHandle, cfg: &AppConfig) -> Result<QuotaSnap
                 {
                     let state = app.state::<AppState>();
                     let mut backoff = state.backoff.write().await;
-                    backoff.record(&id, &err_snap, default_interval_secs);
+                    backoff.record(&id, &err_snap, default_interval_secs, crate::poller_backoff::RefreshSource::Poller);
                 }
                 err_snap.next_fetch_at = Some(
                     chrono::Utc::now().timestamp_millis() + (default_interval_secs as i64) * 1000,
@@ -1585,10 +1585,17 @@ fn apply_provider_order(snap: &mut QuotaSnapshot, cfg: &AppConfig) {
 /// 这样每个 provider 可以有自己的轮询间隔。
 #[tauri::command]
 pub async fn refresh_single(app: AppHandle, id: String) -> Result<(), String> {
-    refresh_single_inner(&app, &id).await
+    refresh_single_inner(&app, &id, crate::poller_backoff::RefreshSource::Manual).await
 }
 
-pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), String> {
+/// H5 fix (2026-07-30 audit): `caller` 区分失败行为 (见 poller_backoff::RefreshSource)。
+/// - 全量 refresh / Poller 入口 → Poller(失败退避)
+/// - 用户点「立即刷新」、设置面板「单源刷新」、登录完成后刷新 → Manual(失败 no-op)
+pub async fn refresh_single_inner(
+    app: &AppHandle,
+    id: &str,
+    caller: crate::poller_backoff::RefreshSource,
+) -> Result<(), String> {
     let cfg = app.state::<AppState>().config.read().await.clone();
     if !cfg.is_enabled_id(id) {
         return Ok(()); // 已被关掉，跳过
@@ -1660,7 +1667,7 @@ pub async fn refresh_single_inner(app: &AppHandle, id: &str) -> Result<(), Strin
     {
         let state = app.state::<AppState>();
         let mut backoff = state.backoff.write().await;
-        backoff.record(id, &provider_snap, default_interval_secs);
+        backoff.record(id, &provider_snap, default_interval_secs, caller);
     }
     // 填 next_fetch_at(同 refresh_inner 的 fill_next_fetch_at,逻辑共享)
     fill_next_fetch_at(app, id, default_interval_secs, &mut provider_snap).await;
@@ -1740,7 +1747,7 @@ pub async fn refresh_single_from_poller(app: &AppHandle, id: &str) -> Result<(),
         tracing::debug!(provider = %id, "全量刷新进行中,跳过本次 per-provider 拉取");
         return Ok(());
     }
-    refresh_single_inner(app, id).await
+    refresh_single_inner(app, id, crate::poller_backoff::RefreshSource::Poller).await
 }
 
 /// 在 fetch 前把 cfg 里的 region / overrides 推给 source（如果 source 实现了的话）。

@@ -289,7 +289,7 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
                         tracing::info!(saved_len, "xiaomi cookie 提取 + 保存成功");
                         // 立即拉一次（让浮窗立刻看到数据）
                         if let Err(e) =
-                            crate::commands::refresh_single_inner(&app2, "xiaomimimo").await
+                            crate::commands::refresh_single_inner(&app2, "xiaomimimo", crate::poller_backoff::RefreshSource::Manual).await
                         {
                             tracing::warn!(error = %e, "登录后立即拉取失败（不阻塞成功事件）");
                         }

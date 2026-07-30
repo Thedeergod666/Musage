@@ -163,7 +163,8 @@
       "limit_reached": "Extra instance limit reached (50)",
       "not_found": "Extra instance '%{id}' does not exist",
       "custom_only_for_custom_provider": "custom field can only be modified on provider_id == 'custom' instances"
-    }
+    },
+    "interval_too_large": "Refresh interval cannot exceed 1 day (max 86400 seconds)"
   },
   "cli": {
     "dump_unknown_source": "[dump] Unknown source id: %{id} (available: %{known})",

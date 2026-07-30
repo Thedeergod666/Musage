@@ -602,8 +602,16 @@ pub async fn save_config(
             max = PROVIDERS_MAP_MAX
         ).into_owned());
     }
+    // L2 fix (2026-07-30 audit): 上限 1 天,挡住 webhook 入口塞 86400 * 365
+    // 把轮询当 background daemon 跑的死循环。前端 settings panel 默认 60s。
     if cfg.refresh_interval_secs < 10 {
         return Err(t!("commands.interval_too_small").into_owned());
+    }
+    if cfg.refresh_interval_secs > 86_400 {
+        return Err(t!(
+            "commands.interval_too_large",
+            value = cfg.refresh_interval_secs
+        ).into_owned());
     }
     // 校验色阈值（settings 面板的保存路径也要兜底 —— 即使用户绕过 set_display_thresholds
     // 直接调 save_config 也会在这里被挡）

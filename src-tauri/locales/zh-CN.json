@@ -163,7 +163,8 @@
       "limit_reached": "已达 extra instance 上限 (50)",
       "not_found": "extra instance '%{id}' 不存在",
       "custom_only_for_custom_provider": "custom 字段只能在 provider_id == 'custom' 的 instance 上修改"
-    }
+    },
+    "interval_too_large": "轮询间隔不能超过 1 天（最大 86400 秒）"
   },
   "cli": {
     "dump_unknown_source": "[dump] 未知 source id: %{id}（可用: %{known}）",

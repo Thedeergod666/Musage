@@ -9,6 +9,15 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::task::JoinSet;
+use tokio::sync::Notify;
+
+/// H1 fix (2026-07-30 audit): 全工程 graceful shutdown 信号源。
+///
+/// 之前主循环永远退出不了、per-provider task 永不 drain → App 退出时丢
+/// 部分 in-flight fetch + JoinSet 残留 panic 提示。quit_app 调
+/// `SHUTDOWN.notify_waiters()` 唤醒主循环, 主循环会立刻 break 跳出、
+/// JoinSet abort + drain,然后 app.exit(0)。
+pub(crate) static SHUTDOWN: Notify = Notify::const_new();
 
 use crate::commands::refresh_inner;
 use crate::providers::all_sources;
@@ -129,9 +138,36 @@ pub fn start(app: AppHandle) {
             );
         }
 
-        // 每秒检查一次
+        // 每秒检查一次。H1 fix (2026-07-30 audit): 用 tokio::select! 同时
+        // 监听 sleep + SHUTDOWN.notify, quit_app 触发 notify_waiters
+        // 即同步退,不丢在飞 fetch 让 JoinSet 自然 abort。
         loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                _ = SHUTDOWN.notified() => {
+                    tracing::info!("poller 主循环收到 SHUTDOWN,开始 drain");
+                    // 把全部在飞 task abort + join。std::sync::MutexGuard
+                    // !Send,所以必须 mem::replace 接管 JoinSet + drop guard 后
+                    // 再 await,否则 spawn 进来的 future 拿不到 Send bound。
+                    let taken: JoinSet<()> = {
+                        let mut g = in_flight().lock().unwrap_or_else(|e| e.into_inner());
+                        std::mem::take(&mut *g)
+                    };
+                    // 全部在飞 task 取消
+                    let mut taken = taken;
+                    taken.abort_all();
+                    // 等所有 task 退出,join_set .join_next().await 阻塞到空
+                    while let Some(res) = taken.join_next().await {
+                        if let Err(e) = res {
+                            if !e.is_cancelled() {
+                                tracing::warn!(error = %e, "poller drain 时 task panic");
+                            }
+                        }
+                    }
+                    tracing::info!("poller 主循环退出");
+                    return;
+                }
+            }
             let cfg = app.state::<AppState>().config.read().await.clone();
             // M5 fix: 之前 backoff read guard 持有整个 for 循环（for 循环里 spawn 的
             // refresh_single_inner 要拿 backoff.write → tokio RwLock read-prefer-write

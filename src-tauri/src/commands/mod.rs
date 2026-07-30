@@ -1097,6 +1097,15 @@ pub async fn reset_floating_window(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn quit_app(app: AppHandle) {
+    // H1 fix (2026-07-30 audit): 之前 app.exit(0) 直接终止,per-provider
+    // in-flight fetch + JoinSet task 全丢日志(可能 panic 但不致命),用户
+    // 偶发看到 "poller 主循环...task panicked" 启动日志告警。改为:
+    //   1) notify shutdown signal,让 poller 主循环走 drain 路径
+    //   2) 短暂 yield 一次让它真有机会跑完
+    //   3) 才 app.exit(0)
+    crate::poller::SHUTDOWN.notify_waiters();
+    // 让出当前 task 让 poller 主循环调度起来跑 drain (通常 <100ms 完成)
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     app.exit(0);
 }
 

@@ -1106,9 +1106,10 @@ const BATCH_PREFIX_RULES: Array<{
   // 2026-07-27 v0.2.5: stepfun 改用 webview 一键登录 (src/stepfun_login.rs),
   // 不再接受手动粘贴 Oasis-Token。删 prefix 规则防 batch paste 误识别。
   { prefix: "tvly-", id: "tavily", field: "api_key" },
-  // 通用 sk- 前缀: minimax/zenmux/openrouter/kimi/siliconflow 都有
-  // 用 host 识别;无 host 的按 priority
-  { prefix: "sk-", id: "minimax", field: "api_key" }, // minimax 是最常见的 sk- 源,优先级高
+  // D7-001 fix (2026-07-30 audit): 删通用 "sk-" 兜底规则
+  // minimax/zenmux/openrouter/kimi/siliconflow 都用 sk- 开头,
+  // 静默归 minimax 会导致 Kimi/ZenMux/SiliconFlow 用户 key 误存
+  // → 强制走 "provider=sk-xxx" 显式标注 (parseBatchLine providerHint 路径)
   // tp- → Xiaomi (cookie 路径虽然用 tp-,但 frontend 也允许 api_key 别名)
   { prefix: "tp-", id: "xiaomimimo", field: "cookie" },
   // zhipu 用 "id.secret" 格式 (数字ID.字母数字 secret)

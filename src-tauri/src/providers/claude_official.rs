@@ -353,6 +353,12 @@ fn extract_reset_ms_from_string_or_int(v: &Value) -> Option<i64> {
             .map(|dt| dt.timestamp_millis());
     }
     if let Some(n) = v.as_i64() {
+        // D-013 fix (2026-07-30 audit): 拒绝 n <= 0 (epoch 0 / 负数 /
+        // 服务端 schema 漂移) → 否则 from_timestamp_millis(0) 返 epoch
+        // 1970-01-01 → 浮窗显示诡异重置时间
+        if n <= 0 {
+            return None;
+        }
         let ms = if n < 1_000_000_000_000 { n * 1000 } else { n };
         return DateTime::<Utc>::from_timestamp_millis(ms).map(|_| ms);
     }
@@ -511,6 +517,13 @@ mod tests {
         // 5h 仍显示，但 resets_at = None
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].resets_at, None);
+    }
+
+    #[test]
+    fn extract_reset_ms_zero_or_negative_returns_none() {
+        // D-013 fix (2026-07-30 audit): n == 0 / 负数不能被当成合法 epoch
+        assert_eq!(extract_reset_ms_from_string_or_int(&json!(0_i64)), None);
+        assert_eq!(extract_reset_ms_from_string_or_int(&json!(-1_i64)), None);
     }
 
     // ── normalize_session_key 单元测试 ──

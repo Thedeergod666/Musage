@@ -321,6 +321,12 @@ fn extract_reset_ms(v: Option<&Value>) -> Option<i64> {
             .map(|dt| dt.timestamp_millis());
     }
     if let Some(n) = v.as_i64() {
+        // D-013 fix (2026-07-30 audit): 拒绝 n <= 0 (epoch 0 / 负数 /
+        // 服务端 schema 漂移) → 否则 from_timestamp_millis(0) 返 epoch
+        // 1970-01-01 → 浮窗显示诡异重置时间
+        if n <= 0 {
+            return None;
+        }
         let ms = if n < 1_000_000_000_000 { n * 1000 } else { n };
         // sanity check：转回 DateTime 避免溢出
         return DateTime::<Utc>::from_timestamp_millis(ms).map(|_| ms);
@@ -521,5 +527,13 @@ mod tests {
         assert_eq!(extract_reset_ms(Some(&json!("not a date"))), None);
         // 远超合理范围的数（from_timestamp_millis 返回 None）→ None
         assert_eq!(extract_reset_ms(Some(&json!(i64::MAX))), None);
+    }
+
+    #[test]
+    fn extract_reset_ms_zero_or_negative_returns_none() {
+        // D-013 fix (2026-07-30 audit): n == 0 / 负数不能被当成合法 epoch,
+        // 否则 from_timestamp_millis(0) 返 epoch_0 → 浮窗显示 1970-01-01
+        assert_eq!(extract_reset_ms(Some(&json!(0_i64))), None);
+        assert_eq!(extract_reset_ms(Some(&json!(-1_i64))), None);
     }
 }

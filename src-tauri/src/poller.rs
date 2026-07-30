@@ -45,6 +45,15 @@ fn jitter_for(provider_id: &str, interval_secs: u64) -> u64 {
     offset.unsigned_abs()
 }
 
+fn retain_live_schedules(
+    next_fetch: &mut HashMap<String, Instant>,
+    last_intervals: &mut HashMap<String, u64>,
+    live_sources: &std::collections::HashSet<String>,
+) {
+    next_fetch.retain(|key, _| live_sources.contains(key));
+    last_intervals.retain(|key, _| live_sources.contains(key));
+}
+
 
 /// per-provider 拉取 task 集合。poller 每秒检查时把过期的 provider spawn 进来，
 /// task 完成或 panic 后自动从 set 里清理（JoinSet::join_next 移除）。当前
@@ -226,9 +235,7 @@ pub fn start(app: AppHandle) {
             // L2 fix: 跟 try_join_next 的 lock 处理对称 ——
             // 单次 batch 删除所有 stale entries 后立刻 drop 锁,避免保留锁进
             // 长 for 循环(下面 for src 是大批量 source)。
-            if next_fetch.len() > live_sources.len() {
-                next_fetch.retain(|k, _| live_sources.contains(k));
-            }
+            retain_live_schedules(&mut next_fetch, &mut last_intervals, &live_sources);
             // M6 fix: 同步清理 backoff 里已删除 source 的 entry,
             // 避免 HashMap 长期膨胀(每删一个 extra instance 留一条永久残留)。
             {
@@ -443,5 +450,28 @@ mod tests {
         let max120 = (120 * 1000) / 10;
         assert!(j60 <= max60 as u64);
         assert!(j120 <= max120 as u64);
+    }
+
+    #[test]
+    fn retain_live_schedules_removes_replaced_source_at_equal_size() {
+        let now = Instant::now();
+        let mut next_fetch = HashMap::from([
+            ("minimax".to_string(), now),
+            ("minimax#2".to_string(), now),
+        ]);
+        let mut last_intervals = HashMap::from([
+            ("minimax".to_string(), 60),
+            ("minimax#2".to_string(), 120),
+        ]);
+        let live_sources = std::collections::HashSet::from([
+            "minimax".to_string(),
+            "deepseek#2".to_string(),
+        ]);
+
+        retain_live_schedules(&mut next_fetch, &mut last_intervals, &live_sources);
+
+        assert_eq!(next_fetch.len(), 1);
+        assert!(next_fetch.contains_key("minimax"));
+        assert_eq!(last_intervals, HashMap::from([("minimax".to_string(), 60)]));
     }
 }

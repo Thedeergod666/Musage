@@ -131,7 +131,8 @@
       "delete_failed": "删除失败: {err}",
       "copy_builtin_btn_title": "复制此 provider（添加新副本）",
       "load_failed": "加载 sources 失败: {err}",
-      "flash_toggle_failed": "切换显示失败: {err}"
+      "flash_toggle_failed": "切换显示失败: {err}",
+      "invalid_interval": "轮询间隔须在 10–86400 秒之间（当前 {val}）"
     },
     "app": {
       "section_title": "应用",
@@ -349,7 +350,8 @@
         "zh-CN": "中文",
         "en": "English"
       },
-      "apply_failed": "{err}"
+      "apply_failed": "{err}",
+      "auto_applied": "已自动切换默认区域为 Global（系统语言非中文）"
     }
   },
   "error": {
@@ -545,7 +547,9 @@
       "balance_path_required": "Balance path 必填",
       "test_failed": "测试失败: {err}",
       "test_error": "测试连接出错: {err}",
-      "save_failed": "保存失败: {err}"
+      "save_failed": "保存失败: {err}",
+      "field_too_long": "字段 {field} 过长（上限 256 字符）",
+      "divide_invalid": "divide 必须是 1~1,000,000 之间的数字（当前 {val}）"
     },
     "test_passing": "测试通过，正在保存...",
     "added": "{name} 已添加 (id: {id})"

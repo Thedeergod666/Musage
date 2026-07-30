@@ -131,7 +131,8 @@
       "delete_failed": "Delete failed: {err}",
       "copy_builtin_btn_title": "Copy this provider (add new instance)",
       "load_failed": "Failed to load sources: {err}",
-      "flash_toggle_failed": "Toggle display failed: {err}"
+      "flash_toggle_failed": "Toggle display failed: {err}",
+      "invalid_interval": "Interval must be 10–86400 seconds (got {val})"
     },
     "app": {
       "section_title": "Application",
@@ -349,7 +350,8 @@
         "zh-CN": "中文",
         "en": "English"
       },
-      "apply_failed": "{err}"
+      "apply_failed": "{err}",
+      "auto_applied": "Default region auto-switched to Global (your system language is non-Chinese)"
     }
   },
   "error": {
@@ -545,7 +547,9 @@
       "balance_path_required": "Balance path required",
       "test_failed": "Test failed: {err}",
       "test_error": "Test connection error: {err}",
-      "save_failed": "Save failed: {err}"
+      "save_failed": "Save failed: {err}",
+      "field_too_long": "Field {field} is too long (max 256 chars)",
+      "divide_invalid": "Divide must be a number between 1 and 1,000,000 (got {val})"
     },
     "test_passing": "Test passed, saving...",
     "added": "{name} added (id: {id})"

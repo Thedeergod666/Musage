@@ -640,11 +640,22 @@ pub fn parse_tier_count(
 /// - 新 schema：`end_time` 是距离重置的秒数（< 10^10，绝大多数情况）
 /// - 边界 10^12：2001-09-09 之后才合法为 epoch ms
 /// - 边界 4*10^12：2100-01-01 上限（防止异常值）
+///
+/// D-011 fix (2026-07-30 audit): 之前 duration 路径直接 `now + raw * 1000`,
+/// 不检查 raw 是否为负。 minimax API 返回异常负数 (e.g. 客户端时钟漂移 /
+/// 中转站 schema 漂移) → resets_at = now + negative = 过去时间 → 浮窗
+/// 「下次重置」倒计时负值, frontend `resetsPrefixFor` 走 expired 路径
+/// 但实际 usage 数据仍是上次的 (因为没真正刷新)。 修复: 负 duration
+/// 视为「已过期」, clamp 到 0 (i.e. now), frontend 看到 0 倒计时走
+/// "立即刷新" 路径恢复; 也防止 absurdly 大负数 overflow。
 fn smart_reset_to_ms(raw: i64) -> i64 {
     const EPOCH_MS_MIN: i64 = 1_000_000_000_000; // 2001-09-09
     const EPOCH_MS_MAX: i64 = 4_102_444_800_000; // 2100-01-01
     if (EPOCH_MS_MIN..=EPOCH_MS_MAX).contains(&raw) {
         raw
+    } else if raw < 0 {
+        // D-011: 负 duration 视作已过期 (clamp 到 0)
+        chrono::Utc::now().timestamp_millis()
     } else {
         // 当作 duration-seconds，加到当前时间
         chrono::Utc::now().timestamp_millis() + raw * 1000

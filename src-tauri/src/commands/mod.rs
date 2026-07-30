@@ -625,6 +625,40 @@ pub async fn save_config(
             return Err(t!("commands.wallet_threshold_negative", n = n).into_owned());
         }
     }
+    // D4-008 fix (2026-07-30 audit): save_config 之前不校验浮窗坐标,
+    // 负数 / 极大值 (例如 IntMax) 会让 position_is_visible 永久 false,
+    // 下次启动浮窗不在可见区,用户看到"浮窗不见了"。补上和 lib.rs:542
+    // 同样的 bounds 检查:xy 在 ±100k (覆盖极端多屏 / 副屏在主屏左侧的负偏移),
+    // wh 在 50~4000 (可见窗口范围, 浮窗实际不会超过 2000 像素)。
+    // None = 用默认值, 放行。
+    const COORD_MIN: i32 = -100_000;
+    const COORD_MAX: i32 = 100_000;
+    const DIM_MIN: i32 = 50;
+    const DIM_MAX: i32 = 4000;
+    for (name, val) in [
+        ("floating_x", cfg.floating_x),
+        ("floating_y", cfg.floating_y),
+    ] {
+        if let Some(v) = val {
+            if !(COORD_MIN <= v && v <= COORD_MAX) {
+                return Err(format!(
+                    "commands.coord_out_of_range: {name}={v} 不在 [{COORD_MIN}, {COORD_MAX}] 范围,                      极端值会让 position_is_visible 永久 false 导致浮窗不可见"
+                ));
+            }
+        }
+    }
+    for (name, val) in [
+        ("floating_w", cfg.floating_w),
+        ("floating_h", cfg.floating_h),
+    ] {
+        if let Some(v) = val {
+            if !(DIM_MIN <= v && v <= DIM_MAX) {
+                return Err(format!(
+                    "commands.dim_out_of_range: {name}={v} 不在 [{DIM_MIN}, {DIM_MAX}] 范围,                      极端值会让浮窗渲染异常"
+                ));
+            }
+        }
+    }
     // 校验自定义色（同 set_display_thresholds 路径）
     for (k, v) in &cfg.color_overrides {
         match k.as_str() {

@@ -1112,7 +1112,23 @@ fn read_keys() -> Result<KeysMap, String> {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let backup = path.with_extension(format!("json.bak.{ts}"));
-        let _ = std::fs::copy(&path, &backup);
+        // D4-005 fix (2026-07-30 audit): 之前 `let _ =` 静默吞掉 copy 错误,
+        // 用户看见日志里没有任何线索, debug 时无法判断 backup 是否成功。
+        // copy 失败时升 ERROR 级(backup 失败 = 损坏版本未被保留, 用户丢全部 key),
+        // 跟 load_from_disk 的损坏 config.json 备份保持同一日志级别语义。
+        if let Err(e) = std::fs::copy(&path, &backup) {
+            tracing::error!(
+                error = %e,
+                path = %path.display(),
+                backup = %backup.display(),
+                "keys.json 为空且 backup 失败, 后续 save_*_key 会用空 map 覆盖原文件 → 永久丢失所有 key"
+            );
+        } else {
+            tracing::warn!(
+                backup = %backup.display(),
+                "keys.json 为空, 已 backup 后返回空 map (注意:下次 save_*_key 会用空 map 覆盖)"
+            );
+        }
         return Ok(BTreeMap::new());
     }
     // parse 失败：先备份损坏的 keys.json 到 .bak.<ts>，再返回 Err。
@@ -1126,7 +1142,18 @@ fn read_keys() -> Result<KeysMap, String> {
                 .map(|d| d.as_secs())
                 .unwrap_or(0);
             let backup = path.with_extension(format!("json.bak.{ts}"));
-            let _ = std::fs::copy(&path, &backup);
+            // D4-005 fix (2026-07-30 audit): 同上 —— copy 失败不能静默吞。
+            // 此分支返 Err, caller 不会拿空 map 覆盖, 但用户需要知道 backup
+            // 是否成功(若 copy 失败, 损坏文件 + parse 失败的组合场景下用户
+            // 失去恢复路径, 必须 ERROR 级告警)。
+            if let Err(copy_err) = std::fs::copy(&path, &backup) {
+                tracing::error!(
+                    error = %copy_err,
+                    path = %path.display(),
+                    backup = %backup.display(),
+                    "keys.json 损坏且 backup 失败, 用户失去恢复路径"
+                );
+            }
             Err(t!(
                 "commands.parse_keys",
                 err = format!("{e}; 备份到 {}", backup.display())

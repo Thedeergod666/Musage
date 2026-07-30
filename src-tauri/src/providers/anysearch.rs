@@ -271,11 +271,35 @@ async fn refresh_token(refresh: &str, unique_id: &str) -> Result<String, FetchEr
         })?;
 
     let status = resp.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(FetchError::auth(
+            t!("error.anysearch.token_invalid_hint").into_owned(),
+        ));
+    }
+    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err(FetchError::new(
+            super::ErrorKind::RateLimited,
+            t!("error.common.rate_limited", provider = "AnySearch").into_owned(),
+        ));
+    }
+    if !status.is_success() {
+        let body = text_body_limited(resp).await.unwrap_or_default();
+        return Err(FetchError::server(
+            t!(
+                "error.common.http_error",
+                provider = "AnySearch refresh",
+                status = status.as_u16(),
+                body = body.chars().take(200).collect::<String>()
+            )
+            .into_owned(),
+        ));
+    }
+
     let raw = json_body_limited(resp).await?;
 
     // 业务级 code（0 = 成功；40114 = refresh token 已作废 → 需重新登录）
-    let code = raw.get("code").and_then(|v| v.as_i64()).unwrap_or(0);
-    if !status.is_success() || code != 0 {
+    let code = raw.get("code").and_then(json_i64).unwrap_or(0);
+    if code != 0 {
         // refresh 失败几乎都是 refresh token 也过期/被作废 → 引导重新登录
         return Err(FetchError::auth(
             t!("error.anysearch.token_invalid_hint").into_owned(),
@@ -319,6 +343,12 @@ async fn refresh_token(refresh: &str, unique_id: &str) -> Result<String, FetchEr
     }
 
     Ok(combined)
+}
+
+fn json_i64(value: &Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_str().and_then(|raw| raw.trim().parse().ok()))
 }
 
 async fn do_fetch(
@@ -761,6 +791,12 @@ mod tests {
         let raw = json!({ "code": 40141, "message": "token invalid" });
         let err = parse(&raw, "anysearch", "AnySearch").unwrap_err();
         assert_eq!(err.kind, super::super::ErrorKind::Parse);
+    }
+
+    #[test]
+    fn json_i64_accepts_numeric_string_business_codes() {
+        assert_eq!(json_i64(&json!("40114")), Some(40114));
+        assert_eq!(json_i64(&json!("not-a-code")), None);
     }
 
     #[test]

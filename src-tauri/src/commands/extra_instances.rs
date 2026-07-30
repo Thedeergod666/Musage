@@ -42,43 +42,6 @@ use crate::AppState;
 
 const TOTAL_EXTRA_LIMIT: usize = 50;
 
-/// 把 `temp_api_key_ref` 下的凭据迁到 `final_api_key_ref`。
-///
-/// H1 fix 配套 helper:add_extra_instance 并发场景 rename key 时,如果 save/delete
-/// 失败不能静默 ok() 吞掉 —— 必须把 error 透传给调用方,让调用方回滚 extras push。
-///
-/// 返回 `Err(String)` 时:
-/// - temp_api_key_ref 下的凭据可能已部分写入 final_api_key_ref (save 成功但 delete 失败)
-/// - 调用方在 Err 返回前应回滚 extras push + 清理残留 (delete_credential_for_id)
-fn try_rename_key(temp_api_key_ref: &str, final_api_key_ref: &str) -> Result<(), String> {
-    let cred = match load_credential_for_id(temp_api_key_ref) {
-        Ok(Some(c)) => c,
-        Ok(None) => {
-            // 没有 key 需要迁移(只填了 api_key 现在却被 rename),直接删 temp 占位即可
-            delete_credential_for_id(temp_api_key_ref).ok();
-            return Ok(());
-        }
-        Err(e) => {
-            return Err(t!("commands.extra.rename_load_key_failed", err = e.as_str()).into_owned());
-        }
-    };
-    if let Err(e) = save_credential_for_id(final_api_key_ref, &cred) {
-        return Err(t!("commands.extra.rename_save_key_failed", err = e.as_str()).into_owned());
-    }
-    if let Err(e) = delete_credential_for_id(temp_api_key_ref) {
-        // final 已写但 temp 清不掉 —— 留两个 key 共存 (final 优先,但下次 cleanup
-        // 不会清 temp)。先记 error 让调用方回滚 extras push,但不让用户重试整个
-        // add (这会把 temp 清掉)。
-        tracing::error!(
-            temp = %temp_api_key_ref,
-            final_api_key_ref = %final_api_key_ref,
-            error = %e,
-            "rename 后删除 temp 凭据失败,keys.json 残留旧 key"
-        );
-    }
-    Ok(())
-}
-
 // ── DTOs ────────────────────────────────────────────────────────
 
 /// 前端 picker 用的 provider option（11 内置 + custom）。
@@ -173,28 +136,14 @@ pub async fn add_extra_instance(
         .into_owned());
     }
 
-    // 2. 先保存 key/kookie 到 keys.json（在 write 锁外 — keys.json 有独立的
-    //    save_lock，不与 extra_instances 锁嵌套）。
-    //    P1-4 fix: 先写 key 再 push extras，这样 key 保存失败时 extras 里没有
-    //    对应记录（不会留下"无 key"的孤儿 instance）。如果 save extras 失败，
-    //    尝试回滚刚写的 key（best-effort）。
-    //
-    //    注意：因为还没拿 write 锁，instance_index 还没正式算 —— 先构造临时
-    //    api_key_ref 用于写 key，等确定了 index 后再 rename key。
-    let temp_api_key_ref = if is_custom {
-        let spec = req.custom.as_ref().unwrap();
-        if spec.id.is_empty() {
-            format!("custom_{}", uuid::Uuid::new_v4().simple())
-        } else {
-            spec.id.clone()
-        }
-    } else {
-        // 先读一次拿 next index（只是为了算 api_key_ref，真正的 push 在锁内重算）
-        let extras_read = state.extra_instances.read().await;
-        let tentative_idx = extra_instances::next_index_for(&req.provider_id, &extras_read);
-        drop(extras_read);
-        format!("{}#{}", req.provider_id, tentative_idx)
-    };
+    // D4-003 fix (2026-07-30 audit): 之前先在 write 锁外算 temp_api_key_ref
+    // (用 read 锁取 tentative idx) → 锁外 save_credential_for_id → 锁内重算
+    // actual idx → 必要时 rename key。问题: 两个并发 add 同一 provider_id
+    // 各自拿 read 锁看到相同 tentative idx (= max+1), 都把自己的 key 写到
+    // 同一个 temp_api_key_ref, 后写者覆盖前者 → User A 的 key 永久丢失。
+    // 修复: 把整个 "算 idx → save key → push instance → save extras"
+    // 全部放进一把 write 锁内, 不留 temp 阶段, rename 路径整段删掉。
+    // 锁持有时间多了一次 keys.json 磁盘 I/O (ms 级), 换来并发安全。
     let api_key_val = req
         .api_key
         .as_deref()
@@ -205,87 +154,72 @@ pub async fn add_extra_instance(
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    // L15 fix (2026-07-06 全量审查): 之前两次连续 save_credential_for_id 各
-    // 自覆盖(temp_api_key_ref → {api_key: x, cookie: None} 后又
-    // → {api_key: None, cookie: y}),第二轮 delete_by_id 只会删第二个 entry
-    // 留下来的 cookie。改成构造一个完整 Credentials(两边字段一次写入),
-    // save 一次,避免 cheap writeorder race。
-    if api_key_val.is_some() || api_cookie_val.is_some() {
-        let cred = Credentials {
+    let cred = if api_key_val.is_some() || api_cookie_val.is_some() {
+        Some(Credentials {
             api_key: api_key_val.map(|s| s.to_string()),
             cookie: api_cookie_val.map(|s| s.to_string()),
             secret_key: None,
-        };
-        save_credential_for_id(&temp_api_key_ref, &cred)
-            .map_err(|e| t!("commands.extra.save_key_failed", err = e.as_str()).into_owned())?;
-    }
-
-    // 3+4. 在 write 锁内构造 + 算 index + limit 检查 + push + 落盘。
-    // Bug fix (2026-06-25): 之前先用 read 锁取快照算 next_index_for(), 再
-    // 单独拿 write 锁 push。并发 add 同一 provider_id 时会拿到相同的 max
-    // index → 重复 api_key_ref → keys.json 条目互相覆盖。现在整个 "读现有
-    // 列表→算 index→push→save" 都在一把 write 锁内完成, 原子化。
+        })
+    } else {
+        None
+    };
+    // L15 fix (2026-07-06 全量审查): api_key + api_cookie 必须一次 save_credential_for_id
+    // 写入 (Credentials 两字段一起), 不能分两次 (第二轮 delete_by_id 会误删第一轮的 cookie)。
     let new_instance = {
         let now = chrono::Utc::now().timestamp();
         let mut extras = state.extra_instances.write().await;
         if extras.len() >= TOTAL_EXTRA_LIMIT {
-            // limit 检查失败 → 回滚刚写的 key
-            delete_credential_for_id(&temp_api_key_ref).ok();
             return Err(t!("commands.extra.limit_reached").into_owned());
         }
-        let instance = if is_custom {
+        // 锁内算 idx + 构造 instance —— 没有 temp,没有 rename
+        let (instance, final_api_key_ref) = if is_custom {
             let mut spec = req.custom.as_ref().unwrap().clone();
-            // P0-3 fix: 前端发 Omit<CustomSourceSpec, "id" | "created_at">，
-            // id/created_at 缺省时自动补。
             if spec.id.is_empty() {
-                spec.id = temp_api_key_ref.clone();
+                spec.id = format!("custom_{}", uuid::Uuid::new_v4().simple());
             }
             if spec.created_at == 0 {
                 spec.created_at = now;
             }
-            ExtraInstance {
+            let api_key_ref = spec.id.clone();
+            let instance = ExtraInstance {
                 id: uuid::Uuid::new_v4(),
                 provider_id: "custom".to_string(),
                 instance_index: extra_instances::next_index_for("custom", &extras),
-                api_key_ref: spec.id.clone(),
+                api_key_ref: api_key_ref.clone(),
                 custom: Some(spec),
                 created_at: now,
-            }
+            };
+            (instance, api_key_ref)
         } else {
             let idx = extra_instances::next_index_for(&req.provider_id, &extras);
-            let final_api_key_ref = format!("{}#{}", req.provider_id, idx);
-            // 如果 tentative index 跟实际 index 不一致（并发 add），rename key
-            //
-            // H1 fix: rename 失败的回滚路径。
-            // save_credential_for_id / delete_credential_for_id 返回 Err 时
-            // 之前只是 ok() 吞掉,导致 extras push 了一条 instance 但 keys.json
-            // 里的 key 名不对。
-            // 现在 try_rename_key 失败时清理 temp key 残留 + 直接返 Err
-            // (instance 还没 push 进 extras,前面 limit check 的回滚路径会清 temp)。
-            if final_api_key_ref != temp_api_key_ref {
-                if let Err(e) = try_rename_key(&temp_api_key_ref, &final_api_key_ref) {
-                    delete_credential_for_id(&temp_api_key_ref).ok();
-                    return Err(e);
-                }
-            }
-            ExtraInstance {
+            let api_key_ref = format!("{}#{}", req.provider_id, idx);
+            let instance = ExtraInstance {
                 id: uuid::Uuid::new_v4(),
                 provider_id: req.provider_id.clone(),
                 instance_index: idx,
-                api_key_ref: final_api_key_ref,
+                api_key_ref: api_key_ref.clone(),
                 custom: None,
                 created_at: now,
-            }
+            };
+            (instance, api_key_ref)
         };
+        // 锁内 save key: 用最终 api_key_ref (不再 temp+rename), 失败直接返 Err
+        if let Some(ref cred) = cred {
+            if let Err(e) = save_credential_for_id(&final_api_key_ref, cred) {
+                return Err(t!(
+                    "commands.extra.save_key_failed",
+                    err = e.as_str()
+                )
+                .into_owned());
+            }
+        }
+        // push + save extras
         extras.push(instance.clone());
         if let Err(e) = extra_instances::save(&extras) {
-            // P1-4 fix: save extras 失败 → 回滚 key
-            delete_credential_for_id(&instance.api_key_ref).ok();
-            if instance.api_key_ref != temp_api_key_ref {
-                delete_credential_for_id(&temp_api_key_ref).ok();
+            // P1-4 + H11 fix: save extras 失败 → 回滚 key + 从内存 pop
+            if cred.is_some() {
+                delete_credential_for_id(&final_api_key_ref).ok();
             }
-            // H11 fix (2026-07-03 audit): 之前 push 后 save 失败只删 key,
-            // 没有从 extras Vec 里 pop 掉,内存残留孤儿 instance(无对应 key)。
             extras.pop();
             return Err(e);
         }

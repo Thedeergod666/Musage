@@ -1414,31 +1414,39 @@ pub async fn refresh_inner(
         }
     }
 
-    // 收集所有结果（按 builtin_sources 顺序，前端卡顺序稳定）
+    // D5-007 fix (2026-07-30 audit): 之前 for 循环里每条 provider 各拿一次
+    // backoff.write().await (12 个 source → 12 次写锁串行排队), 和 poller.rs:172-180
+    // 注释里"write 锁不能跨 for 持有"的设计意图冲突。改成 Phase 1 收集 →
+    // Phase 2 单次写锁 → Phase 3 多次读锁(fill_next_fetch_at)三段式:
+    // - Phase 1: 等所有 task 落地, 收集 Rec 条目, 不持任何 backoff 锁
+    // - Phase 2: 一次性 backoff.write(), for 循环逐条 record (record 是 O(1) HashMap 操作,
+    //   12 条串行 in-lock 总耗时 <1ms, 远比 12 次 lock acquire/release 省)
+    // - Phase 3: drop 写锁后, 每条 fill_next_fetch_at 单独拿读锁(读锁不互斥,
+    //   且与 record 路径串行隔离, 不会出现"读到的 next_interval_secs 不是
+    //   本轮 record 后的最新值"的情况 —— 因 drop 后 fill 才发生)
+    struct Rec {
+        id: String,
+        snap: ProviderSnapshot,
+        default_secs: u64,
+        // join_err 走 Other, 不参与 backoff, 但保持调 record 以维持代码对称;
+        // next_fetch_at 直接用默认间隔(不走 fill_next_fetch_at 读 backoff)
+        is_join_err: bool,
+    }
     let mut snap = QuotaSnapshot::default();
+    let mut recs: Vec<Rec> = Vec::with_capacity(tasks.len());
     for (id, default_interval_secs, task) in tasks {
         match task.await {
-            Ok(Ok(s)) => {
-                let mut s = s;
-                // P1 fix (2026-07-28 审查): 兑现原注释"写 backoff:成功 →
-                // reset 退避状态"的承诺 —— 之前这里只有注释没有 record
-                // 调用(全工程只有 refresh_single_inner 调):手动「立即刷新」
-                // 成功后 per-provider 循环仍按旧退避间隔干等,本路径的
-                // 失败也不累加退避。write guard 只在 record 期间持有,
-                // drop 后再调 fill_next_fetch_at(内部 read),避免锁嵌套。
-                {
-                    let state = app.state::<AppState>();
-                    let mut backoff = state.backoff.write().await;
-                    backoff.record(&id, &s, default_interval_secs, caller);
-                }
-                fill_next_fetch_at(app, &id, default_interval_secs, &mut s).await;
-                snap.providers.push(s);
-            }
+            Ok(Ok(s)) => recs.push(Rec {
+                id,
+                snap: s,
+                default_secs: default_interval_secs,
+                is_join_err: false,
+            }),
             Ok(Err(e)) => {
-                // P1 重构：kind 直接从 FetchError 取，不再走 classify_error_message
-                // 子串匹配（旧实现 i18n 一动就破）。
+                // P1 重构:kind 直接从 FetchError 取,不再走 classify_error_message
+                // 子串匹配(旧实现 i18n 一动就破)。
                 log_provider_error(app, &id, e.kind, &e.message);
-                let mut err_snap = ProviderSnapshot::empty_error(
+                let err_snap = ProviderSnapshot::empty_error(
                     &app.state::<AppState>(),
                     &id,
                     e.kind,
@@ -1446,21 +1454,18 @@ pub async fn refresh_inner(
                     false, // L8: 真实错误,非 transient
                 )
                 .await;
-                // P1 fix: 同上 —— 失败(kind 属于可退避类时)翻倍退避。
-                {
-                    let state = app.state::<AppState>();
-                    let mut backoff = state.backoff.write().await;
-                    backoff.record(&id, &err_snap, default_interval_secs, caller);
-                }
-                fill_next_fetch_at(app, &id, default_interval_secs, &mut err_snap).await;
-                snap.providers.push(err_snap);
+                recs.push(Rec {
+                    id,
+                    snap: err_snap,
+                    default_secs: default_interval_secs,
+                    is_join_err: false,
+                });
             }
             Err(join_err) => {
                 let msg =
                     t!("error.common.join_task_failed", err = join_err.to_string()).into_owned();
                 log_provider_error(app, &id, ErrorKind::Other, &msg);
-                // join_err 走 Other, next_fetch_at 用默认间隔(无 backoff)
-                let mut err_snap = ProviderSnapshot::empty_error(
+                let err_snap = ProviderSnapshot::empty_error(
                     &app.state::<AppState>(),
                     &id,
                     ErrorKind::Other,
@@ -1468,19 +1473,35 @@ pub async fn refresh_inner(
                     false, // L8: 真实错误
                 )
                 .await;
-                // P1 fix: 三条路径一致调 record —— Other 属不可退避类,
-                // record 对它 no-op;保持一致是为未来 kind 分类变化时自动正确。
-                {
-                    let state = app.state::<AppState>();
-                    let mut backoff = state.backoff.write().await;
-                    backoff.record(&id, &err_snap, default_interval_secs, caller);
-                }
-                err_snap.next_fetch_at = Some(
-                    chrono::Utc::now().timestamp_millis() + (default_interval_secs as i64) * 1000,
-                );
-                snap.providers.push(err_snap);
+                recs.push(Rec {
+                    id,
+                    snap: err_snap,
+                    default_secs: default_interval_secs,
+                    is_join_err: true,
+                });
             }
         }
+    }
+
+    // Phase 2: 单次写锁,逐条 record。drop 锁后再做 fill_next_fetch_at
+    {
+        let state = app.state::<AppState>();
+        let mut backoff = state.backoff.write().await;
+        for rec in &recs {
+            backoff.record(&rec.id, &rec.snap, rec.default_secs, caller);
+        }
+    }
+
+    // Phase 3: 填 next_fetch_at。join_err 走默认间隔(不查 backoff), 其余读 backoff
+    for mut rec in recs {
+        if rec.is_join_err {
+            rec.snap.next_fetch_at = Some(
+                chrono::Utc::now().timestamp_millis() + (rec.default_secs as i64) * 1000,
+            );
+        } else {
+            fill_next_fetch_at(app, &rec.id, rec.default_secs, &mut rec.snap).await;
+        }
+        snap.providers.push(rec.snap);
     }
 
     snap.fetched_at = Some(chrono::Utc::now().timestamp_millis());

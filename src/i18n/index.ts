@@ -153,11 +153,18 @@ export const setLocale = async (l: Locale): Promise<void> => {
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("set_app_locale", { locale: l });
   } catch (e) {
-    // 后端没切成 → 回滚前端 + 不通知 listeners,保持前后端语言一致
-    // （否则前端切了后端没切,后续 IPC 返回的字符串语言对不上）。
+    // 后端没切成 → 回滚前端 + 必须通知 listeners 重渲染 (B-M2 fix
+    // 2026-07-30 audit)。失败前 `current = l` 已经触发后续 t() 用新 locale
+    // → 各 listener 内 applyDataI18n / renderProvidersSection 同步读 current
+    // → DOM textContent 已经是新 locale 翻译;不通知的话 listener 不会重跑,
+    // current 又是旧 locale → UI 出现两种 locale 字符串混杂 (zh-CN 表头 +
+    // en 按钮之类)。
     current = prev;
     document.documentElement.lang = prev;
     if (dev) console.debug("[i18n] set_app_locale invoke failed, rolled back", e);
+    listeners.forEach((fn) => {
+      try { fn(prev); } catch (err) { console.error("[i18n] listener error", err); }
+    });
     return;
   }
   // 通知前端 listeners

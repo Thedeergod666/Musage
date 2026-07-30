@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **D4-009**：`save_config` 不限 `provider_order` / `schema_overrides` 数量 → 加 `ORDER_LIST_MAX = 256` / `SCHEMA_OVERRIDES_MAX = 256`，挡 IPC DoS。
 - **D5-007**：`refresh_inner` 12 次顺序 `backoff.write().await` → 三段式（Phase 1 收集 → Phase 2 单次写锁 record → Phase 3 多次读锁 fill_next_fetch_at）。
 - **D5-038**：`refresh_inner` + `refresh_single_inner` 重复"填 source_display_name + emit snapshot + 刷新托盘" → 抽 `publish_snapshot` helper 共用。
+- **D5-074**：长暂停（macOS sleep / 长时间不交互）唤醒时 12 个 `next_fetch` entry 全过期 → 同步连续 spawn 12 个 task，12 个并发 HTTP 同时打出去。spawn 前 `await jitter_for(...)` 让本次 fire 也散开，cap 到 interval 的 10%。
+- **D5-101**：`spawn_debounced_geom_persister` 500ms 循环永久跑、不监听 shutdown，用户拖完最后 100ms 内 quit → tokio runtime drop 取消 task → latest 几何值丢失。select 加 `poller::SHUTDOWN.notified()` 分支，收到 signal 最后 flush 一次后 break。
 
 新增单测：`openrouter::tests::display_name_uses_i18n_key`。
 

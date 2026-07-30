@@ -43,9 +43,16 @@ function applyDataI18n() {
   document.title = t("window.settings");
 }
 
+// D7-002 fix (2026-07-30 audit): initI18n 顶层 void + init() 内 await 双调用
+// 导致 onLocaleChange listener 累积 → 切 locale 时 renderRegionSection 重渲 N 次
+// → settings 面板 region section 重复。仿 bindStepfunLoginEvents 加 module-scope
+// flag。initLocale 走内部缓存,二次调 O(1),所以 flag 只挡 listener 重复绑。
+let _initI18nBound = false;
 async function initI18n() {
   await initLocale();
   applyDataI18n();
+  if (_initI18nBound) return;
+  _initI18nBound = true;
   // 监听前端 setLocale → 重新跑 data-i18n 翻译 + 通知 listeners
   // L1 fix: region-wizard.ts 的 renderRegionSection 在 init 时调一次 t() 把标题
   // 烘到 DOM textContent，切 locale 后不跟着换。这里加 region section 重渲。

@@ -229,6 +229,7 @@
   "stepfun_login": {
     "parse_login_url": "parse LOGIN_URL: %{err}",
     "build_webview": "build webview: %{err}",
-    "save_keys_failed": "写 keys.json 失败: %{err}"
+    "save_keys_failed": "写 keys.json 失败: %{err}",
+    "token_too_large": "合并后 token 过大 ({bytes} 字节,上限 12288)。疑似未来 StepFun 改 ECDSA P-521 或追加字段,请提 bug"
   }
 }

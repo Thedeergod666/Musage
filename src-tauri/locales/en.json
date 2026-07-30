@@ -229,6 +229,7 @@
   "stepfun_login": {
     "parse_login_url": "parse LOGIN_URL: %{err}",
     "build_webview": "build webview: %{err}",
-    "save_keys_failed": "Failed to write keys.json: %{err}"
+    "save_keys_failed": "Failed to write keys.json: %{err}",
+    "token_too_large": "Combined token too large ({bytes} bytes, max 12288). Likely future ECDSA P-521 / extra fields — please file a bug."
   }
 }

@@ -375,6 +375,18 @@ fn combine_token(access: &str, refresh: Option<&str>) -> String {
 /// 存盘格式 `Oasis-Token=<combined>`：provider 侧
 /// `normalize_oasis_token` 会剥掉前缀，跟手动粘贴整段 cookie 的形态一致。
 fn save_token(combined: &str) -> Result<usize, String> {
+    // M2 fix (2026-07-30 audit): 12 KB 上限。
+    // RFC 6265 § 6.1 单 cookie 推荐上限 4 KB(浏览器实际更紧,Chrome / Safari 软上限
+    // ~4093 / ~4097 bytes),kernel-side netfilter 也有 cookie 大小限制(老版本
+    // ~8 KB)。combined token = `<access>...<refresh>` 通常 ~1-2 KB,
+    // StepFun 未来改 ECDSA P-521 / 追加 device_id 等字段可能膨胀。
+    // 12 KB 留 3x 安全冗余:正常 1-2 KB 永远过,反常 10 KB+ 必拒。
+    if combined.len() > 12 * 1024 {
+        return Err(t!(
+            "stepfun_login.token_too_large",
+            bytes = combined.len(),
+        ).into_owned());
+    }
     let cookie_slot = format!("Oasis-Token={combined}");
     let cred = Credentials {
         api_key: None,
@@ -400,6 +412,19 @@ mod tests {
         let payload = URL_SAFE_NO_PAD.encode(claims.as_bytes());
         let sig = URL_SAFE_NO_PAD.encode(b"sig");
         format!("{header}.{payload}.{sig}")
+    }
+
+        #[test]
+    fn save_token_rejects_over_12kb_combined() {
+        // M2 fix (2026-07-30 audit): combined token 超 12 KB (RFC 6265 § 6.1
+        // cookie 上限 + kernel-side 软上限 8 KB)直接拒,避免 kernel cookie store
+        // 截断 + 后续 fetch 401。dummy token 不走实际 save,但走 length gate。
+        let big = "a".repeat(13 * 1024);
+        let err = save_token(&big).unwrap_err();
+        assert!(
+            err.contains("12288") || err.contains("12"),
+            "expected size-cap error, got: {err}"
+        );
     }
 
     fn fresh_jwt() -> String {

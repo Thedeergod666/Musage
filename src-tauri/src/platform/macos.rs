@@ -449,6 +449,17 @@ pub fn start_fullscreen_watcher<R: Runtime>(app: AppHandle<R>) {
             loop {
                 thread::sleep(Duration::from_secs(2));
 
+                // D6-001 fix (2026-07-30 audit): fullscreen watcher OS 线程
+                // 永久循环, quit_app 同步 SHUTDOWN_NATIVE_THREADS atomic,
+                // 此线程每 2s tick 检查后退出。 150ms sleep 余量内能干净退出,
+                // 跟 macOS/Win hover emitter 行为对齐, 避免 quit_app 后跑空 tick。
+                if crate::poller::SHUTDOWN_NATIVE_THREADS
+                    .load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    tracing::debug!("macOS fullscreen watcher 收到 SHUTDOWN, 退出");
+                    break;
+                }
+
                 // 功能开关关：还原任何之前的自动隐藏 + 重置状态
                 if !AUTO_HIDE_IN_FULLSCREEN.load(Ordering::SeqCst) {
                     if WINDOW_HIDDEN_BY_FULLSCREEN.swap(false, Ordering::SeqCst) {

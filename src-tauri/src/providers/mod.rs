@@ -550,17 +550,26 @@ pub struct QuotaSnapshot {
 impl QuotaSnapshot {
     /// 整体最差 health（用于托盘图标颜色）
     pub fn worst_health(&self) -> &'static str {
+        if self.providers.is_empty() {
+            return "unknown";
+        }
         let mut worst = "ok";
         for p in &self.providers {
             let h = p.health_label(self.wallet_alert_threshold);
-            worst = match (worst, h) {
-                (_, "alert") => "alert",
-                ("ok", "warn") => "warn",
-                (a, b) if a == b => a,
-                _ => worst,
-            };
+            if health_rank(h) > health_rank(worst) {
+                worst = h;
+            }
         }
         worst
+    }
+}
+
+fn health_rank(health: &str) -> u8 {
+    match health {
+        "alert" => 3,
+        "warn" => 2,
+        "unknown" => 1,
+        _ => 0,
     }
 }
 
@@ -971,6 +980,34 @@ pub async fn text_body_limited(resp: reqwest::Response) -> Result<String, FetchE
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn success_snapshot(rows: Vec<QuotaRow>) -> ProviderSnapshot {
+        ProviderSnapshot {
+            success: true,
+            rows,
+            source_id: Some("test".to_string()),
+            is_healthy: true,
+            ..ProviderSnapshot::default()
+        }
+    }
+
+    #[test]
+    fn worst_health_preserves_unknown_without_hiding_warnings() {
+        let unknown = success_snapshot(Vec::new());
+        let ok = success_snapshot(vec![QuotaRow {
+            utilization: Some(10.0),
+            ..QuotaRow::default()
+        }]);
+        let warn = success_snapshot(vec![QuotaRow {
+            utilization: Some(80.0),
+            ..QuotaRow::default()
+        }]);
+
+        assert_eq!(QuotaSnapshot::default().worst_health(), "unknown");
+        assert_eq!(QuotaSnapshot { providers: vec![unknown.clone()], ..Default::default() }.worst_health(), "unknown");
+        assert_eq!(QuotaSnapshot { providers: vec![ok, unknown.clone()], ..Default::default() }.worst_health(), "unknown");
+        assert_eq!(QuotaSnapshot { providers: vec![warn, unknown], ..Default::default() }.worst_health(), "warn");
+    }
 
     // ── D2 (2026-07-28 审查): SSRF extract_host / is_ssrf_blocked ──
 

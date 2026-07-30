@@ -521,11 +521,24 @@ fn parse_subscription_window(q: &Value, label: &str) -> Option<QuotaRow> {
 // ── 工具 ────────────────────────────────────────────────────────
 
 /// ISO 8601 字符串 → 毫秒时间戳。失败返 None。
+///
+/// D-006 fix (2026-07-30 audit): 之前只走 parse_from_rfc3339, 要求必带
+/// timezone (Z 或 +HH:MM)。 部分中转站 / 旧 schema 可能返 naive 字符串
+/// 如 "2026-03-24T08:35:09" 无 TZ, parse_from_rfc3339 直接拒, 导致
+/// resets_at = None 浮窗不显示倒计时。 加 NaiveDateTime fallback: 假定 UTC
+/// (跟 rfc3339 +00:00 一致, 用户视角无差异)。
 fn parse_iso8601_ms(s: Option<&str>) -> Option<i64> {
     let s = s?;
-    chrono::DateTime::parse_from_rfc3339(s)
-        .ok()
-        .map(|dt| dt.timestamp_millis())
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+        return Some(dt.timestamp_millis());
+    }
+    if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f") {
+        return Some(ndt.and_utc().timestamp_millis());
+    }
+    if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+        return Some(ndt.and_utc().timestamp_millis());
+    }
+    None
 }
 
 fn num_f64(obj: &Value, field: &str) -> Option<f64> {
@@ -725,6 +738,30 @@ mod tests {
         assert!(ms > 1_700_000_000_000 && ms < 1_800_000_000_000);
         assert!(parse_iso8601_ms(None).is_none());
         assert!(parse_iso8601_ms(Some("not a date")).is_none());
+    }
+
+    // D-006 fix (2026-07-30 audit): NaiveDateTime fallback 覆盖无 TZ 字符串
+    #[test]
+    fn parse_iso8601_naive_fallback() {
+        // RFC3339 with TZ 仍正常
+        let ms_rfc = parse_iso8601_ms(Some("2026-03-24T08:35:09.000Z")).unwrap();
+        // NaiveDateTime 无 TZ 假定 UTC,结果应等于显式 Z 形式
+        let ms_naive = parse_iso8601_ms(Some("2026-03-24T08:35:09")).unwrap();
+        assert_eq!(ms_rfc, ms_naive);
+
+        // 带 sub-second 无 TZ 也走 fallback
+        let ms_naive_ms = parse_iso8601_ms(Some("2026-03-24T08:35:09.123")).unwrap();
+        assert_eq!(
+            ms_naive_ms,
+            chrono::NaiveDateTime::parse_from_str("2026-03-24T08:35:09.123", "%Y-%m-%dT%H:%M:%S%.f")
+                .unwrap()
+                .and_utc()
+                .timestamp_millis()
+        );
+
+        // 无效字符串仍 None
+        assert!(parse_iso8601_ms(Some("garbage")).is_none());
+        assert!(parse_iso8601_ms(Some("")).is_none());
     }
 
     #[test]

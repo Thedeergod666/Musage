@@ -257,8 +257,18 @@ async fn do_fetch(
 
 /// 兼容数字和字符串两种 JSON 表示
 fn parse_f64(obj: &serde_json::Value, field: &str) -> Option<f64> {
-    obj.get(field).and_then(|v| {
-        v.as_f64()
-            .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
-    })
+    obj.get(field).and_then(super::parse::num_f64)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parse_f64_rejects_non_finite_strings() {
+        let raw = json!({ "value": "NaN", "infinite": "inf" });
+        assert_eq!(parse_f64(&raw, "value"), None);
+        assert_eq!(parse_f64(&raw, "infinite"), None);
+    }
 }

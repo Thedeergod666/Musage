@@ -529,11 +529,7 @@ fn parse_iso8601_ms(s: Option<&str>) -> Option<i64> {
 }
 
 fn num_f64(obj: &Value, field: &str) -> Option<f64> {
-    obj.get(field).and_then(|v| {
-        v.as_f64()
-            .or_else(|| v.as_i64().map(|i| i as f64))
-            .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
-    })
+    obj.get(field).and_then(super::parse::num_f64)
 }
 
 // ── 单元测试 ─────────────────────────────────────────────────────
@@ -542,6 +538,13 @@ fn num_f64(obj: &Value, field: &str) -> Option<f64> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn num_f64_rejects_non_finite_strings() {
+        let raw = json!({ "value": "Infinity", "negative_infinity": "-inf" });
+        assert_eq!(num_f64(&raw, "value"), None);
+        assert_eq!(num_f64(&raw, "negative_infinity"), None);
+    }
 
     // ── PAYG 模式 ──
 

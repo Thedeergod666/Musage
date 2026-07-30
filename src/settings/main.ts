@@ -67,7 +67,14 @@ async function initI18n() {
 
 void initI18n();
 
+// D7-003 + D7-004 fix (2026-07-30 audit): setupNav / setupTabs 顶层调无幂等保护
+// + listen 句柄不存, dev HMR 重 init 时累积 nav click listener + 后端 listen.
+// 加 module-scope flag, 仿 bindStepfunLoginEvents.
+let _setupNavBound = false;
+let _setupTabsBound = false;
 function setupNav() {
+  if (_setupNavBound) return;
+  _setupNavBound = true;
   const navItems = document.querySelectorAll<HTMLButtonElement>(".nav-item");
   const sections = document.querySelectorAll<HTMLElement>(".section-view");
 
@@ -126,7 +133,11 @@ function setupNav() {
 setupNav();
 // tabs 是 provider 内部 5 个 tab 切换的兼容（万一以后想用），现在 panel
 // 顺序由 list_sources 决定，tab 切换是 no-op。
-setupTabs();
+// D7-003 fix: 用独立 _setupTabsBound flag 防 HMR 累积
+if (!_setupTabsBound) {
+  _setupTabsBound = true;
+  setupTabs();
+}
 
 // ── 2) 异步：拉数据 + 渲染 6 个 section ───────────────────────
 

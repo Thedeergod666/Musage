@@ -261,7 +261,12 @@ function renderZhipuRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElement
 
   const helpDiv = document.createElement("div");
   helpDiv.className = "help";
-  helpDiv.innerHTML = t("extras.zhipu_region_help");
+  // D7-005 fix (2026-07-30 audit): 对齐 advanced.ts M5 fix (2026-07-06)
+  // 干掉 innerHTML = t(...) 模式, 改 textContent. zhipu_region_help 当前
+  // JSON 值含硬编码 <a href> / <strong>, 改为 textContent 后链接以纯文本
+  // 显示, 用户手抄 URL 即可. 后续如要恢复可点击链接, 改用 el() 拆 DOM
+  // + DOMPurify sanitize(白名单 anchor) 路径.
+  helpDiv.textContent = t("extras.zhipu_region_help");
 
   return el(
     "div",

@@ -589,6 +589,12 @@ pub async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, String>
 /// 前端绕过 set_provider_enabled / add_custom_source 直接 save_config
 /// 灌 100k 条空 entry → serde_json 序列化 + 写盘都慢,无意义。
 const PROVIDERS_MAP_MAX: usize = 256;
+// D4-009 fix (2026-07-30 audit): provider_order / schema_overrides 也加
+// 上限,挡住 IPC DoS 路径。provider_order 跟 builtin_sources() 12 + custom
+// 256 走同一上限 (256);schema_overrides 跟 provider_id 一一对应, 同样
+// 上限 256。
+const ORDER_LIST_MAX: usize = 256;
+const SCHEMA_OVERRIDES_MAX: usize = 256;
 
 #[tauri::command]
 pub async fn save_config(
@@ -602,6 +608,23 @@ pub async fn save_config(
             count = cfg.providers.len(),
             max = PROVIDERS_MAP_MAX
         ).into_owned());
+    }
+    // D4-009 fix (2026-07-30 audit): 之前只挡 providers 数, 不挡
+    // provider_order Vec / schema_overrides BTreeMap 数量。攻击者灌
+    // 100k 空 entry → serde_json 序列化 + 写盘都慢, 无意义。
+    if cfg.provider_order.len() > ORDER_LIST_MAX {
+        return Err(format!(
+            "commands.provider_order_too_many: count={} max={}",
+            cfg.provider_order.len(),
+            ORDER_LIST_MAX
+        ));
+    }
+    if cfg.schema_overrides.len() > SCHEMA_OVERRIDES_MAX {
+        return Err(format!(
+            "commands.schema_overrides_too_many: count={} max={}",
+            cfg.schema_overrides.len(),
+            SCHEMA_OVERRIDES_MAX
+        ));
     }
     // L2 fix (2026-07-30 audit): 上限 1 天,挡住 webhook 入口塞 86400 * 365
     // 把轮询当 background daemon 跑的死循环。前端 settings panel 默认 60s。

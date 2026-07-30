@@ -122,11 +122,14 @@ impl QuotaSource for OpenrouterSource {
         }
     }
     fn display_name(&self) -> Cow<'_, str> {
+        // i18n key `provider_name.openrouter` + `provider.suffix.dup` = " #{}"
+        // t!() 返回 Cow 是临时值，统一用 Cow::Owned + into_owned，参考 minimax.rs:154-164
         if self.instance_index <= 1 {
-            Cow::Borrowed("OpenRouter")
+            Cow::Owned(t!("provider_name.openrouter").into_owned())
         } else {
             Cow::Owned(format!(
-                "OpenRouter{}",
+                "{}{}",
+                t!("provider_name.openrouter").as_ref(),
                 t!("provider.suffix.dup", n = self.instance_index),
             ))
         }
@@ -237,11 +240,15 @@ async fn fetch_credits(
         ));
     }
     if !status.is_success() {
+        // D-008 fix (2026-07-30 audit): fetch_key 已带 body preview (200 字符截断),
+        // fetch_credits 之前只用 http_error_simple 不带 body, 排错时看不到上游响应
+        let body = text_body_limited(resp).await.unwrap_or_default();
         return Err(FetchError::server(
             t!(
-                "error.common.http_error_simple",
+                "error.common.http_error",
                 provider = "OpenRouter",
-                status = status.as_u16()
+                status = status.as_u16(),
+                body = body.chars().take(200).collect::<String>()
             )
             .into_owned(),
         ));
@@ -543,5 +550,24 @@ mod tests {
         let raw = json!({ "error": "bad key" });
         let err = parse_key(&raw, "openrouter", "OpenRouter").unwrap_err();
         assert_eq!(err.kind, ErrorKind::Parse);
+    }
+
+    // D-003 fix (2026-07-30 audit): display_name 走 i18n key 而非硬编码
+    #[test]
+    fn display_name_uses_i18n_key() {
+        // 单实例：直接用 provider_name.openrouter
+        let s = OpenrouterSource::default();
+        assert_eq!(s.display_name(), t!("provider_name.openrouter").as_ref());
+
+        // 多实例：provider_name.openrouter + provider.suffix.dup 空格前缀
+        let s2 = OpenrouterSource::default().with_instance_index(2);
+        assert_eq!(
+            s2.display_name(),
+            format!(
+                "{}{}",
+                t!("provider_name.openrouter").as_ref(),
+                t!("provider.suffix.dup", n = 2),
+            )
+        );
     }
 }

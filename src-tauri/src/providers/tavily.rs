@@ -226,10 +226,28 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
         .map(|s| s.to_string());
 
     // ── 套餐重置时间：从 account.current_billing_period.end 提取 ──
+    //
+    // D-010 fix (2026-07-30 audit): 之前只接 NaiveDate "%Y-%m-%d"。Tavily
+    // 部分账号 (老 enterprise / 海外区) 返 RFC3339 完整时间戳
+    // "2026-07-01T00:00:00Z", NaiveDate 拒 → resets_at = None → 浮窗不显
+    // 倒计时。加 RFC3339 + NaiveDateTime 两条 fallback, 跟 zenmux parse_iso8601_ms
+    // 同款策略。
     let resets_at: Option<i64> = raw
         .pointer("/account/current_billing_period/end")
         .and_then(|v| v.as_str())
         .and_then(|s| {
+            // 1. RFC3339 完整时间戳 ("2026-07-01T00:00:00Z")
+            if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
+                return Some(dt.timestamp_millis());
+            }
+            // 2. NaiveDateTime ("2026-07-01T00:00:00") — 假定 UTC
+            if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f") {
+                return Some(ndt.and_utc().timestamp_millis());
+            }
+            if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+                return Some(ndt.and_utc().timestamp_millis());
+            }
+            // 3. NaiveDate ("2026-07-01") — 走 midnight UTC
             NaiveDate::parse_from_str(s, "%Y-%m-%d").ok().map(|d| {
                 d.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap())
                     .and_utc()

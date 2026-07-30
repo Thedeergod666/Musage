@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed（2026-07-30 全量审计批量修复）
+
+基于 `audit-reports/2026-07-30-full/` 8 域并行审查（01 providers-A / 04 config-ipc / 05 poller-lifecycle 上一轮已完成，本轮基于剩余 04 报告 + 上轮已审未修条目做的 9 个 commit），按 P0→P3 顺序原子修复：
+
+- **D-003 + D-008**：OpenRouter `display_name()` 硬编码 "OpenRouter" 字符串 → 改走 `t!("provider_name.openrouter")` + i18n key，多实例副本同款（`providers/openrouter.rs`）；`fetch_credits` 5xx 分支不带 body → 对齐 `fetch_key` 加 `text_body_limited` 200 字符截断的 body preview。
+- **D4-001**：损坏 `config.json` 三段 fallback 全失败时 `std::fs::copy` 留原文件 → `std::fs::rename` 原子移动到 `.bak.<ts>`，后续 `save()` 不会再覆盖损坏版本；rename 失败兜底回 copy + ERROR 级日志。
+- **D4-003**：`add_extra_instance` 锁外用 read 锁算 tentative idx 写 temp key 并发会撞 → 把"算 idx + save key + push instance + save extras"全部放进一把 write 锁，删 `try_rename_key` helper（dead code）。
+- **D4-004**：`delete_extra_instance` H13 fix 只回滚 extras (内存) 不回滚 keys.json (磁盘) → 跟踪 `migrations_done + target_cred_backup`，save extras 失败时反向 LIFO 操作恢复 keys.json 状态。
+- **D4-005**：`read_keys` 两处 `let _ = std::fs::copy(...)` 静默吞 backup 错误 → 改为 `if let Err(e)` + ERROR 级日志（empty 分支保留 warn 成功路径）。
+- **D4-006**：`delete_extra_instance` gap-filling bug —— 删 deepseek#2 时 compact 把 deepseek#3 迁移到 deepseek#2，紧接着 `delete_credential_for_id("deepseek#2")` 误删刚迁移的凭据 → 删前确认 compact 之后 `target_api_key_ref` 是否已被其他 instance 占用，是则跳过删除。
+- **D4-007**：`truncate_old_backups` 启动只清 `config.json.bak.*`，半年升级用户堆 keys.json.bak 撑爆磁盘 → 加 `truncate_old_backups(parent, "keys.json", 5)`。
+- **D4-008**：`save_config` 不校验浮窗坐标 → 加 bounds 检查：xy 在 ±100k，wh 在 50~4000，越界返 Err 含字段名 + 影响说明。
+- **D4-009**：`save_config` 不限 `provider_order` / `schema_overrides` 数量 → 加 `ORDER_LIST_MAX = 256` / `SCHEMA_OVERRIDES_MAX = 256`，挡 IPC DoS。
+- **D5-007**：`refresh_inner` 12 次顺序 `backoff.write().await` → 三段式（Phase 1 收集 → Phase 2 单次写锁 record → Phase 3 多次读锁 fill_next_fetch_at）。
+- **D5-038**：`refresh_inner` + `refresh_single_inner` 重复"填 source_display_name + emit snapshot + 刷新托盘" → 抽 `publish_snapshot` helper 共用。
+
+新增单测：`openrouter::tests::display_name_uses_i18n_key`。
+
+守门：`cargo test --lib` 354 passed (含 1 个新增)，`pnpm tsc --noEmit` 0 error。
+
 ## [0.2.5] - 2026-07-29
 
 ### Fixed (Critical — StepFun 一键登录永远抓不到 token)

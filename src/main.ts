@@ -233,6 +233,7 @@ interface QuotaSnapshot {
 const app = document.getElementById("app")!;
 let countdownTimer: number | null = null;
 let stalePurgeTimer: number | null = null;
+let disposeFloatingInit: (() => void) | null = null;
 /// 最后一次 render 的 snapshot —— locale 变化时用来重新渲染。
 let lastRenderedSnap: QuotaSnapshot | null = null;
 /// **2026-07-28 fix**：用户是否曾经进入过「有数据」的渲染场景（placeholder、
@@ -1266,6 +1267,46 @@ async function onAppActionClick(e: MouseEvent): Promise<void> {
 // ── 启动 ──
 
 async function init() {
+  disposeFloatingInit?.();
+  const domAbort = new AbortController();
+  const trackedUnlisteners = new Set<UnlistenFn>();
+  let disposed = false;
+  let backdropRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+  let hoverEnterTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const cleanup = () => {
+    if (disposed) return;
+    disposed = true;
+    domAbort.abort();
+    trackedUnlisteners.forEach((unlisten) => unlisten());
+    trackedUnlisteners.clear();
+    if (backdropRefreshTimer !== null) clearTimeout(backdropRefreshTimer);
+    if (hoverEnterTimer !== null) clearTimeout(hoverEnterTimer);
+    if (countdownTimer !== null) {
+      clearInterval(countdownTimer);
+      countdownTimer = null;
+    }
+    if (stalePurgeTimer !== null) {
+      clearInterval(stalePurgeTimer);
+      stalePurgeTimer = null;
+    }
+    if (disposeFloatingInit === cleanup) disposeFloatingInit = null;
+  };
+  disposeFloatingInit = cleanup;
+  window.addEventListener("beforeunload", cleanup, {
+    once: true,
+    signal: domAbort.signal,
+  });
+
+  const trackUnlisten = (promise: Promise<UnlistenFn>, label: string) => {
+    void promise
+      .then((unlisten) => {
+        if (disposed) unlisten();
+        else trackedUnlisteners.add(unlisten);
+      })
+      .catch((error) => console.error(`[floating] listen ${label} 失败`, error));
+  };
+
   // 2026-07-29 audit (A-C1): 错误卡片的"打开设置"按钮必须随时能响应。
   // 中段（原 line 1485）注册的完整 click handler 支持 .err-btn-retry / -advanced /
   // -relogin / -copy / -logs 等，但若 init() 后段任何一处 await throw（catch 块没
@@ -1274,8 +1315,7 @@ async function init() {
   // 完整委托必须在首个 await 之前注册：init 后段失败时错误卡仍可恢复。
   // 先 remove 再 add，让 dev HMR / init 重入保持幂等；旧版“顶部最小兜底 +
   // 后段完整委托”会让 open-settings 一次点击发送两次 IPC。
-  app.removeEventListener("click", onAppActionClick);
-  app.addEventListener("click", onAppActionClick);
+  app.addEventListener("click", onAppActionClick, { signal: domAbort.signal });
 
   // ── i18n 初始化：必须在任何 t() 调用前完成（加载 dict） ──
   await initLocale();
@@ -1283,7 +1323,7 @@ async function init() {
   // 同步浮窗 document.title（settings/main.ts 对 settings 做了同样的事）
   document.title = t("window.floating");
   // locale 变化时重建元数据 + 刷新所有卡片名称 + 同步标题
-  onLocaleChange(() => {
+  trackedUnlisteners.add(onLocaleChange(() => {
     PROVIDER_META = buildProviderMeta();
     document.title = t("window.floating");
     // 刷新已渲染卡片的名称（不触发 full re-render，只更新 .card-name）
@@ -1304,15 +1344,15 @@ async function init() {
     // 重新渲染 loading/error 态（文字也会变）
     const snap = lastRenderedSnap;
     if (snap) render(snap);
-  });
+  }));
   // 监听 Rust 端 locale-changed 事件（设置面板切语言时触发，跨 webview 同步）
   // 防无限循环：若当前 locale 与事件相同，跳过（避免 set_app_locale 二次触发再 emit）
-  listen<string>("musage://locale-changed", async (e) => {
+  trackUnlisten(listen<string>("musage://locale-changed", async (e) => {
     const newLocale = e.payload;
     if ((newLocale === "en" || newLocale === "zh-CN") && newLocale !== getLocale()) {
       await setLocale(newLocale);
     }
-  });
+  }), "musage://locale-changed");
 
   const w = getCurrentWindow();
   // 拖动：左键按住任意非按钮区域 → start_dragging
@@ -1326,7 +1366,7 @@ async function init() {
     // w.startDragging 返 Promise，不 await（同步阻止默认行为已足够），
     // 但加 catch 防止 IPC 拒绝变成 unhandled rejection。
     w.startDragging().catch((err) => console.debug("[floating] startDragging 失败", err));
-  });
+  }, { signal: domAbort.signal });
   // 双击 → 打开设置面板（2026-07-17 改：原绑定是"立即刷新"，刷新走托盘菜单）。
   // 跟上面拖动的 mousedown 一样跳过按钮 / 输入框，避免双击"重试"等按钮时
   // 既触发按钮动作又弹设置窗。
@@ -1334,20 +1374,14 @@ async function init() {
     const target = e.target as HTMLElement;
     if (target.closest("button, input, select, a")) return;
     invoke("open_settings_window").catch((err) => console.error(err));
-  });
+  }, { signal: domAbort.signal });
 
   // 订阅后端推送
-  let unlisten: UnlistenFn | null = null;
-  let unlistenHover: UnlistenFn | null = null;
-  let unlistenResized: UnlistenFn | null = null;
-  let unlistenCfg: UnlistenFn | null = null;
   // **2026-06-20 audit**：5 处 listen().then() 之前都没 .catch()，
   // IPC bridge 启动挂掉时 promise reject → unhandled rejection。补 catch + log。
-  listen<QuotaSnapshot>("musage://snapshot", (e) => {
+  trackUnlisten(listen<QuotaSnapshot>("musage://snapshot", (e) => {
     render(e.payload);
-  })
-    .then((fn) => (unlisten = fn))
-    .catch((e) => console.error("[floating] listen musage://snapshot 失败", e));
+  }), "musage://snapshot");
 
   // ── Hover 状态同步：驱动 body[data-hover] 让 iOS 26 玻璃效果生效 ──
   //
@@ -1412,21 +1446,21 @@ async function init() {
   // 保留 onFocusChanged 监听：用户切到别的 app 时（focus=false）立刻主动
   // setHoverAttr(false) 撤玻璃 —— 即时视觉反馈比"等 Rust 100ms emit false"
   // 更跟手。注意：focused 状态本身不再参与 hover guard，Rust 端是 ground truth。
-  wForFocus
-    .onFocusChanged(({ payload: f }) => {
+  trackUnlisten(
+    wForFocus.onFocusChanged(({ payload: f }) => {
       if (!f) setHoverAttr(false);
-    })
-    .catch(() => {});
+    }),
+    "window focus",
+  );
   document.addEventListener("visibilitychange", () => {
     pageVisible = document.visibilityState === "visible";
     if (!pageVisible) setHoverAttr(false);
-  });
+  }, { signal: domAbort.signal });
   // (b) 显形零延迟：2026-07-09 恢复 v0.1.0 hover 响应速度。
   //     原本 40ms debounce 的目的是吞掉 enter→leave 抖动，但 Rust 端
   //     ENTER_THRESHOLD 已经降到 1 + pageVisible guard 已经能挡 hide_floating
   //     残留，JS 端 debounce 是冗余延迟。Rust emit true 是 ground truth，
   //     JS 路径直接同步切，不再排 setTimeout。
-  let hoverEnterTimer: ReturnType<typeof setTimeout> | null = null; // 保留变量名 + cleanup 路径,但不再被赋值
   const onBodyMouseEnter = () => {
     if (!pageVisible) return; // 隐藏态 → spurious 忽略
     setHoverAttr(true);
@@ -1434,10 +1468,10 @@ async function init() {
   const onBodyMouseLeave = () => {
     setHoverAttr(false);
   };
-  document.body.addEventListener("mouseenter", onBodyMouseEnter);
-  document.body.addEventListener("mouseleave", onBodyMouseLeave);
+  document.body.addEventListener("mouseenter", onBodyMouseEnter, { signal: domAbort.signal });
+  document.body.addEventListener("mouseleave", onBodyMouseLeave, { signal: domAbort.signal });
   let lastHoverPayload: boolean | null = null;
-  listen<boolean>("musage://floating-hover", (e) => {
+  trackUnlisten(listen<boolean>("musage://floating-hover", (e) => {
     // 隐藏态吞掉 inside=true emit：fullscreen watcher 调 hide_floating 后
     // WKWebView 进入 visibilitychange hidden，pageVisible=false 时任何 emit
     // 都按隐藏态算（setHoverAttr(true) 会让玻璃卡住等用户切回全屏 app）。
@@ -1460,9 +1494,7 @@ async function init() {
       hoverEnterTimer = null;
     }
     setHoverAttr(e.payload);
-  })
-    .then((fn) => (unlistenHover = fn))
-    .catch((e) => console.error("[floating] listen musage://floating-hover 失败", e));
+  }), "musage://floating-hover");
 
   // ── Backdrop refresh（L3，2026-07-20 移植自 Usticky）──
   // Rust 端 set_window_level（PinBottom hover-raise / pin mode 切换）后 emit
@@ -1471,9 +1503,7 @@ async function init() {
   // 重采样），击穿 macOS WKWebView ~2s 的 sample 失效窗口。
   // 与 hover emitter 的去抖修复正交：前者解决 sample 失效（物理层），
   // 后者解决 hover 状态机误触发（逻辑层）。
-  let backdropRefreshTimer: ReturnType<typeof setTimeout> | null = null;
-  let unlistenBackdropRefresh: UnlistenFn | null = null;
-  listen("musage://backdrop-refresh", () => {
+  trackUnlisten(listen("musage://backdrop-refresh", () => {
     if (backdropRefreshTimer !== null) clearTimeout(backdropRefreshTimer);
     const targets = app.querySelectorAll<HTMLElement>(".card, .err");
     targets.forEach((el) => el.classList.add("force-reflow"));
@@ -1482,9 +1512,7 @@ async function init() {
       app.querySelectorAll<HTMLElement>(".card.force-reflow, .err.force-reflow")
         .forEach((el) => el.classList.remove("force-reflow"));
     }, 100);
-  })
-    .then((fn) => (unlistenBackdropRefresh = fn))
-    .catch((e) => console.error("[floating] listen musage://backdrop-refresh 失败", e));
+  }), "musage://backdrop-refresh");
 
   // ── 用户手动 resize 窗口 → 通知前端冻结 800ms auto-fit ──
   // Rust 端每收到 Resized 就 emit 这个事件（不管源头是用户拖动还是
@@ -1494,25 +1522,20 @@ async function init() {
   //   - 不等 → 用户拖动，bump userResizedAt 冻结 800ms 避免自动 fit 覆盖
   // 不变量：fit 期间我们 set_size 到 targetH → 立刻更新 lastFitHeight = targetH，
   //         Resized emit 回来时 lastFitHeight === payload → 忽略 ✓。
-  listen<number>("musage://floating-resized", (e) => {
+  trackUnlisten(listen<number>("musage://floating-resized", (e) => {
     const newH = e.payload;
     if (newH === lastFitWindowH) return; // 我们自己 fit 的回声
     userResizedAt = Date.now();
-  })
-    .then((fn) => (unlistenResized = fn))
-    .catch((e) => console.error("[floating] listen musage://floating-resized 失败", e));
+  }), "musage://floating-resized");
 
   // ── 省电模式同步：body[data-low-power] 让 CSS 关掉 backdrop-filter + transition ──
-  let unlistenLowPower: UnlistenFn | null = null;
   const setLowPowerAttr = (on: boolean) => {
     if (on) document.body.dataset.lowPower = "1";
     else delete document.body.dataset.lowPower;
   };
-  listen<boolean>("musage://low-power-mode-changed", (e) => {
+  trackUnlisten(listen<boolean>("musage://low-power-mode-changed", (e) => {
     setLowPowerAttr(e.payload);
-  })
-    .then((fn) => (unlistenLowPower = fn))
-    .catch((e) => console.error("[floating] listen musage://low-power-mode-changed 失败", e));
+  }), "musage://low-power-mode-changed");
 
   // 启动时立即调 render —— render() 内部检测"所有 provider 都未配 key"会
   // 走 renderEmptyState(),不再显示"⏳ Loading..."这个假占位 (2026-06-17 commit
@@ -1562,7 +1585,7 @@ async function init() {
   } catch (e) {
     console.error("读 config 失败", e);
   }
-  setupHoverRaise(pinMode);
+  setupHoverRaise(pinMode, domAbort.signal);
 
   // 配置变化时（设置面板改 Tavily / ZenMux 简洁模式等）→ 更新 renderPrefs 后
   // 用 lastRenderedSnap 重渲染。
@@ -1577,7 +1600,7 @@ async function init() {
   // 重渲染。如果 snapshot 事件先到达，lastRenderedSnap 已是最新数据，渲染
   // 完全幂等；如果 config-changed 先到（极端竞态），用旧数据渲染一遍也
   // 安全，snapshot 事件到了会再渲染一次。
-  listen("musage://config-changed", async () => {
+  trackUnlisten(listen("musage://config-changed", async () => {
     try {
       const cfg = await invoke<{
         tavily_concise_mode?: boolean;
@@ -1600,50 +1623,15 @@ async function init() {
     } catch (e) {
       console.error("[floating] 重新读 config 失败", e);
     }
-  }).then((fn) => (unlistenCfg = fn))
-    .catch((e) => console.error("[floating] listen musage://config-changed 失败", e));
+  }), "musage://config-changed");
 
   // 设置面板改了模式时，重新挂/摘 hover 监听。
   // （设置面板那边调 set_floating_pin_mode 会 emit 这个事件）
   // **2026-06-20 audit**：之前 listen() 没 .catch() + UnlistenFn 没存，dev hot-reload
   // / 极端情况累积 stale handler。补 catch + 存 unlisten，beforeunload 时 remove。
-  let unlistenPinMode: UnlistenFn | null = null;
-  listen<FloatingPinMode>("musage://pin-mode-changed", (e) => {
-    // 清掉旧的监听再装新的（幂等）
-    document.body.removeEventListener("mouseenter", hoverEnterHandler);
-    document.body.removeEventListener("mouseleave", hoverLeaveHandler);
-    setupHoverRaise(e.payload);
-  })
-    .then((fn) => (unlistenPinMode = fn))
-    .catch((e) => console.error("[floating] listen musage://pin-mode-changed 失败", e));
-
-  window.addEventListener("beforeunload", () => {
-    if (unlisten) unlisten();
-    if (unlistenHover) unlistenHover();
-    if (unlistenResized) unlistenResized();
-    if (unlistenLowPower) unlistenLowPower();
-    if (unlistenCfg) unlistenCfg();
-    if (unlistenPinMode) unlistenPinMode();
-    if (unlistenBackdropRefresh) unlistenBackdropRefresh();
-    if (backdropRefreshTimer !== null) clearTimeout(backdropRefreshTimer);
-    if (countdownTimer !== null) {
-      clearInterval(countdownTimer);
-      countdownTimer = null;
-    }
-    if (stalePurgeTimer !== null) {
-      clearInterval(stalePurgeTimer);
-      stalePurgeTimer = null;
-    }
-    // 2026-07-03 fix: 配对清理 hover debounce timer（避免 unhandled timer）
-    // 2026-07-09: hover debounce 已移除,timer 恒为 null;保留 if 块防回归。
-    if (hoverEnterTimer !== null) {
-      clearTimeout(hoverEnterTimer);
-      hoverEnterTimer = null;
-    }
-    // 2026-06-20 audit: 配对 remove body mouseenter/mouseleave
-    document.body.removeEventListener("mouseenter", onBodyMouseEnter);
-    document.body.removeEventListener("mouseleave", onBodyMouseLeave);
-  });
+  trackUnlisten(listen<FloatingPinMode>("musage://pin-mode-changed", (e) => {
+    setupHoverRaise(e.payload, domAbort.signal);
+  }), "musage://pin-mode-changed");
 }
 
 /// 在 PinBottom 模式下挂 mouseenter/mouseleave 监听，调用
@@ -1662,7 +1650,9 @@ function hoverLeaveHandler() {
   );
 }
 
-function setupHoverRaise(mode: FloatingPinMode) {
+function setupHoverRaise(mode: FloatingPinMode, signal: AbortSignal) {
+  document.body.removeEventListener("mouseenter", hoverEnterHandler);
+  document.body.removeEventListener("mouseleave", hoverLeaveHandler);
   if (mode !== "pin_bottom") return;
   // **挂在 document.body 而不是 document**：Chromium 的 mouseenter/mouseleave
   // 在 `document` 这个非元素对象上对"鼠标离开窗口"的判定不可靠 —— mouseleave
@@ -1673,8 +1663,8 @@ function setupHoverRaise(mode: FloatingPinMode) {
   //
   // 之前用 document 时，Win 上"hover 临时置顶后鼠标移开浮窗，always-on-top
   // 一直留着"的 bug 就是 mouseleave 没触发导致的。
-  document.body.addEventListener("mouseenter", hoverEnterHandler);
-  document.body.addEventListener("mouseleave", hoverLeaveHandler);
+  document.body.addEventListener("mouseenter", hoverEnterHandler, { signal });
+  document.body.addEventListener("mouseleave", hoverLeaveHandler, { signal });
 }
 
 

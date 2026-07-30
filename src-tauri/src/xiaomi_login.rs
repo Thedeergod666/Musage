@@ -524,7 +524,19 @@ fn emit_failed(app: &AppHandle, msg: String) {
 ///
 /// 安全校验：只接受纯数字（≤32 位）。任何非数字字符（攻击者注入
 /// `<script>` / 控制字符 / 过长串）都返回 None，不写入 cookie。
+// D3-005 fix (2026-07-30 audit): 加 host 白名单 + path 前缀校验,
+// 防止 XSS / MITM 在受信任域外构造 ?userId=... URL 注入错误的 userId.
+// dashboard host 是 platform.xiaomimimo.com, SSO 回调可能走 *.xiaomimimo.com
+// 域, path 应在 /dashboard 或 /oauth/ 等受信 prefix 下.
 fn extract_user_id_from_url(url: &Url) -> Option<String> {
+    // 域白名单 + path 前缀白名单
+    let host_ok = matches!(url.host_str(), Some("platform.xiaomimimo.com") | Some("xiaomimimo.com"));
+    let path_ok = url.path().starts_with("/dashboard")
+        || url.path().starts_with("/oauth")
+        || url.path() == "/";
+    if !host_ok || !path_ok {
+        return None;
+    }
     for (key, value) in url.query_pairs() {
         if key == "userId" {
             let v = value.into_owned();
@@ -586,5 +598,26 @@ mod tests {
         // 防御性检查：白名单不能被改空
         assert!(!WANTED_COOKIES.is_empty());
         assert!(WANTED_COOKIES.len() >= 2, "白名单至少 2 项才合理");
+    }
+
+    #[test]
+    fn extract_user_id_accepts_dashboard_host() {
+        // D3-005 fix: 受信任 host + dashboard path
+        let url = url("https://platform.xiaomimimo.com/dashboard?userId=12345");
+        assert_eq!(extract_user_id_from_url(&url), Some("12345".to_string()));
+    }
+
+    #[test]
+    fn extract_user_id_rejects_untrusted_host() {
+        // D3-005 fix: 攻击者构造的 evil.com URL 即使有合法 userId 也被拒
+        let url = url("https://evil.com/dashboard?userId=12345");
+        assert_eq!(extract_user_id_from_url(&url), None);
+    }
+
+    #[test]
+    fn extract_user_id_rejects_untrusted_path() {
+        // D3-005 fix: 受信任 host 但 path 不在白名单 → 拒
+        let url = url("https://platform.xiaomimimo.com/some/random/path?userId=12345");
+        assert_eq!(extract_user_id_from_url(&url), None);
     }
 }

@@ -232,8 +232,11 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
                 function isAllowed() {
                     try { return location.hostname === ALLOW_HOST; } catch (_) { return false; }
                 }
+                // D3-001 fix (2026-07-30 audit): 同 anysearch_login.rs, 锁 prototype
+                // 而非 instance. xiaomi 抓的 cookie 是 HttpOnly, 实际威胁面小,
+                // 但对齐 hardening 一致性, 防止未来 cookie 路径变化。
                 const _origCookie = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
-                Object.defineProperty(document, "cookie", {
+                Object.defineProperty(Document.prototype, "cookie", {
                     get() { return isAllowed() ? _origCookie.get.call(this) : ""; },
                     set(v) { if (isAllowed()) _origCookie.set.call(this, v); },
                     configurable: false

@@ -212,8 +212,13 @@ fn init_script() -> String {
             }
             // ── 锁 cookie / storage 读取到受信 host（挡第三方 tracker 偷 JWT）──
             try {
+                // D3-001 fix (2026-07-30 audit): 锁 Document.prototype.cookie
+                // 而非 document.cookie (instance). 之前 instance-level override
+                // 可被 'Object.getOwnPropertyDescriptor(Document.prototype, "cookie")
+                // .get.call(document)' 绕过 → 同源 XSS 能直接读 MUSAGE_TOKEN
+                // (非 HttpOnly). 锁 prototype + configurable: false 防 redef.
                 var _origCookie = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
-                Object.defineProperty(document, "cookie", {
+                Object.defineProperty(Document.prototype, "cookie", {
                     get: function () { return isAllowed() ? _origCookie.get.call(this) : ""; },
                     set: function (v) { if (isAllowed()) _origCookie.set.call(this, v); },
                     configurable: false

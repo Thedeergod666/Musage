@@ -197,6 +197,14 @@ pub fn run() {
                 }
             });
 
+            // 初始化托盘（**先**：保证 tray channel sender 已建好）
+            // M1 fix (2026-07-30 audit): 之前 poller::start 在 tray::setup 之
+            // 前调用,首次 tick() 全量拉取的 snapshot 进无界 channel 时 sender
+            // 还不存在 → 整轮 updates 永久丢失,用户首次开 app 看到"加载中"
+            // 图标一直到下一轮 60s 调度。改为 tray::setup 先建好 sender,
+            // poller 再 fire 首次 tick 即送达 tray consumer。
+            tray::setup(app.handle())?;
+
             // 启动后台轮询
             poller::start(app.handle().clone());
 
@@ -211,9 +219,6 @@ pub fn run() {
             // 非 macOS 是 no-op。watcher 自身始终运行，是否真的隐藏看 config
             // 的 auto_hide_in_fullscreen，这个开关由下面 from-config 同步到平台层。
             crate::platform::start_fullscreen_watcher(app.handle().clone());
-
-            // 初始化托盘
-            tray::setup(app.handle())?;
 
             // 恢复浮窗位置 + 大小（用户上次拖/拉过的话）
             // 必须在 show() 之前调用，否则会有 1 帧错位

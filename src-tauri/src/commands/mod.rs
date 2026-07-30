@@ -1563,26 +1563,7 @@ pub async fn refresh_inner(
 
     snap.fetched_at = Some(chrono::Utc::now().timestamp_millis());
 
-    // ── post-fill source_display_name（2026-06-25 i18n 修复）──────────────
-    // 12 个 provider 的 do_fetch / parse 各自硬编码 source_display_name 为静态
-    // 字符串（"MiniMax" / "DeepSeek" / ...），跟 QuotaSource::display_name() 脱钩。
-    // 逐遍改 12 个 do_fetch 签名风险高且 future provider 仍会再犯。更好的策略：
-    // refresh_inner 产出所有 snapshot 之后，用 find_source(id) 查 display_name()
-    // 统一填回 source_display_name。
-    // - 副本（"minimax#2"）→ "MiniMax #2"（经 i18n）
-    // - 默认（"minimax"）   → "MiniMax"（经 i18n）
-    // - CustomSource        → 用户的 display_name（"DMX API"）
-    for p in &mut snap.providers {
-        let id = p
-            .unique_id
-            .as_deref()
-            .unwrap_or(p.source_id.as_deref().unwrap_or(&p.provider));
-        if let Some(src) = crate::providers::find_source(&state, id).await {
-            p.source_display_name = Some(src.display_name().to_string());
-        }
-    }
-
-    // 过滤 + 排序 + 推送
+    // 过滤 + 排序 (filter 必须在 publish 前: 用户禁用 provider 不应 emit)
     let state = app.state::<AppState>();
     let cfg_read = state.config.read().await;
     snap.providers.retain(|p| {
@@ -1593,13 +1574,11 @@ pub async fn refresh_inner(
     apply_provider_order(&mut snap, &cfg_read);
     // 把全局余额告警阈值带到 snapshot —— health_label 据此翻红/翻黄
     snap.wallet_alert_threshold = cfg_read.wallet_alert_threshold;
-    let tray_style = cfg_read.tray_icon_style;
     drop(cfg_read);
-    // 刷新托盘 + 推送
-    let _ = app.emit("musage://snapshot", &snap);
-    if let Err(e) = crate::tray::update_tray_from_snapshot(app, &snap, tray_style) {
-        tracing::warn!(error = %e, "刷新托盘失败");
-    }
+
+    // D5-038 fix (2026-07-30 audit): display_name + emit + tray 三步封装
+    // 到 publish_snapshot helper, refresh_single 路径共用同款 (2026-06-25 i18n fix)。
+    publish_snapshot(app, &state, &mut snap).await;
 
     Ok(snap)
 }
@@ -1660,6 +1639,45 @@ fn apply_provider_order(snap: &mut QuotaSnapshot, cfg: &AppConfig) {
     });
     snap.providers = indexed.into_iter().map(|(_, p)| p).collect();
 }
+
+/// D5-038 helper (2026-07-30 audit): fill source_display_name + emit snapshot
+/// + refresh tray。refresh_inner (全量) 和 refresh_single_inner (per-provider)
+/// 两条路径共用, 避免两处漂移 (2026-06-25 i18n fix 的 display_name 策略
+/// 跟 emit/tray 顺序耦合, 集中一处)。
+///
+/// 不做 filter + apply_provider_order (refresh_inner 在外层完成, refresh_single
+/// 不需要 — per-provider 路径只有 1 个 provider)。
+async fn publish_snapshot(
+    app: &AppHandle,
+    state: &AppState,
+    snap: &mut crate::providers::QuotaSnapshot,
+) {
+    // ── post-fill source_display_name（2026-06-25 i18n 修复）──────────────
+    // 12 个 provider 的 do_fetch / parse 各自硬编码 source_display_name 为静态
+    // 字符串（"MiniMax" / "DeepSeek" / ...），跟 QuotaSource::display_name() 脱钩。
+    // 逐遍改 12 个 do_fetch 签名风险高且 future provider 仍会再犯。更好的策略：
+    // fetch 产出 snapshot 之后，用 find_source(id) 查 display_name() 统一填回。
+    // - 副本（"minimax#2"）→ "MiniMax #2"（经 i18n）
+    // - 默认（"minimax"）   → "MiniMax"（经 i18n）
+    // - CustomSource        → 用户的 display_name（"DMX API"）
+    for p in &mut snap.providers {
+        let id = p
+            .unique_id
+            .as_deref()
+            .unwrap_or(p.source_id.as_deref().unwrap_or(&p.provider));
+        if let Some(src) = crate::providers::find_source(state, id).await {
+            p.source_display_name = Some(src.display_name().to_string());
+        }
+    }
+    // 推送给前端 (浮窗 + settings 面板)
+    let _ = app.emit("musage://snapshot", &snap);
+    // 刷新托盘 (tray_style 从 cfg 读, 浮窗不需要但 tray 渲染需要)
+    let tray_style = state.config.read().await.tray_icon_style;
+    if let Err(e) = crate::tray::update_tray_from_snapshot(app, &snap, tray_style) {
+        tracing::warn!(error = %e, "刷新托盘失败 (publish_snapshot)");
+    }
+}
+
 
 /// 拉取单个 provider —— 供 poller 的 per-provider 调度使用（H9）。
 ///
@@ -1790,28 +1808,12 @@ pub async fn refresh_single_inner(
     apply_provider_order(&mut snap, &cfg2_snapshot);
     // 同步全局余额告警阈值(per-provider 调度只更一个 provider,不能丢顶层字段)
     snap.wallet_alert_threshold = cfg2_snapshot.wallet_alert_threshold;
-    let tray_style = cfg2_snapshot.tray_icon_style;
     let emit_snap = snap.clone();
     drop(snap);
-    // ── post-fill source_display_name（2026-06-25 i18n 修复）──────────────
-    // 与 refresh_inner 同策略：fetch 产出的 snapshot 拿 display_name 统一填。
+    // D5-038 fix (2026-07-30 audit): 走共享 helper, 见 publish_snapshot 注释。
+    let state = app.state::<AppState>();
     let mut emit_snap = emit_snap;
-    {
-        let state = app.state::<AppState>();
-        for p in &mut emit_snap.providers {
-            let pid = p
-                .unique_id
-                .as_deref()
-                .unwrap_or(p.source_id.as_deref().unwrap_or(&p.provider));
-            if let Some(src) = crate::providers::find_source(&state, pid).await {
-                p.source_display_name = Some(src.display_name().to_string());
-            }
-        }
-    }
-    let _ = app.emit("musage://snapshot", &emit_snap);
-    if let Err(e) = crate::tray::update_tray_from_snapshot(app, &emit_snap, tray_style) {
-        tracing::warn!(error = %e, "刷新托盘失败 (refresh_single)");
-    }
+    publish_snapshot(app, &state, &mut emit_snap).await;
     Ok(())
 }
 

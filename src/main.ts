@@ -1215,6 +1215,54 @@ function cssEscape(s: string): string {
   return s.replace(/([!"#$%&'()*+,./:;<=>?@[\]^`{|}~])/g, "\\$1");
 }
 
+async function onAppActionClick(e: MouseEvent): Promise<void> {
+  const target = (e.target as Element | null)?.closest<HTMLElement>(
+    ".err-btn, .empty-state-cta",
+  );
+  if (!target) return;
+  e.stopPropagation();
+  if (target.classList.contains("open-settings")) {
+    invoke("open_settings_window").catch((err) => console.error(err));
+  } else if (target.classList.contains("err-btn-retry")) {
+    const uniqueId = target.dataset.uniqueId;
+    if (uniqueId) {
+      invoke("refresh_single", { id: uniqueId }).catch((err) => console.error(err));
+    }
+  } else if (target.classList.contains("err-btn-advanced")) {
+    const section = target.dataset.section ?? "advanced";
+    invoke("open_settings_window", { section }).catch((err) => console.error(err));
+  } else if (target.classList.contains("err-btn-relogin")) {
+    const action = target.dataset.action;
+    if (action === "relogin-anysearch") {
+      invoke("open_anysearch_login_window").catch((err) => console.error(err));
+    } else if (action === "relogin-stepfun") {
+      invoke("open_stepfun_login_window").catch((err) => console.error(err));
+    } else {
+      invoke("open_xiaomi_login_window").catch((err) => console.error(err));
+    }
+  } else if (target.classList.contains("err-btn-copy")) {
+    const uniqueId = target.dataset.uniqueId;
+    if (!uniqueId) return;
+    try {
+      const snap = await invoke<QuotaSnapshot>("get_snapshot");
+      const provider = snap.providers.find(
+        (item) => (item.unique_id ?? item.source_id ?? item.provider) === uniqueId,
+      );
+      const errorText = provider?.error ?? "";
+      if (errorText) {
+        await navigator.clipboard.writeText(errorText);
+        showMiniFlash(t("floating.err_btn_copied"));
+      }
+    } catch (err) {
+      console.error("copy error failed:", err);
+    }
+  } else if (target.classList.contains("err-btn-logs")) {
+    invoke("open_settings_window", { section: "logs" }).catch((err) =>
+      console.error(err),
+    );
+  }
+}
+
 // ── 启动 ──
 
 async function init() {
@@ -1223,17 +1271,11 @@ async function init() {
   // -relogin / -copy / -logs 等，但若 init() 后段任何一处 await throw（catch 块没
   // 覆盖到的代码，比如 listen() / invoke("get_config") / setupHoverRaise 等），
   // 后续注册代码就 skip，错误卡片按钮死锁。
-  // 兜底：在 init() 顶部注册最小 click handler，只匹配 .err-btn.open-settings /
-  // .empty-state-cta.open-settings，确保无论如何用户都能跳出去修。
-  // 中段的完整 handler 会优先处理其他 .err-btn-* 路径，不冲突。
-  app.addEventListener("click", (e) => {
-    const target = (e.target as HTMLElement).closest<HTMLElement>(
-      ".err-btn.open-settings, .empty-state-cta.open-settings",
-    );
-    if (!target) return;
-    e.stopPropagation();
-    invoke("open_settings_window").catch((err) => console.error(err));
-  });
+  // 完整委托必须在首个 await 之前注册：init 后段失败时错误卡仍可恢复。
+  // 先 remove 再 add，让 dev HMR / init 重入保持幂等；旧版“顶部最小兜底 +
+  // 后段完整委托”会让 open-settings 一次点击发送两次 IPC。
+  app.removeEventListener("click", onAppActionClick);
+  app.addEventListener("click", onAppActionClick);
 
   // ── i18n 初始化：必须在任何 t() 调用前完成（加载 dict） ──
   await initLocale();
@@ -1489,65 +1531,6 @@ async function init() {
     // script 执行。两层防御。
     app.innerHTML = `<div class="err"><div class="err-title">${escapeHtml(t("floating.loading_error_title"))}</div><div class="err-msg">${escapeHtml(String(e))}</div><button class="err-btn open-settings">${escapeHtml(t("floating.open_settings"))}</button><div class="hint">${escapeHtml(t("floating.tray_right_to_settings"))}</div></div>`;
   }
-
-  // 事件代理：错误卡片的恢复按钮 (2026-06-17 commit)
-  // 5 种 action 通过 data-* 区分:
-  // - .open-settings (无 data-*):  打开设置面板 (原有)
-  // - .err-btn-retry (data-unique-id): 立即重拉该 provider (绕过 backoff)
-  // - .err-btn-advanced (data-section="advanced"): 打开设置 + 跳到高级 section
-  // - .err-btn-relogin (data-action="relogin-xiaomi"): 打开小米登录窗
-  // - .err-btn-copy (data-unique-id): 复制错误信息到剪贴板 (commit 10)
-  // - .err-btn-logs (data-unique-id): 打开设置 + 跳到日志 section (commit 10)
-  app.addEventListener("click", async (e) => {
-    const el = e.target as HTMLElement;
-    const target = el.closest<HTMLElement>(".err-btn, .empty-state-cta");
-    if (!target) return;
-    e.stopPropagation();
-    if (target.classList.contains("open-settings")) {
-      invoke("open_settings_window").catch((err) => console.error(err));
-    } else if (target.classList.contains("err-btn-retry")) {
-      const uniqueId = target.dataset.uniqueId;
-      if (uniqueId) {
-        invoke("refresh_single", { id: uniqueId }).catch((err) => console.error(err));
-      }
-    } else if (target.classList.contains("err-btn-advanced")) {
-      const section = target.dataset.section ?? "advanced";
-      invoke("open_settings_window", { section }).catch((err) => console.error(err));
-    } else if (target.classList.contains("err-btn-relogin")) {
-      // 按 data-action 分发:xiaomi / anysearch / stepfun 各自的登录 webview
-      const action = target.dataset.action;
-      if (action === "relogin-anysearch") {
-        invoke("open_anysearch_login_window").catch((err) => console.error(err));
-      } else if (action === "relogin-stepfun") {
-        invoke("open_stepfun_login_window").catch((err) => console.error(err));
-      } else {
-        invoke("open_xiaomi_login_window").catch((err) => console.error(err));
-      }
-    } else if (target.classList.contains("err-btn-copy")) {
-      // v0.2.1 commit 10: 反查 snapshot 拿 p.error 复制到剪贴板。
-      // 不在按钮上拼长字符串(每次 render 都 escape,效率差)。
-      const uniqueId = target.dataset.uniqueId;
-      if (!uniqueId) return;
-      try {
-        const snap = await invoke<QuotaSnapshot>("get_snapshot");
-        const p = snap.providers.find(
-          (x) => (x.unique_id ?? x.source_id ?? x.provider) === uniqueId,
-        );
-        const errText = p?.error ?? "";
-        if (errText) {
-          await navigator.clipboard.writeText(errText);
-          showMiniFlash(t("floating.err_btn_copied"));
-        }
-      } catch (err) {
-        console.error("copy error failed:", err);
-      }
-    } else if (target.classList.contains("err-btn-logs")) {
-      // v0.2.1 commit 10 + commit 8: 跳日志 section (commit 8 后端已支持)
-      invoke("open_settings_window", { section: "logs" }).catch((err) =>
-        console.error(err),
-      );
-    }
-  });
 
   // ── v0.2.0 不再自动检查更新 —— 升级走"用户手动下 dmg/nsis 装"路径 ──
 

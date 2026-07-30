@@ -57,6 +57,21 @@ use crate::t;
 /// 一旦有任务在提取/等待中，后续回调直接跳过。
 static EXTRACTING: AtomicBool = AtomicBool::new(false);
 
+/// fix (2026-07-30 audit M4): panic 兜底 guard —— xiaomi on_page_load spawn 的
+/// 提取任务任意退出路径(正常 / Cancelled / Failed / panic unwind)都确保窗口
+/// 被关闭。**对齐 stepfun / anysearch 的同款 WindowCloseGuard 模式**(之前
+/// anysearch + stepfun 加了,xiaomi 漏了),保证三个登录模块语义一致。
+struct WindowCloseGuard(tauri::WebviewWindow);
+
+impl Drop for WindowCloseGuard {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            tracing::error!("xiaomi 登录提取任务 panic,guard 兜底关窗");
+        }
+        let _ = self.0.close();
+    }
+}
+
 /// 全局完成标记：提取成功后置 true，后续 on_page_load 回调全部跳过。
 /// 解决 macOS WKWebView 上 on_page_load 多次触发导致的
 /// "failed to receive message from webview" 错误——窗口被第一个成功
@@ -260,6 +275,8 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
             let window_clone = window.clone();
             let my_gen = gen;
             tauri::async_runtime::spawn(async move {
+                // M4 fix: panic 兜底关窗 —— 任意路径退出都强制关 webview
+                let _close_guard = WindowCloseGuard(window_clone.clone());
                 // H3 fix: 用 RAII guard 兜底 —— spawn 的 task panic 时
                 // Rust 仍会跑局部变量的 Drop glue (除非 panic = abort 但
                 // tokio 默认 unwind)。guard 在任意路径退出(正常返回/Err/panic)

@@ -47,12 +47,13 @@ jobs:
             target: x86_64-apple-darwin
             label: macos-x64
             bundles: dmg
-          # Win 双产物：NSIS (.exe) + MSI —— 对齐 v0.1.0 行为
+          # Win 单产物：NSIS (.exe) —— v0.2.0 砍 MSI 避 WiX 镜像 timeout
           # v0.2.0 砍 msi 是为避 WiX 镜像 timeout；v0.2.1 试一次,失败下次发板回退
+          # v0.2.5 (audit D8-002): 每发都撞 timeout, 正式砍回 nsis
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             label: windows-x64
-            bundles: nsis,msi
+            bundles: nsis
           # v0.2.1 新增：Linux x64 三产物
           # 钉 ubuntu-22.04 而非 ubuntu-latest —— 24.04 上 webkit2gtk-4.1
           # 已被 mark deprecated, 未来某天会变 4.2, pin 住避免发板时炸
@@ -221,11 +222,10 @@ jobs:
           echo "$ASSETS" | grep -q "_x64.dmg" \
             || (echo "::error::macOS x64 dmg 缺失"; exit 1)
 
-          # ── Windows: NSIS 是必须的, msi 试一次, 失败下次发板砍回 ──
+          # ── Windows: 只发 NSIS ──
+          # v0.2.0 起砍 msi 避 WiX 镜像 timeout (audit D8-002)
           echo "$ASSETS" | grep -q "_x64-setup.exe" \
             || (echo "::error::Windows NSIS installer 缺失"; exit 1)
-          echo "$ASSETS" | grep -q "_x64_en-US.msi" \
-            || (echo "::warning::Windows MSI 缺失（可能 WiX 镜像 timeout, 下次发板考虑砍掉 msi）"; exit 1)
 
           # ── Linux: 三种 bundle 全要 ──
           echo "$ASSETS" | grep -q "_amd64.AppImage" \

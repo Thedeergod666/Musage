@@ -103,8 +103,8 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::{
-    shared_client, text_body_limited, AuthKind, Credentials, ErrorKind, FetchError,
-    ProviderSnapshot, QuotaRow, QuotaSource,
+    json_body_limited, shared_client, text_body_limited, AuthKind, Credentials, ErrorKind,
+    FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
 };
 use crate::config;
 use crate::t;
@@ -502,8 +502,7 @@ async fn fetch_plan_status(token: &str) -> Result<Option<String>, FetchError> {
         return Ok(None);
     }
 
-    let raw: Value = resp
-        .json()
+    let raw: Value = json_body_limited(resp)
         .await
         .map_err(|e| FetchError::parse(format!("plan status 响应不是 JSON: {e}")))?;
 

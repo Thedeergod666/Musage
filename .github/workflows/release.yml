@@ -51,7 +51,12 @@ jobs:
           # v0.2.0 砍 msi 是为避 WiX 镜像 timeout；v0.2.1 试一次,失败下次发板回退
           # v0.2.5 (audit D8-002): 每发都撞 timeout, 正式砍回 nsis
           - os: windows-latest
-            target: x86_64-pc-windows-msvc
+            # D8-003 fix (2026-07-30 audit): 改 GNU target 对齐本地维护者工具链
+            # (per AGENTS.md, 维护者 dev-env.bat 走 x86_64-pc-windows-gnu + MinGW).
+            # MSVC target 走 vcruntime140_1.dll 动态链接, 用户机器裸装会
+            # 报缺 DLL; GNU 静态链 libstd/libgcc, 用户机器零依赖. 跟 AGENTS.md
+            # 第 75-79 行"工具链"段一致.
+            target: x86_64-pc-windows-gnu
             label: windows-x64
             bundles: nsis
           # v0.2.1 新增：Linux x64 三产物
@@ -93,6 +98,21 @@ jobs:
       - name: Set macOS deployment target
         if: runner.os == 'macOS'
         run: echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> $GITHUB_ENV
+
+      # ── Windows MinGW: GNU target 链接时必须 dlltool + linker ──
+      # D8-003 fix (2026-07-30 audit): CI 走 GNU target → 必须 MinGW 提供 dlltool
+      # 否则 'error calling dlltool: program not found'. 用 choco 装 (GitHub
+      # Actions windows-latest runner 默认带 choco).
+      - name: Install Windows MinGW
+        if: runner.os == 'Windows'
+        run: choco install mingw -y --no-progress
+        shell: cmd
+      # D8-003 fix: choco mingw 装到 C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin
+      # PATH 默认不带, 显式 echo 到 GITHUB_PATH 让 cargo 找 dlltool.
+      - name: Add MinGW to PATH
+        if: runner.os == 'Windows'
+        run: echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
+        shell: pwsh
 
       # ── Linux 系统依赖：webkit2gtk-4.1 + libappindicator3 + librsvg + patchelf ──
       # 跟 Tauri 2 官方 GitHub Actions 文档示例同一组包；

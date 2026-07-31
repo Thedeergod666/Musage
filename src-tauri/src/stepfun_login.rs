@@ -378,10 +378,28 @@ fn is_fresh_token(value: &str) -> bool {
     if value.is_empty() {
         return false;
     }
-    match access_token_exp_seconds_ago(value) {
+    // access 半段 exp 门 (跟原版一致, ~30min 寿命)
+    let access_ok = match access_token_exp_seconds_ago(value) {
         Some(secs_ago) => secs_ago < 0,
         None => true,
+    };
+    if !access_ok {
+        return false;
     }
+    // D3-007 fix (2026-07-30 audit): combined token 走 `access...refresh` 格式,
+    // refresh 半段 ~30 天寿命. access 新但 refresh 已过期的边缘场景
+    // (用户 29 天没用, 重新登录, server 仍发新 access, 老 refresh 也带过来)
+    // → 之前只看 access 通过, 存盘 30min 后 access 过期 → refresh 失败 → 401
+    // → user 强制重登. 修: 解析 refresh half 单独也校验, 跟 access 同款门.
+    if let Some(combined) = value.split("...").nth(1) {
+        // refresh 解不出 exp (非 JWT / 格式变化) → 放行, 跟 access 同款 fallback
+        if let Some(secs_ago) = access_token_exp_seconds_ago(combined) {
+            if secs_ago >= 0 {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// 拼 combined token（CodexBar `access...refresh` 约定）。
@@ -492,11 +510,19 @@ mod tests {
     }
 
     #[test]
-    fn combined_token_uses_access_half() {
+    fn combined_token_requires_both_halves_fresh() {
+        // D3-007 fix (2026-07-30 audit): combined token (access...refresh) 两个半段
+        // 都必须 exp 未到, 因为 access ~30min 寿命, refresh ~30 天寿命.
+        // 老 refresh 过期但 access 新 → 之前只看 access 通过 → 存盘 30min 后
+        // refresh 调用 401 → 强制重登. 修后: refresh 也校验, 老 refresh 拒收.
         let fresh = fresh_jwt();
         let expired = expired_jwt();
-        assert!(is_fresh_token(&format!("{fresh}...{expired}")));
+        // access 新 + refresh 新 → 收
+        assert!(is_fresh_token(&format!("{fresh}...{fresh}")));
+        // access 旧 → 拒 (refresh 状态无关)
         assert!(!is_fresh_token(&format!("{expired}...{fresh}")));
+        // access 新 + refresh 旧 → D3-007 修后拒 (之前通过, 是 bug)
+        assert!(!is_fresh_token(&format!("{fresh}...{expired}")));
     }
 
     // ── combine_token ──

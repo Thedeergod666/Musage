@@ -207,8 +207,13 @@ pub fn save(instances: &[ExtraInstance]) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| format!("chmod 0600: {e}"))?;
+        // D8-005 fix (2026-07-30 audit): chmod 失败降级为 warn, 跟 config.rs
+        // save() 对齐 (config.rs 早就用 `let _ = ...` 吞错). 之前 hard error
+        // 会让 rename 不发生, tmp 文件 world-readable 留在磁盘 (含 extra
+        // instance config 但不含 credentials), 用户配置丢失.
+        if let Err(e) = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)) {
+            tracing::warn!(error = %e, path = %tmp.display(), "extra_instances chmod 0600 失败 (WSL2 / SMB 挂载常见), 继续");
+        }
     }
 
     if let Err(e) = std::fs::rename(&tmp, &path) {

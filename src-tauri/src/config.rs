@@ -822,16 +822,24 @@ impl AppConfig {
 /// 不会从错误字段强行补默认(本来就坏的字段保 0 / None / 空数组);
 /// 只挑"raw 能看到且类型对得上的"字段复制。
 fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
+    // D8-004 fix (2026-07-30 audit): 跟踪至少解析到 1 个关键字段才返 Some.
+    // 否则 raw JSON 是空 `{}` 或只有未识别字段 (用户手改 + 字段名全错), 
+    // 走 best_effort 会返一个"全 default + 用户原始字段被覆写"的混合 cfg,
+    // 下次 save() 写回 disk 把用户的 provider_order / providers 全清空.
+    // 这种情况应当返 None → caller 走 Self::default() + 保留 .bak.<ts> 给用户恢复.
     let mut cfg = AppConfig::default();
     let obj = v.as_object()?;
+    let mut recognized_any = false;
 
     if let Some(arr) = obj.get("provider_order").and_then(|x| x.as_array()) {
+        recognized_any = true;
         cfg.provider_order = arr
             .iter()
             .filter_map(|x| x.as_str().map(|s| s.to_string()))
             .collect();
     }
     if let Some(map) = obj.get("providers").and_then(|x| x.as_object()) {
+        recognized_any = true;
         let mut parsed: std::collections::BTreeMap<String, ProviderConfig> =
             std::collections::BTreeMap::new();
         for (k, val) in map {
@@ -842,12 +850,15 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
         cfg.providers = parsed;
     }
     if let Some(x) = obj.get("refresh_interval_secs").and_then(|x| x.as_u64()) {
+        recognized_any = true;
         cfg.refresh_interval_secs = x;
     }
     if let Some(s) = obj.get("locale").and_then(|x| x.as_str()) {
+        recognized_any = true;
         cfg.locale = s.to_string();
     }
     if let Some(s) = obj.get("user_region").and_then(|x| x.as_str()) {
+        recognized_any = true;
         cfg.user_region = match s {
             "cn" => UserRegion::Cn,
             "global" => UserRegion::Global,
@@ -856,18 +867,23 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
         };
     }
     if let Some(x) = obj.get("floating_x").and_then(|x| x.as_i64()) {
+        recognized_any = true;
         cfg.floating_x = Some(x as i32);
     }
     if let Some(x) = obj.get("floating_y").and_then(|x| x.as_i64()) {
+        recognized_any = true;
         cfg.floating_y = Some(x as i32);
     }
     if let Some(x) = obj.get("floating_w").and_then(|x| x.as_i64()) {
+        recognized_any = true;
         cfg.floating_w = Some(x as i32);
     }
     if let Some(x) = obj.get("floating_h").and_then(|x| x.as_i64()) {
+        recognized_any = true;
         cfg.floating_h = Some(x as i32);
     }
     if let Some(s) = obj.get("floating_pin_mode").and_then(|x| x.as_str()) {
+        recognized_any = true;
         cfg.floating_pin_mode = match s {
             "pin_top" | "top" => FloatingPinMode::PinTop,
             "pin_bottom" | "bottom" => FloatingPinMode::PinBottom,
@@ -876,15 +892,19 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
         };
     }
     if let Some(b) = obj.get("autostart").and_then(|x| x.as_bool()) {
+        recognized_any = true;
         cfg.autostart = b;
     }
     if let Some(b) = obj.get("show_in_tray_on_close").and_then(|x| x.as_bool()) {
+        recognized_any = true;
         cfg.show_in_tray_on_close = b;
     }
     if let Some(b) = obj.get("show_footer_hint").and_then(|x| x.as_bool()) {
+        recognized_any = true;
         cfg.show_footer_hint = b;
     }
     if let Some(s) = obj.get("tray_icon_style").and_then(|x| x.as_str()) {
+        recognized_any = true;
         cfg.tray_icon_style = match s {
             "logo" => TrayIconStyle::Logo,
             "bars" => TrayIconStyle::Bars,
@@ -895,21 +915,27 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
     // C6 fix (2026-07-28 审查): 以下字段之前全部漏挑,一次 JSON typo 触发
     // best-effort 恢复后这些设置被默认值静默覆盖。对照 AppConfig 定义补齐。
     if let Some(x) = obj.get("schema_version").and_then(|x| x.as_u64()) {
+        recognized_any = true;
         cfg.schema_version = x as u32;
     }
     if let Some(b) = obj.get("low_power_mode").and_then(|x| x.as_bool()) {
+        recognized_any = true;
         cfg.low_power_mode = b;
     }
     if let Some(b) = obj.get("auto_hide_in_fullscreen").and_then(|x| x.as_bool()) {
+        recognized_any = true;
         cfg.auto_hide_in_fullscreen = b;
     }
     if let Some(b) = obj.get("tavily_concise_mode").and_then(|x| x.as_bool()) {
+        recognized_any = true;
         cfg.tavily_concise_mode = b;
     }
     if let Some(s) = obj.get("zenmux_base_url").and_then(|x| x.as_str()) {
+        recognized_any = true;
         cfg.zenmux_base_url = Some(s.to_string());
     }
     if let Some(s) = obj.get("zenmux_mode").and_then(|x| x.as_str()) {
+        recognized_any = true;
         cfg.zenmux_mode = Some(s.to_string());
     }
     if let Some(b) = obj
@@ -919,9 +945,11 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
         cfg.zenmux_payg_concise_mode = Some(b);
     }
     if let Some(s) = obj.get("zhipu_region").and_then(|x| x.as_str()) {
+        recognized_any = true;
         cfg.zhipu_region = Some(s.to_string());
     }
     if let Some(arr) = obj.get("color_thresholds").and_then(|x| x.as_array()) {
+        recognized_any = true;
         // [u8; 3] —— 长度 / 范围不对就保持默认,不强行截断
         if arr.len() == 3 {
             if let (Some(a), Some(b), Some(c)) = (arr[0].as_u64(), arr[1].as_u64(), arr[2].as_u64())
@@ -933,9 +961,11 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
         }
     }
     if let Some(x) = obj.get("wallet_alert_threshold").and_then(|x| x.as_f64()) {
+        recognized_any = true;
         cfg.wallet_alert_threshold = Some(x);
     }
     if let Some(map) = obj.get("color_overrides").and_then(|x| x.as_object()) {
+        recognized_any = true;
         for (k, val) in map {
             if let Some(s) = val.as_str() {
                 cfg.color_overrides.insert(k.clone(), s.to_string());
@@ -943,6 +973,7 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
         }
     }
     if let Some(map) = obj.get("schema_overrides").and_then(|x| x.as_object()) {
+        recognized_any = true;
         for (k, val) in map {
             // 单条损坏不拖垮整张 map(跟 providers 字段同款容错)
             if let Ok(po) = serde_json::from_value::<ProviderOverrides>(val.clone()) {
@@ -951,6 +982,9 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
         }
     }
     tracing::warn!("config.json 部分解析——已 best-effort 保留可知字段");
+    if !recognized_any {
+        return None;
+    }
     Some(cfg)
 }
 
@@ -1395,6 +1429,20 @@ mod tests {
         assert!(cfg.schema_overrides.contains_key("minimax"));
         assert!(!cfg.schema_overrides.contains_key("broken"));
         assert_eq!(cfg.color_thresholds, default_color_thresholds());
+    }
+
+    #[test]
+    fn best_effort_returns_none_on_empty_or_unrecognized_json() {
+        // D8-004 fix (2026-07-30 audit): 空 `{}` 或只有未识别字段 (用户手改
+        // 把字段名全拼错) 应当返 None → caller 走 default + 保留 .bak.<ts>,
+        // 而不是返 "全 default + 用户原始字段被覆写" 的混合 cfg.
+        let empty = serde_json::json!({});
+        assert!(best_effort_from_value(&empty).is_none());
+        let all_unknown = serde_json::json!({
+            "typo_field_1": 123,
+            "another_typo": "abc"
+        });
+        assert!(best_effort_from_value(&all_unknown).is_none());
     }
 }
 

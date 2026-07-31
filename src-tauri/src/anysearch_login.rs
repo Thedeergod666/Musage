@@ -270,12 +270,18 @@ fn init_script() -> String {
             // ── 每 500ms 把 token 写到 cookie（覆盖式，方便 Rust 端轮询读）──
             // 同时清掉上一次写入的过期 cookie 防止积累；token 为空时清 cookie（让
             // Rust 知道"还在等"）。
-            setInterval(function () {
+            // D3-006 fix (2026-07-30 audit): 拿到 interval handle, 首次成功写
+            // 非空 token 后 clearInterval. 之前永远 24h × 2 次/秒 = 17 万次
+            // cookie store fsync. SPA 跳转 / 新 tab 会叠加新 interval (init script
+            // 在每个 document_start 跑), webview 关才停, 资源浪费.
+            var _musageIv = setInterval(function () {
                 if (!isAllowed()) return;
                 var tok = readToken();
                 try {
                     if (tok) {
                         document.cookie = COOKIE_NAME + "=" + tok + "; path=/; max-age=3600; SameSite=Lax";
+                        // 首次成功写 → 停 interval, Rust 端会读 cookie 后关窗
+                        clearInterval(_musageIv);
                     } else {
                         document.cookie = COOKIE_NAME + "=; path=/; max-age=0";
                     }

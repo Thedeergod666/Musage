@@ -285,7 +285,13 @@
       "upgrade_hint": "v0.2.0 起不内置自动更新，请到 GitHub releases 手动下载最新版覆盖安装：",
       "links": "链接",
       "source": "源码：",
-      "feedback": "问题反馈：同上 GitHub issues"
+      "feedback": "问题反馈：同上 GitHub issues",
+      "dev_menu_title": "开发者工具",
+      "dev_menu_hint": "Dev 菜单",
+      "dev_menu_body": "仅在 dev 构建中可见 (Vite import.meta.env.DEV)。",
+      "dump_missing_keys": "导出缺失 i18n key",
+      "dump_missing_keys_empty": "无缺失 i18n key",
+      "dump_missing_keys_done": "已导出 {count} 个缺失 key 到 console (F12 → 控制台)"
     },
     "pin_mode": {
       "top": "已设为：始终置顶",

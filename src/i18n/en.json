@@ -285,7 +285,13 @@
       "upgrade_hint": "v0.2.0+ no longer ships auto-updates. Download the latest release from GitHub and install over the existing one:",
       "links": "Links",
       "source": "Source code:",
-      "feedback": "Feedback: same GitHub issues"
+      "feedback": "Feedback: same GitHub issues",
+      "dev_menu_title": "Developer tools",
+      "dev_menu_hint": "Dev menu",
+      "dev_menu_body": "Only visible in dev build (Vite import.meta.env.DEV).",
+      "dump_missing_keys": "Dump missing i18n keys",
+      "dump_missing_keys_empty": "No missing i18n keys",
+      "dump_missing_keys_done": "Dumped {count} missing key(s) to console (F12 → Console)"
     },
     "pin_mode": {
       "top": "Set to: always on top",

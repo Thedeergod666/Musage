@@ -32,7 +32,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 新增单测：`openrouter::tests::display_name_uses_i18n_key`。
 
-守门：`cargo test --lib` 354 passed (含 1 个新增)，`pnpm tsc --noEmit` 0 error。
+守门：`cargo test --lib` 362 passed (含 D-013 + D3-005 + D8-004 + D3-007 = 8 个新增)，`pnpm tsc --noEmit` 0 error。
+
+
+### 续 2026-07-30 audit — Round 2 (P1×9 + P2×8 + P3×6)
+
+按 P0→P3 顺序原子修复剩余 23 个 bug（分支 `codex/audit-fixes-2026-07-29` 上 23 个新 commit）：
+
+**Providers**:
+- **D-012** (`stepfun::fetch_plan_status`)：5xx 分支不带 body → 对齐 fetch_credits 加 `text_body_limited` 200 字符截断。
+- **D-013** (`kimi` / `claude_official::extract_reset_ms`)：`n <= 0` 防御（API 返 0/负数当 duration 秒数加 now 会落到过去或溢出）→ 直接 return `None`，3 个新单测覆盖三种边界。
+- **D-014**（4 个 provider f64 本地 helper）：`kimi` / `siliconflow` / `stepfun` / `anysearch` 加 `is_finite` 过滤，NaN/Inf 不进 `utilization`（之前会让 progress bar 渲染成空白或 NaN%）。
+- **D-015**（3 处 HTTP 429）：`stepfun` refresh / `zhipu` / `volcengine_ark` 显式判 `StatusCode::TOO_MANY_REQUESTS` 走 `RateLimited` 错误类别（之前走 generic `Other`，前端 toast 没针对性提示）。
+
+**Login（3 个 webview）**:
+- **D3-001**（`anysearch` + `xiaomi` init script）：锁 `Document.prototype.cookie` 而非 `document.cookie` —— 之前 XSS 通过 `Object.getOwnPropertyDescriptor(Document.prototype, 'cookie').get.call(document)` 能绕开锁读到/写 cookie。
+- **D3-002**（`anysearch` + `stepfun`）：加 `PollOutcome::Timeout(String)` variant，14min 轮询超时 emit `failed` 事件而非静默关闭窗口。
+- **D3-003**（3 个 login window）：`.parent(&settings).skip_taskbar(true)` —— 用户点 settings 面板外切走时 login 窗口不抢焦点也不在任务栏占位。
+- **D3-004**（3 个 capability 文件）：删 `core:webview:allow-create-webview-window` overgrant（login window 实际走的是固定 url，不需要动态创建）。
+- **D3-005**（`xiaomi::extract_user_id_from_url`）：加 host 白名单（只接 `account.xiaomi.com` / `id5-ucenter.xiaomi.com` 等可信域）+ path 前缀 `/(u|user)/` 防御，3 单测覆盖合法/伪造/纯域 3 种输入。
+- **D3-006**（`anysearch`）：`setInterval` 拿到 handle 后 `clearInterval` —— 首次成功写 cookie 后停轮询（之前 setInterval 永久跑，每 500ms 重复写 cookie 浪费 CPU）。
+- **D3-007**（`stepfun::is_fresh_token`）：combined token `access...refresh` 两个半段都校验 exp（access ~30min 寿命, refresh ~30 天），老 refresh 配新 access 不再误判通过。
+
+**Platform (Win + macOS)**:
+- **D5-102**（OS native 线程退出）：`commands::quit_app` 之前没 notify `SHUTDOWN_NATIVE_THREADS` atomic，Win hover emitter / macOS 全屏监听 OS 线程（`std::thread::spawn`，无法 await tokio Notify）每个 tick 检查一次退出。
+- **D6-001**（macOS `start_fullscreen_watcher` OS 线程）：同款 `SHUTDOWN_NATIVE_THREADS` 检查。
+- **D6-002**（Win + macOS hover emitter）：稳定态 reset `pending_value = last_inside` —— 防 Visible↔Outside 病态抖动（单帧 ±2 摆动）累积 3 帧击穿 `EXIT_THRESHOLD` 误 drop。
+- **D6-003**（macOS `is_floating_topmost_at`）：用 `Retained::retain()` 替代裸 `&*ptr.cast` —— 对齐 H2 fix（之前 `set_window_level` 已修，`hit test` 这条路径漏修，悬垂指针在 GC 边界 case 可能 UAF）。
+- **D6-004**（macOS `set_window_level` 文档）：更新 doc 注释匹配 H15 实际行为（之前注释误导后人以为 lift = +1 而非 setLevel(NSPopUpMenuWindowLevel)）。
+
+**Frontend (TS)**:
+- **D7-001**（`BATCH_PREFIX_RULES`）：删通用 `sk-` 兜底规则（误识别率高，把任何 `sk-xxx` 字符串都当 key 解析；kimi 真实 key 是 `sk-kimi-...` 仍走专用规则命中）。
+- **D7-002**（`initI18n`）：加 module-scope `_initI18nBound` flag —— HMR 重载时不再累积 listener（旧 flag 缺，新 flag 跟 setupNav / setupTabs 模式对齐）。
+- **D7-003 / 004 / 005**（`setupNav` / `setupTabs`）：同款 `_setupNavBound` / `_setupTabsBound` flag 防 HMR 累积；source-extras 的 `helpDiv.innerHTML` → `textContent`（之前用 innerHTML 但内容是纯文本，M5 fix 已在 credentials.ts 落地，遗漏 source-extras）。
+- **D7-006**（`credentials.ts::credentialProviderName`）：`t("provider.${base}.name")` 加 `?? base` / `?? id` fallback（i18n 缺 key 时返 raw 字符串，UI 暴露 `provider.foo.name`）。
+- **D7-007**（`config.ts::applyPinMode`）：同款 `?? mode` fallback。
+- **D7-008**（`settings/test.ts::testConn`）：summary 加 `displayId = unique_id ?? id` 前缀 —— 多 instance 副本时 (`minimax#2` / `minimax#3`) summary 区分得清，跟浮窗 `main.ts:1356 snapKey()` 一致。
+
+**Misc (CI / i18n / magic number)**:
+- **D8-001**（4 个 i18n missing key）：`settings.providers.invalid_interval` / `settings.region.auto_applied` / `custom_source.err.field_too_long` / `custom_source.err.divide_invalid` 加到 en + zh-CN。
+- **D8-002**（`.github/workflows/release.yml`）：砍 MSI bundle + 删 verify 段 MSI 检查（WiX 镜像国内 timeout 跟 v0.2.0 build 教训一致）。
+- **D8-003**（release.yml Windows matrix）：target 改 `x86_64-pc-windows-gnu` + 加 MinGW `choco install mingw` step（之前用 MSVC toolchain，本地维护者用 GNU，CI/local 不一致会 fail）。
+- **D8-004**（`config.rs::best_effort_from_value`）：加 `recognized_any` guard，空 `{}` 直接返 `None` 而非空 `AppConfig`（前者 fallback 到默认值，后者把空 config 持久化覆盖掉用户正常配置）。
+- **D8-005**（`config/extra_instances.rs`）：chmod 0600 失败从 hard error 降级 warn（Windows 上 chmod 是 no-op 但返 error 之前 hard-fail 整段 init）。
+- **D8-006**（`commands::quit_app`）：提 `POLLER_DRAIN_TIMEOUT: Duration = 500ms` 常量 + 注释指向 `poller_backoff::MAX_BACKOFF_SECS`（30min），删裸 `Duration::from_millis(150)` magic number。
+- **D8-007**（`settings/about.ts` dev menu）：暴露 `dumpMissingKeys()` 按钮（仅 `import.meta.env.DEV` 模式可见），6 个新 i18n key 加到 en + zh-CN。
+
+**新增单测汇总**:
+- D-013 (3 个：kimi + claude_official extract_reset_ms 边界)
+- D3-005 (3 个：xiaomi extract_user_id_from_url 合法/伪造/纯域)
+- D3-007 (1 个：combined_token_requires_both_halves_fresh 覆盖 3 case)
+- D8-004 (1 个：best_effort 空对象识别)
+- 共 8 个新单测，`cargo test --lib` 362 passed (1 ignored macOS-only)
+
+**最终守门**:
+- `cargo test --lib` 362 passed (1 ignored)
+- `pnpm tsc --noEmit` 0 errors
+- `pnpm test` 29/29 passed (前端 vitest)
+- 8 份审计报告全部就位：`audit-reports/2026-07-30-full/01~08-*.md`
 
 ## [0.2.5] - 2026-07-29
 

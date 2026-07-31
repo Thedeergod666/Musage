@@ -120,6 +120,9 @@ export interface ProviderSnapshot {
   provider: ProviderId;
   /** Phase 1 新增。 */
   source_id?: string | null;
+  /** D7-008 fix (2026-07-30 audit): 多 instance 唯一标识 (跟 src/main.ts:221 同义),
+   * settings/test.ts 用它做 summary label, 多份 minimax 区分得清. */
+  unique_id?: string | null;
   source_display_name?: string | null;
   plan_name?: string | null;
   success: boolean;

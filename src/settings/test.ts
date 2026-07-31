@@ -16,7 +16,9 @@ export async function testConn() {
     if (ok.length === 0) {
       const errs = snap.providers
         .map((p) => {
-          const id = p.source_id ?? p.provider;
+          // D7-008 fix (2026-07-30 audit): 用 unique_id 区分多 instance,
+          // 跟浮窗 main.ts:1356 snapKey() 一致.
+          const id = p.unique_id ?? p.source_id ?? p.provider;
           return `${id}: ${p.error}`;
         })
         .join("; ");
@@ -26,55 +28,85 @@ export async function testConn() {
     const summary = ok
       .map((p) => {
         // Phase 1：用 source_id 路由（registry 驱动），provider 字段保兼容
+        // D7-008 fix (2026-07-30 audit): route 走 base id, display 走 unique_id
+        // 多 instance 时 summary 区分得清.
         const id = p.source_id ?? p.provider;
+        const displayId = p.unique_id ?? id;
         if (id === "minimax") {
           const fiveHour = p.rows.find((r) => r.utilization != null);
-          return fiveHour
-            ? t("settings.test.minimax_5h", { pct: Math.round(fiveHour.utilization ?? 0) })
-            : t("settings.test.minimax_ok");
+          return (
+            displayId +
+            (fiveHour
+              ? t("settings.test.minimax_5h", {
+                  pct: Math.round(fiveHour.utilization ?? 0),
+                })
+              : t("settings.test.minimax_ok"))
+          );
         } else if (id === "deepseek") {
           const balance = p.rows.find((r) => r.remaining != null);
-          return balance
-            ? t("settings.test.deepseek_balance", {
-                amount: formatAmount(balance.remaining ?? 0),
-                unit: balance.unit ?? "",
-              })
-            : t("settings.test.deepseek_ok");
+          return (
+            displayId +
+            (balance
+              ? t("settings.test.deepseek_balance", {
+                  amount: formatAmount(balance.remaining ?? 0),
+                  unit: balance.unit ?? "",
+                })
+              : t("settings.test.deepseek_ok"))
+          );
         } else if (id === "xiaomimimo") {
           const plan = p.rows.find((r) => r.utilization != null);
-          return plan
-            ? t("settings.test.xiaomi_plan", { pct: Math.round(plan.utilization ?? 0) })
-            : t("settings.test.xiaomi_ok");
+          return (
+            displayId +
+            (plan
+              ? t("settings.test.xiaomi_plan", {
+                  pct: Math.round(plan.utilization ?? 0),
+                })
+              : t("settings.test.xiaomi_ok"))
+          );
         } else if (id === "tavily") {
           // 主指标在 used/total/unit="credits" 的那一行
           const main = p.rows.find((r) => r.unit === "credits");
           if (main && main.used != null && main.total != null) {
-            return t("settings.test.tavily_credits", {
-              used: Math.round(main.used),
-              total: Math.round(main.total),
-            });
+            return (
+              displayId +
+              t("settings.test.tavily_credits", {
+                used: Math.round(main.used),
+                total: Math.round(main.total),
+              })
+            );
           }
-          return t("settings.test.tavily_ok");
+          return displayId + t("settings.test.tavily_ok");
         } else if (id === "kimi") {
           // Kimi 与 MiniMax 同款 5h/周 百分比行
           const fiveHour = p.rows.find((r) => r.label === "5h");
-          return fiveHour
-            ? t("settings.test.kimi_5h", { pct: Math.round(fiveHour.utilization ?? 0) })
-            : t("settings.test.kimi_ok");
+          return (
+            displayId +
+            (fiveHour
+              ? t("settings.test.kimi_5h", {
+                  pct: Math.round(fiveHour.utilization ?? 0),
+                })
+              : t("settings.test.kimi_ok"))
+          );
         } else if (id === "zhipu") {
           // CN = "智谱 GLM"，EN = "Z.ai"（后端 source_display_name 决定）
           // 2026-06-20 audit：之前硬编码 "Z.ai" 字符串（漏 t()）。改用现有
-// provider.zhipu_en.name i18n key 跟其它 provider 路径一致。
-const label = p.source_display_name === "Z.ai" ? t("provider.zhipu_en.name") : t("provider.zhipu_cn.name");
+          // provider.zhipu_en.name i18n key 跟其它 provider 路径一致。
+          const label =
+            p.source_display_name === "Z.ai"
+              ? t("provider.zhipu_en.name")
+              : t("provider.zhipu_cn.name");
           const fiveHour = p.rows.find((r) => r.label === "5h");
-          return fiveHour
-            ? t("settings.test.zhipu_5h", {
-                label,
-                pct: Math.round(fiveHour.utilization ?? 0),
-              })
-            : t("settings.test.zhipu_ok", { label });
+          return (
+            displayId +
+            (fiveHour
+              ? t("settings.test.zhipu_5h", {
+                  label,
+                  pct: Math.round(fiveHour.utilization ?? 0),
+                })
+              : t("settings.test.zhipu_ok", { label }))
+          );
         }
-        return t("settings.test.generic_ok", { id });
+        return displayId + t("settings.test.generic_ok", { id });
       })
       .join(" / ");
     flash(t("settings.test.success", { summary }));

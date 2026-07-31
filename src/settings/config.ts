@@ -19,7 +19,7 @@ import type { FloatingPinMode } from "./types";
 export async function applyPinMode(mode: FloatingPinMode) {
   try {
     await setFloatingPinMode(mode);
-    const label = t(`settings.pin_mode.${mode === "pin_top" ? "top" : mode === "pin_bottom" ? "bottom" : "normal"}`);
+    const label = t(`settings.pin_mode.${mode === "pin_top" ? "top" : mode === "pin_bottom" ? "bottom" : "normal"}`) ?? mode;
     flash("ok", label);
   } catch (e) {
     flash(t("settings.pin_mode.failed", { err: String(e) }), true);

@@ -645,7 +645,7 @@ async function credentialProviderName(id: string): Promise<string> {
   if (hashIdx > 0) {
     const base = id.slice(0, hashIdx);
     const n = Number(id.slice(hashIdx + 1));
-    return formatDisplayName(t(`provider.${base as ProviderId}.name`), n);
+    return formatDisplayName(t(`provider.${base as ProviderId}.name`) ?? base, n);
   }
   if (id.startsWith("custom_")) {
     try {
@@ -657,7 +657,7 @@ async function credentialProviderName(id: string): Promise<string> {
     }
     return id;
   }
-  return t(`provider.${id as ProviderId}.name`);
+  return t(`provider.${id as ProviderId}.name`) ?? id;
 }
 
 export async function saveCredentialAction(id: string, action: "key" | "cookie", advInputId?: string) {

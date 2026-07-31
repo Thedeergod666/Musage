@@ -22,6 +22,8 @@
 pub mod extra_instances;
 pub mod i18n;
 
+use std::time::Duration;
+
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
@@ -1153,6 +1155,14 @@ pub async fn reset_floating_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// 退出前 drain 等待时间。
+///
+/// 退出时调用 `crate::poller::SHUTDOWN.notify_waiters()` 后, 当前 tokio task
+/// sleep 这个时间让 poller 主循环跑完 in-flight fetch + cleanup。**这个值
+/// 必须远小于 `poller_backoff::MAX_BACKOFF_SECS` (30min)** —— 否则用户点
+/// quit 后最长要等 30min 进程才退, 实际只需要 <500ms。
+const POLLER_DRAIN_TIMEOUT: Duration = Duration::from_millis(500);
+
 #[tauri::command]
 pub async fn quit_app(app: AppHandle) {
     // H1 fix (2026-07-30 audit): 之前 app.exit(0) 直接终止,per-provider
@@ -1167,8 +1177,9 @@ pub async fn quit_app(app: AppHandle) {
     // SHUTDOWN_NATIVE_THREADS atomic, OS 线程每个 tick 检查一次退出。
     crate::poller::SHUTDOWN_NATIVE_THREADS
         .store(true, std::sync::atomic::Ordering::SeqCst);
-    // 让出当前 task 让 poller 主循环调度起来跑 drain (通常 <100ms 完成)
-    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    // 让出当前 task 让 poller 主循环调度起来跑 drain (通常 <100ms 完成,
+    // 500ms 留 buffer 应对最坏情况)
+    tokio::time::sleep(POLLER_DRAIN_TIMEOUT).await;
     app.exit(0);
 }
 

@@ -592,7 +592,9 @@ pub fn parse_tier_count(
         let remain = item.get(&triple.remaining).and_then(num_to_f64);
         if let (Some(t), Some(r)) = (total, remain) {
             if t > 0.0 {
-                let utilization = ((t - r) / t) * 100.0;
+                // 2026-08-03 audit (Raman P1): clamp 到 [0.0, 100.0]
+                // 防止 server bug (r < 0 或 r > t) 让 progress bar 越界
+                let utilization = (((t - r) / t) * 100.0).clamp(0.0, 100.0);
                 let resets_at = triple
                     .end
                     .as_deref()
@@ -616,7 +618,8 @@ pub fn parse_tier_count(
         let remain = item.get(*k_remain).and_then(num_to_f64);
         if let (Some(t), Some(r)) = (total, remain) {
             if t > 0.0 {
-                let utilization = ((t - r) / t) * 100.0;
+                // 2026-08-03 audit (Raman P1): 同上, clamp
+                let utilization = (((t - r) / t) * 100.0).clamp(0.0, 100.0);
                 let resets_at = item
                     .get(*k_reset)
                     .and_then(|v| {
@@ -663,7 +666,9 @@ fn smart_reset_to_ms(raw: i64) -> i64 {
 }
 
 fn num_to_f64(v: &serde_json::Value) -> Option<f64> {
-    v.as_f64().or_else(|| v.as_i64().map(|i| i as f64))
+    // 2026-08-03 audit (Raman P2): 走共享 parse::num_f64
+    // 自动获得 NaN/Inf 过滤 + 字符串数字支持 + u64 支持
+    super::parse::num_f64(v)
 }
 
 // ── 单元测试 ─────────────────────────────────────────────────────
@@ -927,5 +932,54 @@ mod tests {
         );
         assert!(!snap.success);
         assert_eq!(snap.error_kind, Some(ErrorKind::Parse));
+    }
+
+    #[test]
+    fn parse_tier_count_clamps_to_100_on_negative_remaining() {
+        // 2026-08-03 audit (Raman P1): server bug r < 0 越界
+        // 应该 clamp 到 100% utilization (max),而不是 > 100%
+        let item = serde_json::json!({
+            "current_interval_total_count": 100,
+            "current_interval_usage_count": -50,  // 异常负 remaining
+        });
+        let t = parse_tier_count(
+            &item,
+            &[(
+                "current_interval_total_count",
+                "current_interval_usage_count",
+                "end_time",
+            )],
+            &[],
+        )
+        .unwrap();
+        assert!(
+            (t.utilization - 100.0).abs() < 0.001,
+            "expected 100% clamp, got {}",
+            t.utilization
+        );
+    }
+
+    #[test]
+    fn parse_tier_count_clamps_to_zero_on_over_remaining() {
+        // 2026-08-03 audit (Raman P1): r > t 应 clamp 到 0% utilization
+        let item = serde_json::json!({
+            "current_interval_total_count": 100,
+            "current_interval_usage_count": 150,  // 异常 > total
+        });
+        let t = parse_tier_count(
+            &item,
+            &[(
+                "current_interval_total_count",
+                "current_interval_usage_count",
+                "end_time",
+            )],
+            &[],
+        )
+        .unwrap();
+        assert!(
+            t.utilization.abs() < 0.001,
+            "expected 0% clamp, got {}",
+            t.utilization
+        );
     }
 }

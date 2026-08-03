@@ -233,7 +233,10 @@ impl QuotaSource for StepfunSource {
             // `stepfun` legacy 槽位不会被登录流程清掉（save_credential_for_id
             // 对 None 字段是跳过而非删除），若 api_key 优先会永远读到那个
             // 过期 token，新登录的 cookie 被完全忽略（2026-07-28 实测 bug）。
-            // api_key 仅作 legacy 兜底（cookie 槽不存在时）。
+            // 2026-08-03 audit (Darwin B10): api_key 槽是 legacy-only ——
+            // v0.2.4 手动粘贴 Oasis-Token 时代产物; 新用户走 cookie 槽
+            // (anysearch_login.rs / stepfun_login.rs 一键登录)。cookie
+            // 优先 (跟 anysearch / claude_official 的 Cookie-kind 约定一致)
             let raw = credentials
                 .cookie
                 .as_deref()

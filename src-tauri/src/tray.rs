@@ -1092,19 +1092,38 @@ fn provider_short_body(p: &ProviderSnapshot) -> String {
             }
         }
         if parts.is_empty() {
-            display()
+            return sanitize_tooltip_segment(&display());
         } else {
-            t!(
+            let rendered = t!(
                 "tray.tooltip.provider_rows",
                 provider = display(),
                 rows = parts.join(" / ")
             )
-            .to_string()
+            .to_string();
+            sanitize_tooltip_segment(&rendered)
         }
     }
 }
 
+/// T-M1 fix (2026-08-03 audit): 简单 sanitize tooltip 文本段。
+/// tauri tray tooltip 是纯文本(不解析 HTML),但 display_name / row.label
+/// 可能含换行 / NUL / 控制字符,会破坏 tooltip 单行展示。
+/// 保留空格/Unicode 字符(包括 emoji),只过滤 ASCII 控制字符。
+fn sanitize_tooltip_segment(s: &str) -> String {
+    s.chars()
+        .filter(|c| !c.is_control() || *c == '\t')
+        .collect::<String>()
+        .replace('\t', "    ")
+}
+
 fn format_amount_short(v: f64) -> String {
+    // T-M2 fix (2026-08-03 audit): NaN/Inf 防御。JSON 异常 (parse 漏的 schema
+    // 漂移 / 服务端 bug) 可能传 f64::NAN 或 ±∞,round() 后是 i64::MIN/MAX,
+    // 拼到 tooltip 里渲染成"NaN%" / 怪异 k 数字。共享 parse::num_f64 已拦
+    // 字符串入口,这里是数值入口的最后一道。
+    if !v.is_finite() {
+        return "?".to_string();
+    }
     let r = v.round() as i64;
     if r >= 100_000 {
         // 大数字用 k 简写
@@ -1192,5 +1211,27 @@ mod tests {
             .sum::<f32>()
             .round() as i32;
         assert!(w <= 30, "100% at fit_scale={} 宽度={w} > max_w=30", scale.x);
+    }
+
+    /// T-M2 fix (2026-08-03 audit): NaN/±Inf 必须 fence 成 "?"。共享 parse::num_f64
+    /// 已拦字符串入口,这里守数值入口,防止 JSON 异常穿透到 tooltip。
+    #[test]
+    fn format_amount_short_fences_nan_and_infinity() {
+        assert_eq!(format_amount_short(f64::NAN), "?");
+        assert_eq!(format_amount_short(f64::INFINITY), "?");
+        assert_eq!(format_amount_short(f64::NEG_INFINITY), "?");
+        // finite 值正常
+        assert_eq!(format_amount_short(42.5), "42.50");
+        assert_eq!(format_amount_short(1500.0), "1.5k");
+        assert_eq!(format_amount_short(250_000.0), "250k");
+    }
+
+    /// T-M1 fix (2026-08-03 audit): tooltip sanitize 过滤控制字符但保留 emoji。
+    #[test]
+    fn sanitize_tooltip_segment_strips_control_chars() {
+        assert_eq!(sanitize_tooltip_segment("hello\nworld"), "helloworld");
+        assert_eq!(sanitize_tooltip_segment("a\0b"), "ab");
+        assert_eq!(sanitize_tooltip_segment("Musage 🎵"), "Musage 🎵");
+        assert_eq!(sanitize_tooltip_segment("a\tb"), "a    b");
     }
 }

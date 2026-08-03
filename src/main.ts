@@ -762,6 +762,11 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
     // ── 持久错误 / 还没拉到过任何成功数据：走老 UI ──
     const label = errorKindLabel(kind);
     const id = p.unique_id ?? p.source_id ?? p.provider;
+    // F-M1 fix (2026-08-03 audit): 多实例副本(unique_id 带 #N 后缀,
+    // 例 "xiaomimimo#2") 不能用 full id 匹配 provider kind 决定 re-login
+    // 按钮。re-login 走 provider base(window label 走 base id),用 baseId
+    // 决策,unique_id 仍作 data-attr 区分具体副本的快照。
+    const baseId = p.provider;
     // 按 error_kind 分发按钮 (2026-06-17 commit):
     // - unconfigured_key / auth_failed: 打开设置面板
     // - auth_failed + xiaomimimo:        🔑 重新登录 (走 xiaomi_login window)
@@ -784,11 +789,11 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
       // 紧接着真实 fetch 结果会替换它；现在不闪"打开设置"了，体验跟手。
       if (p.transient === true) {
         // no action button
-      } else if (kind === "auth_failed" && id === "xiaomimimo") {
+      } else if (kind === "auth_failed" && baseId === "xiaomimimo") {
         actionBtn = `<button class="err-btn err-btn-relogin" data-action="relogin-xiaomi">${escapeHtml(t("floating.err_btn_relogin_xiaomi"))}</button>`;
-      } else if (kind === "auth_failed" && id === "anysearch") {
+      } else if (kind === "auth_failed" && baseId === "anysearch") {
         actionBtn = `<button class="err-btn err-btn-relogin" data-action="relogin-anysearch">${escapeHtml(t("floating.err_btn_relogin_anysearch"))}</button>`;
-      } else if (kind === "auth_failed" && id === "stepfun") {
+      } else if (kind === "auth_failed" && baseId === "stepfun") {
         // v0.2.5+: stepfun 改 webview 一键登录(原 token 过期/失效场景)
         actionBtn = `<button class="err-btn err-btn-relogin" data-action="relogin-stepfun">${escapeHtml(t("floating.err_btn_relogin_stepfun"))}</button>`;
       } else {

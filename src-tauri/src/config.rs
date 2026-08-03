@@ -503,6 +503,9 @@ impl AppConfig {
         if let Some(parent) = path.parent() {
             truncate_old_backups(parent, "config.json", 5);
             truncate_old_backups(parent, "keys.json", 5);
+            // C-M2 fix (2026-08-03 audit): extra_instances.json.bak.<ts>
+            // 半年升级用户会堆,加 truncate_old_backups 跟 keys.json 同款。
+            truncate_old_backups(parent, "extra_instances.json", 5);
             // app_log.jsonl 不在 cfg 目录(在 app log dir),见 cleanup_orphan_tmp_files
         }
         if !path.exists() {
@@ -942,6 +945,9 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
         .get("zenmux_payg_concise_mode")
         .and_then(|x| x.as_bool())
     {
+        // C-M1 fix (2026-08-03 audit): 缺 recognized_any = true 触发未识别
+        // 字段警告,即使字段是合法的,前端调试时容易误判 schema 问题。
+        recognized_any = true;
         cfg.zenmux_payg_concise_mode = Some(b);
     }
     if let Some(s) = obj.get("zhipu_region").and_then(|x| x.as_str()) {
@@ -1500,5 +1506,17 @@ mod cleanup_orphan_tmp_files_tests {
 
         // 清理临时目录
         let _ = std::fs::remove_dir_all(&tmp_root);
+    }
+
+    /// C-M1 fix (2026-08-03 audit): zenmux_payg_concise_mode 单独存在也必须
+    /// 标记 recognized_any = true,否则触发未识别字段警告。
+    #[test]
+    fn best_effort_recognizes_zenmux_payg_concise_mode_in_isolation() {
+        let raw = serde_json::json!({ "zenmux_payg_concise_mode": true });
+        // C-M1 fix (2026-08-03 audit): 单独 zenmux_payg_concise_mode 字段
+        // 也必须返 Some(让 caller 走 best_effort 而不是 fallback default),否则
+        // raw JSON 解析路径上 recognized_any 没被设,触发未识别字段警告。
+        let cfg = best_effort_from_value(&raw).expect("must recognize");
+        assert_eq!(cfg.zenmux_payg_concise_mode, Some(true));
     }
 }

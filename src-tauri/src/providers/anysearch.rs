@@ -84,8 +84,8 @@ use base64::Engine;
 use serde_json::{json, Value};
 
 use super::{
-    json_body_limited, shared_client, text_body_limited, AuthKind, Credentials, FetchError,
-    ProviderSnapshot, QuotaRow, QuotaSource,
+    json_body_limited, shared_client, text_body_limited, AuthKind, Credentials, ErrorKind,
+    FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
 };
 
 use crate::t;
@@ -596,12 +596,23 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
     }
 
     let success = !rows.is_empty();
+    // 2026-08-03 audit (Raman P2 / McClintock): is_active=false 时
+    // 必须返回 AuthFailed error,浮窗才能显示"账号已停用"提示,
+    // 并触发一键重登路径 (跟 anysearch_login.rs 的 relogin-anysearch 分支配对)
+    let (error, error_kind) = if !is_active {
+        (
+            Some(t!("error.anysearch.account_inactive").into_owned()),
+            Some(ErrorKind::AuthFailed),
+        )
+    } else {
+        (None, None)
+    };
     Ok(ProviderSnapshot {
         provider: "anysearch".to_string(),
         success,
         rows,
-        error: None,
-        error_kind: None,
+        error,
+        error_kind,
         fetched_at: Some(now_ms),
         next_fetch_at: None,
         raw: Some(raw.clone()),

@@ -99,7 +99,8 @@
     "anysearch": {
       "token_empty": "AnySearch session token not configured (Settings → AnySearch → click \"Login AnySearch\")",
       "token_invalid_hint": "AnySearch session token invalid or expired — click the floating window \"Re-login\" or Settings → AnySearch → \"Login AnySearch\"",
-      "schema_unknown_hint": "AnySearch response schema changed (data.used/total/next_reset_at missing)"
+      "schema_unknown_hint": "AnySearch response schema changed (data.used/total/next_reset_at missing)",
+      "account_inactive": "AnySearch account marked inactive — re-login to refresh status"
     },
     "custom": {
       "network": "CustomSource network error: %{err}",

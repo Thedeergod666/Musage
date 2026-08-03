@@ -99,7 +99,8 @@
     "anysearch": {
       "token_empty": "未配置 AnySearch 登录凭据（设置面板 · AnySearch · 点「登录 AnySearch」）",
       "token_invalid_hint": "AnySearch 登录凭据无效或已过期 —— 点浮窗「重新登录」或 设置面板 · AnySearch ·「登录 AnySearch」",
-      "schema_unknown_hint": "AnySearch 响应 schema 变更（data.used/total/next_reset_at 缺失）"
+      "schema_unknown_hint": "AnySearch 响应 schema 变更（data.used/total/next_reset_at 缺失）",
+      "account_inactive": "AnySearch 账号已停用 —— 重新登录刷新状态"
     },
     "custom": {
       "network": "CustomSource 网络错误: %{err}",

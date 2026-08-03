@@ -233,12 +233,13 @@ unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
         ZOrder::TopMost => {
             let new_style: i32 = ex_style | (WS_EX_TOPMOST as i32);
             SetLastError(0);
-            SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
-            // 2026-08-03 audit (Darwin B5): check SetWindowLongW 返值 —
-            // 失败 (cross-process / UIPI 等) 返 0,但 SetLastError != 0。
-            // 失败时跳过 SetWindowPos,避免 style 没改但 z-order 已被
-            // 操纵的「topmost 标志还在但被塞到 HWND_BOTTOM」状态不一致
-            if new_style == 0 && GetLastError() != 0 {
+            // 2026-08-03 audit (Darwin B5 + Singer verify): **必须**捕获返值
+            // (SetWindowLongW 的 i32 返值是「prev style」,不是新值)。之前
+            // 5418865 写 new_style==0 检查的是 input —— 对真实窗口 ex_style
+            // 永远非 0, guard 永不 fire。改捕获 prev 后 prev==0 + GetLastError
+            // != 0 才算真失败 (cross-process / UIPI 拒绝)。
+            let prev = SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
+            if prev == 0 && GetLastError() != 0 {
                 tracing::trace!(?z, "apply_z_order: SetWindowLongW 失败，跳过 SetWindowPos");
                 return;
             }
@@ -250,9 +251,9 @@ unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
             // 改为 Bottom 和 NotTopMost 都显式 AND-out WS_EX_TOPMOST。
             let new_style: i32 = ex_style & !(WS_EX_TOPMOST as i32);
             SetLastError(0);
-            SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
-            // 2026-08-03 audit (Darwin B5): 同 TopMost 分支
-            if ex_style == new_style && new_style == 0 && GetLastError() != 0 {
+            // 同 TopMost 分支 —— 捕获 prev 而非检查 new_style
+            let prev = SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
+            if prev == 0 && GetLastError() != 0 {
                 tracing::trace!(?z, "apply_z_order: SetWindowLongW 失败，跳过 SetWindowPos");
                 return;
             }

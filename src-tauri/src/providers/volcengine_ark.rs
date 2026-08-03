@@ -437,6 +437,12 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
                     .and_then(|v| v.as_f64())
                     .map(|f| f as i64)
             })
+            // H4 fix (2026-08-03 audit): D-013 一致性 —— 拒绝 ts <= 0
+            // (epoch 0 / 负数 / 服务端 schema 漂移)。和 kimi/claude_official/stepfun
+            // 同款保护,这块 2026-07-30 audit 漏了 volcengine_ark,本次补回。
+            // 否则 ts=0 → from_timestamp_millis(0) 返 epoch 1970-01-01,
+            // ts=-1 → ts*1000 负数溢出 i64 / 浮窗显示诡异过去重置。
+            .filter(|ts| *ts > 0)
             .map(|ts| {
                 if ts < 1_000_000_000_000 {
                     ts * 1000
@@ -914,5 +920,49 @@ mod tests {
         let snap = parse(&raw, "volcengine_ark", "Volcengine Ark").expect("parse");
         assert_eq!(snap.rows.len(), 1);
         assert_eq!(snap.rows[0].label, t!("row.weekly_7d").as_ref());
+    }
+
+    /// H4 fix (2026-08-03 audit): ResetTimestamp = 0 / 负数必须被拒 (D-013
+    /// 一致性)。火山 Coding Plan schema 漂移或 epoch=0 返回时,不能把 resets_at
+    /// 设成 Some(0) 让浮窗显示 1970-01-01,也不能让负数 ts*1000 溢出。
+    #[test]
+    fn parse_drops_zero_reset_timestamp() {
+        let raw = json!({
+            "Result": {
+                "Code": "Success",
+                "PlanName": "Lite",
+                "UsageList": [
+                    { "Level": "Session", "Remaining": 1100, "Total": 1200, "ResetTimestamp": 0_i64 },
+                    { "Level": "Weekly",  "Remaining": 8500, "Total": 9000, "ResetTimestamp": 1753761600000_i64 }
+                ]
+            }
+        });
+        let snap = parse(&raw, "volcengine_ark", "Volcengine Ark").expect("parse");
+        assert!(snap.success);
+        assert_eq!(snap.rows.len(), 2);
+        // Session 行 ResetTimestamp=0 → resets_at=None (不显示 1970)
+        // 通过 resets_at 验证 5h 行(0 被过滤为 None)
+        let _five_h = snap.rows.iter().find(|r| r.resets_at.is_none()).expect("5h row (ts=0)");
+        // Weekly 行(resets_at 正常)
+        let week = snap.rows.iter().find(|r| r.resets_at == Some(1753761600000)).expect("weekly row");
+        assert_eq!(week.resets_at, Some(1753761600000));
+    }
+
+    #[test]
+    fn parse_drops_negative_reset_timestamp() {
+        let raw = json!({
+            "Result": {
+                "Code": "Success",
+                "PlanName": "Lite",
+                "UsageList": [
+                    { "Level": "Session", "Remaining": 1100, "Total": 1200, "ResetTimestamp": -1_i64 }
+                ]
+            }
+        });
+        let snap = parse(&raw, "volcengine_ark", "Volcengine Ark").expect("parse");
+        assert!(snap.success);
+        assert_eq!(snap.rows.len(), 1);
+        let five_h = &snap.rows[0];
+        assert_eq!(five_h.resets_at, None, "ts=-1 must be filtered to None");
     }
 }

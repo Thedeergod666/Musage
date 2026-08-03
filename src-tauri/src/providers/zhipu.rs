@@ -407,7 +407,13 @@ fn classify_zhipu_limits(data: &Value) -> (Option<(f64, Option<i64>)>, Option<(f
                 .and_then(|v| super::parse::num_f64(v))
                 .map(|p| p.clamp(0.0, 100.0))
                 .unwrap_or(0.0);
-            let reset_ms = item.get("nextResetTime").and_then(|v| v.as_i64());
+            let reset_ms = item
+                .get("nextResetTime")
+                .and_then(|v| v.as_i64())
+                // H5 fix (2026-08-03 audit): D-013 一致性 —— 拒绝 ts <= 0
+                // (epoch 0 / 负数 / 服务端 schema 漂移)。和 kimi/claude_official/
+                // stepfun/volcengine_ark 同款保护,这块 2026-07-30 audit 漏了 zhipu。
+                .filter(|ts| *ts > 0);
             // 排序键：None 排最前（无 resetTime 的优先归 5h）
             let sort_key = reset_ms.unwrap_or(i64::MIN);
             let entry = (sort_key, percentage, reset_ms);
@@ -724,5 +730,45 @@ mod tests {
         src.set_state(cfg).await;
         // 非法 region → fallback 到 Cn（不 panic）
         assert_eq!(*src.region.read().unwrap(), Some(ZhipuRegion::Cn));
+    }
+
+    /// H5 fix (2026-08-03 audit): nextResetTime = 0 / 负数必须被拒 (D-013 一致性)。
+    /// 和 volcengine_ark / kimi / claude_official / stepfun 同款,这块 2026-07-30
+    /// audit 漏了 zhipu。
+    #[test]
+    fn parse_drops_zero_reset_time() {
+        let raw = json!({
+            "success": true,
+            "data": {
+                "level": "pro",
+                "limits": [
+                    { "type": "TOKENS_LIMIT", "unit": 3, "percentage": 44.0, "nextResetTime": 0_i64 }
+                ]
+            }
+        });
+        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "Zhipu GLM").expect("parse");
+        assert!(snap.success);
+        assert_eq!(snap.rows.len(), 1);
+        let five_h = &snap.rows[0];
+        assert!((five_h.utilization.unwrap() - 44.0).abs() < 0.001);
+        assert_eq!(five_h.resets_at, None, "ts=0 must be filtered to None");
+    }
+
+    #[test]
+    fn parse_drops_negative_reset_time() {
+        let raw = json!({
+            "success": true,
+            "data": {
+                "level": "pro",
+                "limits": [
+                    { "type": "TOKENS_LIMIT", "unit": 3, "percentage": 44.0, "nextResetTime": -1_i64 }
+                ]
+            }
+        });
+        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "Zhipu GLM").expect("parse");
+        assert!(snap.success);
+        assert_eq!(snap.rows.len(), 1);
+        let five_h = &snap.rows[0];
+        assert_eq!(five_h.resets_at, None, "ts=-1 must be filtered to None");
     }
 }

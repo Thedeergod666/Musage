@@ -982,4 +982,41 @@ mod tests {
             t.utilization
         );
     }
+
+    // 2026-08-03 audit (Raman P3): smart_reset_to_ms 之前 0 单测, 补 3 个
+    // 覆盖 epoch_ms 路径 / duration-seconds 路径 / 负 duration clamp 路径
+
+    #[test]
+    fn smart_reset_to_ms_passes_through_epoch_ms() {
+        let epoch_ms: i64 = 1_700_000_000_000; // 2023-11-14 in [EPOCH_MS_MIN..EPOCH_MS_MAX]
+        assert_eq!(smart_reset_to_ms(epoch_ms), epoch_ms);
+    }
+
+    #[test]
+    fn smart_reset_to_ms_treats_small_as_duration_seconds() {
+        let before = chrono::Utc::now().timestamp_millis();
+        let secs: i64 = 3600; // 1h
+        let result = smart_reset_to_ms(secs);
+        let after = chrono::Utc::now().timestamp_millis();
+        assert!(
+            result >= before + secs * 1000,
+            "result {result} must be >= before + 1h"
+        );
+        assert!(
+            result <= after + secs * 1000,
+            "result {result} must be <= after + 1h"
+        );
+    }
+
+    #[test]
+    fn smart_reset_to_ms_clamps_negative_to_now() {
+        // D-011 fix: 负 duration (异常中转站 / clock drift) → clamp 到 now
+        let before = chrono::Utc::now().timestamp_millis();
+        let result = smart_reset_to_ms(-500);
+        let after = chrono::Utc::now().timestamp_millis();
+        assert!(
+            result >= before && result <= after,
+            "negative must clamp to current time, got {result}"
+        );
+    }
 }

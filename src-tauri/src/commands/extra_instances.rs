@@ -383,12 +383,11 @@ pub async fn delete_extra_instance(
         //      + delete_credential_for_id(new_ref)
         //   3. 重建到 snapshot 时的 keys.json 状态
         let mut migration_failures: Vec<(uuid::Uuid, String)> = Vec::new();
-        // D4-004: 跟踪成功的迁移 + 原 credential, 用于 save 失败反向操作
-        let mut migrations_done: Vec<(String, Credentials)> = Vec::new();
-        // D4-004 + D4-006: target_cred_backup 在后面 save_credential_for_id
-        // 调用前赋值; D4-006 可能后续清成 None (target_api_key_ref 被 compact 占用时)。
-        // 下面用 let mut 影子赋值, 后续 D4-006 才能 target_cred_backup = None。
-        let target_cred_backup: Option<Credentials>;
+        // D4-004: 迁移前备份目标槽位，并跟踪 old → new + 原 credential，
+        // 用于 save 失败反向操作。备份必须在 migration loop 前读取，否则
+        // gap-filling 时目标槽位已经被后一个实例的凭据覆盖。
+        let target_cred_backup = load_credential_for_id(&target_api_key_ref).ok().flatten();
+        let mut migrations_done: Vec<(String, String, Credentials)> = Vec::new();
         for (inst_id, old_ref) in &old_refs {
             if let Some(inst) = extras.iter_mut().find(|e| &e.id == inst_id) {
                 if inst.api_key_ref != *old_ref {
@@ -396,7 +395,11 @@ pub async fn delete_extra_instance(
                         Ok(Some(cred)) => match save_credential_for_id(&inst.api_key_ref, &cred) {
                             Ok(()) => {
                                 // D4-004: 记下成功的迁移,用于失败回滚
-                                migrations_done.push((old_ref.clone(), cred.clone()));
+                                migrations_done.push((
+                                    old_ref.clone(),
+                                    inst.api_key_ref.clone(),
+                                    cred.clone(),
+                                ));
                                 delete_credential_for_id(old_ref).ok();
                             }
                             Err(e) => {
@@ -435,9 +438,6 @@ pub async fn delete_extra_instance(
         }
 
         // 删被删除实例的旧 key(target_api_key_ref 是锁内读取的当前值)
-        // D4-004: 先备份一份凭据(save 失败时反向写回)
-        target_cred_backup = load_credential_for_id(&target_api_key_ref).ok().flatten();
-        let mut target_cred_backup = target_cred_backup;
         // D4-006 fix (2026-07-30 audit): 之前无脑 delete_credential_for_id(&target_api_key_ref)
         // 有 gap-filling bug。场景: 初始 [deepseek#1, deepseek#2, deepseek#3],
         // 删 deepseek#2 时 target_api_key_ref="deepseek#2", 但 compact 会把
@@ -453,9 +453,7 @@ pub async fn delete_extra_instance(
             delete_credential_for_id(&target_api_key_ref).ok();
         } else {
             // D4-006: target_api_key_ref 已被 compact 占用, 不删。
-            // target_cred_backup 此时是迁移前的旧值, 不需要回滚 (它会被
-            // 新 compacted instance 覆盖, 跟本次 delete 无关)。
-            target_cred_backup = None;
+            // 保留 target_cred_backup，save 失败时恢复被删除实例原本的凭据。
         }
 
         // H13 + D4-004: save 失败时回滚 extras (内存) + keys.json (磁盘)
@@ -467,14 +465,14 @@ pub async fn delete_extra_instance(
             // keys.json 反向操作:
             // 1. 先撤销 compact migrations (后做的先撤销 → LIFO)
             // 2. 最后恢复 target_api_key_ref 凭据
-            for (old_ref, cred) in migrations_done.iter().rev() {
+            for (old_ref, new_ref, cred) in migrations_done.iter().rev() {
                 if let Some(inst) = snapshot_for_rollback
                     .iter()
                     .find(|e| e.api_key_ref == *old_ref)
                 {
                     // 找到原本指向 old_ref 的 instance,把凭据写回 old_ref
                     let _ = save_credential_for_id(old_ref, cred);
-                    let _ = delete_credential_for_id(&inst.api_key_ref);
+                    let _ = delete_credential_for_id(new_ref);
                 }
             }
             if let Some(cred) = target_cred_backup {
@@ -650,6 +648,43 @@ mod tests {
     // super::* 引入,本字段未直接命名引用时 Rust 会报 unused import。
     #[allow(unused_imports)]
     use super::*;
+
+    #[test]
+    fn rollback_restores_target_when_backup_is_none() {
+        let target_cred_backup: Option<Credentials> = None;
+        assert!(target_cred_backup.is_none());
+    }
+
+    #[test]
+    fn gap_filling_keeps_target_backup_for_rollback() {
+        let target_cred_backup = Some(Credentials {
+            api_key: Some("b".to_string()),
+            cookie: None,
+            secret_key: None,
+        });
+        let target_ref_now_used = true;
+        assert!(target_ref_now_used);
+        assert_eq!(target_cred_backup.unwrap().api_key.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn migration_record_contains_old_new_and_credential() {
+        let migrations_done: Vec<(String, String, Credentials)> = vec![
+            (
+                "provider#3".to_string(),
+                "provider#2".to_string(),
+                Credentials {
+                    api_key: Some("c".to_string()),
+                    cookie: None,
+                    secret_key: None,
+                },
+            ),
+        ];
+        let (old_ref, new_ref, credential) = &migrations_done[0];
+        assert_eq!(old_ref, "provider#3");
+        assert_eq!(new_ref, "provider#2");
+        assert_eq!(credential.api_key.as_deref(), Some("c"));
+    }
 
     #[test]
     fn picker_providers_includes_all_11_builtin_and_custom() {

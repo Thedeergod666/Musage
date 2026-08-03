@@ -56,7 +56,8 @@
       "missing_field_generic": "响应缺少 %{field} 字段",
       "read_keys_failed": "读 keys.json 失败: %{err}",
       "join_task_failed": "任务调度失败: %{err}",
-      "unknown_source_id": "未知的 source id: %{id}"
+      "unknown_source_id": "未知的 source id: %{id}",
+      "url_authority_has_userinfo": "URL authority 不能包含 '@' (通过 base_url 实现 userinfo 绕过 SSRF 检查)。当前值：%{url}"
     },
     "parse": {
       "no_rows_found": "响应中未找到任何用量行 —— schema 可能已变更"

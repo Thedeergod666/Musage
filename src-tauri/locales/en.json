@@ -56,7 +56,8 @@
       "missing_field_generic": "Response missing %{field} field",
       "read_keys_failed": "Failed to read keys.json: %{err}",
       "join_task_failed": "Failed to join task: %{err}",
-      "unknown_source_id": "Unknown source id: %{id}"
+      "unknown_source_id": "Unknown source id: %{id}",
+      "url_authority_has_userinfo": "URL authority must not contain '@' (userinfo bypass via base_url). Current value: %{url}"
     },
     "parse": {
       "no_rows_found": "Response contains no usage rows — schema may have changed"

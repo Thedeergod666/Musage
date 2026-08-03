@@ -232,6 +232,20 @@ async fn do_fetch(
         ));
     }
     let url = format!("{}{}", spec.base_url.trim_end_matches('/'), spec.path);
+    // H3 fix (2026-08-03 audit SECURITY): reject URL authority with @ (userinfo bypass).
+    // base_url = "https://api.legit.com@evil.com" + path = "/foo"
+    // → reqwest parses `api.legit.com` as userinfo, `evil.com` as host.
+    // is_ssrf_blocked("evil.com") returns false (not loopback), Bearer API key
+    // leaks to attacker's server. Only the **authority** (between "https://" and
+    // the first "/") is checked — legitimate "@" in the path is preserved.
+    if let Some(rest) = url.strip_prefix("https://") {
+        let authority_end = rest.find('/').unwrap_or(rest.len());
+        if rest[..authority_end].contains('@') {
+            return Err(FetchError::auth(
+                t!("error.common.url_authority_has_userinfo", url = url).into_owned(),
+            ));
+        }
+    }
     // H9 fix: SSRF / protocol confusion 防护 —— user-provided base_url 必须 https://
     // 拒绝 http:// (泄露 API key 走明文) / file:// / javascript: / 其他 scheme。
     // 即使 saved config 也每次都校验（防御篡改）。
@@ -699,5 +713,73 @@ mod tests {
         assert_eq!(spec.display_name, "Test API");
         assert!(spec.id.is_empty(), "id should default to empty string");
         assert_eq!(spec.created_at, 0, "created_at should default to 0");
+    }
+
+    /// H3 fix (2026-08-03 audit SECURITY): URL with "@" in authority must be
+    /// rejected (reqwest would parse `api.legit.com` as userinfo and connect
+    /// to the real host `evil.com`, leaking Bearer key). Authority is the
+    /// part between "https://" and the first "/".
+    #[test]
+    fn h3_rejects_at_in_authority() {
+        let mut spec = make_spec(ExtractSpec::NewApi { divide: None });
+        spec.base_url = "https://api.legit.com@evil.com".to_string();
+        spec.path = "/foo".to_string();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let err = rt
+            .block_on(do_fetch("test-key", &spec, "custom_test1234", "Test"))
+            .unwrap_err();
+        assert!(
+            err.message.contains("userinfo") || err.message.contains("authority"),
+            "expected userinfo/authority error, got: {}",
+            err.message
+        );
+    }
+
+    /// H3 fix 合法 URL 不带 @ 必须放行(走 https:// + 真实 host)。
+    /// 这里只检查 prefix 阶段,实际 fetch 会被 mock 拒绝/panic 都行
+    /// —— 关键是 do_fetch 不要在 @ check 阶段提前 reject。
+    #[test]
+    fn h3_allows_legitimate_url_without_at() {
+        let mut spec = make_spec(ExtractSpec::NewApi { divide: None });
+        spec.base_url = "https://api.legit.com".to_string();
+        spec.path = "/foo".to_string();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        // do_fetch 走到 client.get() 后会试图连真地址,timeout / connection refused
+        // 都行 —— 但要确保 error 不是 "userinfo" 拦截。
+        let result = rt.block_on(do_fetch("test-key", &spec, "custom_test1234", "Test"));
+        match result {
+            Ok(_) => panic!("expected network error against unreachable host"),
+            Err(e) => {
+                assert!(
+                    !e.message.to_lowercase().contains("userinfo")
+                        && !e.message.to_lowercase().contains("authority"),
+                    "legit URL should not be rejected by H3 @ check: {}",
+                    e.message
+                );
+            }
+        }
+    }
+
+    /// H3 fix: "@" in **path** (after first "/") is legitimate and must NOT
+    /// be rejected. e.g. `base_url="https://api.legit.com" + path="/v1/@me"`
+    /// 常见 REST API 路径段。
+    #[test]
+    fn h3_allows_at_in_path() {
+        let mut spec = make_spec(ExtractSpec::NewApi { divide: None });
+        spec.base_url = "https://api.legit.com".to_string();
+        spec.path = "/v1/@me/foo".to_string();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(do_fetch("test-key", &spec, "custom_test1234", "Test"));
+        match result {
+            Ok(_) => panic!("expected network error against unreachable host"),
+            Err(e) => {
+                assert!(
+                    !e.message.to_lowercase().contains("userinfo")
+                        && !e.message.to_lowercase().contains("authority"),
+                    "@ in path should not trigger H3: {}",
+                    e.message
+                );
+            }
+        }
     }
 }

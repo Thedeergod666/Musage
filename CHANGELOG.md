@@ -91,6 +91,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pnpm test` 29/29 passed (前端 vitest)
 - 8 份审计报告全部就位：`audit-reports/2026-07-30-full/01~08-*.md`
 
+
+### Fixed（2026-08-03 全量审计批量修复）
+
+基于 6 个并行 agent（Darwin/Raman/Feynman/Noether/Pauli/McClintock）的审查报告，按 P0→P3 顺序原子修复 17 个 bug + 新增 6 个单测：
+
+**P0 (2 commits)**
+- **P0-Raman**: `stepfun.rs` + `volcengine_ark.rs` 各有连续两份相同的 `if status == TOO_MANY_REQUESTS` 块（D-015 audit-fix 添加的重复未删 dead code），第二份永远 unreachable → 删第二份。`refresh_oasis_token` (line 594) 只有一份，无重复。
+
+**P1 (2 commits)**
+- **P1-Raman**: `minimax::parse_tier_count` 计算 utilization 后未 clamp 到 [0.0, 100.0]，server bug (r<0 或 r>t) 让 progress bar 越界。对齐 `parse_tier_percent` 已有的 reject 逻辑。新增 2 个单测覆盖 r<0 / r>t。
+- **P1-McClintock**: `stepfun_login.rs` 之前 `is_fresh_token(access)` 只校验 access 半段，refresh cookie 单独读出 → 老 access 新鲜但 refresh 已过期仍会被存盘，30min 后 access 过期 → refresh 401 → 强制重登。改为先拼 combined token 再 `is_fresh_token(&combined)`（split-n-th-1 已支持校验 refresh 半段）。
+
+**P2 (8 commits)**
+- **P2-Raman**: `anysearch::is_active=false` 时 `is_healthy=false` 但 `error=None` → 浮窗红点无 actionable message。改为 `error="error.anysearch.account_inactive" + error_kind=AuthFailed`，触发浮窗错误卡 + 一键重登。新增 en/zh-CN i18n key。
+- **P2-Raman**: `zhipu::classify_zhipu_limits::percentage` 不支持字符串数字、无 NaN/Inf 过滤、无 [0,100] clamp → 改走 `super::parse::num_f64` 自动获得过滤 + clamp。
+- **P2-Darwin B3/B4**: `lib.rs::run_dump_subcommand` 只遍历 `builtin_sources()`（11 份内置基实例）+ `custom` 中转站副本，内置副本 (`minimax#2`) 永远被跳过；dump header 用 `src.id()` 输出 `minimax`，多副本时三个 header 完全一样。改：全量 dump 同时遍历 extras.json 内置副本走 `instantiate_builtin_with_index(provider_id, instance_index)`；dump header 改 `src.unique_id()`。
+- **P2-Darwin B2**: `providers::is_ssrf_blocked` 只挡 `::ffff:127.0.0.1` 一个具体地址，但 RFC 4291 § 2.5.5.2 整个 `::ffff:127.0.0.0/104` prefix 都是 loopback。Strip `::ffff:` 前缀后重新跑 127. 检查覆盖整个 prefix。新增单测覆盖 6 个 hostile host + 2 个 safe control。
+- **P2-Darwin B5**: `platform/windows::apply_z_order` 之前只 guard `GetWindowLongW` 返回值，但 `SetWindowLongW` 失败时同样返 0 + `GetLastError()!=0`，旧代码盲信返值继续 `SetWindowPos` 导致 style 没改但 z-order 已被操纵的状态不一致。TopMost / Bottom | NotTopMost 两个分支 `SetWindowLongW` 之后检查 new_style==0 && `GetLastError()!=0` → 跳过 `SetWindowPos`。
+- **P2-Darwin B7**: 三个 login 模块 polling 循环 (`stepfun_login` / `anysearch_login` / `xiaomi_login`) 之前不观察 `SHUTDOWN_NATIVE_THREADS`，每个 tick 开头加 SHUTDOWN check。
+- **P2-McClintock (anysearch)**: init script `setInterval` 写 cookie 后立即 `clearInterval`，但 assign 成功 ≠ cookie 落地（size limit / special chars / webview store 截断都不抛错）。验证失败时不清 interval，下个 tick 重试。
+- **P2-McClintock (anysearch + stepfun)**: 14min 之前只算 iteration count (1200 × 700ms)，errors 触发额外 sleep → 实际 wall time 远超 14min。改 `Instant::now() + Duration::from_secs(14*60)` deadline 为主，MAX_ITERS 保留作 runaway 兜底。
+
+**P3 (5 commits)**
+- **P3-Raman**: `siliconflow::parse_f64` 缺 i64 / u64 分支 + 重复实现共享逻辑。直接 delegate 到 `super::parse::num_f64`。
+- **P3-Raman**: `minimax::smart_reset_to_ms` 之前 0 单测覆盖 D-011 行为，补 3 个测试覆盖 epoch_ms 直通 / duration-seconds / 负值 clamp 三条路径。
+- **P3-Darwin B10**: `stepfun.rs::fetch` 注释明确 `api_key` 槽是 legacy-only（v0.2.4 手动粘贴时代产物），新用户走 cookie 槽（`anysearch_login.rs` / `stepfun_login.rs` 一键登录）。
+- **P3-Darwin B12**: `commands/mod.rs::apply_provider_order` 删冗余 `position(o == a_order_key || o == a.source_id...)` 第二短路 —— `a_order_key` 已经走 unique_id || source_id || provider 三级 fallback，留 belt-and-suspenders 文档即可。
+- **P3-Darwin B13**: `providers::extract_host` 对 unclosed bracket (`[::1`) 之前返 host 字符串原样 → 改返 sentinel `"[invalid_ipv6]"` 让下游 `is_ssrf_blocked` 明确拒。
+
+**新增单测 6 个**：
+- `minimax::tests::parse_tier_count_clamps_to_100_on_negative_remaining`
+- `minimax::tests::parse_tier_count_clamps_to_zero_on_over_remaining`
+- `minimax::tests::smart_reset_to_ms_passes_through_epoch_ms`
+- `minimax::tests::smart_reset_to_ms_treats_small_as_duration_seconds`
+- `minimax::tests::smart_reset_to_ms_clamps_negative_to_now`
+- `providers::tests::ssrf_blocks_ipv4_mapped_ipv6_loopback_prefix`
+
+**守门**：`cargo test --lib` **367 passed** (was 361; +6 new), `cargo check --lib` clean, `cargo check --tests` clean。
+
+**16 个 atomic commits on main**：`3a71f45` `582bbb9` `44b27bc` `726bfc4` `cbcd5d6` `2b75647` `4dc3dca` `5418865` `9313c41` `4d82146` `aa163d2` `3d94bfb` `904697c` `ba48afd` `011c612` `b447db9`。
+
 ## [0.2.5] - 2026-07-29
 
 ### Fixed (Critical — StepFun 一键登录永远抓不到 token)

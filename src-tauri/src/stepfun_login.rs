@@ -283,7 +283,13 @@ async fn poll_token_from_cookie(
 ) -> PollOutcome {
     // 安全上限：~14 分钟（1200 × 700ms），覆盖手动手机号 + 验证码登录；
     // 防窗口句柄异常残留时任务永不退出。
+    //
+    // 2026-08-03 audit (McClintock P2): 同时记 wall-clock deadline。
+    // 之前只算 iteration count, 但 errors 时会额外 sleep(700ms) 重试
+    // → 实际 wall time 远超 14min。改 deadline 为主, MAX_ITERS 保留作
+    // runaway 兜底。
     const MAX_ITERS: u32 = 1200;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(14 * 60);
     let probe_url: Url = PLATFORM_URL.parse().unwrap_or_else(|_| {
         Url::parse("https://platform.stepfun.com/").expect("hardcoded URL parses")
     });
@@ -306,6 +312,11 @@ async fn poll_token_from_cookie(
         {
             tracing::debug!("stepfun 轮询收到 SHUTDOWN, 退出");
             return PollOutcome::Cancelled;
+        }
+        // 2026-08-03 audit (McClintock P2): wall-clock deadline 优先
+        if std::time::Instant::now() >= deadline {
+            tracing::warn!("stepfun 登录轮询达到 14min 硬上限 deadline, 通知前端");
+            return PollOutcome::Timeout(stepfun_timeout_reason());
         }
         // 窗口已被关 → 用户取消
         if app.get_webview_window(WINDOW_LABEL).is_none() {

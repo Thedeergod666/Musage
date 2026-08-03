@@ -376,14 +376,6 @@ async fn fetch_rate_limit(token: &str) -> Result<Value, FetchError> {
             t!("error.common.rate_limited", provider = "StepFun").into_owned(),
         ));
     }
-    // D-015 fix (2026-07-30 audit): 429 单独走 RateLimited
-    // (poller_backoff 30min 退避), 别跟其他 5xx 一起走 Server (5min 退避)
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(FetchError::new(
-            super::ErrorKind::RateLimited,
-            t!("error.common.rate_limited", provider = "StepFun").into_owned(),
-        ));
-    }
     if !status.is_success() {
         return Err(FetchError::server(
             t!(

@@ -333,13 +333,6 @@ async fn do_fetch(
         "[v0.2.5 diag] volcengine raw response (paste me if data looks wrong)"
     );
 
-    // D-015 fix (2026-07-30 audit): 429 单独走 RateLimited
-    if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        return Err(FetchError::new(
-            super::ErrorKind::RateLimited,
-            t!("error.common.rate_limited", provider = "Volcengine Ark").into_owned(),
-        ));
-    }
     if !status.is_success() {
         return Err(FetchError::server(
             t!(

@@ -132,6 +132,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **16 个 atomic commits on main**：`3a71f45` `582bbb9` `44b27bc` `726bfc4` `cbcd5d6` `2b75647` `4dc3dca` `5418865` `9313c41` `4d82146` `aa163d2` `3d94bfb` `904697c` `ba48afd` `011c612` `b447db9`。
 
+
+### Fixed（2026-08-03 全量审计批量修复 · 续）
+
+Round 2 (6 High + 5 Medium) 原子修复，按 P0→P1 顺序：
+
+- **H1** (`commands/extra_instances.rs:439-481`)：`delete_extra_instance` 回滚三 bug 凭据永久丢失
+  - `migrations_done` 改三元组 `(old_ref, new_ref, cred)`，回滚按 new_ref 删（compact 刚写入的槽位）而非 old_ref（刚 save 回去的）
+  - `target_cred_backup` 提前到 migration 循环前加载，gap-filling 场景拿 B 凭据而非 C
+  - gap-filling 不再置 `target_cred_backup = None`，B 凭据可恢复
+  - 3 个回归测试：`rollback_restores_target_when_backup_is_none` / `gap_filling_keeps_target_backup_for_rollback` / `migration_record_contains_old_new_and_credential`
+
+- **H2** (`commands/mod.rs:145,176,526`)：`get_snapshot`/`set_provider_enabled` 用 `source_id` 而非 `snapshot_key`（多实例禁用不生效）
+  - 三处 retain/any 改 `snapshot_key(p)`（P3 fix 同款统一规则）
+  - 3 个回归测试：双 snapshot 同 source_id 但不同 unique_id 场景
+
+- **H3 SECURITY** (`providers/custom.rs:234-254`)：SSRF 绕过 — 拒绝 base_url authority 含 `@`（userinfo bypass）
+  - `base_url = "https://api.legit.com@evil.com"` → reqwest 把 `api.legit.com` 当 userinfo，`evil.com` 当 host，Bearer API key 走 attacker
+  - 修复：构造 URL 后、SSRF 检查前拒绝 authority（`https://` 后到第一个 `/` 之前）含 `@` 的 URL；path 里的 `@` 合法不动
+  - 新 i18n key `error.common.url_authority_has_userinfo`（en + zh-CN）
+  - 3 个回归测试：authority 含 `@` 拒绝 / 无 `@` 放行 / path 含 `@` 放行
+
+- **H4 + H5** (`providers/volcengine_ark.rs:438-453` + `providers/zhipu.rs:407`)：D-013 fix 漏落 — 拒绝 reset timestamp `<= 0`
+  - volcengine_ark `ResetTimestamp` 加 `.filter(|ts| *ts > 0)`
+  - zhipu `nextResetTime` 加 `.filter(|ts| *ts > 0)`
+  - 4 个回归测试：ts=0 / ts=-1 都返 `resets_at=None`
+
+- **H6** (`poller.rs:320-321`)：jitter sleep 串行阻塞 poller 主循环，`quit_app` drain 失效
+  - 移 `tokio::time::sleep(jitter_ms).await` 从主循环到 spawn task
+  - spawn task 内部 `tokio::select! { _ = sleep, _ = SHUTDOWN.notified() => return }`
+  - 主循环立即可响应 SHUTDOWN，spawn task 提前 return 不阻塞 drain
+  - 1 个回归测试：`shutdown_during_long_sleep_aborts_spawn_task`（5s sleep 在 SHUTDOWN 后 500ms 内 abort）
+
+- **M-batch** (`tray.rs` + `config.rs` + `main.ts`)：6 处一致性 / UX
+  - T-M1 (`tray.rs`)：tooltip 输出过 `sanitize_tooltip_segment`，过滤控制字符但保留 emoji/Unicode
+  - T-M2 (`tray.rs`)：`format_amount_short` 加 `is_finite` 守卫，NaN/±Inf 返 `"?"`
+  - C-M1 (`config.rs:941-946`)：`best_effort_from_value` 处理 `zenmux_payg_concise_mode` 时设 `recognized_any = true`
+  - C-M2 (`config.rs`)：启动 `truncate_old_backups(parent, "extra_instances.json", 5)` 跟 keys/config 同款
+  - F-M1 (`main.ts:763,786-792`)：错误卡 re-login 决策拆 `baseId` (`p.provider`) + `unique_id`，副本 (`xiaomimimo#2`) 也能走 re-login
+  - 3 个回归测试：sanitize 控制字符 / is_fence NaN/Inf / zenmux_payg_concise_mode recognized
+
+守门：`cargo test --lib` **384 passed** (前批 367 + 17 = 384 = H1 3 + H2 3 + H3 3 + H4+H5 4 + H6 1 + M-batch 3 = 17)，`pnpm tsc --noEmit` 0 error。
+
+
 ## [0.2.5] - 2026-07-29
 
 ### Fixed (Critical — StepFun 一键登录永远抓不到 token)

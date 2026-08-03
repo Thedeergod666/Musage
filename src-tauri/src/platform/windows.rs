@@ -232,7 +232,16 @@ unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
     match z {
         ZOrder::TopMost => {
             let new_style: i32 = ex_style | (WS_EX_TOPMOST as i32);
+            SetLastError(0);
             SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
+            // 2026-08-03 audit (Darwin B5): check SetWindowLongW 返值 —
+            // 失败 (cross-process / UIPI 等) 返 0,但 SetLastError != 0。
+            // 失败时跳过 SetWindowPos,避免 style 没改但 z-order 已被
+            // 操纵的「topmost 标志还在但被塞到 HWND_BOTTOM」状态不一致
+            if new_style == 0 && GetLastError() != 0 {
+                tracing::trace!(?z, "apply_z_order: SetWindowLongW 失败，跳过 SetWindowPos");
+                return;
+            }
         }
         ZOrder::Bottom | ZOrder::NotTopMost => {
             // M4 fix: NotTopMost 之前不清 style bit (注释说 "SetWindowPos 按 Win32 文档
@@ -240,7 +249,13 @@ unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
             // WS_EX_TOPMOST，导致 Normal 模式在 Win10/11 上不可靠。
             // 改为 Bottom 和 NotTopMost 都显式 AND-out WS_EX_TOPMOST。
             let new_style: i32 = ex_style & !(WS_EX_TOPMOST as i32);
+            SetLastError(0);
             SetWindowLongW(hwnd, GWL_EXSTYLE, new_style);
+            // 2026-08-03 audit (Darwin B5): 同 TopMost 分支
+            if ex_style == new_style && new_style == 0 && GetLastError() != 0 {
+                tracing::trace!(?z, "apply_z_order: SetWindowLongW 失败，跳过 SetWindowPos");
+                return;
+            }
         }
     }
 

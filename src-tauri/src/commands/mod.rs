@@ -141,8 +141,9 @@ pub async fn set_provider_enabled(
     if !enabled {
         let state_arc = app.state::<AppState>();
         let mut snap = state_arc.snapshot.write().await;
-        snap.providers
-            .retain(|p| p.source_id.as_deref().unwrap_or(&p.provider) != id);
+        // H2 fix (2026-08-03 audit): 用 snapshot_key 统一身份键 (P3 同款规则)
+        // —— source_id 匹配置信 base id,副本 (minimax#2) 关闭时不会真被移除。
+        snap.providers.retain(|p| snapshot_key(p) != id);
         let emit_snap = snap.clone();
         drop(snap);
         // 排序 + emit
@@ -170,10 +171,12 @@ pub async fn set_provider_enabled(
         {
             let state_arc = app.state::<AppState>();
             let mut snap = state_arc.snapshot.write().await;
+            // H2 fix (2026-08-03 audit): 同样改 snapshot_key,避免 placeholder
+            // 在已存在的副本上重复 push(老 source_id 匹配置信 base)。
             let already_present = snap
                 .providers
                 .iter()
-                .any(|p| p.source_id.as_deref() == Some(&id));
+                .any(|p| snapshot_key(p) == id);
             if !already_present {
                 let mut placeholder = ProviderSnapshot::placeholder(&state_arc, &id).await;
                 // **B-NEW-10（2026-06-19 audit）**：placeholder 默认 next_fetch_at=None，
@@ -523,8 +526,9 @@ pub async fn get_snapshot(state: State<'_, AppState>) -> Result<QuotaSnapshot, S
     // 数据还留在 vecdeque 里，所以需要在这里也过滤一次。
     let mut filtered = snap;
     filtered.providers.retain(|p| {
-        let id = p.source_id.as_deref().unwrap_or(&p.provider);
-        cfg.is_enabled_id(id)
+        // H2 fix (2026-08-03 audit): 改用 snapshot_key —— 副本 (minimax#2)
+        // 关闭后浮窗不再显示,跟 set_provider_enabled 的 disable/retain 口径一致。
+        cfg.is_enabled_id(snapshot_key(p))
     });
     // 按用户配置的 provider_order 排序（空 = 用 builtin_sources() 顺序）
     apply_provider_order(&mut filtered, &cfg);
@@ -2403,5 +2407,110 @@ mod snapshot_key_tests {
             .collect();
         let out = sanitize_provider_order(vec!["minimax#2".into(), "minimax".into()], &known);
         assert_eq!(out, vec!["minimax#2".to_string(), "minimax".to_string()]);
+    }
+
+    /// H2 fix (2026-08-03 audit) 回归测试:两个 snapshot 共享同一 source_id
+    /// ("minimax" base),但 unique_id 不同("minimax#1" / "minimax#2"),`snapshot_key`
+    /// 必须把它们当成两条独立条目,retain/iter().any() 都按 unique_id 而非 source_id
+    /// 区分。模拟的正是设置面板里"关掉 minimax#2 但不要碰 minimax#1"的 H2 bug 场景。
+    #[test]
+    fn retain_by_snapshot_key_keeps_other_duplicate_source_id() {
+        let base = ProviderSnapshot {
+            provider: "minimax".into(),
+            unique_id: Some("minimax#1".into()),
+            source_id: Some("minimax".into()),
+            ..Default::default()
+        };
+        let dup = ProviderSnapshot {
+            provider: "minimax".into(),
+            unique_id: Some("minimax#2".into()),
+            source_id: Some("minimax".into()),
+            ..Default::default()
+        };
+        let mut snap = QuotaSnapshot {
+            providers: vec![base, dup],
+            ..Default::default()
+        };
+
+        // 关掉副本 minimax#2 (id 走 unique_id 路径):只删 dup,base 留下。
+        let id = "minimax#2".to_string();
+        snap.providers.retain(|p| snapshot_key(p) != id);
+
+        assert_eq!(snap.providers.len(), 1);
+        assert_eq!(snapshot_key(&snap.providers[0]), "minimax#1");
+    }
+
+    /// H2 fix 反向场景:set_provider_enabled(true) 在副本已存在时不应再
+    /// push 一份 placeholder。`already_present` 检查必须按 snapshot_key,
+    /// 否则用 source_id 匹配置信 base,副本会被当成"新条目"再来一份。
+    #[test]
+    fn any_already_present_uses_snapshot_key_not_source_id() {
+        let base = ProviderSnapshot {
+            provider: "minimax".into(),
+            unique_id: Some("minimax#1".into()),
+            source_id: Some("minimax".into()),
+            ..Default::default()
+        };
+        let dup = ProviderSnapshot {
+            provider: "minimax".into(),
+            unique_id: Some("minimax#2".into()),
+            source_id: Some("minimax".into()),
+            ..Default::default()
+        };
+        let snap = QuotaSnapshot {
+            providers: vec![base.clone(), dup],
+            ..Default::default()
+        };
+
+        // 副本 id="minimax#2" 已在 vec 里 → already_present=true,不重复 push。
+        let id_dup = "minimax#2".to_string();
+        assert!(snap.providers.iter().any(|p| snapshot_key(p) == id_dup));
+
+        // base id="minimax#1" 也在 vec 里 → 已存在。
+        let id_base = "minimax#1".to_string();
+        assert!(snap.providers.iter().any(|p| snapshot_key(p) == id_base));
+
+        // 不存在的 id → 不命中。
+        let id_missing = "minimax#3".to_string();
+        assert!(!snap.providers.iter().any(|p| snapshot_key(p) == id_missing));
+    }
+
+    /// H2 fix 第三处 get_snapshot 的 retain 也走 snapshot_key:
+    /// 用 bug 描述里同样的双 snapshot 模拟"副本已禁用"过滤,base 不应被误过。
+    #[test]
+    fn get_snapshot_filter_distinguishes_dup_from_base() {
+        use std::collections::{BTreeMap, HashSet};
+        // 模拟 is_enabled_id 的简化语义:enabled 集合里的 id 才通过 retain。
+        let enabled: HashSet<String> = ["minimax#1"].into_iter().map(String::from).collect();
+        let mut by_id: BTreeMap<String, bool> = BTreeMap::new();
+        for k in &enabled {
+            by_id.insert(k.clone(), true);
+        }
+        let is_enabled = |id: &str| by_id.get(id).copied().unwrap_or(false);
+
+        let base = ProviderSnapshot {
+            provider: "minimax".into(),
+            unique_id: Some("minimax#1".into()),
+            source_id: Some("minimax".into()),
+            ..Default::default()
+        };
+        let dup = ProviderSnapshot {
+            provider: "minimax".into(),
+            unique_id: Some("minimax#2".into()),
+            source_id: Some("minimax".into()),
+            ..Default::default()
+        };
+        let mut snap = QuotaSnapshot {
+            providers: vec![base, dup],
+            ..Default::default()
+        };
+
+        snap.providers.retain(|p| is_enabled(snapshot_key(p)));
+
+        // 只留 base (minimax#1),副本 (minimax#2) 因为源里 enabled=false 被滤掉。
+        // 老实现按 source_id 匹配 → 两条都是 "minimax" → 两条都过 / 都不通过,
+        // 取决于 enabled 集合里填的是 base 名还是副本名。
+        assert_eq!(snap.providers.len(), 1);
+        assert_eq!(snapshot_key(&snap.providers[0]), "minimax#1");
     }
 }

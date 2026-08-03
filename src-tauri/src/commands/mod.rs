@@ -1641,15 +1641,20 @@ fn apply_provider_order(snap: &mut QuotaSnapshot, cfg: &AppConfig) {
             .as_deref()
             .or(b.source_id.as_deref())
             .unwrap_or(&b.provider);
+        // 2026-08-03 audit (Darwin B12): 删冗余 fallback ——
+        // a_order_key 已经走 unique_id || source_id || provider 三级 fallback,
+        // a.source_id.as_deref().unwrap_or(&a.provider) 是 a_order_key 没匹配上的
+        // 边缘场景(legacy provider_order 只有 source_id 而 snap 没 source_id 字段)
+        // 实战不存在 (snap.source_id 总是 Some),留 belt-and-suspenders 文档即可
         let apos = cfg
             .provider_order
             .iter()
-            .position(|o| o == a_order_key || o == a.source_id.as_deref().unwrap_or(&a.provider))
+            .position(|o| o == a_order_key)
             .unwrap_or(usize::MAX);
         let bpos = cfg
             .provider_order
             .iter()
-            .position(|o| o == b_order_key || o == b.source_id.as_deref().unwrap_or(&b.provider))
+            .position(|o| o == b_order_key)
             .unwrap_or(usize::MAX);
         apos.cmp(&bpos).then(ai.cmp(bi))
     });

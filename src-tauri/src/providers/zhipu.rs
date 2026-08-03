@@ -400,9 +400,12 @@ fn classify_zhipu_limits(data: &Value) -> (Option<(f64, Option<i64>)>, Option<(f
             if !limit_type.eq_ignore_ascii_case("TOKENS_LIMIT") {
                 continue;
             }
+            // 2026-08-03 audit (Raman P2): 走共享 parse::num_f64 拿 NaN/Inf
+            // 过滤 + 字符串数字支持,再 clamp 到 [0.0, 100.0]
             let percentage = item
                 .get("percentage")
-                .and_then(|v| v.as_f64())
+                .and_then(|v| super::parse::num_f64(v))
+                .map(|p| p.clamp(0.0, 100.0))
                 .unwrap_or(0.0);
             let reset_ms = item.get("nextResetTime").and_then(|v| v.as_i64());
             // 排序键：None 排最前（无 resetTime 的优先归 5h）

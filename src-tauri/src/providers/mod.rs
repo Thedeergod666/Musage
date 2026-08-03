@@ -214,10 +214,21 @@ pub fn is_ssrf_blocked(host: &str) -> bool {
     if host == "[::]" || host == "::" {
         return true;
     }
-    if host == "::ffff:127.0.0.1" || host == "[::ffff:127.0.0.1]" {
+    // 2026-08-03 audit (Darwin B2): IPv4-mapped IPv6 loopback bypass ——
+    // 旧实现只挡 ::ffff:127.0.0.1 这一个地址,但 ::ffff:127.0.0.0/104 (RFC 4291
+    // § 2.5.5.2) 整个 prefix 都是 loopback。Strip ::ffff: 前缀后重新跑 127. 检查
+    // 即可覆盖 ::ffff:127.0.0.2 / ::ffff:127.255.255.255 等全部
+    let ipv4_mapped = host
+        .strip_prefix("::ffff:")
+        .or_else(|| host.strip_prefix("[::ffff:").and_then(|s| s.strip_suffix("]")))
+        .unwrap_or(host);
+    if ipv4_mapped == "::ffff:127.0.0.1" || ipv4_mapped == "[::ffff:127.0.0.1]" {
         return true;
     }
-    if host.strip_prefix("127.").is_some() {
+    if ipv4_mapped.strip_prefix("127.").is_some() {
+        return true;
+    }
+    if ipv4_mapped == "0.0.0.0" {
         return true;
     }
     if host.starts_with("169.254.") {
@@ -1079,6 +1090,31 @@ mod tests {
     fn enforce_body_limit_allows_small_and_rejects_huge() {
         assert!(enforce_body_limit(&[0u8; 1024]).is_ok());
         assert!(enforce_body_limit(&vec![0u8; MAX_RESPONSE_BYTES + 1]).is_err());
+    }
+
+    // ── 2026-08-03 audit (Darwin B2): IPv4-mapped IPv6 loopback prefix 全挡 ──
+
+    #[test]
+    fn ssrf_blocks_ipv4_mapped_ipv6_loopback_prefix() {
+        // RFC 4291 § 2.5.5.2: ::ffff:127.0.0.0/104 整个 prefix 都是 loopback
+        // 旧实现只挡 ::ffff:127.0.0.1 一个地址,::ffff:127.0.0.2 / ::ffff:127.255.255.255
+        // 都能绕过。修:strip ::ffff: 前缀后跑 127. 检查。
+        for host in [
+            "::ffff:127.0.0.1",
+            "::ffff:127.0.0.2",
+            "::ffff:127.1.2.3",
+            "::ffff:127.255.255.255",
+            "[::ffff:127.0.0.2]",
+            "[::ffff:127.255.255.255]",
+        ] {
+            assert!(
+                is_ssrf_blocked(host),
+                "{host} 应被 SSRF 拦截 (::ffff:127.x.x.x loopback)"
+            );
+        }
+        // 公共 IPv4-mapped 地址不应被误拦
+        assert!(!is_ssrf_blocked("::ffff:8.8.8.8"));
+        assert!(!is_ssrf_blocked("[::ffff:8.8.8.8]"));
     }
 }
 

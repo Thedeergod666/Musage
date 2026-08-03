@@ -298,6 +298,15 @@ async fn poll_token_from_cookie(
         if DONE.load(Ordering::SeqCst) {
             return PollOutcome::Cancelled;
         }
+        // 2026-08-03 audit (Darwin B7): 跟 hover emitter / fullscreen watcher
+        // 一样在每个 tick 开头检查 SHUTDOWN_NATIVE_THREADS, 用户 quit_app
+        // 时立即退出轮询,不再浪费一个 sleep(700ms) 周期
+        if crate::poller::SHUTDOWN_NATIVE_THREADS
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            tracing::debug!("stepfun 轮询收到 SHUTDOWN, 退出");
+            return PollOutcome::Cancelled;
+        }
         // 窗口已被关 → 用户取消
         if app.get_webview_window(WINDOW_LABEL).is_none() {
             return PollOutcome::Cancelled;
@@ -331,20 +340,24 @@ async fn poll_token_from_cookie(
         if let Some(tok) = cookies.iter().find(|c| c.name() == TOKEN_COOKIE) {
             // cookie value 可能带引号（macOS WKWebView 习惯），剥掉
             let access = tok.value().trim_matches('"');
-            if is_fresh_token(access) {
-                let refresh = cookies
-                    .iter()
-                    .find(|c| c.name() == REFRESH_COOKIE)
-                    .map(|c| c.value().trim_matches('"'))
-                    .filter(|v| !v.is_empty());
-                let combined = combine_token(access, refresh);
+            let refresh = cookies
+                .iter()
+                .find(|c| c.name() == REFRESH_COOKIE)
+                .map(|c| c.value().trim_matches('"'))
+                .filter(|v| !v.is_empty());
+            // 2026-08-03 audit (McClintock P1): 拼成 combined token 再校验,
+            // 不能再只看 access —— 老 access 新鲜但 refresh cookie 已过期
+            // (用户 30 天没来, server 重发 access 但 refresh 残留) 会被
+            // 错误接受并存盘,30min 后 access 过期 → refresh 401 → 强制重登
+            let combined = combine_token(access, refresh);
+            if is_fresh_token(&combined) {
                 return match save_token(&combined) {
                     Ok(len) => PollOutcome::Saved(len),
                     Err(e) => PollOutcome::Failed(e),
                 };
             }
-            // token 在但已过期 / 为空 —— 上一次会话的残留，继续等用户登录后的新 token
-            tracing::debug!("Oasis-Token 存在但已过期或为空（旧会话残留），继续轮询");
+            // token 在但已过期 / 为空 —— 上一次会话的残留,继续等用户登录后的新 token
+            tracing::debug!("Oasis-Token 存在但已过期或为空(旧会话残留),继续轮询");
         }
         // 没有 Oasis-Token cookie = 用户还没登录 —— 继续等
 

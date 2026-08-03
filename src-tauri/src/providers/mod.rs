@@ -186,9 +186,14 @@ pub fn extract_host(url: &str) -> Option<String> {
         // fix (2026-07-28 审查 D2): 保留完整 `[...]` 形式(含闭合括号)。
         // 之前 `split(']').next()` 产出 `[::1`(丢 `]`),is_ssrf_blocked 比对
         // `[::1]` 不匹配 → `https://[::1]:8080` 绕过 SSRF 拦截。
+        //
+        // 2026-08-03 audit (Darwin B13): unclosed bracket 防御 ——
+        // 之前 `None => host` 返无括号串, is_ssrf_blocked 不认识 → 绕过。
+        // 改返 sentinel "[invalid_ipv6]" 让下游拦截 (URL::parse 也会拒但
+        // 保险起见显式标注)
         match host.find(']') {
             Some(end) => &host[..=end],
-            None => host,
+            None => return Some("[invalid_ipv6]".into()),
         }
     } else {
         host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host)

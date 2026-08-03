@@ -604,34 +604,57 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
                     .into_iter()
                     .filter(|s| cfg.is_enabled_id(s.id().as_ref()))
                     .collect();
-                // custom source 单独 append —— builtin 列表里没有
-                // PR 1a：extra instance 里只 append provider_id == "custom" 的
-                // (内置副本由 builtin_sources() 已含的 11 份 ... 不对, 副本不走 builtin)
-                // PR 1a 简化：dump CLI 暂时不展示内置副本(builtin_sources() 只返 11 份
-                // 内置第 1 份),全量 dump 时只 append custom 中转站。后续 PR 1b
-                // providers::all_sources 改完后再调它。
+                // 2026-08-03 audit (Darwin B3): 同时遍历 builtin 副本 + custom 中转站。
+                // builtin_sources() 只返 11 份内置「基」实例,副本 (#2/#3) 走 extras.json
+                // 注册,这里用 instantiate_builtin_with_index() 重新实例化并 push。
                 for inst in &customs {
+                    if !cfg.is_enabled_id(&inst.api_key_ref) {
+                        continue;
+                    }
                     if inst.provider_id == "custom" {
                         if let Some(spec) = &inst.custom {
-                            if cfg.is_enabled_id(&inst.api_key_ref) {
-                                all.push(Box::new(CustomSource::new(spec.clone())));
-                            }
+                            all.push(Box::new(CustomSource::new(spec.clone())));
+                        }
+                    } else {
+                        // 内置副本:按 provider_id + instance_index 重新构造
+                        if let Some(src) = crate::providers::instantiate_builtin_with_index(
+                            &inst.provider_id,
+                            inst.instance_index,
+                        ) {
+                            all.push(src);
                         }
                     }
                 }
                 all
             }
             Some(id) => {
-                // builtin 优先,然后 custom
+                // builtin 基实例优先(单一 id 形式),然后 builtin 副本
+                // (api_key_ref 形式如 minimax#2),最后 custom
                 if let Some(s) = builtin_sources().into_iter().find(|s| s.id() == id) {
                     vec![s]
                 } else if let Some(inst) = customs.iter().find(|s| s.api_key_ref == id) {
-                    if let Some(spec) = &inst.custom {
-                        vec![Box::new(CustomSource::new(spec.clone()))]
+                    if inst.provider_id == "custom" {
+                        if let Some(spec) = &inst.custom {
+                            vec![Box::new(CustomSource::new(spec.clone()))]
+                        } else {
+                            eprintln!("instance {} found but has no custom spec", inst.api_key_ref);
+                            return 2;
+                        }
                     } else {
-                        // 找到了 instance 但不是 custom(理论不会到这里)
-                        eprintln!("instance {} found but has no custom spec", inst.api_key_ref);
-                        return 2;
+                        // 内置副本:按 provider_id + instance_index 重新构造
+                        match crate::providers::instantiate_builtin_with_index(
+                            &inst.provider_id,
+                            inst.instance_index,
+                        ) {
+                            Some(src) => vec![src],
+                            None => {
+                                eprintln!(
+                                    "unknown builtin provider_id '{}' for instance {}",
+                                    inst.provider_id, inst.api_key_ref
+                                );
+                                return 2;
+                            }
+                        }
                     }
                 } else {
                     // 拼"已知 id"列表(builtin + custom),错误消息更友好
@@ -659,12 +682,14 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
         }
 
         for src in sources {
+            // 2026-08-03 audit (Darwin B4): 用 unique_id() 区分 minimax vs minimax#2,
+            // 不然两份副本 + 基实例 dump 时三个 header 都是 "minimax" 区分不出来
             println!(
                 "{}",
                 t!(
                     "cli.dump_header",
                     display_name = src.display_name(),
-                    id = src.id()
+                    id = src.unique_id()
                 )
             );
 

@@ -280,8 +280,16 @@ fn init_script() -> String {
                 try {
                     if (tok) {
                         document.cookie = COOKIE_NAME + "=" + tok + "; path=/; max-age=3600; SameSite=Lax";
-                        // 首次成功写 → 停 interval, Rust 端会读 cookie 后关窗
-                        clearInterval(_musageIv);
+                        // 2026-08-03 audit (McClintock P2): 写后回读 verify
+                        // —— cookie 写入可能因 size limit / special chars /
+                        // webview cookie store 截断 失败但 assignment 不抛错
+                        // (assign 成功 ≠ cookie 落地). 验证失败时不清 interval,
+                        // 下个 tick 重试; 验证成功才 clearInterval + 通知 Rust
+                        var written = (document.cookie || "").split("; ")
+                            .some(function (c) { return c.indexOf(COOKIE_NAME + "=") === 0 && c.length >= (COOKIE_NAME + "=" + tok).length; });
+                        if (written) {
+                            clearInterval(_musageIv);
+                        }
                     } else {
                         document.cookie = COOKIE_NAME + "=; path=/; max-age=0";
                     }
@@ -413,7 +421,13 @@ async fn poll_token_from_cookie(
     my_gen: u64,
 ) -> PollOutcome {
     // 安全上限：~14 分钟，防窗口句柄异常残留时任务永不退出。
+    //
+    // 2026-08-03 audit (McClintock P2): 同时记 wall-clock deadline。
+    // 之前只算 iteration count (1200 × 700ms = 14min),但 errors 时会
+    // 额外 sleep(700ms) 重试 → 实际 wall time 远超 14min。改 deadline
+    // 为主, MAX_ITERS 保留作 runaway 兜底。
     const MAX_ITERS: u32 = 1200;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(14 * 60);
     // cookies_for_url 需要一个 URL —— anysearch.com 任何 URL 都返同一 cookie jar
     let probe_url: Url = LOGIN_URL.parse().unwrap_or_else(|_| {
         Url::parse("https://www.anysearch.com/").expect("hardcoded URL parses")
@@ -440,6 +454,12 @@ async fn poll_token_from_cookie(
         {
             tracing::debug!("anysearch 轮询收到 SHUTDOWN, 退出");
             return PollOutcome::Cancelled;
+        }
+        // 2026-08-03 audit (McClintock P2): wall-clock deadline 优先
+        // —— errors 触发的额外 sleep 会让 iteration count 估不准
+        if std::time::Instant::now() >= deadline {
+            tracing::warn!("anysearch 登录轮询达到 14min 硬上限 deadline, 通知前端");
+            return PollOutcome::Timeout(anysearch_timeout_reason());
         }
         // 窗口已被关 → 用户取消
         if app.get_webview_window(WINDOW_LABEL).is_none() {

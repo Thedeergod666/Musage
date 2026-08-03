@@ -366,6 +366,14 @@ async fn extract_with_retry(
             return Err(t!("xiaomi_login.another_task_done").into_owned());
         }
 
+        // 2026-08-03 audit (Darwin B7): 跟 hover emitter 同款 SHUTDOWN 检查
+        if crate::poller::SHUTDOWN_NATIVE_THREADS
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            tracing::debug!("xiaomi 提取流程收到 SHUTDOWN, 退出");
+            return Err(t!("xiaomi_login.another_task_done").into_owned());
+        }
+
         // gen 已被新流程取代 → 静默退出
         if !is_current_gen(my_gen) {
             tracing::debug!(my_gen, attempt_num, "xiaomi 提取流程 gen 失效，静默退出");

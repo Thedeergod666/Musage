@@ -433,6 +433,14 @@ async fn poll_token_from_cookie(
         if DONE.load(Ordering::SeqCst) {
             return PollOutcome::Cancelled;
         }
+        // 2026-08-03 audit (Darwin B7): 跟 hover emitter / fullscreen watcher
+        // 一样在每个 tick 开头检查 SHUTDOWN_NATIVE_THREADS
+        if crate::poller::SHUTDOWN_NATIVE_THREADS
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            tracing::debug!("anysearch 轮询收到 SHUTDOWN, 退出");
+            return PollOutcome::Cancelled;
+        }
         // 窗口已被关 → 用户取消
         if app.get_webview_window(WINDOW_LABEL).is_none() {
             return PollOutcome::Cancelled;

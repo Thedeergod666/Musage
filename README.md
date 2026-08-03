@@ -6,7 +6,7 @@
 
 ![platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-blue) ![tauri](https://img.shields.io/badge/Tauri-2-orange) ![rust](https://img.shields.io/badge/rust-1.77+-orange) ![license](https://img.shields.io/badge/license-MIT-green)
 
-<!-- 📸 TODO: 录一个 5-10s demo gif（浮窗拖动 + 托盘变色 + 多实例并排）放到 .github/assets/hero.gif，然后在上面这行 badges 下加一行 ![hero](.github/assets/hero.gif) -->
+![hero](.github/assets/hero.gif)
 
 ## 为什么做
 

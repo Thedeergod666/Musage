@@ -317,8 +317,14 @@ pub fn start(app: AppHandle) {
                 //
                 // cap jitter 到 interval 的 10% (跟 jitter_for 一致), wake-up
                 // 路径下 spawn 总等待时长 ≤ 1.2 * interval,用户体感仍是"立刻刷新"。
+                //
+                // H6 fix (2026-08-03 audit): jitter sleep **必须**移进 spawn task,
+                // 主循环只推进 entry。原来主循环里 await sleep (1.2 * 12 providers
+                // 顺序串行 ≈ 36-72s),quit_app 500ms drain 窗口内主循环卡 sleep,
+                // app.exit(0) 强杀 → in-flight fetch 被强杀 + JoinSet 残留 panic
+                // 日志。移进去后主循环立即可响应 SHUTDOWN,spawn task 自己用
+                // select 守 SHUTDOWN 提前 return。
                 let jitter_ms = jitter_for(unique.as_str(), interval_secs);
-                tokio::time::sleep(Duration::from_millis(jitter_ms)).await;
                 // 到点 → 拉这个 provider（独立 task，并发）
                 let app_clone = app.clone();
                 let unique_owned = unique.clone();
@@ -333,6 +339,15 @@ pub fn start(app: AppHandle) {
                         e.into_inner()
                     })
                     .spawn(async move {
+                        // H6 fix: jitter sleep 在 spawn task 里,且 select 守 SHUTDOWN
+                        // —— quit_app 期间 task 立即退出,不阻塞 drain。
+                        tokio::select! {
+                            _ = tokio::time::sleep(Duration::from_millis(jitter_ms)) => {}
+                            _ = SHUTDOWN.notified() => {
+                                tracing::debug!(provider = %unique_owned, "spawn task aborted by SHUTDOWN during jitter");
+                                return;
+                            }
+                        }
                         // P4 fix (2026-07-28 审查): 走 poller 专用入口 ——
                         // tick()/refresh_now 全量刷新在跑时跳过本次(之前
                         // TICK_RUNNING 只防 tick vs tick,这里 spawn 的
@@ -490,5 +505,27 @@ mod tests {
         assert_eq!(next_fetch.len(), 1);
         assert!(next_fetch.contains_key("minimax"));
         assert_eq!(last_intervals, HashMap::from([("minimax".to_string(), 60)]));
+    }
+
+    /// H6 fix 主用例:SHUTDOWN 在 sleep 中途通知,task 立即退出。
+    #[tokio::test]
+    async fn shutdown_during_long_sleep_aborts_spawn_task() {
+        let jitter_ms = 5_000u64; // 5s sleep
+        // notify_one 安排 permit 给下一次 notified() —— 跟 wake-up 期间
+        // 主循环处理 SHUTDOWN 的语义一致(notify_waiters 只唤醒当前等待的)。
+        SHUTDOWN.notify_one();
+        let aborted = tokio::time::timeout(Duration::from_millis(500), async {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(jitter_ms)) => {
+                    false
+                }
+                _ = SHUTDOWN.notified() => {
+                    true
+                }
+            }
+        })
+        .await
+        .expect("select 应在 500ms 内被 SHUTDOWN permit 唤醒");
+        assert!(aborted, "spawn task 在 SHUTDOWN 后必须 abort,不能等满 5s sleep");
     }
 }

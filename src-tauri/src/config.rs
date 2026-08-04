@@ -1299,6 +1299,39 @@ pub fn delete_credential_for_id(id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// v0.2.5 新增：只删 `{id}:cookie` 单槽位，**不动 api_key / secret_key**。
+///
+/// Kimi「总套餐」会话（`kimi:cookie` = kimi-auth JWT）的「清除」按钮走这里
+/// —— kimi 的主凭据是 API key（`AuthKind::ApiKey`），webview 登录的 cookie
+/// 只是可选增强，清除时绝不能用 [`delete_credential_for_id`] 把用户的
+/// API key 一起带走。
+///
+/// 实现注意（2026-08-04）：**不能**走 `save_credential_for_id` 传
+/// `cookie: None` —— 那个函数对 None 字段是**跳过不删**（StepFun 2026-07-28
+/// 二轮实测 bug 的同一行为），必须显式 `map.remove`。
+pub fn delete_cookie_slot_for_id(id: &str) -> Result<(), String> {
+    let _g = save_lock().lock().unwrap_or_else(lock_recover);
+    let mut map = read_keys()?;
+    map.remove(&format!("{id}:cookie"));
+    if map.is_empty() {
+        // 跟 delete_credential_for_id 同款 H2 fix 语义：空 map 优先删文件，
+        // 失败回退写空 map，保证内存与磁盘一致。
+        let path = keys_path()?;
+        if path.exists() {
+            if let Err(e) = std::fs::remove_file(&path) {
+                tracing::warn!(
+                    error = %e,
+                    "remove empty keys.json 失败, fallback 到写空 map"
+                );
+                write_keys_atomic(&map)?;
+            }
+        }
+    } else {
+        write_keys_atomic(&map)?;
+    }
+    Ok(())
+}
+
 // ── 单元测试 ─────────────────────────────────────────────────────
 
 #[cfg(test)]

@@ -28,6 +28,7 @@
     "plan": "套餐",
     "compensation": "补偿",
     "monthly_total": "总额度",
+    "total_plan": "总套餐",
     "free_tier": "Free tier",
     "credits": "credits",
     "calls": "calls",
@@ -183,6 +184,7 @@
     "xiaomi_login": "登录小米账号 - Musage",
     "anysearch_login": "登录 AnySearch - Musage",
     "stepfun_login": "登录 StepFun - Musage",
+    "kimi_login": "登录 Kimi - Musage",
     "floating": "Musage"
   },
   "provider_name": {
@@ -233,5 +235,19 @@
     "build_webview": "build webview: %{err}",
     "save_keys_failed": "写 keys.json 失败: %{err}",
     "token_too_large": "合并后 token 过大 ({bytes} 字节,上限 12288)。疑似未来 StepFun 改 ECDSA P-521 或追加字段,请提 bug"
+  },
+  "kimi_login": {
+    "parse_login_url": "parse LOGIN_URL: %{err}",
+    "build_webview": "build webview: %{err}",
+    "save_keys_failed": "写 keys.json 失败: %{err}",
+    "token_too_large": "kimi-auth token 过大 (%{bytes} 字节,上限 12288)。疑似 Kimi 端 schema 变化,请提 bug"
+  },
+  "login": {
+    "stepfun": {
+      "timeout": "%{secs} 秒内未完成登录 —— 请重试"
+    },
+    "kimi": {
+      "timeout": "%{secs} 秒内未完成登录 —— 请重试"
+    }
   }
 }

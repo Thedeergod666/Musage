@@ -47,6 +47,13 @@ uuid = { version = "1", features = ["v4"] }
 # 用作 Oasis-Webid (CodexBar reverse-engineered)。
 # 用 URL_SAFE_NO_PAD(JWT 标准)避免 padding 处理。
 base64 = "=0.22.1"
+# v0.2.5 Kimi 总套餐：读 kimi-desktop 本地 Chromium Cookies SQLite 库
+# 里的 kimi-auth 会话 JWT（CodexBar KimiDesktopAuthToken 同款方案）。
+# bundled = 静态链 sqlite3，不依赖系统库（Windows GNU 工具链也能编）。
+rusqlite = { version = "0.31", features = ["bundled"] }
+# v0.2.5 Kimi 总套餐：GetSubscriptionStats 请求头 r-timezone 需要 IANA
+# 时区名（仿 CodexBar `TimeZone.current.identifier`）。
+iana-time-zone = "0.1"
 # v0.2.5: 火山方舟 Coding Plan / Agent Plan 管控面鉴权走 v4 HMAC-SHA256
 # 签名(类 AWS SigV4,无 AWS4 前缀,SERVICE/REQUEST 终结)。每个 fetch 算
 # 一次签名(< 100µs 串行 4 次 HMAC)。reqwest 0.12 已传递依赖了 sha2 / hmac

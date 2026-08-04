@@ -216,6 +216,52 @@ export function renderCredentialBlock(meta: SourceMeta): HTMLElement {
         apiKeyHelpNode(meta.id),
       ),
     );
+    // 2026-08-04 v0.2.5: kimi 追加「总套餐」可选增强 banner（一键登录
+    // kimi.com 网页会话 → 浮窗多出「总套餐」月度共享池行）。
+    // 形态仿 stepfun/anysearch 的 quick-login-banner，但**保留**上面的
+    // API key 输入区 —— kimi 的主凭据仍是 API key（5h/7d 限额），网页会话
+    // 只是可选增强：不登录浮窗保持原样（只 5h + 7d）。
+    // status 元素 id = cookie-status-kimi（不带 -adv），由专用的
+    // loadKimiSessionStatus() 写「已配置 / 未配置」— 不能用公共的
+    // loadCredentialStatus（它按"任一槽位"判定，会被 API key 槽污染，
+    // 且 ?? 链只命中第一个 status 元素）。
+    if (meta.id === "kimi") {
+      block.appendChild(
+        el("div", { class: "quick-login-banner" },
+          el("div", { class: "quick-login-text" },
+            el("strong", {}, t("credentials.kimi_login_hint")),
+            el("br"),
+            t("credentials.kimi_login_help"),
+          ),
+          el("div", { class: "row" },
+            el("button", {
+              class: "primary big",
+              id: `kimi-login-${meta.id}`,
+              "data-id": meta.id,
+              "data-action": "kimi-login",
+            }, t("credentials.login_kimi")),
+            el("button", {
+              class: "danger",
+              id: `kimi-clear-cookie-${meta.id}`,
+              "data-id": meta.id,
+              "data-action": "kimi-clear-cookie",
+            }, t("credentials.clear_cookie")),
+            el("a", {
+              class: "link-ext",
+              href: "https://www.kimi.com/membership/subscription?tab=quota",
+              target: "_blank",
+              rel: "noopener noreferrer",
+            }, t("credentials.visit_official_site")),
+          ),
+        ),
+      );
+      block.appendChild(
+        el("div", { class: "field" },
+          el("div", { class: "status", id: `cookie-status-${meta.id}`, "data-id": meta.id },
+            t("credentials.cookie_status_placeholder")),
+        ),
+      );
+    }
   } else if (meta.auth_kind === "api_key_with_secret") {
     // ── 双独立 input：AK + SK（v0.2.5 火山方舟 Coding Plan 用）──
     // 跟 ccswitch 1:1：两个 password input + 2 个状态徽章 + 1 个 save / 1 个 del。
@@ -914,6 +960,65 @@ export async function stepfunClearCookieAction(id: string) {
   }
 }
 
+/// 一键登录 Kimi（「总套餐」网页会话，v0.2.5）：弹 webview → 用户在
+/// kimi.com 登录（或已有 session 秒过）→ 后端轮询 www.kimi.com 域
+/// cookie jar 抽 kimi-auth JWT → 写 keys.json（`kimi:cookie` 槽位，
+/// **不动 API key**）→ 立即 refresh 让浮窗多出「总套餐」行。
+///
+/// 数据流（仿 stepfunLoginAction）：
+/// 1. `invoke("open_kimi_login_window")` → 后端开 webview
+/// 2. 用户在 webview 里正常登录 Kimi
+/// 3. 后端每 700ms 轮询 cookie jar，见到 exp 未过期的 kimi-auth → 存盘
+/// 4. 后端 emit `musage://kimi-login-success` / `-failed`
+/// 5. 本函数在 init 时绑一次事件监听（见 `bindKimiLoginEvents`）
+export async function kimiLoginAction(id: string) {
+  if (id !== "kimi") {
+    flash(t("credentials.kimi_login_only"), true);
+    return;
+  }
+  try {
+    await invoke("open_kimi_login_window");
+    flash(t("credentials.kimi_login_opened"));
+  } catch (e) {
+    flash(t("credentials.kimi_login_failed", { err: String(e) }), true);
+  }
+}
+
+/// 清除已保存的 Kimi 网页会话（`kimi:cookie` 槽）。
+/// 走后端专用 `clear_kimi_session` 命令 —— **只清 cookie 槽，不动 API key**
+/// （deleteSourceCredential 会把该 id 全部凭据都删掉，kimi 不能用）。
+export async function kimiClearSessionAction(id: string) {
+  if (id !== "kimi") return;
+  if (!(await confirmInApp(t("credentials.confirm_clear_kimi_session")))) return;
+  try {
+    await invoke("clear_kimi_session");
+    flash(t("credentials.kimi_session_clear_done"));
+    await loadKimiSessionStatus();
+  } catch (e) {
+    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
+  }
+}
+
+/// 刷新 Kimi 网页会话状态徽章（`cookie-status-kimi`）。
+/// 读 **cookie 槽** 判定（不能用公共 loadCredentialStatus：它按"任一槽位"
+/// 判定，API key 已配时永远显示"已配置"，徽章失去意义）。
+/// settings/main.ts init 渲染完 kimi panel 后调一次；登录成功 / 清除后也调。
+export async function loadKimiSessionStatus(): Promise<void> {
+  const status = document.getElementById("cookie-status-kimi");
+  if (!status) return; // kimi panel 还没渲染
+  let has = false;
+  try {
+    const tok = await getSourceCredential("kimi", "cookie");
+    has = !!tok && tok.length > 0;
+  } catch {
+    has = false;
+  }
+  status.textContent = has
+    ? t("credentials.cookie_status_saved")
+    : t("credentials.cookie_status_unset");
+  status.className = `status ${has ? "ok" : ""}`;
+}
+
 /// 绑一次后端 StepFun 登录事件 → UI 反馈。init 时调一次。
 // M8 fix: 跟 anysearch / xiaomi 同样 — _listeners 数组存 unlisten
 // 句柄,init 重试 / dev hot-reload 不会累积 listener。
@@ -930,6 +1035,24 @@ export function bindStepfunLoginEvents() {
     flash(t("credentials.stepfun_login_failure", { err: e.payload }), true);
   }).then((un) => _stepfunListeners.push(un));
   _stepfunListenersBound = true;
+}
+
+/// 绑一次后端 Kimi 登录事件 → UI 反馈。init 时调一次。
+// 跟 stepfun / anysearch / xiaomi 同款：module-scope 存 unlisten 句柄 +
+// bound flag，init 重试 / dev hot-reload 不会累积 listener。
+const _kimiListeners: UnlistenFn[] = [];
+let _kimiListenersBound = false;
+export function bindKimiLoginEvents() {
+  if (_kimiListenersBound) return;
+  void listen<number>("musage://kimi-login-success", (e) => {
+    const savedLen = e.payload;
+    flash(t("credentials.kimi_login_success", { bytes: savedLen }));
+    void loadKimiSessionStatus();
+  }).then((un) => _kimiListeners.push(un));
+  void listen<string>("musage://kimi-login-failed", (e) => {
+    flash(t("credentials.kimi_login_failure", { err: e.payload }), true);
+  }).then((un) => _kimiListeners.push(un));
+  _kimiListenersBound = true;
 }
 
 /// 绑一次后端 AnySearch 登录事件 → UI 反馈。init 时调一次。
@@ -1023,6 +1146,12 @@ export function bindCredentialButtonsGlobal() {
         break;
       case "stepfun-clear-cookie":
         void stepfunClearCookieAction(id);
+        break;
+      case "kimi-login":
+        void kimiLoginAction(id);
+        break;
+      case "kimi-clear-cookie":
+        void kimiClearSessionAction(id);
         break;
     }
   });

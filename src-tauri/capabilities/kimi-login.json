@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "kimi-login",
+  "description": "kimi-login window — permission for the login webview itself (window focus only). Window creation happens in Rust (src/kimi_login.rs) and does not use webview permission. The webview loads an external URL and does not call createWebviewWindow.",
+  "windows": ["kimi-login"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-focus"
+  ]
+}

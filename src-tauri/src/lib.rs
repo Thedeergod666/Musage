@@ -15,6 +15,8 @@
 mod anysearch_login;
 mod commands;
 mod config;
+mod kimi_desktop;
+mod kimi_login;
 mod logstore;
 mod platform;
 mod poller;
@@ -387,6 +389,8 @@ pub fn run() {
             xiaomi_login::open_xiaomi_login_window,
             anysearch_login::open_anysearch_login_window,
             stepfun_login::open_stepfun_login_window,
+            kimi_login::open_kimi_login_window,
+            kimi_login::clear_kimi_session,
         ])
         .on_window_event(|window, event| {
             // 关闭悬浮窗时拦截，避免退出整个 app

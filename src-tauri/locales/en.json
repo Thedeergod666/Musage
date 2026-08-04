@@ -28,6 +28,7 @@
     "plan": "Plan",
     "compensation": "Compensation",
     "monthly_total": "Monthly total",
+    "total_plan": "Total plan",
     "free_tier": "Free tier",
     "credits": "credits",
     "calls": "calls",
@@ -183,6 +184,7 @@
     "xiaomi_login": "Login Xiaomi — Musage",
     "anysearch_login": "Login AnySearch — Musage",
     "stepfun_login": "Login StepFun — Musage",
+    "kimi_login": "Login Kimi — Musage",
     "floating": "Musage"
   },
   "provider_name": {
@@ -233,5 +235,19 @@
     "build_webview": "build webview: %{err}",
     "save_keys_failed": "Failed to write keys.json: %{err}",
     "token_too_large": "Combined token too large ({bytes} bytes, max 12288). Likely future ECDSA P-521 / extra fields — please file a bug."
+  },
+  "kimi_login": {
+    "parse_login_url": "parse LOGIN_URL: %{err}",
+    "build_webview": "build webview: %{err}",
+    "save_keys_failed": "Failed to write keys.json: %{err}",
+    "token_too_large": "kimi-auth token too large (%{bytes} bytes, max 12288). Likely a Kimi-side schema change — please file a bug."
+  },
+  "login": {
+    "stepfun": {
+      "timeout": "Login not completed within %{secs}s — please try again"
+    },
+    "kimi": {
+      "timeout": "Login not completed within %{secs}s — please try again"
+    }
   }
 }

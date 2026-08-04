@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Kimi「总套餐」月度共享池, 2026-08-04)
+
+**背景**：2026-08 起 Kimi 网页端「我的额度」页新增**总使用量**进度条 —— 所有会员功能（Kimi 对话 / Kimi Code / Kimi Work / PPT / 深度研究…）共享一个月度额度池（`FEATURE_OMNI`），按 token 消耗；Kimi Code 的 5h/7d 限额独立于该池。本机调查实锤：
+
+- **API key 拿不到总池**：`GET /coding/v1/usages` 响应 `authentication.scope` 锁死 `FEATURE_CODING`；`totalQuota` 字段已存在但**恒为空 `{}`**（`?scope=FEATURE_OMNI` 等参数被无视，`/coding/v2/usages` / `/subscription` / `/quota` 变体全 404，调网页网关 401 `REASON_INVALID_AUTH_TOKEN`）。官方 kimi-cli `/usage` 源码同款只渲染 5h/7d —— 官方 CLI 也没有总套餐。
+- **总池只走网页会话**：`POST https://www.kimi.com/apiv2/kimi.gateway.membership.v2.MembershipService/GetSubscriptionStats`（CodexBar `KimiUsageFetcher.swift` 逆向），鉴权 = `kimi-auth` cookie 会话 JWT。本机实测 200：`{ ratelimitCode5h{ratio,resetTime}, ratelimitCode7d{...}, subscriptionBalance{ feature:"FEATURE_OMNI", type:"SUBSCRIPTION", amountUsedRatio:0.5548, kimiCodeUsedRatio:0.2977, expireTime }, boosterWallets[...] }` —— 与网页端截图数值逐项吻合（`amountUsedRatio` = 总池，`kimiCodeUsedRatio` = 官方双色堆叠条的 Code 蓝段）。
+
+**集成策略（hybrid enrich，增强失败绝不 fail 主快照）**：
+
+- API key 拉 5h/7d 原逻辑零改动；`totalQuota` **防御性解析**（官方未来若填上直接消费，猜测 schema 同 `usage`）
+- 空则走网页会话调 `GetSubscriptionStats`：请求头对齐 CodexBar 实测集合（Bearer + Cookie 双写 / `connect-protocol-version: 1` / `x-msh-platform: web` / JWT claims 解 `x-msh-device-id`(device_id) / `x-msh-session-id`(ssid) / `x-traffic-id`(sub) / 浏览器 UA / `r-timezone`）；门控 `feature ∈ {缺省, FEATURE_OMNI}` + `type ∈ {缺省, SUBSCRIPTION}` 才认 `amountUsedRatio`
+- 会话获取三级降级：`kimi:cookie` 槽（webview 登录写入，剥 `kimi-auth=` 前缀防御手改）→ **kimi-desktop 本地 Chromium Cookies SQLite 库实时读**（新模块 `src/kimi_desktop.rs`，CodexBar `KimiDesktopAuthToken` 同款：三平台 `config_dir()/kimi-desktop/Cookies` 路径 + busy_timeout 250ms + `immutable=1` 兜底 + `value` 明文检测（Windows DPAPI/App-Bound 加密读不出 → None 降级）+ JWT exp 60s skew 本地预检；桌面端自己刷新会话 → **每次 fetch 重读即自动保鲜**，不写 keys.json）→ 都没有 → **浮窗保持原样（只 5h + 7d，用户明确要求的降级语义）**
+- 总套餐行：utilization-only（`amountUsedRatio × 100`）插卡片**最前**（对齐官方 UI 层级），label 走新 key `row.total_plan`「总套餐 / Total plan」，`resets_at` = `expireTime` + `extra.reset_period="monthly"` → 前端**零改动**自动渲「月重置」倒计时；`kimi_code_used_ratio` 塞 `extra` 备后续双色堆叠条
+- stats 原始响应挂 `snapshot.raw.subscription_stats_enrich`，dump CLI 可排查
+
+**WebView 一键登录兜底**（新模块 `src/kimi_login.rs`，仿 stepfun 2026-07-28 重写后形态）：设置面板 kimi 卡片 API key 区下方新增 `quick-login-banner`（「🔑 登录 Kimi（总套餐）」+「清除」+ 官网链接 + 专用 cookie 状态徽章——不走公共 `loadCredentialStatus`，它按"任一槽位"判定会被 API key 槽污染）。点按钮弹 webview 加载 `www.kimi.com/membership/subscription?tab=quota` → 独立轮询任务 700ms × 14min 读 `cookies_for_url("https://www.kimi.com/")`（probe 与 cookie 同域 `www.kimi.com`，不踩 stepfun 跨域坑）→ **JWT exp 新鲜度门**（复用 `kimi_desktop::jwt_exp_seconds_ago`，旧残留必过期 → 拒绝继续等；无 init script / READY 握手 / clear_browsing_data 竞态机制）→ 存 `kimi:cookie` 槽（裸 JWT，12 KB 上限）→ 关窗 → emit `musage://kimi-login-success` → 立即 refresh 浮窗。GEN 防重入 + DONE 标记 + `WindowCloseGuard` panic 兜底 + `SHUTDOWN_NATIVE_THREADS` 观察 + wall-clock deadline，全部对齐 stepfun/anysearch 现行设计。新命令 `clear_kimi_session` 走 `config::delete_cookie_slot_for_id`（**只清 cookie 槽不动 API key**；`save_credential_for_id` 对 None 字段跳过不删，必须显式 `map.remove`）。新 capability `kimi-login.json`（仅 window focus，无 webview 创建权限）。
+
+**顺手 fix**：补 rust locale 缺失的 `login.stepfun.timeout` key（D3-002 加调用时漏加，超时 toast 此前会显示原始 key 字符串）。
+
+**已知取舍**：Windows 端 kimi-desktop cookie 若加密读不出 → 自动落 WebView 登录路径（设计行为）；WebView 登录未真机实测（本机走桌面端零交互路径已覆盖），设计 1:1 对齐 stepfun 三遍实测形态；不做「切换账号」（旧 token 仍有效时点登录直接抓走旧 token，stepfun 同款取舍）。
+
+**新增单测 26 个**：`kimi_desktop` 6（JWT 新鲜度门 / skew / 畸形 / claims / 路径）+ `kimi.rs` 13（totalQuota 填充·空·缺 limit·limit=0 / stats 全字段·门控·缺 ratio·NaN·超 100% clamp）+ `kimi_login` 7（新鲜度门 / 空 / 非 JWT 放行 / 12KB 上限 / window label / probe 域回归）。
+
+**守门**：`cargo test --lib` **403 passed**（+26），`pnpm tsc --noEmit` 0 errors。本机实测 `dump kimi` 出 3 行：Total plan 72.33%（月重置 2026-08-17）+ 5h 6% + 7d 8%。新依赖：`rusqlite 0.31 (bundled)`（读 Cookies 库）+ `iana-time-zone 0.1`（`r-timezone` 请求头）。
+
 ### Fixed（2026-07-30 全量审计批量修复）
 
 基于 `audit-reports/2026-07-30-full/` 8 域并行审查（01 providers-A / 04 config-ipc / 05 poller-lifecycle 上一轮已完成，本轮基于剩余 04 报告 + 上轮已审未修条目做的 9 个 commit），按 P0→P3 顺序原子修复：

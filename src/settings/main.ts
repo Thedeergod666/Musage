@@ -16,7 +16,7 @@ import { renderLogsSection, loadLogs } from "./logs";
 import { renderAboutSection } from "./about";
 // v0.2.0 不再自动检查更新 —— 升级走"用户手动下 dmg/nsis 装"路径
 import { renderRegionSection } from "./region-wizard";
-import { bindCredentialButtonsGlobal, bindXiaomiLoginEvents, bindAnysearchLoginEvents, bindStepfunLoginEvents, loadXiaomiDisplayMode } from "./credentials";
+import { bindCredentialButtonsGlobal, bindXiaomiLoginEvents, bindAnysearchLoginEvents, bindStepfunLoginEvents, bindKimiLoginEvents, loadXiaomiDisplayMode, loadKimiSessionStatus } from "./credentials";
 import { bindOrderButtonsGlobal, updateOrderConfig, isSuppressingConfigRebuild } from "./order";
 import { flash } from "./utils";
 import { t, initLocale, onLocaleChange } from "../i18n";
@@ -153,6 +153,7 @@ async function init() {
     bindXiaomiLoginEvents();
     bindAnysearchLoginEvents();
     bindStepfunLoginEvents();
+    bindKimiLoginEvents();
     bindOrderButtonsGlobal();
 
     // 拉 cfg + sources（并发）
@@ -188,6 +189,9 @@ async function init() {
     // （cfg 初值已经在 render*Section 里用上了；不用再调 loadConfig）
     await loadAllCredentialStatus(sources);
     await loadXiaomiDisplayMode();
+    // v0.2.5: kimi「总套餐」网页会话徽章（cookie 槽专用判定，不走公共
+    // loadCredentialStatus —— 那个按"任一槽位"会被 API key 槽污染）
+    await loadKimiSessionStatus();
     await loadLogs();
 
     // 订阅后端 config-changed：用户改了「在浮窗显示」或调整了 provider

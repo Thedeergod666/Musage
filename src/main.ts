@@ -171,7 +171,7 @@ interface QuotaRow {
    *  浮窗据此显示「日重置」/「月重置」前缀（缺省走月重置，跟旧行为一致）；
    *  StepFun 一次性额度包带 `{reset_period: "expire"}` → 显示「到期」+「已到期」。
    *  Kimi 总套餐行带 `{kimi_code_used_ratio: number}`（总池里 Code 消耗占比 %）
-   *  → 进度条渲染成 Kimi 深色段 + Code 蓝段的堆叠条（对齐官网「总使用量」）。 */
+   *  → bar 和「月重置」之间多渲染一行拆分小字「Kimi xx% · Code xx%」。 */
   extra?: { reset_period?: string; kimi_code_used_ratio?: number } | null;
   /** 行的语义分类（与 locale 解耦，**L7 fix 2026-06-19**）。
    *  rowKey 优先用这个做 DOM 稳定 key，避免切 locale 后 key 变化导致全量重建。 */
@@ -937,24 +937,20 @@ function buildRowSkeleton(r: QuotaRow): HTMLElement {
       </div>
     `;
   } else if (r.utilization != null) {
-    // Kimi 总套餐行（extra.kimi_code_used_ratio 有值）→ 堆叠条骨架：
-    // Kimi 深色段 + Code 蓝段 + legend（对齐官网「总使用量」）。
-    // 其它 utilization-only 行保持单条 bar-fill。
+    // Kimi 总套餐行（extra.kimi_code_used_ratio 有值）→ 普通单条 bar
+    // （阈值变色，跟其它行一致）+ bar 和 row-foot（月重置）之间插一行
+    // 拆分小字「Kimi xx% · Code xx%」。2026-08-05 二轮：官网同款双色
+    // 堆叠条的黑段 #17171c 在深色玻璃上易读性太差，用户拍板改回单条。
+    // 其它 utilization-only 行保持单条 bar-fill 无拆分小字。
     if (r.extra?.kimi_code_used_ratio != null) {
-      row.classList.add("stacked-total-row");
+      row.classList.add("split-note-row");
       row.innerHTML = `
         <div class="row-label">
           <span></span>
           <span class="pct"></span>
         </div>
-        <div class="bar stacked">
-          <div class="bar-seg seg-kimi"></div>
-          <div class="bar-seg seg-code"></div>
-        </div>
-        <div class="bar-legend">
-          <span class="lg lg-kimi"></span>
-          <span class="lg lg-code"></span>
-        </div>
+        <div class="bar"><div class="bar-fill"></div></div>
+        <div class="split-note"></div>
         <div class="row-foot"></div>
       `;
     } else {
@@ -1039,27 +1035,19 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
     const pct = rowEl.querySelector<HTMLElement>(".pct")!;
     pct.textContent = formatPct(r.utilization);
     pct.className = `pct ${cls}`;
-    const segKimi = rowEl.querySelector<HTMLElement>(".seg-kimi");
-    const segCode = rowEl.querySelector<HTMLElement>(".seg-code");
-    if (segKimi && segCode) {
-      // Kimi 总套餐堆叠条（2026-08-05）：Kimi 深色段 + Code 蓝段，
-      // 对齐官网「总使用量」。两段颜色固定（数据本身），**pct 大字颜色
-      // 不动、仍跟随总用量阈值**（上面的 cls，用户明确要求）。
-      // - Code 段宽 = extra.kimi_code_used_ratio（API 直接给的 Code 占比）
-      // - Kimi 段宽 = 总 − Code（API 无独立 Kimi Work 分项，官方黑段
-      //   同样是"其余全部"），clamp 防 schema 漂移出负值/超界
+    const bar = rowEl.querySelector<HTMLElement>(".bar-fill")!;
+    bar.className = `bar-fill ${cls}`;
+    bar.style.width = `${barWidth(r.utilization)}%`;
+    // Kimi 总套餐拆分小字（2026-08-05 二轮，替代双色堆叠条）：
+    // 插在 bar 和「月重置」之间的单行文本「Kimi xx% · Code xx%」。
+    // - Code = extra.kimi_code_used_ratio（API 直接给的 Code 占比）
+    // - Kimi = 总 − Code（API 无独立 Kimi Work 分项，官方黑段同样
+    //   是"其余全部"），clamp 防 schema 漂移出负值/超界
+    const note = rowEl.querySelector<HTMLElement>(".split-note");
+    if (note) {
       const codePct = clampPct(r.extra?.kimi_code_used_ratio ?? 0);
       const kimiPct = clampPct(Math.min(r.utilization, 100) - codePct);
-      segKimi.style.width = `${kimiPct}%`;
-      segCode.style.width = `${codePct}%`;
-      const lgKimi = rowEl.querySelector<HTMLElement>(".lg-kimi");
-      const lgCode = rowEl.querySelector<HTMLElement>(".lg-code");
-      if (lgKimi) lgKimi.textContent = `Kimi ${Math.round(kimiPct)}%`;
-      if (lgCode) lgCode.textContent = `Code ${Math.round(codePct)}%`;
-    } else {
-      const bar = rowEl.querySelector<HTMLElement>(".bar-fill")!;
-      bar.className = `bar-fill ${cls}`;
-      bar.style.width = `${barWidth(r.utilization)}%`;
+      note.textContent = `Kimi ${Math.round(kimiPct)}% · Code ${Math.round(codePct)}%`;
     }
     if (r.resets_at) {
       rowEl.dataset.resetsAt = String(r.resets_at);

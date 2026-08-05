@@ -72,10 +72,12 @@
 //! 总套餐行：追加在 5h/7d **之后**（对齐火山方舟 5h → 7d → 月 窗口升序，
 //! 2026-08-05 调整）。label「总套餐」+ utilization（`amountUsedRatio × 100`）
 //! + resets_at（`expireTime`，前端 `extra.reset_period="monthly"` →「月重置」）。
-//! `kimiCodeUsedRatio`（总池里 Kimi Code 消耗占比，官方 UI 双色堆叠条的
-//! 蓝色段）塞进 `extra.kimi_code_used_ratio` → 前端把该行的进度条渲染成
-//! **Kimi 深色段 + Code 蓝段** 的堆叠条（对齐官网「总使用量」），Kimi 段
-//! = 总 − Code（API 无独立 Kimi Work 分项，官方黑段同样是"其余全部"）。
+//! `kimiCodeUsedRatio`（总池里 Kimi Code 消耗占比）塞进
+//! `extra.kimi_code_used_ratio` → 前端在该行的 bar 和「月重置」之间
+//! 渲染一行拆分小字「Kimi xx% · Code xx%」，Kimi 段 = 总 − Code
+//! （API 无独立 Kimi Work 分项，官方黑段同样是"其余全部"）。
+//! （2026-08-05 二轮：曾做官网同款双色堆叠条，黑段在深色玻璃上
+//! 易读性太差，用户拍板改回普通单条 bar + 文本行。）
 
 use std::borrow::Cow;
 use std::pin::Pin;

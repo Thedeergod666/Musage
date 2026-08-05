@@ -32,6 +32,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **守门**：`cargo test --lib` **403 passed**（+26），`pnpm tsc --noEmit` 0 errors。本机实测 `dump kimi` 出 3 行：Total plan 72.33%（月重置 2026-08-17）+ 5h 6% + 7d 8%。新依赖：`rusqlite 0.31 (bundled)`（读 Cookies 库）+ `iana-time-zone 0.1`（`r-timezone` 请求头）。
 
+### Changed (Kimi 总套餐行序 + 官网同款堆叠条, 2026-08-05)
+
+- **行序对齐火山方舟**：总套餐行从插卡片**最前**改为**追加在 5h/7d 之后**（`insert(0)` → `push`）—— 5h → 7d → 月 窗口升序，与方舟等多窗口 provider 视觉一致。
+- **进度条改官网同款 Kimi/Code 双色堆叠条**：总套餐行的单行 bar 改成 `.bar.stacked`（深色 `.seg-kimi` `#17171c` + 蓝色 `.seg-code` `#2f7cf6`，官网「总使用量」同款配色）+ 条下 legend（`Kimi xx%` / `Code xx%` 各带 6px 色块）。**Kimi 段 = 总用量 − Code 段**：探测结论 API 无独立 Kimi Work 分项（`GetUsages` 只有 `totalQuota` + `kimiCodeUsedRatio` 两个比值，官方黑段同样是"其余全部"），拆分只能做到「Code vs 其他」——与官网一致。行尾 pct 大字颜色**不变**，仍随**总**用量阈值（70%/90%）变色（用户明确要求「百分号的颜色不动，跟着总进度的来」）。
+- 前端实现：`QuotaRow.extra` 类型加 `kimi_code_used_ratio?: number`；`buildRowSkeleton` utilization-only 分支检测该字段生成堆叠骨架（`stacked-total-row` class），`updateRow` 算 `codePct = clamp(ratio)` / `kimiPct = clamp(min(util,100) − codePct)` 设两段 width + legend 文本（新增 `clampPct` helper）；无该字段的行（其余所有 provider）走原 `.bar-fill` 路径零改动。
+- 探测增量（本轮实测补记）：网页会话路径 `POST GetUsages` 带 `scope:["FEATURE_CODING"]` 时响应 `totalQuota{limit,used,remaining}` **有数据**（83/100），但 api.kimi.com API key 路径仍恒空 `{}`；`scope:["FEATURE_OMNI"]` 单发被 `min_items` 校验 400 拒。结论不变：总池只有 `GetSubscriptionStats` 一条路。
+- 守门：`cargo test --lib` 403 passed（无新增，纯渲染层改动），`pnpm tsc --noEmit` 0 errors，`pnpm test` 29/29。本机实测 `dump kimi` 行序 5h(7%) → 7d(10%) → Total plan(88.88%, extra `kimi_code_used_ratio:30.05` + `reset_period:monthly`, 月重置 2026-08-17)。
+
 ### Fixed（2026-07-30 全量审计批量修复）
 
 基于 `audit-reports/2026-07-30-full/` 8 域并行审查（01 providers-A / 04 config-ipc / 05 poller-lifecycle 上一轮已完成，本轮基于剩余 04 报告 + 上轮已审未修条目做的 9 个 commit），按 P0→P3 顺序原子修复：

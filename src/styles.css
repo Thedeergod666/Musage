@@ -358,6 +358,43 @@ body[data-hover] #app .bar-fill::after { opacity: 1; }
 .bar-fill.warn  { --bar-grad: linear-gradient(90deg, var(--c-data-warn),  var(--c-data-warn)); }
 .bar-fill.alert { --bar-grad: linear-gradient(90deg, var(--c-data-alert), var(--c-data-alert)); }
 
+/* ── Kimi 总套餐堆叠条（2026-08-05，对齐官网「总使用量」双色条）──
+ * Kimi 深色段 + Code 蓝段，颜色**固定**（分段比例本身就是信息），idle
+ * 也保持彩色 —— 不走 .bar-fill 那套 "idle 白半透 / hover 才上色" 的
+ * 双层机制。大字号 pct 的颜色不受影响，仍走 .pct.{ok,cyan,warn,alert}
+ * 跟随总用量阈值（用户明确要求）。
+ * 圆角由 .bar 自身的 border-radius + overflow:hidden 裁剪，分段不用管。 */
+.bar.stacked {
+  display: flex;
+  gap: 1px;
+}
+.bar-seg {
+  height: 100%;
+  transition: width 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.bar-seg.seg-kimi { background: #17171c; } /* 官网黑段同款 */
+.bar-seg.seg-code { background: #2f7cf6; } /* 官网蓝段同款 */
+
+/* 分段 legend（官网同款：色块 + 名称 + 占比） */
+.bar-legend {
+  display: flex;
+  gap: 10px;
+  margin-top: 2px;
+  font-size: 9.5px;
+  line-height: 1.2;
+  color: var(--fg-3);
+}
+.bar-legend .lg::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 1.5px;
+  margin-right: 3px;
+}
+.bar-legend .lg-kimi::before { background: #17171c; }
+.bar-legend .lg-code::before { background: #2f7cf6; }
+
 .row-foot {
   font-size: 10.5px;
   color: var(--text-faint);

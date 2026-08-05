@@ -169,8 +169,10 @@ interface QuotaRow {
   unit: string | null;
   /** provider 特有扩展字段。AnySearch 主行带 `{reset_period: "daily"|"monthly"}`，
    *  浮窗据此显示「日重置」/「月重置」前缀（缺省走月重置，跟旧行为一致）；
-   *  StepFun 一次性额度包带 `{reset_period: "expire"}` → 显示「到期」+「已到期」。 */
-  extra?: { reset_period?: string } | null;
+   *  StepFun 一次性额度包带 `{reset_period: "expire"}` → 显示「到期」+「已到期」。
+   *  Kimi 总套餐行带 `{kimi_code_used_ratio: number}`（总池里 Code 消耗占比 %）
+   *  → 进度条渲染成 Kimi 深色段 + Code 蓝段的堆叠条（对齐官网「总使用量」）。 */
+  extra?: { reset_period?: string; kimi_code_used_ratio?: number } | null;
   /** 行的语义分类（与 locale 解耦，**L7 fix 2026-06-19**）。
    *  rowKey 优先用这个做 DOM 稳定 key，避免切 locale 后 key 变化导致全量重建。 */
   kind?:
@@ -935,14 +937,36 @@ function buildRowSkeleton(r: QuotaRow): HTMLElement {
       </div>
     `;
   } else if (r.utilization != null) {
-    row.innerHTML = `
-      <div class="row-label">
-        <span></span>
-        <span class="pct"></span>
-      </div>
-      <div class="bar"><div class="bar-fill"></div></div>
-      <div class="row-foot"></div>
-    `;
+    // Kimi 总套餐行（extra.kimi_code_used_ratio 有值）→ 堆叠条骨架：
+    // Kimi 深色段 + Code 蓝段 + legend（对齐官网「总使用量」）。
+    // 其它 utilization-only 行保持单条 bar-fill。
+    if (r.extra?.kimi_code_used_ratio != null) {
+      row.classList.add("stacked-total-row");
+      row.innerHTML = `
+        <div class="row-label">
+          <span></span>
+          <span class="pct"></span>
+        </div>
+        <div class="bar stacked">
+          <div class="bar-seg seg-kimi"></div>
+          <div class="bar-seg seg-code"></div>
+        </div>
+        <div class="bar-legend">
+          <span class="lg lg-kimi"></span>
+          <span class="lg lg-code"></span>
+        </div>
+        <div class="row-foot"></div>
+      `;
+    } else {
+      row.innerHTML = `
+        <div class="row-label">
+          <span></span>
+          <span class="pct"></span>
+        </div>
+        <div class="bar"><div class="bar-fill"></div></div>
+        <div class="row-foot"></div>
+      `;
+    }
   } else if (r.remaining != null) {
     row.classList.add("balance-row");
     row.innerHTML = `
@@ -1015,9 +1039,28 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
     const pct = rowEl.querySelector<HTMLElement>(".pct")!;
     pct.textContent = formatPct(r.utilization);
     pct.className = `pct ${cls}`;
-    const bar = rowEl.querySelector<HTMLElement>(".bar-fill")!;
-    bar.className = `bar-fill ${cls}`;
-    bar.style.width = `${barWidth(r.utilization)}%`;
+    const segKimi = rowEl.querySelector<HTMLElement>(".seg-kimi");
+    const segCode = rowEl.querySelector<HTMLElement>(".seg-code");
+    if (segKimi && segCode) {
+      // Kimi 总套餐堆叠条（2026-08-05）：Kimi 深色段 + Code 蓝段，
+      // 对齐官网「总使用量」。两段颜色固定（数据本身），**pct 大字颜色
+      // 不动、仍跟随总用量阈值**（上面的 cls，用户明确要求）。
+      // - Code 段宽 = extra.kimi_code_used_ratio（API 直接给的 Code 占比）
+      // - Kimi 段宽 = 总 − Code（API 无独立 Kimi Work 分项，官方黑段
+      //   同样是"其余全部"），clamp 防 schema 漂移出负值/超界
+      const codePct = clampPct(r.extra?.kimi_code_used_ratio ?? 0);
+      const kimiPct = clampPct(Math.min(r.utilization, 100) - codePct);
+      segKimi.style.width = `${kimiPct}%`;
+      segCode.style.width = `${codePct}%`;
+      const lgKimi = rowEl.querySelector<HTMLElement>(".lg-kimi");
+      const lgCode = rowEl.querySelector<HTMLElement>(".lg-code");
+      if (lgKimi) lgKimi.textContent = `Kimi ${Math.round(kimiPct)}%`;
+      if (lgCode) lgCode.textContent = `Code ${Math.round(codePct)}%`;
+    } else {
+      const bar = rowEl.querySelector<HTMLElement>(".bar-fill")!;
+      bar.className = `bar-fill ${cls}`;
+      bar.style.width = `${barWidth(r.utilization)}%`;
+    }
     if (r.resets_at) {
       rowEl.dataset.resetsAt = String(r.resets_at);
       // utilization-only 行（StepFun credit 等）：extra.reset_period="expire"
@@ -1167,6 +1210,13 @@ function dotClass(p: ProviderSnapshot): string {
 function barWidth(util: number | null | undefined): number {
   if (util == null) return 0;
   return Math.min(util, 100);
+}
+
+/// Kimi 总套餐堆叠条分段宽用的 [0,100] clamp（NaN / 负值 / 超界防御，
+/// 2026-08-05 新增）。
+function clampPct(v: number): number {
+  if (!Number.isFinite(v)) return 0;
+  return Math.min(100, Math.max(0, v));
 }
 
 /// 倒计时格式（Kimi / MiniMax / GLM 周行 + Xiaomi 月行共用）：

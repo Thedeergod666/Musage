@@ -365,10 +365,12 @@ body[data-hover] #app .bar-fill::after { opacity: 1; }
  * 太差，用户拍板砍掉分段改文本行。 */
 .split-note {
   margin-top: 2px;
-  font-size: 9.5px;
-  line-height: 1.2;
-  color: var(--fg-3);
+  /* 样式与 .row-foot（月重置倒计时行）完全同步，仅多一个上间距 */
+  font-size: 10.5px;
+  color: var(--text-faint);
   font-variant-numeric: tabular-nums;
+  text-shadow: var(--text-shadow);
+  transition: color 0.28s, text-shadow 0.28s;
 }
 
 .row-foot {

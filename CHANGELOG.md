@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-08-05
+
 ### Added (Kimi「总套餐」月度共享池, 2026-08-04)
 
 **背景**：2026-08 起 Kimi 网页端「我的额度」页新增**总使用量**进度条 —— 所有会员功能（Kimi 对话 / Kimi Code / Kimi Work / PPT / 深度研究…）共享一个月度额度池（`FEATURE_OMNI`），按 token 消耗；Kimi Code 的 5h/7d 限额独立于该池。本机调查实锤：
@@ -207,6 +209,21 @@ Round 2 (6 High + 5 Medium) 原子修复，按 P0→P1 顺序：
 
 守门：`cargo test --lib` **384 passed** (前批 367 + 17 = 384 = H1 3 + H2 3 + H3 3 + H4+H5 4 + H6 1 + M-batch 3 = 17)，`pnpm tsc --noEmit` 0 error。
 
+
+### Fixed (2026-08-05 交叉验证 + CI 修复)
+
+- **全量代码审查报告交叉验证**（commit `7160c18`）：原报告 4 CRITICAL + 18 HIGH 大半为幻觉 / 已修 / 事实错误（不可重入死锁、refresh 丢失、ensure_success 双 schema、LogStore torn read 四个 CRITICAL 全 REFUTED；平台 / 前端 / 构建域 8 个 HIGH 全 REFUTED）。仅 8 个经源码验证为真并修复：
+  - `anysearch`：`is_active=false` 时 `success` 仍 true（违反 ProviderSnapshot 契约，前端同时渲染用量条 + 错误卡）-> `success = !rows.is_empty() && is_active`
+  - `stepfun`：`fetch_plan_status` 网络 / 解析错误被 `.ok().flatten()` 静默吞掉（非 200 已 warn，reqwest / JSON 错误无日志）-> 显式 match 记 warn
+  - `config`：`best_effort_from_value` 静默丢弃损坏的 `providers` / `schema_overrides` 条目 -> match 记 warn 留痕
+  - `minimax`：所有业务错误归 `ServerError` -> 30min 退避；1004 / 限流类现归 `RateLimited`（其他仍 ServerError），新增 / 重命名单测覆盖两条分支
+  - `poller` tick 竞态：全量刷新可能用旧数据覆盖 per-provider poller 的并发更新（`tick_is_running` 挡不住已 in-flight 的 fetch）-> 比较 `fetched_at`，仅 new >= old 时覆盖
+  - `poller` shutdown 丢通知：`notify_waiters()` 在 loop body 执行期间触发则永久丢失 -> 加 `SHUTDOWN_REQUESTED` AtomicBool 兜底（quit_app notify 前置位，主循环 select! 退出后必查）
+  - `lib` locale 切换：`rebuild_tray` 只重建 menu 不刷 tooltip（≤60s 旧 locale 文本滞留到下个 poller tick）-> 用当前 snapshot 触发一次 tray Update（icon + tooltip）
+  - `poller` jitter 文档订正：`±10%` -> `0..+10%`（`unsigned_abs()` 折叠符号，实际为有界恒定偏长，非累积漂移）
+- **CI 修复**（commit `bc34da5`）：`tray.rs:696/841` 直连 `crate::platform::macos::menu_bar_is_light()` 在 Linux/Windows 编译期 E0433（`macos` 模块被 `#[cfg(target_os="macos")]` 门控，`cfg!() &&` 是运行时短路不挡路径解析）-> 改调跨平台 `crate::platform::menu_bar_is_light()`（`platform/mod.rs` 加非 macOS stub，对齐 `set_window_pin_bottom` 同款 shim 设计）；同时 `cargo fmt --all` 对齐散落 20 个文件的 100 处 fmt 违规。
+
+守门：`cargo test --lib` **404 passed** / 0 failed，`cargo fmt --all -- --check` 干净，`cargo check --all-targets` 干净（仅 1 个 pre-existing unused_var 警告）。
 
 ## [0.2.5] - 2026-07-29
 

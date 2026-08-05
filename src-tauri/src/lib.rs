@@ -183,11 +183,8 @@ pub fn run() {
                         let state = app_for_locale.state::<crate::AppState>();
                         let snap = state.snapshot.blocking_read().clone();
                         let style = state.config.blocking_read().tray_icon_style;
-                        let _ = crate::tray::update_tray_from_snapshot(
-                            &app_for_locale,
-                            &snap,
-                            style,
-                        );
+                        let _ =
+                            crate::tray::update_tray_from_snapshot(&app_for_locale, &snap, style);
                     }
                     // 同步 settings 窗口 title
                     if let Some(w) = app_for_locale.get_webview_window("settings") {

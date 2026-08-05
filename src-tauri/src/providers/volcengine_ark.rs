@@ -942,9 +942,17 @@ mod tests {
         assert_eq!(snap.rows.len(), 2);
         // Session 行 ResetTimestamp=0 → resets_at=None (不显示 1970)
         // 通过 resets_at 验证 5h 行(0 被过滤为 None)
-        let _five_h = snap.rows.iter().find(|r| r.resets_at.is_none()).expect("5h row (ts=0)");
+        let _five_h = snap
+            .rows
+            .iter()
+            .find(|r| r.resets_at.is_none())
+            .expect("5h row (ts=0)");
         // Weekly 行(resets_at 正常)
-        let week = snap.rows.iter().find(|r| r.resets_at == Some(1753761600000)).expect("weekly row");
+        let week = snap
+            .rows
+            .iter()
+            .find(|r| r.resets_at == Some(1753761600000))
+            .expect("weekly row");
         assert_eq!(week.resets_at, Some(1753761600000));
     }
 

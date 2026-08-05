@@ -826,7 +826,7 @@ impl AppConfig {
 /// 只挑"raw 能看到且类型对得上的"字段复制。
 fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
     // D8-004 fix (2026-07-30 audit): 跟踪至少解析到 1 个关键字段才返 Some.
-    // 否则 raw JSON 是空 `{}` 或只有未识别字段 (用户手改 + 字段名全错), 
+    // 否则 raw JSON 是空 `{}` 或只有未识别字段 (用户手改 + 字段名全错),
     // 走 best_effort 会返一个"全 default + 用户原始字段被覆写"的混合 cfg,
     // 下次 save() 写回 disk 把用户的 provider_order / providers 全清空.
     // 这种情况应当返 None → caller 走 Self::default() + 保留 .bak.<ts> 给用户恢复.
@@ -1093,7 +1093,11 @@ fn keys_path() -> Result<PathBuf, String> {
 /// 扫描 `parent_dir` 下形如 `<basename>.<ext>.bak.<digits>` 的文件,
 /// 删除同一前缀的所有超过 `keep` 个的最新文件之外的全部文件。
 /// 返回删除的文件数。
-pub(crate) fn truncate_old_backups(parent_dir: &std::path::Path, prefix: &str, keep: usize) -> usize {
+pub(crate) fn truncate_old_backups(
+    parent_dir: &std::path::Path,
+    prefix: &str,
+    keep: usize,
+) -> usize {
     let mut matched: Vec<(std::path::PathBuf, std::time::SystemTime)> = Vec::new();
     let entries = match std::fs::read_dir(parent_dir) {
         Ok(e) => e,
@@ -1424,7 +1428,6 @@ mod tests {
             .unwrap_or(true));
     }
 
-
     #[test]
     fn truncate_old_backups_keeps_only_n_most_recent() {
         use std::time::Duration;
@@ -1540,20 +1543,26 @@ mod cleanup_orphan_tmp_files_tests {
         // 不该清的。即清理逻辑只走 ends_with 检查。
         assert!(OUR_TMP_SUFFIXES.contains(&".json.tmp"));
         assert!(OUR_TMP_SUFFIXES.contains(&".jsonl.tmp"));
-        assert!(!OUR_TMP_SUFFIXES.iter().any(|s| s == &".tmp"),
-            "不能再匹配裸 .tmp,必须带扩展名前缀防误删用户文件");
+        assert!(
+            !OUR_TMP_SUFFIXES.iter().any(|s| s == &".tmp"),
+            "不能再匹配裸 .tmp,必须带扩展名前缀防误删用户文件"
+        );
 
         // 实际 cleanup_orphan_tmp_files() 调 dirs::config_dir() → 测试隔离难。
         // 这里只验证 OUR_TMP_SUFFIXES 的字符串 ends_with 行为,代表清理逻辑。
         let our_files = ["config.json.tmp", "keys.json.tmp", "app_log.jsonl.tmp"];
         for f in &our_files {
-            assert!(OUR_TMP_SUFFIXES.iter().any(|suf| f.ends_with(suf)),
-                "{f} 应被识别为我们的 .tmp");
+            assert!(
+                OUR_TMP_SUFFIXES.iter().any(|suf| f.ends_with(suf)),
+                "{f} 应被识别为我们的 .tmp"
+            );
         }
         let user_files = ["notes.tmp", "download.tmp", "scratchpad.tmp"];
         for f in &user_files {
-            assert!(!OUR_TMP_SUFFIXES.iter().any(|suf| f.ends_with(suf)),
-                "{f} 不应被识别 (用户文件)");
+            assert!(
+                !OUR_TMP_SUFFIXES.iter().any(|suf| f.ends_with(suf)),
+                "{f} 不应被识别 (用户文件)"
+            );
         }
 
         // 清理临时目录

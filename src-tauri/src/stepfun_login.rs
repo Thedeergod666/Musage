@@ -126,7 +126,10 @@ async fn wait_window_closed(app: &AppHandle, label: &str) {
     // 都堆一份),且下次 build 同 label 返 Err → 用户看到红色 toast 不明所以。
     // destroy 是同步 drop,不 await,百毫秒内必回收。
     if let Some(w) = app.get_webview_window(label) {
-        tracing::warn!(label = label, "wait_window_closed 超时 2s,强制 destroy 防 webview 泄漏");
+        tracing::warn!(
+            label = label,
+            "wait_window_closed 超时 2s,强制 destroy 防 webview 泄漏"
+        );
         let _ = w.destroy();
         // 重建后极短时间再确认一次,有些平台 destroy 后句柄还没完全 drop
         for _ in 0..10 {
@@ -198,7 +201,9 @@ pub async fn open_stepfun_login_window(app: AppHandle) -> Result<(), String> {
         .center()
         .skip_taskbar(true);
     let b = match app.get_webview_window("settings") {
-        Some(p) => b.parent(&p).map_err(|e| format!("stepfun login parent: {e}"))?,
+        Some(p) => b
+            .parent(&p)
+            .map_err(|e| format!("stepfun login parent: {e}"))?,
         None => b,
     };
     let window = b
@@ -226,7 +231,13 @@ pub async fn open_stepfun_login_window(app: AppHandle) -> Result<(), String> {
                 DONE.store(true, Ordering::SeqCst);
                 tracing::info!(len, "stepfun cookie 提取 + 保存成功");
                 // 立即拉一次（让浮窗立刻看到数据）
-                if let Err(e) = crate::commands::refresh_single_inner(&app2, "stepfun", crate::poller_backoff::RefreshSource::Manual).await {
+                if let Err(e) = crate::commands::refresh_single_inner(
+                    &app2,
+                    "stepfun",
+                    crate::poller_backoff::RefreshSource::Manual,
+                )
+                .await
+                {
                     tracing::warn!(error = %e, "登录后立即拉取失败（不阻塞成功事件）");
                 }
                 let _ = window_clone.close();
@@ -307,9 +318,7 @@ async fn poll_token_from_cookie(
         // 2026-08-03 audit (Darwin B7): 跟 hover emitter / fullscreen watcher
         // 一样在每个 tick 开头检查 SHUTDOWN_NATIVE_THREADS, 用户 quit_app
         // 时立即退出轮询,不再浪费一个 sleep(700ms) 周期
-        if crate::poller::SHUTDOWN_NATIVE_THREADS
-            .load(std::sync::atomic::Ordering::SeqCst)
-        {
+        if crate::poller::SHUTDOWN_NATIVE_THREADS.load(std::sync::atomic::Ordering::SeqCst) {
             tracing::debug!("stepfun 轮询收到 SHUTDOWN, 退出");
             return PollOutcome::Cancelled;
         }
@@ -384,11 +393,7 @@ async fn poll_token_from_cookie(
 
 /// D3-002 fix (2026-07-30 audit): 超时原因走 i18n
 fn stepfun_timeout_reason() -> String {
-    t!(
-        "login.stepfun.timeout",
-        secs = 14 * 60
-    )
-    .into_owned()
+    t!("login.stepfun.timeout", secs = 14 * 60).into_owned()
 }
 
 /// 判断抽到的 Oasis-Token 是否「新鲜可用」。
@@ -454,10 +459,7 @@ fn save_token(combined: &str) -> Result<usize, String> {
     // StepFun 未来改 ECDSA P-521 / 追加 device_id 等字段可能膨胀。
     // 12 KB 留 3x 安全冗余:正常 1-2 KB 永远过,反常 10 KB+ 必拒。
     if combined.len() > 12 * 1024 {
-        return Err(t!(
-            "stepfun_login.token_too_large",
-            bytes = combined.len(),
-        ).into_owned());
+        return Err(t!("stepfun_login.token_too_large", bytes = combined.len(),).into_owned());
     }
     let cookie_slot = format!("Oasis-Token={combined}");
     let cred = Credentials {
@@ -486,7 +488,7 @@ mod tests {
         format!("{header}.{payload}.{sig}")
     }
 
-        #[test]
+    #[test]
     fn save_token_rejects_over_12kb_combined() {
         // M2 fix (2026-07-30 audit): combined token 超 12 KB (RFC 6265 § 6.1
         // cookie 上限 + kernel-side 软上限 8 KB)直接拒,避免 kernel cookie store

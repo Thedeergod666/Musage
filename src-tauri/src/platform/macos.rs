@@ -161,8 +161,7 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
                 // D5-102 fix (2026-07-30 audit): macOS hover emitter OS 线程
                 // 同样永久循环, quit_app 同步 SHUTDOWN_NATIVE_THREADS atomic,
                 // 此线程每 tick 检查后退出。 50ms 延迟用户无感知。
-                if crate::poller::SHUTDOWN_NATIVE_THREADS
-                    .load(std::sync::atomic::Ordering::SeqCst)
+                if crate::poller::SHUTDOWN_NATIVE_THREADS.load(std::sync::atomic::Ordering::SeqCst)
                 {
                     tracing::debug!("macOS hover emitter 收到 SHUTDOWN, 退出");
                     break;
@@ -341,9 +340,7 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
             // 之前裸 &*ptr.cast 借 raw pointer 引用, 若浮窗在引用期间被 close,
             // 后续 windowNumber() 调 dispatch use-after-free. Retained 增加
             // 一次 retain 引用计数, 闭包内一直 hold 住, 闭包结束自动 release.
-            let window: Retained<NSWindow> = unsafe {
-                Retained::retain(ptr.cast::<NSWindow>())
-            }?;
+            let window: Retained<NSWindow> = unsafe { Retained::retain(ptr.cast::<NSWindow>()) }?;
             let our_id = window.windowNumber();
             if our_id == 0 {
                 // 窗口还没上屏（极少见，初始化竞态）→ 直接 false
@@ -465,8 +462,7 @@ pub fn start_fullscreen_watcher<R: Runtime>(app: AppHandle<R>) {
                 // 永久循环, quit_app 同步 SHUTDOWN_NATIVE_THREADS atomic,
                 // 此线程每 2s tick 检查后退出。 150ms sleep 余量内能干净退出,
                 // 跟 macOS/Win hover emitter 行为对齐, 避免 quit_app 后跑空 tick。
-                if crate::poller::SHUTDOWN_NATIVE_THREADS
-                    .load(std::sync::atomic::Ordering::SeqCst)
+                if crate::poller::SHUTDOWN_NATIVE_THREADS.load(std::sync::atomic::Ordering::SeqCst)
                 {
                     tracing::debug!("macOS fullscreen watcher 收到 SHUTDOWN, 退出");
                     break;
@@ -596,7 +592,6 @@ fn show_floating<R: Runtime>(app: &AppHandle<R>) {
     });
 }
 
-
 /// H2 fix (2026-07-29 审查): 检测 macOS 菜单栏当前外观。菜单栏在
 /// "浅色"模式下背景接近白色,我们硬编码的白字 Rgba([255,255,255,255])
 /// 会变得完全不可见。返回 true 表示"菜单栏是浅色背景",caller 改用
@@ -639,7 +634,6 @@ pub fn menu_bar_is_light() -> bool {
 pub fn menu_bar_is_light() -> bool {
     false
 }
-
 
 #[cfg(test)]
 mod tests {

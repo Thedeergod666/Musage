@@ -131,7 +131,10 @@ async fn wait_window_closed(app: &AppHandle, label: &str) {
     // 都堆一份),且下次 build 同 label 返 Err → 用户看到红色 toast 不明所以。
     // destroy 是同步 drop,不 await,百毫秒内必回收。
     if let Some(w) = app.get_webview_window(label) {
-        tracing::warn!(label = label, "wait_window_closed 超时 2s,强制 destroy 防 webview 泄漏");
+        tracing::warn!(
+            label = label,
+            "wait_window_closed 超时 2s,强制 destroy 防 webview 泄漏"
+        );
         let _ = w.destroy();
         // 重建后极短时间再确认一次,有些平台 destroy 后句柄还没完全 drop
         for _ in 0..10 {
@@ -341,7 +344,9 @@ pub async fn open_anysearch_login_window(app: AppHandle) -> Result<(), String> {
         .center()
         .skip_taskbar(true);
     let b = match app.get_webview_window("settings") {
-        Some(p) => b.parent(&p).map_err(|e| format!("anysearch login parent: {e}"))?,
+        Some(p) => b
+            .parent(&p)
+            .map_err(|e| format!("anysearch login parent: {e}"))?,
         None => b,
     };
     let window = b
@@ -370,7 +375,13 @@ pub async fn open_anysearch_login_window(app: AppHandle) -> Result<(), String> {
                 DONE.store(true, Ordering::SeqCst);
                 tracing::info!(len, "anysearch JWT 提取 + 保存成功");
                 // 立即拉一次（让浮窗立刻看到数据）
-                if let Err(e) = crate::commands::refresh_single_inner(&app2, "anysearch", crate::poller_backoff::RefreshSource::Manual).await {
+                if let Err(e) = crate::commands::refresh_single_inner(
+                    &app2,
+                    "anysearch",
+                    crate::poller_backoff::RefreshSource::Manual,
+                )
+                .await
+                {
                     tracing::warn!(error = %e, "登录后立即拉取失败（不阻塞成功事件）");
                 }
                 let _ = window_clone.close();
@@ -449,9 +460,7 @@ async fn poll_token_from_cookie(
         }
         // 2026-08-03 audit (Darwin B7): 跟 hover emitter / fullscreen watcher
         // 一样在每个 tick 开头检查 SHUTDOWN_NATIVE_THREADS
-        if crate::poller::SHUTDOWN_NATIVE_THREADS
-            .load(std::sync::atomic::Ordering::SeqCst)
-        {
+        if crate::poller::SHUTDOWN_NATIVE_THREADS.load(std::sync::atomic::Ordering::SeqCst) {
             tracing::debug!("anysearch 轮询收到 SHUTDOWN, 退出");
             return PollOutcome::Cancelled;
         }
@@ -532,11 +541,7 @@ async fn poll_token_from_cookie(
 
 /// D3-002 fix (2026-07-30 audit): 超时原因走 i18n, 复用现有 key + 拼具体秒数
 fn anysearch_timeout_reason() -> String {
-    t!(
-        "login.anysearch.timeout",
-        secs = 14 * 60
-    )
-    .into_owned()
+    t!("login.anysearch.timeout", secs = 14 * 60).into_owned()
 }
 
 /// 把抽到的 JWT 写进 keys.json 的 cookie 槽位。返回写入字节数。

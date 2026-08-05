@@ -28,13 +28,13 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::config::{self, AppConfig, FloatingPinMode, ProviderConfig, TrayIconStyle, UserRegion};
+use crate::poller_backoff::RefreshSource;
 use crate::providers::minimax::Region as MinimaxRegion;
 use crate::providers::xiaomi::XiaomiDisplayMode;
 use crate::providers::{
     all_sources, builtin_sources, find_source, AuthKind, Credentials, ErrorKind, FetchError,
     ProviderSnapshot, QuotaSnapshot, QuotaSource,
 };
-use crate::poller_backoff::RefreshSource;
 use crate::t;
 use crate::AppState;
 
@@ -173,10 +173,7 @@ pub async fn set_provider_enabled(
             let mut snap = state_arc.snapshot.write().await;
             // H2 fix (2026-08-03 audit): 同样改 snapshot_key,避免 placeholder
             // 在已存在的副本上重复 push(老 source_id 匹配置信 base)。
-            let already_present = snap
-                .providers
-                .iter()
-                .any(|p| snapshot_key(p) == id);
+            let already_present = snap.providers.iter().any(|p| snapshot_key(p) == id);
             if !already_present {
                 let mut placeholder = ProviderSnapshot::placeholder(&state_arc, &id).await;
                 // **B-NEW-10（2026-06-19 audit）**：placeholder 默认 next_fetch_at=None，
@@ -214,7 +211,12 @@ pub async fn set_provider_enabled(
         let app_clone = app.clone();
         let id_owned = id.clone();
         tokio::spawn(async move {
-            let _ = refresh_single_inner(&app_clone, &id_owned, crate::poller_backoff::RefreshSource::Manual).await;
+            let _ = refresh_single_inner(
+                &app_clone,
+                &id_owned,
+                crate::poller_backoff::RefreshSource::Manual,
+            )
+            .await;
         });
     }
     let _ = app.emit("musage://config-changed", ());
@@ -259,7 +261,12 @@ pub async fn set_xiaomi_display_mode(
     // 模式时浮窗在 ~100ms 内就有响应。
     let app_clone = app.clone();
     tokio::spawn(async move {
-        let _ = refresh_single_inner(&app_clone, "xiaomimimo", crate::poller_backoff::RefreshSource::Manual).await;
+        let _ = refresh_single_inner(
+            &app_clone,
+            "xiaomimimo",
+            crate::poller_backoff::RefreshSource::Manual,
+        )
+        .await;
     });
     let _ = app.emit("musage://config-changed", ());
     Ok(())
@@ -340,7 +347,12 @@ pub async fn set_schema_overrides(
             // 漏掉副本(副本跟 base 共享同一套 schema override,也该刷新)。
             let base = id.split('#').next().unwrap_or(id.as_str());
             if matches!(base, "minimax" | "xiaomimimo") {
-                let _ = refresh_single_inner(&app_clone, &id, crate::poller_backoff::RefreshSource::Manual).await;
+                let _ = refresh_single_inner(
+                    &app_clone,
+                    &id,
+                    crate::poller_backoff::RefreshSource::Manual,
+                )
+                .await;
             }
         }
     });
@@ -391,7 +403,12 @@ pub async fn set_minimax_region(
         entry.region = Some(parsed);
         cfg.save()?;
     }
-    let _ = refresh_single_inner(&app, "minimax", crate::poller_backoff::RefreshSource::Manual).await;
+    let _ = refresh_single_inner(
+        &app,
+        "minimax",
+        crate::poller_backoff::RefreshSource::Manual,
+    )
+    .await;
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -418,7 +435,12 @@ pub async fn set_xiaomi_region_field(
         entry.xiaomi_region = Some(parsed);
         cfg.save()?;
     }
-    let _ = refresh_single_inner(&app, "xiaomimimo", crate::poller_backoff::RefreshSource::Manual).await;
+    let _ = refresh_single_inner(
+        &app,
+        "xiaomimimo",
+        crate::poller_backoff::RefreshSource::Manual,
+    )
+    .await;
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -434,7 +456,8 @@ pub async fn set_tavily_concise_mode(
         cfg.tavily_concise_mode = enabled;
         cfg.save()?;
     }
-    let _ = refresh_single_inner(&app, "tavily", crate::poller_backoff::RefreshSource::Manual).await;
+    let _ =
+        refresh_single_inner(&app, "tavily", crate::poller_backoff::RefreshSource::Manual).await;
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -458,7 +481,8 @@ pub async fn set_zenmux_base_url(
         };
         cfg.save()?;
     }
-    let _ = refresh_single_inner(&app, "zenmux", crate::poller_backoff::RefreshSource::Manual).await;
+    let _ =
+        refresh_single_inner(&app, "zenmux", crate::poller_backoff::RefreshSource::Manual).await;
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -477,7 +501,8 @@ pub async fn set_zenmux_mode(
         cfg.zenmux_mode = Some(mode.clone());
         cfg.save()?;
     }
-    let _ = refresh_single_inner(&app, "zenmux", crate::poller_backoff::RefreshSource::Manual).await;
+    let _ =
+        refresh_single_inner(&app, "zenmux", crate::poller_backoff::RefreshSource::Manual).await;
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -493,7 +518,8 @@ pub async fn set_zenmux_payg_concise(
         cfg.zenmux_payg_concise_mode = Some(enabled);
         cfg.save()?;
     }
-    let _ = refresh_single_inner(&app, "zenmux", crate::poller_backoff::RefreshSource::Manual).await;
+    let _ =
+        refresh_single_inner(&app, "zenmux", crate::poller_backoff::RefreshSource::Manual).await;
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -613,7 +639,8 @@ pub async fn save_config(
             "commands.providers_too_many",
             count = cfg.providers.len(),
             max = PROVIDERS_MAP_MAX
-        ).into_owned());
+        )
+        .into_owned());
     }
     // D4-009 fix (2026-07-30 audit): 之前只挡 providers 数, 不挡
     // provider_order Vec / schema_overrides BTreeMap 数量。攻击者灌
@@ -641,7 +668,8 @@ pub async fn save_config(
         return Err(t!(
             "commands.interval_too_large",
             value = cfg.refresh_interval_secs
-        ).into_owned());
+        )
+        .into_owned());
     }
     // 校验色阈值（settings 面板的保存路径也要兜底 —— 即使用户绕过 set_display_thresholds
     // 直接调 save_config 也会在这里被挡）
@@ -882,7 +910,13 @@ pub async fn set_source_credential(
         let app_clone = app.clone();
         let id_owned = id.clone();
         tokio::spawn(async move {
-            if let Err(e) = refresh_single_inner(&app_clone, &id_owned, crate::poller_backoff::RefreshSource::Manual).await {
+            if let Err(e) = refresh_single_inner(
+                &app_clone,
+                &id_owned,
+                crate::poller_backoff::RefreshSource::Manual,
+            )
+            .await
+            {
                 tracing::warn!(error = %e, provider = %id_owned, "set_source_credential 后立即拉取失败（不阻塞保存）");
             }
         });
@@ -1007,7 +1041,9 @@ pub async fn delete_source_credential(
     // 错误态，而不是等下一次 poller 周期。
     let enabled = state.config.read().await.is_enabled_id(&id);
     if enabled {
-        if let Err(e) = refresh_single_inner(&app, &id, crate::poller_backoff::RefreshSource::Manual).await {
+        if let Err(e) =
+            refresh_single_inner(&app, &id, crate::poller_backoff::RefreshSource::Manual).await
+        {
             tracing::warn!(error = %e, provider = %id, "delete 后立即拉取失败");
         }
     }
@@ -1180,14 +1216,12 @@ pub async fn quit_app(app: AppHandle) {
     // notify_waiters 只唤醒当前已注册的 notified() future -- 若主循环正在
     // loop body 里 (无 notified() 注册), 通知会丢. SHUTDOWN_REQUESTED AtomicBool
     // 是兜底, 主循环 select! 退出后必查, 保证不漏 shutdown.
-    crate::poller::SHUTDOWN_REQUESTED
-        .store(true, std::sync::atomic::Ordering::SeqCst);
+    crate::poller::SHUTDOWN_REQUESTED.store(true, std::sync::atomic::Ordering::SeqCst);
     crate::poller::SHUTDOWN.notify_waiters();
     // D5-102 fix (2026-07-30 audit): OS 线程 (Win hover emitter / macOS
     // 全屏监听) 用 std::thread::spawn, 不能 await tokio Notify。设
     // SHUTDOWN_NATIVE_THREADS atomic, OS 线程每个 tick 检查一次退出。
-    crate::poller::SHUTDOWN_NATIVE_THREADS
-        .store(true, std::sync::atomic::Ordering::SeqCst);
+    crate::poller::SHUTDOWN_NATIVE_THREADS.store(true, std::sync::atomic::Ordering::SeqCst);
     // 让出当前 task 让 poller 主循环调度起来跑 drain (通常 <100ms 完成,
     // 500ms 留 buffer 应对最坏情况)
     tokio::time::sleep(POLLER_DRAIN_TIMEOUT).await;
@@ -1579,9 +1613,8 @@ pub async fn refresh_inner(
     // Phase 3: 填 next_fetch_at。join_err 走默认间隔(不查 backoff), 其余读 backoff
     for mut rec in recs {
         if rec.is_join_err {
-            rec.snap.next_fetch_at = Some(
-                chrono::Utc::now().timestamp_millis() + (rec.default_secs as i64) * 1000,
-            );
+            rec.snap.next_fetch_at =
+                Some(chrono::Utc::now().timestamp_millis() + (rec.default_secs as i64) * 1000);
         } else {
             fill_next_fetch_at(app, &rec.id, rec.default_secs, &mut rec.snap).await;
         }
@@ -1709,7 +1742,6 @@ async fn publish_snapshot(
         tracing::warn!(error = %e, "刷新托盘失败 (publish_snapshot)");
     }
 }
-
 
 /// 拉取单个 provider —— 供 poller 的 per-provider 调度使用（H9）。
 ///

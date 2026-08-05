@@ -371,8 +371,7 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
                 // 硬杀线程 (std::thread 无优雅退出)。 检查 quit_app 同步设的
                 // SHUTDOWN_NATIVE_THREADS atomic, 退出循环。 50ms 延迟用户
                 // 无感知, 不引入新信号量。
-                if crate::poller::SHUTDOWN_NATIVE_THREADS
-                    .load(std::sync::atomic::Ordering::SeqCst)
+                if crate::poller::SHUTDOWN_NATIVE_THREADS.load(std::sync::atomic::Ordering::SeqCst)
                 {
                     tracing::debug!("Win hover emitter 收到 SHUTDOWN, 退出");
                     break;

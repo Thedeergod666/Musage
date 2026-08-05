@@ -476,7 +476,10 @@ fn build_total_plan_row(
 /// 未来官方若填上则 API key 直拿总池。猜测 schema 跟 `usage` 同款
 /// `{limit, used/remaining, resetTime}`（数字或数字字符串）。
 fn parse_total_quota(raw: &Value) -> Option<QuotaRow> {
-    let tq = raw.get("totalQuota")?.as_object().filter(|o| !o.is_empty())?;
+    let tq = raw
+        .get("totalQuota")?
+        .as_object()
+        .filter(|o| !o.is_empty())?;
     let tq = Value::Object(tq.clone());
     let limit = parse_f64(tq.get("limit"))?;
     if limit <= 0.0 {
@@ -487,15 +490,16 @@ fn parse_total_quota(raw: &Value) -> Option<QuotaRow> {
         .unwrap_or_else(|| explicit_used.map(|u| (limit - u).max(0.0)).unwrap_or(0.0));
     let used = explicit_used.unwrap_or_else(|| (limit - remaining).max(0.0));
     let resets_at = extract_reset_ms(tq.get("resetTime"));
-    Some(build_total_plan_row((used / limit) * 100.0, resets_at, None))
+    Some(build_total_plan_row(
+        (used / limit) * 100.0,
+        resets_at,
+        None,
+    ))
 }
 
 /// 网页会话路径：调 `GetSubscriptionStats` 拿总池，返回（行, 原始响应）。
 /// 任何失败返 None + 日志（best-effort 增强，不向上抛错）。
-async fn fetch_total_plan_row(
-    token: &str,
-    info: &KimiSessionInfo,
-) -> Option<(QuotaRow, Value)> {
+async fn fetch_total_plan_row(token: &str, info: &KimiSessionInfo) -> Option<(QuotaRow, Value)> {
     // 请求头对齐 CodexBar `webRequest`（2026-08-04 本机实测 200 的完整
     // header 集合）：Bearer + Cookie 双写、connect-protocol-version、
     // x-msh-platform、JWT claims 解出的 device/session/traffic id。
@@ -543,7 +547,10 @@ async fn fetch_total_plan_row(
     if !status.is_success() {
         // 401/403 = 会话失效（kimi-desktop 侧登出等）；5xx = 服务端抖动。
         // 都只跳行，不影响主快照。
-        tracing::warn!(status = status.as_u16(), "[kimi] GetSubscriptionStats 非 2xx → 跳过总套餐行");
+        tracing::warn!(
+            status = status.as_u16(),
+            "[kimi] GetSubscriptionStats 非 2xx → 跳过总套餐行"
+        );
         return None;
     }
     let raw = match json_body_limited(resp).await {
@@ -575,7 +582,11 @@ fn parse_total_plan_from_stats(raw: &Value) -> Option<QuotaRow> {
     let ratio = parse_f64(balance.get("amountUsedRatio"))?;
     let resets_at = extract_reset_ms(balance.get("expireTime"));
     let code_ratio_pct = parse_f64(balance.get("kimiCodeUsedRatio")).map(|r| r * 100.0);
-    Some(build_total_plan_row(ratio * 100.0, resets_at, code_ratio_pct))
+    Some(build_total_plan_row(
+        ratio * 100.0,
+        resets_at,
+        code_ratio_pct,
+    ))
 }
 
 // ── 单元测试 ─────────────────────────────────────────────────────
@@ -812,9 +823,7 @@ mod tests {
         // 非对象 / 缺 limit / limit=0 → None
         assert!(parse_total_quota(&json!({ "totalQuota": null })).is_none());
         assert!(parse_total_quota(&json!({ "totalQuota": { "used": 10 } })).is_none());
-        assert!(
-            parse_total_quota(&json!({ "totalQuota": { "limit": 0, "used": 0 } })).is_none()
-        );
+        assert!(parse_total_quota(&json!({ "totalQuota": { "limit": 0, "used": 0 } })).is_none());
     }
 
     #[test]

@@ -95,11 +95,11 @@ pub struct LogEntry {
 /// 用于 [`LogEntry`] 三种构造器 + 写盘前的 `append_entry`，**两层防御**
 /// 防 caller 漏掉调用 redact。
 pub fn redact_message(s: &str) -> std::borrow::Cow<'_, str> {
+    use regex::Regex;
     use std::borrow::Cow;
     use std::sync::OnceLock;
-    use regex::Regex;
 
-        static RE: OnceLock<Regex> = OnceLock::new();
+    static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
         // 用 raw string 拼接 (concat!)，避免 Rust normal string 把 "\t" / "\s"
         // 转义成字面 "\ + t/s"——regex 引擎收到错的字符类。raw string 里每一个
@@ -118,19 +118,19 @@ pub fn redact_message(s: &str) -> std::borrow::Cow<'_, str> {
             // 这两个拼写,无歧义)。prefix (sk-/tvly-/tp-/tk-/eyJ) 全 case-
             // sensitive (厂商 token 格式都是 lowercase)。
             r"(?:",
-                r"[Bb]earer\s+[A-Za-z0-9._\-+/=]{8,}",
-                r"|[Bb]asic\s+[A-Za-z0-9._\-+/=]{4,}",
-                r"|\bsk-[A-Za-z0-9_\-]{8,}",
-                r"|\bsk-or-v1-[A-Za-z0-9_\-]{8,}",
-                r"|\bsk-cp-[A-Za-z0-9_\-]{8,}",
-                r"|\btvly-[A-Za-z0-9_\-]{8,}",
-                r"|\btp-[A-Za-z0-9_\-]{8,}",
-                r"|\btk-[A-Za-z0-9_\-]{8,}",
-                r"|\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{2,}\.[A-Za-z0-9_\-]{2,}",
-                r"|Oasis-Token=[^\s;,]+",
-                r"|Oasis-Refresh-Token=[^\s;,]+",
-                r"|MUSAGE_TOKEN=[^\s;,]+",
-                r"|(?:Cookie|Set-Cookie):[^\n]+",
+            r"[Bb]earer\s+[A-Za-z0-9._\-+/=]{8,}",
+            r"|[Bb]asic\s+[A-Za-z0-9._\-+/=]{4,}",
+            r"|\bsk-[A-Za-z0-9_\-]{8,}",
+            r"|\bsk-or-v1-[A-Za-z0-9_\-]{8,}",
+            r"|\bsk-cp-[A-Za-z0-9_\-]{8,}",
+            r"|\btvly-[A-Za-z0-9_\-]{8,}",
+            r"|\btp-[A-Za-z0-9_\-]{8,}",
+            r"|\btk-[A-Za-z0-9_\-]{8,}",
+            r"|\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{2,}\.[A-Za-z0-9_\-]{2,}",
+            r"|Oasis-Token=[^\s;,]+",
+            r"|Oasis-Refresh-Token=[^\s;,]+",
+            r"|MUSAGE_TOKEN=[^\s;,]+",
+            r"|(?:Cookie|Set-Cookie):[^\n]+",
             r")",
         ))
         .expect("redact regex compile failed")
@@ -184,10 +184,7 @@ impl LogStore {
                 #[cfg(unix)]
                 {
                     use std::os::unix::fs::PermissionsExt;
-                    let _ = std::fs::set_permissions(
-                        &path,
-                        std::fs::Permissions::from_mode(0o600),
-                    );
+                    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
                 }
             }
         }
@@ -441,7 +438,6 @@ impl LogEntry {
     }
 }
 
-
 #[cfg(test)]
 mod redact_tests {
     use super::*;
@@ -519,10 +515,7 @@ mod redact_tests {
         assert!(!e.message.contains("eyJhbGciOi"), "msg = {}", e.message);
         assert!(e.message.contains("<redacted>"));
 
-        let w = LogEntry::warn(
-            Some("stepfun"),
-            "token tp-abcdef1234 expired",
-        );
+        let w = LogEntry::warn(Some("stepfun"), "token tp-abcdef1234 expired");
         assert!(!w.message.contains("tp-abcdef"));
     }
 

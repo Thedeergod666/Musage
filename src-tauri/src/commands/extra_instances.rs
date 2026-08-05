@@ -206,11 +206,7 @@ pub async fn add_extra_instance(
         // 锁内 save key: 用最终 api_key_ref (不再 temp+rename), 失败直接返 Err
         if let Some(ref cred) = cred {
             if let Err(e) = save_credential_for_id(&final_api_key_ref, cred) {
-                return Err(t!(
-                    "commands.extra.save_key_failed",
-                    err = e.as_str()
-                )
-                .into_owned());
+                return Err(t!("commands.extra.save_key_failed", err = e.as_str()).into_owned());
             }
         }
         // push + save extras
@@ -229,7 +225,13 @@ pub async fn add_extra_instance(
     // 5. emit + refresh
     let _ = app.emit("musage://config-changed", ());
     let unique = new_instance.api_key_ref.clone();
-    if let Err(e) = crate::commands::refresh_single_inner(&app, &unique, crate::poller_backoff::RefreshSource::Manual).await {
+    if let Err(e) = crate::commands::refresh_single_inner(
+        &app,
+        &unique,
+        crate::poller_backoff::RefreshSource::Manual,
+    )
+    .await
+    {
         tracing::warn!(error = %e, provider = %unique, "add_extra_instance 后立即拉取失败");
     }
     Ok(new_instance)
@@ -313,7 +315,13 @@ pub async fn update_extra_instance(
 
     let _ = app.emit("musage://config-changed", ());
     let unique = updated.api_key_ref.clone();
-    if let Err(e) = crate::commands::refresh_single_inner(&app, &unique, crate::poller_backoff::RefreshSource::Manual).await {
+    if let Err(e) = crate::commands::refresh_single_inner(
+        &app,
+        &unique,
+        crate::poller_backoff::RefreshSource::Manual,
+    )
+    .await
+    {
         tracing::warn!(error = %e, provider = %unique, "update_extra_instance 后立即拉取失败");
     }
     Ok(updated)
@@ -446,9 +454,7 @@ pub async fn delete_extra_instance(
         // 误删刚写进来的 d#3 凭据。 修复: 删前确认 compact 之后 target_api_key_ref
         // 是否已被其他 instance 占用, 是则跳过删除 (该 key 已被迁移覆盖,
         // 不能再清; 凭据所有权转给 compacted instance)。
-        let target_ref_now_used = extras
-            .iter()
-            .any(|e| e.api_key_ref == target_api_key_ref);
+        let target_ref_now_used = extras.iter().any(|e| e.api_key_ref == target_api_key_ref);
         if !target_ref_now_used {
             delete_credential_for_id(&target_api_key_ref).ok();
         } else {
@@ -669,17 +675,15 @@ mod tests {
 
     #[test]
     fn migration_record_contains_old_new_and_credential() {
-        let migrations_done: Vec<(String, String, Credentials)> = vec![
-            (
-                "provider#3".to_string(),
-                "provider#2".to_string(),
-                Credentials {
-                    api_key: Some("c".to_string()),
-                    cookie: None,
-                    secret_key: None,
-                },
-            ),
-        ];
+        let migrations_done: Vec<(String, String, Credentials)> = vec![(
+            "provider#3".to_string(),
+            "provider#2".to_string(),
+            Credentials {
+                api_key: Some("c".to_string()),
+                cookie: None,
+                secret_key: None,
+            },
+        )];
         let (old_ref, new_ref, credential) = &migrations_done[0];
         assert_eq!(old_ref, "provider#3");
         assert_eq!(new_ref, "provider#2");

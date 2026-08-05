@@ -225,7 +225,10 @@ pub fn is_ssrf_blocked(host: &str) -> bool {
     // 即可覆盖 ::ffff:127.0.0.2 / ::ffff:127.255.255.255 等全部
     let ipv4_mapped = host
         .strip_prefix("::ffff:")
-        .or_else(|| host.strip_prefix("[::ffff:").and_then(|s| s.strip_suffix("]")))
+        .or_else(|| {
+            host.strip_prefix("[::ffff:")
+                .and_then(|s| s.strip_suffix("]"))
+        })
         .unwrap_or(host);
     if ipv4_mapped == "::ffff:127.0.0.1" || ipv4_mapped == "[::ffff:127.0.0.1]" {
         return true;
@@ -1020,9 +1023,30 @@ mod tests {
         }]);
 
         assert_eq!(QuotaSnapshot::default().worst_health(), "unknown");
-        assert_eq!(QuotaSnapshot { providers: vec![unknown.clone()], ..Default::default() }.worst_health(), "unknown");
-        assert_eq!(QuotaSnapshot { providers: vec![ok, unknown.clone()], ..Default::default() }.worst_health(), "unknown");
-        assert_eq!(QuotaSnapshot { providers: vec![warn, unknown], ..Default::default() }.worst_health(), "warn");
+        assert_eq!(
+            QuotaSnapshot {
+                providers: vec![unknown.clone()],
+                ..Default::default()
+            }
+            .worst_health(),
+            "unknown"
+        );
+        assert_eq!(
+            QuotaSnapshot {
+                providers: vec![ok, unknown.clone()],
+                ..Default::default()
+            }
+            .worst_health(),
+            "unknown"
+        );
+        assert_eq!(
+            QuotaSnapshot {
+                providers: vec![warn, unknown],
+                ..Default::default()
+            }
+            .worst_health(),
+            "warn"
+        );
     }
 
     // ── D2 (2026-07-28 审查): SSRF extract_host / is_ssrf_blocked ──

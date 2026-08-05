@@ -30,6 +30,20 @@ pub use self::macos::*;
 #[cfg(target_os = "windows")]
 pub use self::windows::*;
 
+/// menu_bar_is_light 跨平台 shim。macOS 实现由上方 `pub use self::macos::*`
+/// 重导出（真 NSApp effectiveAppearance 判断）；非 macOS（Win/Linux）tray
+/// 永远渲染在深色任务栏上 -> 固定 false（保持白字）。
+///
+/// **上层必须调 `crate::platform::menu_bar_is_light()`，不要直连
+/// `crate::platform::macos::menu_bar_is_light()`** -- `macos` 模块在
+/// 非 macOS 平台不存在（`pub mod macos` 被 `#[cfg(target_os="macos")]` 门控），
+/// 直连会让 Linux/Windows 编译期 E0433（2026-08-05 CI 修复）。
+#[cfg(not(target_os = "macos"))]
+#[inline]
+pub fn menu_bar_is_light() -> bool {
+    false
+}
+
 // ── Linux stub：EWMH 不支持原生"置底"，会降级成普通窗口（已知限制）──
 // Windows 已经走 windows.rs 自己的 tracker 实现（对称 macOS 那套），
 // 这里只留 Linux 作为最后兜底。

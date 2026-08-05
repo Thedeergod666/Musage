@@ -178,7 +178,10 @@ async fn wait_window_closed(app: &AppHandle, label: &str) {
     // 都堆一份),且下次 build 同 label 返 Err → 用户看到红色 toast 不明所以。
     // destroy 是同步 drop,不 await,百毫秒内必回收。
     if let Some(w) = app.get_webview_window(label) {
-        tracing::warn!(label = label, "wait_window_closed 超时 2s,强制 destroy 防 webview 泄漏");
+        tracing::warn!(
+            label = label,
+            "wait_window_closed 超时 2s,强制 destroy 防 webview 泄漏"
+        );
         let _ = w.destroy();
         // 重建后极短时间再确认一次,有些平台 destroy 后句柄还没完全 drop
         for _ in 0..10 {
@@ -223,7 +226,9 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
         .center()
         .skip_taskbar(true);
     let b = match app.get_webview_window("settings") {
-        Some(p) => b.parent(&p).map_err(|e| format!("xiaomi login parent: {e}"))?,
+        Some(p) => b
+            .parent(&p)
+            .map_err(|e| format!("xiaomi login parent: {e}"))?,
         None => b,
     };
     b
@@ -367,9 +372,7 @@ async fn extract_with_retry(
         }
 
         // 2026-08-03 audit (Darwin B7): 跟 hover emitter 同款 SHUTDOWN 检查
-        if crate::poller::SHUTDOWN_NATIVE_THREADS
-            .load(std::sync::atomic::Ordering::SeqCst)
-        {
+        if crate::poller::SHUTDOWN_NATIVE_THREADS.load(std::sync::atomic::Ordering::SeqCst) {
             tracing::debug!("xiaomi 提取流程收到 SHUTDOWN, 退出");
             return Err(t!("xiaomi_login.another_task_done").into_owned());
         }
@@ -538,7 +541,10 @@ fn emit_failed(app: &AppHandle, msg: String) {
 // 域, path 应在 /dashboard 或 /oauth/ 等受信 prefix 下.
 fn extract_user_id_from_url(url: &Url) -> Option<String> {
     // 域白名单 + path 前缀白名单
-    let host_ok = matches!(url.host_str(), Some("platform.xiaomimimo.com") | Some("xiaomimimo.com"));
+    let host_ok = matches!(
+        url.host_str(),
+        Some("platform.xiaomimimo.com") | Some("xiaomimimo.com")
+    );
     let path_ok = url.path().starts_with("/dashboard")
         || url.path().starts_with("/oauth")
         || url.path() == "/";

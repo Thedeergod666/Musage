@@ -693,7 +693,7 @@ fn draw_mini_bars(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64
     let track = Rgba([60u8, 60, 60, 255]);
     // H2 fix (2026-07-29 审查): macOS 浅色菜单栏下白字不可见 → 改黑字。
     // Win/Linux tray 永远渲染在深色任务栏上,固定白字保持不变。
-    let fill = if cfg!(target_os = "macos") && crate::platform::macos::menu_bar_is_light() {
+    let fill = if crate::platform::menu_bar_is_light() {
         Rgba([0u8, 0, 0, 255])
     } else {
         Rgba([255u8, 255, 255, 255])
@@ -837,8 +837,8 @@ fn draw_percent(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64, 
     let y_top = 0; //  0 →  0
     let y_bot = s / 2; // 16 → 32
     let pad_right = s * 2 / 32; // 右边留 2px 内边距
-    // H2 fix: 同 draw_mini_bars,浅色菜单栏改黑字
-    let color = if cfg!(target_os = "macos") && crate::platform::macos::menu_bar_is_light() {
+                                // H2 fix: 同 draw_mini_bars,浅色菜单栏改黑字
+    let color = if crate::platform::menu_bar_is_light() {
         Rgba([0u8, 0, 0, 255])
     } else {
         Rgba([255u8, 255, 255, 255])
@@ -1206,7 +1206,8 @@ mod tests {
         let font = load_font().expect("test needs embedded font");
         let scale = fit_scale(font, "100%", 20.0, 30);
         let scaled = font.as_scaled(scale);
-        let w = "100%".chars()
+        let w = "100%"
+            .chars()
             .map(|c| scaled.h_advance(font.glyph_id(c)))
             .sum::<f32>()
             .round() as i32;

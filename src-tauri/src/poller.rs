@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::task::JoinSet;
 use tokio::sync::Notify;
+use tokio::task::JoinSet;
 
 /// H1 fix (2026-07-30 audit): 全工程 graceful shutdown 信号源。
 ///
@@ -76,7 +76,6 @@ fn retain_live_schedules(
     next_fetch.retain(|key, _| live_sources.contains(key));
     last_intervals.retain(|key, _| live_sources.contains(key));
 }
-
 
 /// per-provider 拉取 task 集合。poller 每秒检查时把过期的 provider spawn 进来，
 /// task 完成或 panic 后自动从 set 里清理（JoinSet::join_next 移除）。当前
@@ -381,9 +380,8 @@ pub fn start(app: AppHandle) {
                 // H2 fix (2026-07-29 审查): jitter 已用于 spawn 前 sleep,next
                 // entry 仍按 interval + jitter 排,但本次 fire 已在 sleep 时分散。
                 // jitter 已在 spawn 前消费,此处不再重复计算。
-                *entry = now
-                    + Duration::from_secs(interval_secs)
-                    + Duration::from_millis(jitter_ms);
+                *entry =
+                    now + Duration::from_secs(interval_secs) + Duration::from_millis(jitter_ms);
             }
         }
     });
@@ -482,16 +480,31 @@ mod tests {
 
     #[test]
     fn jitter_for_different_ids_scatter() {
-        let providers = ["minimax", "deepseek", "xiaomimimo", "tavily", "zenmux",
-                         "openrouter", "kimi", "zhipu", "claude_official",
-                         "siliconflow", "stepfun", "anysearch"];
+        let providers = [
+            "minimax",
+            "deepseek",
+            "xiaomimimo",
+            "tavily",
+            "zenmux",
+            "openrouter",
+            "kimi",
+            "zhipu",
+            "claude_official",
+            "siliconflow",
+            "stepfun",
+            "anysearch",
+        ];
         let mut seen = std::collections::HashSet::new();
         for id in &providers {
             seen.insert(jitter_for(id, 60));
         }
-        assert_eq!(seen.len(), providers.len(),
+        assert_eq!(
+            seen.len(),
+            providers.len(),
             "12 个 provider jitter 应全部不同 (u64 空间), 实际 {} / {}",
-            seen.len(), providers.len());
+            seen.len(),
+            providers.len()
+        );
     }
 
     #[test]
@@ -500,7 +513,10 @@ mod tests {
         let max_ms = (interval * 1000) / 10;
         for id in ["minimax", "deepseek", "kimi", "zhipu", "stepfun"] {
             let j = jitter_for(id, interval);
-            assert!(j <= max_ms as u64, "jitter={j} > 0..+10% ({max_ms}ms) for id={id}");
+            assert!(
+                j <= max_ms as u64,
+                "jitter={j} > 0..+10% ({max_ms}ms) for id={id}"
+            );
         }
     }
 
@@ -517,18 +533,12 @@ mod tests {
     #[test]
     fn retain_live_schedules_removes_replaced_source_at_equal_size() {
         let now = Instant::now();
-        let mut next_fetch = HashMap::from([
-            ("minimax".to_string(), now),
-            ("minimax#2".to_string(), now),
-        ]);
-        let mut last_intervals = HashMap::from([
-            ("minimax".to_string(), 60),
-            ("minimax#2".to_string(), 120),
-        ]);
-        let live_sources = std::collections::HashSet::from([
-            "minimax".to_string(),
-            "deepseek#2".to_string(),
-        ]);
+        let mut next_fetch =
+            HashMap::from([("minimax".to_string(), now), ("minimax#2".to_string(), now)]);
+        let mut last_intervals =
+            HashMap::from([("minimax".to_string(), 60), ("minimax#2".to_string(), 120)]);
+        let live_sources =
+            std::collections::HashSet::from(["minimax".to_string(), "deepseek#2".to_string()]);
 
         retain_live_schedules(&mut next_fetch, &mut last_intervals, &live_sources);
 
@@ -541,8 +551,8 @@ mod tests {
     #[tokio::test]
     async fn shutdown_during_long_sleep_aborts_spawn_task() {
         let jitter_ms = 5_000u64; // 5s sleep
-        // notify_one 安排 permit 给下一次 notified() —— 跟 wake-up 期间
-        // 主循环处理 SHUTDOWN 的语义一致(notify_waiters 只唤醒当前等待的)。
+                                  // notify_one 安排 permit 给下一次 notified() —— 跟 wake-up 期间
+                                  // 主循环处理 SHUTDOWN 的语义一致(notify_waiters 只唤醒当前等待的)。
         SHUTDOWN.notify_one();
         let aborted = tokio::time::timeout(Duration::from_millis(500), async {
             tokio::select! {
@@ -556,6 +566,9 @@ mod tests {
         })
         .await
         .expect("select 应在 500ms 内被 SHUTDOWN permit 唤醒");
-        assert!(aborted, "spawn task 在 SHUTDOWN 后必须 abort,不能等满 5s sleep");
+        assert!(
+            aborted,
+            "spawn task 在 SHUTDOWN 后必须 abort,不能等满 5s sleep"
+        );
     }
 }

@@ -84,7 +84,7 @@ fn should_skip_endpoint(source_id: &str, ep: Endpoint) -> bool {
     // 用户频繁 add/delete extra instance 时 entry 永久残留 → HashMap 缓慢
     // 膨胀 (实操 low risk: source_id 是 provider_id + #index 形式, 实际
     // 不超过 builtin_sources + extra 数量; 但清理窗口是 free)。 修法:
-    // 锁内顺便 prune 过期 entry (TTL = 5 分钟, 跟 should_skip 一致), 
+    // 锁内顺便 prune 过期 entry (TTL = 5 分钟, 跟 should_skip 一致),
     // 每次 should_skip 调用都白嫖一次 GC, 不用额外 timer。
     let Ok(mut g) = last_successful().lock() else {
         return false;

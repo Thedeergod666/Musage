@@ -92,7 +92,10 @@ async fn wait_window_closed(app: &AppHandle, label: &str) {
         sleep(Duration::from_millis(50)).await;
     }
     if let Some(w) = app.get_webview_window(label) {
-        tracing::warn!(label = label, "wait_window_closed 超时 2s,强制 destroy 防 webview 泄漏");
+        tracing::warn!(
+            label = label,
+            "wait_window_closed 超时 2s,强制 destroy 防 webview 泄漏"
+        );
         let _ = w.destroy();
         for _ in 0..10 {
             if app.get_webview_window(label).is_none() {
@@ -146,7 +149,9 @@ pub async fn open_kimi_login_window(app: AppHandle) -> Result<(), String> {
         .center()
         .skip_taskbar(true);
     let b = match app.get_webview_window("settings") {
-        Some(p) => b.parent(&p).map_err(|e| format!("kimi login parent: {e}"))?,
+        Some(p) => b
+            .parent(&p)
+            .map_err(|e| format!("kimi login parent: {e}"))?,
         None => b,
     };
     let window = b

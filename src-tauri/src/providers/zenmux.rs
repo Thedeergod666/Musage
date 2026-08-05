@@ -753,10 +753,13 @@ mod tests {
         let ms_naive_ms = parse_iso8601_ms(Some("2026-03-24T08:35:09.123")).unwrap();
         assert_eq!(
             ms_naive_ms,
-            chrono::NaiveDateTime::parse_from_str("2026-03-24T08:35:09.123", "%Y-%m-%dT%H:%M:%S%.f")
-                .unwrap()
-                .and_utc()
-                .timestamp_millis()
+            chrono::NaiveDateTime::parse_from_str(
+                "2026-03-24T08:35:09.123",
+                "%Y-%m-%dT%H:%M:%S%.f"
+            )
+            .unwrap()
+            .and_utc()
+            .timestamp_millis()
         );
 
         // 无效字符串仍 None

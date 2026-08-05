@@ -171,7 +171,7 @@ interface QuotaRow {
    *  浮窗据此显示「日重置」/「月重置」前缀（缺省走月重置，跟旧行为一致）；
    *  StepFun 一次性额度包带 `{reset_period: "expire"}` → 显示「到期」+「已到期」。
    *  Kimi 总套餐行带 `{kimi_code_used_ratio: number}`（总池里 Code 消耗占比 %）
-   *  → bar 和「月重置」之间多渲染一行拆分小字「Kimi xx% · Code xx%」。 */
+   *  → 「月重置」行之后多渲染一行拆分小字「Kimi xx% · Code xx%」。 */
   extra?: { reset_period?: string; kimi_code_used_ratio?: number } | null;
   /** 行的语义分类（与 locale 解耦，**L7 fix 2026-06-19**）。
    *  rowKey 优先用这个做 DOM 稳定 key，避免切 locale 后 key 变化导致全量重建。 */
@@ -938,9 +938,9 @@ function buildRowSkeleton(r: QuotaRow): HTMLElement {
     `;
   } else if (r.utilization != null) {
     // Kimi 总套餐行（extra.kimi_code_used_ratio 有值）→ 普通单条 bar
-    // （阈值变色，跟其它行一致）+ bar 和 row-foot（月重置）之间插一行
-    // 拆分小字「Kimi xx% · Code xx%」。2026-08-05 二轮：官网同款双色
-    // 堆叠条的黑段 #17171c 在深色玻璃上易读性太差，用户拍板改回单条。
+    // （阈值变色，跟其它行一致）+ row-foot（月重置）之后再跟一行拆分
+    // 小字「Kimi xx% · Code xx%」。2026-08-05 二轮：官网同款双色堆叠条
+    // 黑段在深色玻璃上易读性太差砍分段；三轮：小字行与月重置行对调。
     // 其它 utilization-only 行保持单条 bar-fill 无拆分小字。
     if (r.extra?.kimi_code_used_ratio != null) {
       row.classList.add("split-note-row");
@@ -950,8 +950,8 @@ function buildRowSkeleton(r: QuotaRow): HTMLElement {
           <span class="pct"></span>
         </div>
         <div class="bar"><div class="bar-fill"></div></div>
-        <div class="split-note"></div>
         <div class="row-foot"></div>
+        <div class="split-note"></div>
       `;
     } else {
       row.innerHTML = `
@@ -1038,8 +1038,8 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
     const bar = rowEl.querySelector<HTMLElement>(".bar-fill")!;
     bar.className = `bar-fill ${cls}`;
     bar.style.width = `${barWidth(r.utilization)}%`;
-    // Kimi 总套餐拆分小字（2026-08-05 二轮，替代双色堆叠条）：
-    // 插在 bar 和「月重置」之间的单行文本「Kimi xx% · Code xx%」。
+    // Kimi 总套餐拆分小字（2026-08-05 二轮替代双色堆叠条；三轮对调
+    // 到月重置行之后）：单行文本「Kimi xx% · Code xx%」。
     // - Code = extra.kimi_code_used_ratio（API 直接给的 Code 占比）
     // - Kimi = 总 − Code（API 无独立 Kimi Work 分项，官方黑段同样
     //   是"其余全部"），clamp 防 schema 漂移出负值/超界

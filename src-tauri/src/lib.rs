@@ -173,6 +173,22 @@ pub fn run() {
                     if let Err(e) = crate::tray::rebuild_tray(&app_for_locale) {
                         tracing::warn!(error = %e, "rebuild_tray 失败");
                     }
+                    // 2026-08-05 审查交叉验证修复: rebuild_tray 只重建 menu, 不刷
+                    // tooltip -- tooltip 文本走 t!(), locale 切换后不刷新会显示旧
+                    // locale 文本直到下个 poller tick (≤60s). 这里用当前 snapshot
+                    // 触发一次 tray Update (icon + tooltip), 让 tooltip 立刻跟新 locale.
+                    // blocking_read 跟同文件 config 监听器 (L161) 同款, 事件回调在
+                    // tauri 专用线程跑, 不在 tokio runtime 里, 安全.
+                    {
+                        let state = app_for_locale.state::<crate::AppState>();
+                        let snap = state.snapshot.blocking_read().clone();
+                        let style = state.config.blocking_read().tray_icon_style;
+                        let _ = crate::tray::update_tray_from_snapshot(
+                            &app_for_locale,
+                            &snap,
+                            style,
+                        );
+                    }
                     // 同步 settings 窗口 title
                     if let Some(w) = app_for_locale.get_webview_window("settings") {
                         let title = t!("window.settings").to_string();

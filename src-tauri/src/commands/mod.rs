@@ -1175,6 +1175,13 @@ pub async fn quit_app(app: AppHandle) {
     //   1) notify shutdown signal,让 poller 主循环走 drain 路径
     //   2) 短暂 yield 一次让它真有机会跑完
     //   3) 才 app.exit(0)
+    //
+    // 2026-08-05 审查交叉验证修复: 先置 SHUTDOWN_REQUESTED, 再 notify_waiters.
+    // notify_waiters 只唤醒当前已注册的 notified() future -- 若主循环正在
+    // loop body 里 (无 notified() 注册), 通知会丢. SHUTDOWN_REQUESTED AtomicBool
+    // 是兜底, 主循环 select! 退出后必查, 保证不漏 shutdown.
+    crate::poller::SHUTDOWN_REQUESTED
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     crate::poller::SHUTDOWN.notify_waiters();
     // D5-102 fix (2026-07-30 audit): OS 线程 (Win hover emitter / macOS
     // 全屏监听) 用 std::thread::spawn, 不能 await tokio Notify。设

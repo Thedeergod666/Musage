@@ -334,6 +334,20 @@ fn parse(
                 .get("status_msg")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
+            // 2026-08-05 审查交叉验证修复: 之前所有 status_code != 0 一律归
+            // ServerError -> poller_backoff 走 30min 指数退避 + 前端显示
+            // "服务端错误". 但 1004 / 限流类消息是瞬态限流, 应归 RateLimited
+            // (前端 rate_limited UI + 退避语义正确). 其他业务码暂仍归 ServerError.
+            let msg_lower = msg.to_lowercase();
+            let kind = if code == 1004
+                || msg_lower.contains("rate limit")
+                || msg.contains("限流")
+                || msg.contains("频率")
+            {
+                ErrorKind::RateLimited
+            } else {
+                ErrorKind::ServerError
+            };
             return ProviderSnapshot {
                 // v0.3: 用 source_id 替代旧 enum 占位
                 provider: "minimax".to_string(),
@@ -348,7 +362,7 @@ fn parse(
                     )
                     .into_owned(),
                 ),
-                error_kind: Some(ErrorKind::ServerError),
+                error_kind: Some(kind),
                 fetched_at: Some(now_ms),
                 next_fetch_at: None,
                 raw: Some(raw.clone()),
@@ -903,9 +917,27 @@ mod tests {
     }
 
     #[test]
-    fn parse_full_business_error() {
+    fn parse_full_rate_limit_error() {
+        // 2026-08-05 审查修复: 1004 + "rate limit" 现归 RateLimited (不是 ServerError)
         let raw = serde_json::json!({
             "base_resp": { "status_code": 1004, "status_msg": "rate limit" }
+        });
+        let snap = parse(
+            &raw,
+            Region::Cn,
+            &ProviderOverrides::default(),
+            "minimax",
+            "MiniMax",
+        );
+        assert!(!snap.success);
+        assert_eq!(snap.error_kind, Some(ErrorKind::RateLimited));
+    }
+
+    #[test]
+    fn parse_full_business_error_non_rate_limit() {
+        // 2026-08-05 审查修复: 非限流业务码仍归 ServerError
+        let raw = serde_json::json!({
+            "base_resp": { "status_code": 1005, "status_msg": "plan not subscribed" }
         });
         let snap = parse(
             &raw,

@@ -308,7 +308,17 @@ async fn fetch_once(
 ) -> Result<ProviderSnapshot, FetchError> {
     // 并行拉 rate limit + plan status（互不依赖）
     let rate = fetch_rate_limit(token).await?;
-    let plan = fetch_plan_status(token).await.ok().flatten(); // 失败不阻塞
+    // 2026-08-05 审查交叉验证修复: fetch_plan_status 的网络/解析错误之前被
+    // .ok().flatten() 静默吞掉 (非 200 已 warn, 但 reqwest/JSON 错误无日志),
+    // plan_name 变 None 时用户/开发者查不到原因. 改为显式 match 记 warn.
+    // plan_name 是可选字段, 失败不阻塞主 fetch.
+    let plan = match fetch_plan_status(token).await {
+        Ok(opt) => opt,
+        Err(e) => {
+            tracing::warn!(error = %e, "StepFun plan_status 拉取失败, plan_name 将为 None");
+            None
+        }
+    };
 
     parse(rate, plan, source_id, display_name)
 }

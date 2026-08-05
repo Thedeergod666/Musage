@@ -29,16 +29,29 @@ pub(crate) static SHUTDOWN: Notify = Notify::const_new();
 pub(crate) static SHUTDOWN_NATIVE_THREADS: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// 2026-08-05 审查交叉验证修复: tokio 主循环 shutdown 兜底标志.
+///
+/// `SHUTDOWN` (Notify) 的 `notify_waiters()` 只唤醒**当前已注册**的
+/// `notified()` future -- 若信号在主循环 loop body 执行期间触发 (此时
+/// 没有 `notified()` future 注册), 通知永久丢失, 主循环漏掉 shutdown.
+/// 此 AtomicBool 由 `quit_app` 在 `notify_waiters()` 之前置位, 主循环
+/// `select!` 退出后必查, 不依赖 notify 时序, 保证不漏.
+///
+/// 跟 `SHUTDOWN_NATIVE_THREADS` 区分: 那个给 std::thread (hover emitter),
+/// 这个给 tokio 主循环. 两者并存.
+pub(crate) static SHUTDOWN_REQUESTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 use crate::commands::refresh_inner;
 use crate::providers::all_sources;
 use crate::AppState;
 
-/// H2 fix (2026-07-29 审查): 给定 provider id + interval,返 ±10% 范围的
+/// H2 fix (2026-07-29 审查): 给定 provider id + interval,返 0..+10% 范围的
 /// 确定性 jitter ms。确定性 (基于 provider id hash) → 同一 provider
 /// 每次拉取 jitter 都一样 (避免运行时漂移),不同 provider 散开。
 ///
 /// 不引 rand 依赖 —— FNV-1a 64-bit hash 输出分散到 u64 全空间,再 map
-/// 到 ±10% interval 范围 (ms 范围 ~6s @ interval=60s)。21 bucket (旧版)
+/// 到 0..+10% interval 范围 (ms 范围 ~6s @ interval=60s)。21 bucket (旧版)
 /// 散 12 个 provider 只能 7-8 个不同 (实测撞概率高),后端看到的是
 /// 绝对 jitter ms,不是 percent,只要"不同 provider 不同毫秒偏移"即可,
 /// u64 空间足够。
@@ -160,32 +173,39 @@ pub fn start(app: AppHandle) {
         // 每秒检查一次。H1 fix (2026-07-30 audit): 用 tokio::select! 同时
         // 监听 sleep + SHUTDOWN.notify, quit_app 触发 notify_waiters
         // 即同步退,不丢在飞 fetch 让 JoinSet 自然 abort。
+        //
+        // 2026-08-05 审查交叉验证修复: 之前 drain 逻辑在 select! 的 notified()
+        // 分支里 -- 若 quit_app 的 notify_waiters() 在 loop body 执行期间触发
+        // (此时无 notified() future 注册), 通知丢失, 主循环漏掉 shutdown.
+        // 改为: select! 两个分支都只负责"醒过来", 真正的 drain 判定移到 select!
+        // 之后用 SHUTDOWN_REQUESTED AtomicBool 兜底 (quit_app notify 前置位).
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(1)) => {}
-                _ = SHUTDOWN.notified() => {
-                    tracing::info!("poller 主循环收到 SHUTDOWN,开始 drain");
-                    // 把全部在飞 task abort + join。std::sync::MutexGuard
-                    // !Send,所以必须 mem::replace 接管 JoinSet + drop guard 后
-                    // 再 await,否则 spawn 进来的 future 拿不到 Send bound。
-                    let taken: JoinSet<()> = {
-                        let mut g = in_flight().lock().unwrap_or_else(|e| e.into_inner());
-                        std::mem::take(&mut *g)
-                    };
-                    // 全部在飞 task 取消
-                    let mut taken = taken;
-                    taken.abort_all();
-                    // 等所有 task 退出,join_set .join_next().await 阻塞到空
-                    while let Some(res) = taken.join_next().await {
-                        if let Err(e) = res {
-                            if !e.is_cancelled() {
-                                tracing::warn!(error = %e, "poller drain 时 task panic");
-                            }
+                _ = SHUTDOWN.notified() => {}
+            }
+            if SHUTDOWN_REQUESTED.load(std::sync::atomic::Ordering::SeqCst) {
+                tracing::info!("poller 主循环收到 SHUTDOWN,开始 drain");
+                // 把全部在飞 task abort + join。std::sync::MutexGuard
+                // !Send,所以必须 mem::replace 接管 JoinSet + drop guard 后
+                // 再 await,否则 spawn 进来的 future 拿不到 Send bound。
+                let taken: JoinSet<()> = {
+                    let mut g = in_flight().lock().unwrap_or_else(|e| e.into_inner());
+                    std::mem::take(&mut *g)
+                };
+                // 全部在飞 task 取消
+                let mut taken = taken;
+                taken.abort_all();
+                // 等所有 task 退出,join_set .join_next().await 阻塞到空
+                while let Some(res) = taken.join_next().await {
+                    if let Err(e) = res {
+                        if !e.is_cancelled() {
+                            tracing::warn!(error = %e, "poller drain 时 task panic");
                         }
                     }
-                    tracing::info!("poller 主循环退出");
-                    return;
                 }
+                tracing::info!("poller 主循环退出");
+                return;
             }
             let cfg = app.state::<AppState>().config.read().await.clone();
             // M5 fix: 之前 backoff read guard 持有整个 for 循环（for 循环里 spawn 的
@@ -419,7 +439,17 @@ async fn tick_with_source(
                 .iter()
                 .position(|p| crate::commands::snapshot_key(p) == new_id)
             {
-                guard.providers[idx] = new_p.clone();
+                // 2026-08-05 审查交叉验证修复: tick 全量刷新的 new_snap 是
+                // refresh_inner fetch 期间收集的, 可能比 per-provider poller
+                // 并发写入的更新数据更旧 (tick_is_running 只挡 tick 开始后的
+                // 新 task, 挡不住已 in-flight 的 per-provider fetch). 比较
+                // fetched_at, 仅在新数据 >= 已有数据时覆盖, 避免 tick 回滚
+                // per-provider 的并发更新. 漏掉时下个周期会自愈.
+                let old_ts = guard.providers[idx].fetched_at.unwrap_or(0);
+                let new_ts = new_p.fetched_at.unwrap_or(0);
+                if new_ts >= old_ts {
+                    guard.providers[idx] = new_p.clone();
+                }
             } else {
                 guard.providers.push(new_p.clone());
             }
@@ -470,7 +500,7 @@ mod tests {
         let max_ms = (interval * 1000) / 10;
         for id in ["minimax", "deepseek", "kimi", "zhipu", "stepfun"] {
             let j = jitter_for(id, interval);
-            assert!(j <= max_ms as u64, "jitter={j} > ±10% ({max_ms}ms) for id={id}");
+            assert!(j <= max_ms as u64, "jitter={j} > 0..+10% ({max_ms}ms) for id={id}");
         }
     }
 

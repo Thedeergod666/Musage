@@ -846,8 +846,18 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
         let mut parsed: std::collections::BTreeMap<String, ProviderConfig> =
             std::collections::BTreeMap::new();
         for (k, val) in map {
-            if let Ok(pc) = serde_json::from_value::<ProviderConfig>(val.clone()) {
-                parsed.insert(k.clone(), pc);
+            match serde_json::from_value::<ProviderConfig>(val.clone()) {
+                Ok(pc) => {
+                    parsed.insert(k.clone(), pc);
+                }
+                Err(e) => {
+                    // 2026-08-05 审查交叉验证修复: 之前 if let Ok 静默丢弃损坏条目,
+                    // 用户某条 provider 配置写坏后会无声消失, 无任何日志可查.
+                    tracing::warn!(
+                        key = %k, error = %e,
+                        "best-effort: providers 条目解析失败, 跳过该 provider"
+                    );
+                }
             }
         }
         cfg.providers = parsed;
@@ -982,8 +992,17 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
         recognized_any = true;
         for (k, val) in map {
             // 单条损坏不拖垮整张 map(跟 providers 字段同款容错)
-            if let Ok(po) = serde_json::from_value::<ProviderOverrides>(val.clone()) {
-                cfg.schema_overrides.insert(k.clone(), po);
+            match serde_json::from_value::<ProviderOverrides>(val.clone()) {
+                Ok(po) => {
+                    cfg.schema_overrides.insert(k.clone(), po);
+                }
+                Err(e) => {
+                    // 2026-08-05 审查交叉验证修复: 之前静默丢弃, 现记 warn 留痕.
+                    tracing::warn!(
+                        key = %k, error = %e,
+                        "best-effort: schema_overrides 条目解析失败, 跳过该条"
+                    );
+                }
             }
         }
     }

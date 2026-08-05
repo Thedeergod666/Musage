@@ -595,7 +595,12 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
         ));
     }
 
-    let success = !rows.is_empty();
+    // 2026-08-05 审查交叉验证修复: success 必须跟 is_active 联动.
+    // 之前 success = !rows.is_empty() -- 账号停用时 API 仍可能返回 billing 行,
+    // 导致 success:true + error:Some(AuthFailed) 同时出现, 违反
+    // ProviderSnapshot 契约 (error_kind 仅 success==false 时有意义), 前端
+    // 浮窗会同时渲染用量条 + 错误卡, 行为矛盾.
+    let success = !rows.is_empty() && is_active;
     // 2026-08-03 audit (Raman P2 / McClintock): is_active=false 时
     // 必须返回 AuthFailed error,浮窗才能显示"账号已停用"提示,
     // 并触发一键重登路径 (跟 anysearch_login.rs 的 relogin-anysearch 分支配对)

@@ -1,6 +1,6 @@
 # Musage 项目说明
 
-> 任何新打开此项目的 AI 会话应先读这个文件。这是当前对话的精炼版（v0.2.4 + Unreleased StepFun 一键登录 + Kimi 总套餐（含 8-05 堆叠条/行序迭代）/ 2026-08-05 快照）。
+> 任何新打开此项目的 AI 会话应先读这个文件。这是当前对话的精炼版（v0.2.6 已发版，含 StepFun 一键登录 + AnySearch + Kimi「总套餐」月度共享池（含 8-05 堆叠条/行序迭代）+ 2026-07-30 / 08-03 两轮审计批量修复 + 08-05 交叉验证修复 / 2026-08-05 快照）。
 
 ## 这是什么
 
@@ -129,9 +129,9 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 - `*_remaining_percent=100` 不代表"还有 100%"，可能是 `status=2/3`（不在套餐内）
 - 旧字段对 Plus 订阅者全为 0
 
-## 当前进度（v0.2.4 快照，2026-07-21）
+## 当前进度（v0.2.6 快照，2026-08-05）
 
-✅ **v0.2.4 已发布**（git tag `v0.2.4`，2026-07-17）
+✅ **v0.2.4 / v0.2.5 / v0.2.6 已发布**（v0.2.4 tag 2026-07-17 / v0.2.5 tag 2026-07-29 / v0.2.6 tag 2026-08-05）。v0.2.5 = AnySearch 一键登录 + StepFun 重写 + Win PinBottom hover-raise；v0.2.6 = Kimi 总套餐月度共享池（行序/堆叠条迭代）+ 2026-07-30 / 08-03 两轮审计批量修复 + 08-05 交叉验证修复（详见 CHANGELOG 对应段）。
    - feat(kimi)：浮窗左侧标签改动态窗口剩余（剩 <1 天 → `5h`，≥1 天 → `7d`），替代 used/total；foot 前缀跟随（`5h重置`/`7d重置`），Tavily 无 kind 标记保持原样（commit `75a5d8f`）
    - feat(floating)：双击浮窗打开设置面板（原双击"立即刷新"移除，托盘菜单仍可触发；跳过 button/input/select/a 防误触）（commit `361fc55`）
    - fix：5h 用量达 100% 上限时 kimi / zhipu / claude_official 行被隐藏（commit `de6668b`）
@@ -139,7 +139,7 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
    - v0.2.3 macOS 26 tray icon visual hotfix：[src-tauri/icons/tray-base.png](src-tauri/icons/tray-base.png) 重做为 64×64（48px 内容 + 8px 透明 padding 四边），圆外径 32→24 (-25%)，halo 消失
    - v0.2.2 + v0.2.3 都没正式 ship（v0.2.1 → v0.2.3 直接跨度），CHANGELOG 两段都保留
 
-⏳ **Unreleased（v0.2.5 候选，详见 CHANGELOG [Unreleased] 段）**：
+✅ **v0.2.5 + v0.2.6 已 ship（下列条目均已发布，详见 CHANGELOG 对应段）**：
    - **StepFun 集成重写**（commit `0d51124`，2026-07-21）：端点迁 `platform.stepfun.com`；`Oasis-Webid` 请求头从 token refresh half 的 JWT `device_id` claim 本地提取（CodexBar 逆向，新增 `base64` 依赖 `URL_SAFE_NO_PAD`），缺 webid 一律 401；token 过期/格式本地预检（`token_expired_hint` 带过期分钟数 / `token_malformed_hint`），不再让用户拿 401 猜原因；credit 套餐（`plan_family=2` Mini/Pro）解析 + 单行「额度」（新 i18n key `row.credit`）；支持整段 `Cookie: Oasis-Token=...` 粘贴自动剥离
    - **Win PinBottom hover-raise 重写**（commit `ff309bb`，2026-07-20）：dwell hysteresis + 两级命中（`Visible` 1 tick / `Covered` 250ms dwell / `Outside` 150ms）+ edge-trigger + 1s re-assert 兜底，详见下方专节
    - **玻璃 backdrop throttling 三层防御**（commit `1a38d89`）：`will-change: backdrop-filter` + 4s 心跳 keyframes + `set_window_level` 后 emit `musage://backdrop-refresh` 强制重采；idle 玻璃参数向 Usticky 对齐（blur 28px / saturate 180% 写死，不再 idle 切换）

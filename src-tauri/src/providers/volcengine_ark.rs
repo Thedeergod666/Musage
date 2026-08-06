@@ -322,16 +322,11 @@ async fn do_fetch(
     let raw_text = text_body_limited(resp).await.map_err(|e| {
         FetchError::parse(t!("error.common.parse_json", err = e.message).into_owned())
     })?;
-    // v0.2.5 临时诊断: 无条件打火山原始响应 body (无论 status)。用户 dev
-    // 重启后看 stderr 就能拿到真实 JSON,排查 schema 漂移。
-    // 不打印 AK/SK 内容(只打长度)避免 secret 漏日志。
-    tracing::warn!(
-        status = status.as_u16(),
-        ak_len = ak.len(),
-        sk_len = sk.len(),
-        body = %raw_text.chars().take(2000).collect::<String>(),
-        "[v0.2.5 diag] volcengine raw response (paste me if data looks wrong)"
-    );
+    // P0 fix (2026-08-06 cross-verify #2): 删 v0.2.5 临时诊断的 unconditional
+    // tracing::warn!。它原在 if !status.is_success() 之前,每次 fetch(含成功)
+    // 都打 2000 字符 body 到 stderr,长期泄露 PlanName / UsageList 账户信息。
+    // 错误响应 body 已由下面 !status.is_success() 分支的 FetchError::server 消息
+    // (200 字符)带出,无需无条件全量打。ak/sk 一直只打长度,不回归。
 
     if !status.is_success() {
         return Err(FetchError::server(

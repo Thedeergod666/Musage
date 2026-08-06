@@ -130,6 +130,12 @@ pub fn redact_message(s: &str) -> std::borrow::Cow<'_, str> {
             r"|Oasis-Token=[^\s;,]+",
             r"|Oasis-Refresh-Token=[^\s;,]+",
             r"|MUSAGE_TOKEN=[^\s;,]+",
+            // 2026-08-06 cross-verify (#5/#7): kimi v0.2.6 集成新增 kimi-auth cookie,
+            // URL query ?access_token= 也是 token 载体,redact 之前都漏。kimi-auth
+            // 的值是 JWT(已被上面 eyJ pattern 覆盖),这里补名字前缀防裸串边界;
+            // access_token= 防回显进日志的 URL query。
+            r"|kimi-auth=[^\s;,]+",
+            r"|access_token=[^\s;&]+",
             r"|(?:Cookie|Set-Cookie):[^\n]+",
             r")",
         ))

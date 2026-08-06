@@ -493,7 +493,7 @@ pub async fn delete_extra_instance(
     Ok(())
 }
 
-/// 前端 modal 的 provider picker 数据源：11 内置 + 1 custom。
+/// 前端 modal 的 provider picker 数据源：12 内置 + 1 custom。
 ///
 /// v0.2.1 commit 4:`display_name` 由后端 `t!()` 注入翻译好的字符串,前端
 /// 不再走 `t("provider_name.xxx")`。`name_key` 字段保留但 `skip_serializing_if`
@@ -529,6 +529,16 @@ pub async fn list_picker_providers() -> Result<Vec<PickerProvider>, String> {
             auth_kind: "api_key".to_string(),
             is_builtin: true,
         },
+        // 2026-08-06 cross-verify (#3): anysearch 之前漏在 picker 里,用户无法
+        // 从 picker 加副本。anysearch 走 webview 登录的 JWT cookie
+        // (anysearch.rs auth_kind = AuthKind::Cookie),跟 claude_official 同款。
+        PickerProvider {
+            id: "anysearch".to_string(),
+            name_key: String::new(),
+            display_name: t!("provider_name.anysearch").into_owned(),
+            auth_kind: "cookie".to_string(),
+            is_builtin: true,
+        },
         PickerProvider {
             id: "zenmux".to_string(),
             name_key: String::new(),
@@ -561,7 +571,11 @@ pub async fn list_picker_providers() -> Result<Vec<PickerProvider>, String> {
             id: "stepfun".to_string(),
             name_key: String::new(),
             display_name: t!("provider_name.stepfun").into_owned(),
-            auth_kind: "api_key".to_string(),
+            // 2026-08-06 cross-verify (#3): stepfun v0.2.5+ 改 webview 登录
+            // (stepfun.rs auth_kind = AuthKind::Cookie)。之前 picker 写 "api_key"
+            // -> 前端按单 key 渲染 -> 提交后 fetch 走 cookie 槽位永远
+            // UnconfiguredKey。改为 "cookie" 跟 source 实际 auth_kind 对齐。
+            auth_kind: "cookie".to_string(),
             is_builtin: true,
         },
         PickerProvider {

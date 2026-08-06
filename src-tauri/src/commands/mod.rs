@@ -1832,7 +1832,13 @@ pub async fn refresh_single_inner(
     {
         let state = app.state::<AppState>();
         let mut backoff = state.backoff.write().await;
-        backoff.record(id, &provider_snap, default_interval_secs, caller);
+        // 2026-08-06 cross-verify (#4): backoff 槽位键必须用 unique_id,与 poller
+        // 读取端(poller.rs 用 src.unique_id())一致。之前用 IPC 入参 `id`(前端
+        // main.ts refresh_single 实际传 uniqueId,故当前未触发 bug;但若误传
+        // base id 会写错副本槽位 -> 副本永退避 / 永不退避)。显式取 src.unique_id()
+        // 杜绝 latent 风险。find_source / is_enabled_id 仍按 base+unique 双匹配。
+        let backoff_key = src.unique_id();
+        backoff.record(&backoff_key, &provider_snap, default_interval_secs, caller);
     }
     // 填 next_fetch_at(同 refresh_inner 的 fill_next_fetch_at,逻辑共享)
     fill_next_fetch_at(app, id, default_interval_secs, &mut provider_snap).await;

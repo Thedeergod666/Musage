@@ -907,6 +907,20 @@ pub fn shared_client() -> &'static reqwest::Client {
             // 30s 没流量就关。
             .pool_max_idle_per_host(2)
             .pool_idle_timeout(std::time::Duration::from_secs(30))
+            // P0 fix (2026-08-06 cross-verify #1): reqwest 默认 follow ≤10 跳。
+            // custom/zenmux 用户可控 base_url,恶意 / 被劫持中转站可 30x 到
+            // 169.254.169.254(云元数据)/ 127.0.0.1(本机 admin),Bearer
+            // API key 跟随落内网。每跳重跑 is_ssrf_blocked:loopback / link-
+            // local target 不 follow(3xx 原样返 caller,provider 当非成功
+            // status 处理);合法外网 redirect(relay -> CDN)不受影响。
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                let host = attempt.url().host_str().unwrap_or("");
+                if is_ssrf_blocked(host) {
+                    attempt.stop()
+                } else {
+                    attempt.follow()
+                }
+            }))
             .build()
             .expect("build shared reqwest client")
     })

@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-08-06
+
+### Added (托盘数据源多 provider 可切换 + 余额显示 + 颜色自定义 + 右键快捷切换, 方案 A)
+
+**背景**：托盘图标之前硬编码只画 MiniMax 的 5h/周 双窗口（`pick_minimax_rows`）。方案 A 让托盘图标能显示任意 provider 的数据，并支持余额系 provider（DeepSeek / OpenRouter / SiliconFlow / ZenMux 的钱包余额）。
+
+- **配置 `tray_source`**（None = 默认 minimax，向后兼容，老 config 无感）：托盘图标显示哪个 provider 的数据。
+- **`pick_minimax_rows` → `pick_tray_rows(snap, source_id)` 通用化**：按 source_id base 匹配（保留 extra instance 多副本选 5h 最高实例的逻辑）。
+- **volcengine_ark 补 `RowKind::FiveHour/Weekly`**（前置必做，否则 tray 的 RowKind 匹配找不到火山方舟）。
+- **TrayCell enum（余额系支持）**：`Percent` / `Balance` / `Empty`。百分比系画 "N%"，余额系画 "¥128"/"$74"（货币符号 + 短数字，<1000 取整数适配 32px，≥1000 用 k 简写）。`pick_tray_rows` 数据驱动：有 5h/weekly row → 百分比系，否则取 `remaining` → 余额系（不依赖 provider 白名单，siliconflow 也能正确识别）。
+- **余额系 bars 模式 fallback 到 percent**（余额没有进度条概念，`render_icon` 自动分发）。
+- **托盘颜色自定义 `tray_icon_color`**：None = 按菜单栏明暗自动黑/白（浅色菜单栏黑字，深色白字）；可设固定色（#RRGGBB）覆盖自适应。
+- **右键菜单「托盘数据源」子菜单**：9 provider 快捷切换，当前选中打 ✓，复用后端 `provider_name.*` 显示名；点击即时切换（写 cfg + 重渲 icon + 重建菜单刷 ✓）。
+- **设置面板**：「托盘图标样式」下方新增「托盘数据源」下拉（9 provider）+「托盘图标颜色」选择器（取色器 + 自动按钮）。
+- 新 IPC：`set_tray_source` / `set_tray_icon_color`（即时生效，不需点保存）。
+
+### Fixed (2026-08-06 cross-verify hotfix)
+
+- **P0 Security (SSRF)**：`shared_client()` 加 `redirect::Policy::custom`，每跳重跑 `is_ssrf_blocked` —— 堵 custom/zenmux 用户可控 base_url 30x → 169.254.169.254 / 127.0.0.1 时 Bearer API key 跟随落内网；合法外网 redirect（relay → CDN）不受影响。
+- **P0 Privacy**：volcengine_ark 删 v0.2.5 临时诊断的 unconditional `tracing::warn!`（成功 fetch 不再打 2000 字符 body 到 stderr，堵 PlanName / UsageList 账户信息外泄；错误 body 仍由非成功分支 200 字符带出）。
+- **P0 Correctness**：`list_picker_providers` 修 stepfun `auth_kind` api_key→cookie（对齐 `AuthKind::Cookie`，之前 picker 加副本渲染单 key 导致 fetch 永远 UnconfiguredKey）+ 补 anysearch（Cookie 形态）+ volcengine_ark 进 picker（2-field AK/SK 表单，#3 完整修复）。
+- **Defensive**：`refresh_single_inner` backoff.record 改用 `src.unique_id()` 显式对齐 poller 读取键，杜绝 base id 误传写错副本 backoff 槽位。
+- **Privacy**：`redact_message` regex 补 `kimi-auth=` + `access_token=`（kimi v0.2.6 新增 kimi-auth cookie + URL query token 载体之前漏 redact）。
+
+### Changed
+
+- hero.gif 动画效果更新。
+
+**守门**：`cargo test --lib` 404 passed，`pnpm tsc --noEmit` 0 errors，vitest 29/29，cargo fmt clean。
+
 ## [0.2.6] - 2026-08-05
 
 ### Added (Kimi「总套餐」月度共享池, 2026-08-04)

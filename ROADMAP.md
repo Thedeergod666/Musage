@@ -1,6 +1,6 @@
 # Musage 当前路线图
 
-> Status: **v0.2.4 (2026-07-17) 已发布** — 11 内置 + CustomSource + 多实例 + 完整 i18n + 全平台发板（macOS dmg / Windows nsis+msi / Linux AppImage+deb+rpm）。**Unreleased 在飞**（v0.2.5 候选）：StepFun 集成重写（Oasis-Webid 提取 + credit 套餐）/ Win PinBottom hover-raise 重写 / 玻璃 backdrop throttling 三层防御，详见 [CHANGELOG.md](CHANGELOG.md) [Unreleased] 段。
+> Status: **v0.2.7 (2026-08-06) 已发布** — 13 内置（+ volcengine_ark）+ CustomSource + 多实例 + 完整 i18n + 全平台发板（macOS dmg / Windows nsis / Linux AppImage+deb+rpm）。**v0.2.7 关键增量**：托盘数据源多 provider 可切换（含余额系 DeepSeek/OpenRouter/SiliconFlow/ZenMux）+ 颜色自定义 + 右键快捷切换（方案 A）+ 2026-08-06 cross-verify hotfix（SSRF redirect / volcengine body leak / picker auth_kind / backoff key / redact）。详见 [CHANGELOG.md](CHANGELOG.md) [0.2.7] 段。
 > 详尽历史见 git log + [CHANGELOG.md](CHANGELOG.md)。
 
 ## Recent (已完成,留作历史)
@@ -65,20 +65,20 @@
 
 见 [FUTURE.md](FUTURE.md)。
 
-## Tech debt (v0.2.4 刷新, 2026-07-21)
+## Tech debt (v0.2.7 刷新, 2026-08-06)
 
 ### Critical(已修 ✅)
-- ✅ `cargo check` 20 warnings — v0.2 清理 PR (`f800c8e`/`6e90518`/`54a5554`) 砍 `set_state` / `region` field / Provider enum 等 dead code;剩 `#[allow(dead_code)]` 2 处是 v2 预留
-- ✅ 31/193 cargo test 失败 → v0.2 后 **188/188 全绿**(commit `de5185f` 修 10 broken test + 23 i18n assertion + 1 production i18n bug)
+- ✅ `cargo check` warnings 收敛到 1 pre-existing `inst` @extra_instances.rs:475（v0.2.7 方案 A + 2026-08-06 hotfix 后均无新 warning）
+- ✅ `cargo test --lib` **404 passed**（v0.2.7：v0.2.6 的 403 + 26 跨 verify hotfix 测试 + 删 `weekly_util` 死代码 + 方案 A 净增测试）
 
 ### High(留 v0.3)
 - ◐ ~~12 provider 错误分类不统一(401/403/429 各自映射不同),缺 `http_status_to_error_kind` helper~~ — helper 已落地为 `classify_http_status`(2026-07-02 audit L1 fix,kimi 先用);其余 provider 保留各自 msg 短路,全面推广**留 v0.3**
 - ✅ ~~`Provider::Minimax` 占位散落 7+ 处~~ — v0.2 删 enum 解决
-- ⏳ `refresh_inner` 每次 `Box::new` 12 个 source(参考 [source-instance-rebuild-footgun](memory/source-instance-rebuild-footgun.md)) — **留 v0.3**
+- ⏳ `refresh_inner` 每次 `Box::new` 13 个 source(参考 [source-instance-rebuild-footgun](memory/source-instance-rebuild-footgun.md)) — **留 v0.3**
 - ⏳ Backoff 状态不持久化到 disk,重启后 30min 退避归零 — **留 v0.3**
 - ⏳ Per-provider poller task 无 shutdown signal,App 退出时可能泄漏 — **留 v0.3**
-- ✅ `refresh_single_inner` miss 时返硬编码中文 — `commands/mod.rs:1267` 已 `t!("error.common.unknown_source_id")`
-- ⏳ Frontend 0 单元测试(contentFingerprint / render / updateCard / autoResizeWindow) — **留 v0.3** (有 1 个 `order.test.ts` 起点)
+- ✅ `refresh_single_inner` miss 时返硬编码中文 — `commands/mod.rs` 已 `t!("error.common.unknown_source_id")`
+- ⏳ Frontend 单元测试仅 `order.test.ts` 1 文件 29 tests(contentFingerprint / render / updateCard / autoResizeWindow 4 核心函数零覆盖) — **留 v0.3**
 
 ### Medium(v0.2 顺手修的留 v0.3)
 - ✅ ~~`src-tauri/src/commands/mod.rs:984-988` 硬编码中文 "未知的 source id"~~ — 已修(见 High 第 5 条)

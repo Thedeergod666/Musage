@@ -1,6 +1,6 @@
 # Musage 项目说明
 
-> 任何新打开此项目的 AI 会话应先读这个文件。这是当前对话的精炼版（v0.2.6 已发版，含 StepFun 一键登录 + AnySearch + Kimi「总套餐」月度共享池（含 8-05 堆叠条/行序迭代）+ 2026-07-30 / 08-03 两轮审计批量修复 + 08-05 交叉验证修复 / 2026-08-05 快照）。
+> 任何新打开此项目的 AI 会话应先读这个文件。这是当前对话的精炼版（v0.2.7 已发版，含托盘数据源多 provider 切换 + 余额显示 + 颜色自定义 + 右键快捷切换 + 2026-08-06 cross-verify hotfix / 2026-08-06 快照）。
 
 ## 这是什么
 
@@ -8,7 +8,8 @@
 
 - 形态：**小悬浮窗 + 系统托盘**（始终置顶、可拖动、双行数据：5h 限额 / 周限额 + 重置时间）
 - 鉴权：仅需 API Key / Cookie（Bearer Token），不依赖浏览器 session
-- **11 内置 provider + 任意 New API 中转站 (custom_<uuid>) + 同 provider 多实例副本**
+- **13 个 provider 全实装**（12 内置 + custom），全部加 `instance_index` + `unique_id()` + `with_instance_index()`
+- **12 内置 provider + 任意 New API 中转站 (custom_<uuid>) + 同 provider 多实例副本**
 - 关键 schema 见下方"关键 API"章节（2026-06-01 MiniMax 改 schema，v0.2.0 已实现兼容）
 
 ## 技术栈（已拍板）
@@ -16,7 +17,7 @@
 | 层 | 选型 |
 |---|---|
 | 框架 | **Tauri 2.x** |
-| 后端 | Rust (stable-x86_64-pc-windows-gnu) |
+| 后端 | Rust (stable-x86_64-pc-windows-msvc) |
 | 前端 | Vanilla TypeScript + Vite（无框架，极小） |
 | HTTP | reqwest + rustls-tls |
 | 密钥存储 | 本地 `keys.json` 文件（Unix 0600 权限，原子写）。原 keyring 方案在 macOS 上启动弹 Keychain 访问窗 + 解锁密码框，体验不优雅 |
@@ -25,7 +26,7 @@
 | 日志 | tracing + tracing-subscriber |
 | 自动启动 | tauri-plugin-autostart |
 | 前端类型 | `@types/node` 20.x（vite.config.ts 用 `node:url`） |
-| Providers | minimax / deepseek / xiaomimimo / tavily / zenmux / openrouter / kimi / zhipu / stepfun / siliconflow / claude_official / **anysearch** + **用户自定义 New API 中转站 (custom_<uuid>)**（12 内置 + N 动态） |
+| Providers | minimax / deepseek / xiaomimimo / tavily / zenmux / openrouter / kimi / zhipu / stepfun / siliconflow / claude_official / anysearch / **volcengine_ark** + 用户自定义 New API 中转站 (custom_<uuid>)（13 内置 + N 动态） |
 
 ## 环境与工具链
 
@@ -129,9 +130,9 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 - `*_remaining_percent=100` 不代表"还有 100%"，可能是 `status=2/3`（不在套餐内）
 - 旧字段对 Plus 订阅者全为 0
 
-## 当前进度（v0.2.6 快照，2026-08-05）
+## 当前进度（v0.2.7 快照，2026-08-06）
 
-✅ **v0.2.4 / v0.2.5 / v0.2.6 已发布**（v0.2.4 tag 2026-07-17 / v0.2.5 tag 2026-07-29 / v0.2.6 tag 2026-08-05）。v0.2.5 = AnySearch 一键登录 + StepFun 重写 + Win PinBottom hover-raise；v0.2.6 = Kimi 总套餐月度共享池（行序/堆叠条迭代）+ 2026-07-30 / 08-03 两轮审计批量修复 + 08-05 交叉验证修复（详见 CHANGELOG 对应段）。
+✅ **v0.2.4 / v0.2.5 / v0.2.6 / v0.2.7 已发布**（v0.2.4 tag 2026-07-17 / v0.2.5 tag 2026-07-29 / v0.2.6 tag 2026-08-05 / v0.2.7 tag 2026-08-06）。v0.2.7 = 托盘数据源多 provider 可切换 + 余额显示 + 颜色自定义 + 右键快捷切换（方案 A）+ 2026-08-06 cross-verify hotfix（SSRF redirect 防护 / volcengine body 泄露 / picker 补 anysearch+volcengine_ark+stepfun auth_kind / backoff key 对齐 / redact 补 kimi-auth），详见 CHANGELOG 对应段。
    - feat(kimi)：浮窗左侧标签改动态窗口剩余（剩 <1 天 → `5h`，≥1 天 → `7d`），替代 used/total；foot 前缀跟随（`5h重置`/`7d重置`），Tavily 无 kind 标记保持原样（commit `75a5d8f`）
    - feat(floating)：双击浮窗打开设置面板（原双击"立即刷新"移除，托盘菜单仍可触发；跳过 button/input/select/a 防误触）（commit `361fc55`）
    - fix：5h 用量达 100% 上限时 kimi / zhipu / claude_official 行被隐藏（commit `de6668b`）
@@ -139,21 +140,18 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
    - v0.2.3 macOS 26 tray icon visual hotfix：[src-tauri/icons/tray-base.png](src-tauri/icons/tray-base.png) 重做为 64×64（48px 内容 + 8px 透明 padding 四边），圆外径 32→24 (-25%)，halo 消失
    - v0.2.2 + v0.2.3 都没正式 ship（v0.2.1 → v0.2.3 直接跨度），CHANGELOG 两段都保留
 
-✅ **v0.2.5 + v0.2.6 已 ship（下列条目均已发布，详见 CHANGELOG 对应段）**：
-   - **StepFun 集成重写**（commit `0d51124`，2026-07-21）：端点迁 `platform.stepfun.com`；`Oasis-Webid` 请求头从 token refresh half 的 JWT `device_id` claim 本地提取（CodexBar 逆向，新增 `base64` 依赖 `URL_SAFE_NO_PAD`），缺 webid 一律 401；token 过期/格式本地预检（`token_expired_hint` 带过期分钟数 / `token_malformed_hint`），不再让用户拿 401 猜原因；credit 套餐（`plan_family=2` Mini/Pro）解析 + 单行「额度」（新 i18n key `row.credit`）；支持整段 `Cookie: Oasis-Token=...` 粘贴自动剥离
-   - **Win PinBottom hover-raise 重写**（commit `ff309bb`，2026-07-20）：dwell hysteresis + 两级命中（`Visible` 1 tick / `Covered` 250ms dwell / `Outside` 150ms）+ edge-trigger + 1s re-assert 兜底，详见下方专节
-   - **玻璃 backdrop throttling 三层防御**（commit `1a38d89`）：`will-change: backdrop-filter` + 4s 心跳 keyframes + `set_window_level` 后 emit `musage://backdrop-refresh` 强制重采；idle 玻璃参数向 Usticky 对齐（blur 28px / saturate 180% 写死，不再 idle 切换）
-   - **AnySearch 集成（commits `1e0c877` + `54a8937`，2026-07-22）**：第 12 个内置 provider，免费 1000 calls/天（vs Tavily 1000/月）。用量端点 **`GET /api/api/user/billing/overview`**（**不是** `/api/api/user/keys`！后者是 API key 元数据，quota_used 是全 key 累计无日配额；overview 页真正调 billing/overview，返 `{tier_name, total, used, remaining, rate_limit_qps, rate_limit_unlimited, reset_period, next_reset_at}`）只认 console session JWT（`as_sk_` API key 返 401），JWT 在 `window.localStorage`（`search-template-auth-state.state.accessToken`，实测 572 字符 `eyJ…`），不在 cookie jar → 仿 Xiaomi 一键登录 WebView 但**提取通道是 cookie 而不是 title**（Tauri 2 `WebviewWindow::title()` 读 OS 窗口标题非 `document.title`，第一版设计踩坑 → 改成 init script 写 `MUSAGE_TOKEN` cookie + Rust `cookies_for_url` 读）。**设计要点**：auth_kind=Cookie + JWT 存 cookie 槽位 / `default_enabled=true` 跟 11 个 peer 一致 / init script 500ms setInterval 监听 localStorage（SPA 客户端跳转也能捕获）/ hardening 锁 `document.cookie`+`Storage.getItem` 到 `www.anysearch.com` 挡第三方 tracker 偷 JWT / 浮窗行只留「Quota 主（已用/总量+进度条+日重置）」（QPS 副行按产品要求砍掉）无 logo 资产时走首字母+蓝色 accent fallback。**2026-07-23 四个实测 fix**（未 commit，待编译验证）：① 重新登录「弹出即消失+信息不更新」= 持久化 webview profile 残留过期 token → init script document_start 清 localStorage+旧 cookie + 置 `MUSAGE_READY` 握手 + 轮询首次读取前 sleep 1.5s 堵竞态；② 浮窗「月重置」误标 = 前端硬编码 monthly_prefix → Rust 把 `reset_period` 塞主行 `extra`，前端 daily→「日重置」；③ 设置面板三处顺序不一致（面板列表置底）= providers.ts 扁平列表只按 currentProviderOrder 线性排 → 改成跟顺序 section 一样的 enabled 优先分段排序；④ 砍 QPS 副行（含删 rust locale `row.rate_limit`/`row.calls_per_sec`）。详见 [memory/anysearch-provider-integration.md](memory/anysearch-provider-integration.md)
-   - **StepFun 一键登录（2026-07-27）**：仿 Xiaomi/AnySearch 模式砍掉「粘 Oasis-Token」入口。新增 `src-tauri/src/stepfun_login.rs`（仿 `xiaomi_login.rs` 同款 `EXTRACTING` 锁 + `ExtractingGuard` RAII + `DONE` 标记）+ capability 拆分 `stepfun-login.json`（仅 `stepfun-login` 窗口拿 `core:webview:allow-create-webview-window`）。settings 面板 stepfun 行改 anysearch 同款 `quick-login-banner` 形态：「🔑 登录 StepFun」按钮 + 「清除」按钮 + 官网链接（无 api_key input/cookie textarea）。**3 个关键 fix**：① `stepfun.rs` 的 `auth_kind` 改 `AuthKind::Cookie`（fetch 端走 `credentials.cookie.as_deref()` 路径，token 落 `stepfun:cookie` 槽位）；② init script `document_start` 清旧 `Oasis-Token`/`Oasis-Webid`/`Oasis-Refresh-Token` cookie + 置 `MUSAGE_READY=1` 握手标记（仿 anysearch，挡 webview profile 持久化过期 cookie 导致「弹出即消失」bug）+ hardening 锁 `document.cookie`/`Storage.getItem` 到 `platform.stepfun.com` 挡第三方 tracker 偷 token；③ 浮窗错误卡加 `relogin-stepfun` 分支（仿 `relogin-anysearch`），点按钮调 `open_stepfun_login_window`。`is_dashboard_url` 白名单 + 5 次重试（11s 覆盖）仿 xiaomi。删 `error.stepfun.token_unconfigured_hint` / `token_invalid_hint` / `token_expired_hint`（用户不再需要这 3 条）。`help.stepfun` 重写，删 DevTools 教程段。`BATCH_PREFIX_RULES` 删 `Oasis-Token` 防误识别。**风险**：webview 路径未 spike 验证（musage 缺真实 StepFun 账号），CodexBar 选了 API 路径正是因为 webview 不可控 → 真不可行时降级方案：保留 webview 框架 + capability，settings 面板改成账号密码内联表单（CodexBar 3 步 API POST）。详见 [memory/anysearch-provider-integration.md](memory/anysearch-provider-integration.md) 同款 memory 模式（如有 v0.2.6 spike 失败 → 新建 [memory/stepfun-webview-fallback.md](memory/stepfun-webview-fallback.md)）
-   - **StepFun 一键登录 2026-07-28 重写（修「永远抓不到 token」）**：真实账号实测第一版 100% 失败 —— webview 停在 platform 首页但 token 从未存盘。四个叠加 bug：① **probe URL 域错（致命）**：`extract_and_save` 用 `LOGIN_URL`（account.stepfun.com）调 `cookies_for_url`，而 `Oasis-Token` 落在 **platform.stepfun.com** 域，`cookies_for_url` 按域过滤 → 永远拿不到（xiaomi 没踩是因为 LOGIN_URL 和 cookie 同域）；② init script 在 platform 域 document_start 无差别 `max-age=0` 清 `Oasis-Token`，登录后跳回 platform 的首次加载把刚 Set-Cookie 的新 token 立刻删掉（非 HttpOnly 时）；③ init script 的 `Storage.getItem` 锁在非 platform 域一律返 null，可能破坏 account 域登录 SPA 的 OIDC state 读取；④ 开窗后 200ms `clear_all_browsing_data` 跟 SSO 秒跳竞态（可能清掉刚落定的新 token）+ 杀死「SSO 自动重登」零交互路径。**重写后设计**（对齐 anysearch_login.rs）：删 init script / READY 握手 / clear_all_browsing_data / `on_page_load` 依赖，改独立轮询任务（700ms × 1200 ≈ 14min）读 `cookies_for_url("https://platform.stepfun.com/")`；**JWT exp 新鲜度门**替代握手（旧会话残留 token 必已过期 → 拒绝继续等，新 token 才接受；复用 provider 侧 `access_token_exp_seconds_ago`，已改 `pub(crate)`，判定单一来源）；保留 webview profile SSO session → 重登可走零交互路径；`Oasis-Token` 单段且有 `Oasis-Refresh-Token` cookie 时拼 `<access>...<refresh>`。8 个新单测（exp 门 / combine / probe URL 域回归防御）。locale `stepfun_login.*` 瘦身为 3 key（parse_login_url / build_webview / save_keys_failed）。`cargo test --lib` 278 passed。已知取舍：不支持切换账号（旧 token 仍有效时点重登会直接抓走旧 token）。**第二只 bug（同日二轮实测）**：登录成功存盘后浮窗继续报「已过期」—— keys.json 里 v0.2.4 手动粘贴时代遗留 `stepfun` api_key 槽位（`save_credential_for_id` 对 None 字段跳过不删除），而 `stepfun.rs` fetch 是 `api_key.or(cookie)` api_key 优先 → 新 cookie 被永远忽略。修法：fetch 改 **cookie 优先**（对齐 anysearch / claude_official Cookie-kind 约定），api_key 仅作 legacy 兜底。**第三只 bug（同日三轮实测）**：登录成功 token 新鲜但浮窗报「API error (code -1): 」空 message —— 对照 CodexBar `StepFunUsageFetcher.swift` + 本机探针实锤：① 现行成功响应是 `{status:1, 字段顶层}` 不是 `{code:0, data:{...}}`，旧代码把真实成功数据误判为 `code -1` 业务错误；② **access 半段仅 ~30min 寿命**（refresh 半段 ~30 天带 device_id），浏览器靠 `POST …/PassportService/RefreshToken` 续期；③ token 必须发 `<access>...<refresh>` 整段 pair（裸 access → 401 "token is illegal"），webid 不匹配 → 401 "embezzled"。修法（stepfun.rs 整体重写）：双 schema 解析（status==1 / code==0 + flex 数字字符串 + epoch 字符串时间戳，"0"=无窗口配置）+ RefreshToken 续期流（仿 anysearch：SKEW 120s 主动续 + 401 兜底续 + 新 pair 原子写回 keys.json）+ 业务错误 auth 感知（"auth failed"/"embezzled"/"illegal" → AuthFailed 让续期接管）+ 失败路径 `[diag] stepfun` 响应体日志。18 个新单测，`cargo test --lib` 296 passed。⚠ 未解：node 探针 replay 被风控（401），reqwest 拿到过 200 —— 疑似 TLS 指纹风控但 reqwest 目前放行；若 reqwest 也被风控，备选 = usage 请求塞进登录 webview 内发（JS fetch 走浏览器 TLS）。**credit 到期时间（同日增量）**：`musage dump` 实测字段 —— 套餐用量行新增 resets_at（`subscription_credit_reset_time`>0 → 周期重置 / bucket 最早 `next_reset_at` → 重置 / bucket 最早 `expire_at` → 一次性包**到期** + `extra.reset_period="expire"` 浮窗显示「到期」「已到期」）；前端 `resetsPrefixFor` helper 共用化 + utilization-only 行支持 prefix + 新 key `floating.countdown.expire_prefix`/`expire_done`；4 单测，`cargo test --lib` 300 passed；credit 行标签「额度」改「套餐用量」（`row.credit` value 变更，key 名不动）
+✅ **v0.2.5 + v0.2.6 + v0.2.7 已 ship（v0.2.5/v0.2.6 详见 CHANGELOG 对应段 + git log；v0.2.7 详见下方专节）**：
+   - **托盘数据源多 provider 可切换 + 余额显示 + 颜色自定义 + 右键快捷切换（v0.2.7，方案 A）**：`tray_source` 配置（None = 默认 minimax，向后兼容）+ `pick_tray_rows(snap, source_id)` 通用化（保留 extra instance 选 5h 最高实例逻辑）+ `TrayCell { Percent / Balance / Empty }` enum + `format_balance_tray`（`¥128` / `$74` / `1.3k`，<1000 取整数适配 32px）+ volcengine_ark 补 `RowKind::FiveHour/Weekly`（前置必做）+ `tray_icon_color` + `tray_fill_color` + `parse_hex_color` 全链路透传（`TrayRequest::Update` / `update_tray_from_snapshot` / `render_icon`）+ 右键菜单子菜单（9 provider + 当前 `✓` 标记，复用后端 `provider_name.*` 显示名）+ 设置面板「托盘数据源」下拉 + 「托盘图标颜色」选择器（取色器 + 自动按钮）+ `set_tray_source` / `set_tray_icon_color` IPC + 删死代码 `weekly_util`。`cargo test --lib` 404 passed。
+   - **2026-08-06 cross-verify hotfix（v0.2.7）**：基于 v0.2.6 (`398e441`) 独立交叉验证 prior 8-domain audit。P0 security：`shared_client()` 加 `redirect::Policy::custom` 每跳重跑 `is_ssrf_blocked`，堵 custom/zenmux 30x → 169.254.169.254 / 127.0.0.1 时 Bearer API key 跟随落内网。P0 privacy：volcengine_ark 删 v0.2.5 临时诊断的 unconditional `tracing::warn!`（成功 fetch 不再打 2000 字符 body 到 stderr，堵 PlanName / UsageList 账户信息外泄；错误 body 仍由非成功分支 200 字符带出）。P0 correctness：`list_picker_providers` 修 stepfun auth_kind api_key→cookie（对齐 `AuthKind::Cookie`，picker 加副本渲染单 key 导致 fetch 永远 UnconfiguredKey）+ 补 anysearch（Cookie 形态）+ volcengine_ark 进 picker（2-field AK/SK 表单，#3 完整修复）。Defensive：`refresh_single_inner` backoff.record 改用 `src.unique_id()` 显式对齐 poller 读取键（前端 main.ts 已传 uniqueId 当前不触发 bug）。P0 privacy：`redact_message` regex 补 `kimi-auth=` + `access_token=`。
+   - **Windows Release 工具链回退 MSVC + crt-static（v0.2.7 commit `51d10d9`）**：v0.2.6/v0.2.7 两次 release windows-x64 job 都因 `resource.lib: file not recognized` 失败——audit D8-003 把 CI Windows target 从 MSVC 切到 GNU，但 windows-latest runner 自带 Visual Studio，tauri-build embed-resource 在 GNU target 下走了 MSVC `rc.exe` 生成 MSVC 格式资源库，GNU ld 不认。回退到 `x86_64-pc-windows-msvc`（v0.2.5 验证过）+ `RUSTFLAGS=-C target-feature=+crt-static` 静态链接 CRT，既保持构建稳定又实现 D8-003 当初"用户机器零 vcruntime 依赖"目标。
+   - **v0.2.5 / v0.2.6 详情**：StepFun 集成重写 + 一键登录三轮实测修复（commit `0d51124` 起 + `8d485bf` 等）；Win PinBottom hover-raise 重写（commit `ff309bb`，2026-07-20，dwell hysteresis + 两级命中）；玻璃 backdrop throttling 三层防御（commit `1a38d89`）；AnySearch 集成（commits `1e0c877` + `54a8937`，v0.2.5，仿 Xiaomi 一键登录但 JWT 在 localStorage，init script 写 `MUSAGE_TOKEN` cookie 提取）；Kimi「总套餐」月度共享池（v0.2.6，hybrid enrich 失败只少一行 + WebView 一键登录兜底）。详见 [CHANGELOG.md](CHANGELOG.md) 对应段 + [memory/anysearch-provider-integration.md](memory/anysearch-provider-integration.md)。
 
-   - **Kimi「总套餐」月度共享池（2026-08-04）**：2026-08 起 Kimi 网页端「我的额度」新增总使用量进度条（Kimi 对话 + Code + Work + PPT 等共享 `FEATURE_OMNI` 月度池，Code 的 5h/7d 独立）。**调查实锤**：API key 拿不到总池（`authentication.scope` 锁 `FEATURE_CODING`；`totalQuota` 字段存在但恒空 `{}`，参数/变体端点全 404，网页网关 401；官方 kimi-cli `/usage` 也只有 5h/7d）；总池只走网页会话 `POST www.kimi.com/apiv2/kimi.gateway.membership.v2.MembershipService/GetSubscriptionStats`（CodexBar 逆向，本机实测 200：`subscriptionBalance{feature,type,amountUsedRatio,kimiCodeUsedRatio,expireTime}`，与网页截图逐项吻合）。**集成（hybrid enrich，失败只少一行）**：① API key 5h/7d 原逻辑零改动 + `totalQuota` 防御性解析（官方填上直接消费）；② 空则调 GetSubscriptionStats（CodexBar 同款 header 集 + FEATURE_OMNI/SUBSCRIPTION 门控）；③ 会话三级降级：`kimi:cookie` 槽（剥 `kimi-auth=` 前缀防御）→ **新模块 `src/kimi_desktop.rs`** 读 kimi-desktop 本地 Chromium Cookies SQLite 库（三平台 `config_dir()/kimi-desktop/Cookies` + busy_timeout 250ms + immutable 兜底 + value 明文检测（Win DPAPI 加密读不出 → None 降级）+ JWT exp 60s skew 预检；桌面端自动保鲜，不写 keys.json）→ 都没有 → **浮窗保持原样只 5h + 7d**（用户明确要求的降级语义）。总套餐行 utilization-only 插卡片最前，新 key `row.total_plan`「总套餐」+ `extra.reset_period="monthly"` → 前端零改动自动「月重置」；`kimi_code_used_ratio` 塞 extra 备双色堆叠条。**WebView 一键登录兜底（新模块 `src/kimi_login.rs`，仿 stepfun 2026-07-28 现行形态）**：设置面板 kimi 卡片 API key 区下方 `quick-login-banner`（🔑 登录 Kimi（总套餐）/ 清除 / 官网链接 + 专用 cookie 徽章，不走公共 loadCredentialStatus——它按"任一槽位"会被 API key 槽污染）；弹 webview 加载 `www.kimi.com/membership/subscription?tab=quota` → 独立轮询 700ms×14min 读 `cookies_for_url("https://www.kimi.com/")`（probe 与 cookie 同域不踩 stepfun 坑）→ JWT 新鲜度门（复用 `jwt_exp_seconds_ago`）→ 存 `kimi:cookie` 裸 JWT → 关窗 + 立即 refresh。GEN 防重入 + DONE + WindowCloseGuard + SHUTDOWN 观察 + wall-clock deadline 全对齐 stepfun。新命令 `clear_kimi_session` 走 `config::delete_cookie_slot_for_id`（只清 cookie 槽不动 API key；`save_credential_for_id` 对 None 跳过不删必须显式 map.remove）。新 capability `kimi-login.json`。**顺手 fix**：补 rust locale 缺失的 `login.stepfun.timeout` key（D3-002 漏加，超时 toast 会显示原始 key）。新依赖 `rusqlite 0.31 (bundled)` + `iana-time-zone 0.1`。26 个新单测（kimi_desktop 6 / kimi.rs 13 / kimi_login 7），`cargo test --lib` **403 passed**，`pnpm tsc` 0 errors。本机实测 dump kimi 3 行（Total plan 72.33% 月重置 2026-08-17 + 5h/7d）。**已知取舍**：Win 桌面端 cookie 加密读不出时自动落 WebView 路径；WebView 登录未真机实测（桌面端零交互路径已覆盖）；不支持切换账号（stepfun 同款取舍）。**2026-08-05 增量**：① 总套餐行从插最前改为**追加在 5h/7d 之后**（`push` 替代 `insert(0)`），对齐火山方舟 5h→7d→月 升序；② 该行保持普通单条阈值变色 bar，Kimi/Code 占比拆分以**一行小字**跟在「月重置」行之后（`.split-note`：`Kimi xx% · Code xx%`，样式与 row-foot 完全同步；初版在 bar 与月重置之间，同日三轮对调）——探测结论 API 无独立 Kimi Work 分项（官方黑段同样是"其余全部"），**Kimi = 总 − Code**；曾实装官网同款双色堆叠条（黑 `#17171c` + 蓝 `#2f7cf6` + legend），黑段在深色玻璃上易读性太差被用户砍掉（同日二轮）。前端：`extra` 类型加 `kimi_code_used_ratio?`，`buildRowSkeleton`/`updateRow` utilization-only 分支检测该字段加 `.split-note` 行并写文本（`clampPct` helper），无该字段行零改动。守门：403 tests + tsc 0 errors + vitest 29/29，实测 dump 行序 5h→7d→Total plan（88.88%，code 30.05%）。
 
 ✅ v0.2.1 全部完成 + v0.2.2/v0.2.3/v0.2.4 增量（详见 CHANGELOG 对应段）
 
 ✅ 项目骨架完整
-✅ 12 个 provider 全实装（11 内置 + custom），全部加 `instance_index` + `unique_id()` + `with_instance_index()`
-✅ 12 个 provider 全部支持**多实例**（`minimax#2` / `minimax#3` 共存）
+✅ 13 个 provider 全实装（12 内置 + custom），全部加 `instance_index` + `unique_id()` + `with_instance_index()`
+✅ 13 个 provider 全部支持**多实例**（`minimax#2` / `minimax#3` 共存）
 ✅ Rust 核心代码：main / lib / poller / poller_backoff / tray / config / commands / xiaomi_login / logstore（icon.rs 已并入 tray.rs，api.rs 已拆进 providers/）
 ✅ 前端：main.ts / settings.ts + settings/ 21 个子模块
 ✅ 托盘图标动态绘制（颜色 + 百分比文字 + 多实例 `#N` 后缀）
@@ -168,10 +166,12 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 ✅ AnySearch 一键登录 WebView（v0.2.5，commit `1e0c877`）：仿 Xiaomi 但鉴权不同 —— JWT 在 localStorage 不在 cookie jar，所以 init script 用 `setInterval` 把 token 写到 `MUSAGE_TOKEN` cookie（同源），Rust 端 `cookies_for_url` + 白名单 `COOKIE_NAME` 读。**第一版用 `document.title` 中转失败**——Tauri 2 `WebviewWindow::title()` 读 OS 窗口标题不是 `document.title`，两套 API。这条经验加 [memory/anysearch-provider-integration.md](memory/anysearch-provider-integration.md)。
 ✅ import/export 配置（无 keys）
 ❌ ~~自动更新~~：**v0.2.0 已删 tauri-plugin-updater**（`TAURI_SIGNING_PRIVATE_KEY` GitHub Secret 未配 → Windows build 报 "Missing comment in secret key" 整批 release 挂，commit `586e55c`）。升级走「GitHub release 手动下载 dmg/nsis/AppImage/deb/rpm 覆盖装」，设置面板「关于」页放 releases 链接（[src/settings/about.ts](src/settings/about.ts)）。详见 [RELEASING.md](RELEASING.md)
-✅ **`cargo check` 0 错**（v0.2 cleanup 砍 dead code + Provider enum，剩 `#[allow(dead_code)]` 2 处是 v2 预留）
-✅ **`cargo test --lib` 196 passed**（v0.2.0 follow-up 修 10 broken test + 23 i18n assertion + 1 production i18n bug）
+✅ **`cargo check` 0 错**（v0.2.7 唯一 warning = pre-existing `inst` @extra_instances.rs:475，方案 A + 2026-08-06 hotfix 后均无新 warning）
+✅ **`cargo test --lib` 404 passed**（v0.2.7 阶段：v0.2.6 403 + 26 跨 verify hotfix + -1 删除 `weekly_util` 死代码 + ±0 方案 A 净增测试）
+✅ **`cargo fmt --check` 0 违规**
 ✅ **`pnpm tsc --noEmit` 0 errors**
-✅ **`pnpm tauri build` 通过**（macOS dmg + Windows NSIS + Linux AppImage/deb/rpm）
+✅ **`pnpm vitest` 29/29 passed**
+✅ **`pnpm tauri build` 通过**（v0.2.7 CI matrix：macOS dmg ×2 + Windows NSIS + Linux AppImage/deb/rpm 全绿；windows-x64 commit `51d10d9` 回退 MSVC + `crt-static` 静态 CRT）
 
 ⚠️ **坑：MinGW 工具链 16-bit 导出表上限**
 - 现象：`cdylib` 链接时 `ld.exe: error: export ordinal too large: 141874`
@@ -511,7 +511,7 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 ## 关键文件链接（按重要性）
 
 - **核心 schema 解析**：`src-tauri/src/providers/minimax.rs`（兼容 2026-06-01 前后的两种 schema）
-- **Provider 实现**：`src-tauri/src/providers/{minimax,deepseek,xiaomi,tavily,zenmux,openrouter,kimi,zhipu,stepfun,siliconflow,claude_official}.rs`（PR 1b：11 provider + custom 全加 `instance_index` + `with_instance_index` + override `unique_id` / `display_name`）
+- **Provider 实现**：`src-tauri/src/providers/{minimax,deepseek,xiaomi,tavily,zenmux,openrouter,kimi,zhipu,stepfun,siliconflow,claude_official,anysearch,volcengine_ark}.rs`（PR 1b + v0.2.5/v0.2.7：12 内置 + custom 全加 `instance_index` + `with_instance_index` + override `unique_id` / `display_name`）
 - **Extra instance 持久化**（PR 1b）：`src-tauri/src/config/extra_instances.rs`（`ExtraInstance` + `load` / `save` / `next_index_for` / `compact_indexes_for`，9 单测）
 - **Extra instance IPC**（PR 1b）：`src-tauri/src/commands/extra_instances.rs`（6 IPC + DTOs；DTO `#[serde(rename_all = "camelCase")]`）
 - **Provider 注册 + all_sources**：`src-tauri/src/providers/mod.rs`（`builtin_sources()` + `instantiate_builtin_with_index()` 11 provider 全实装）
@@ -529,3 +529,4 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 - CARGO_HOME 必须 cargo root
 - MinGW dlltool 必在 PATH
 - Tauri CSP + Vite assetsInlineLimit 兼容性（导致 Tavily/ZenMux 裂开）
+

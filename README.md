@@ -1,8 +1,8 @@
 # Musage
 
-> **Musage** = **My** + **Usage**。跨平台 AI 套餐用量监控悬浮窗 —— 把 MiniMax / DeepSeek / Claude Code / Cursor / OpenRouter / 中转站 的 5h · 周限额 + 重置时间钉在桌面。
+> **Musage** = **My** + **Usage**。跨平台 AI 套餐用量监控悬浮窗 —— 把 MiniMax / DeepSeek / Claude Code / Cursor / OpenRouter / 火山方舟 / 中转站 的 5h · 周限额 + 重置时间钉在桌面。**v0.2.7**：托盘数据源可切到任意 provider（含余额系 DeepSeek/OpenRouter/SiliconFlow/ZenMux 钱包数字）+ 颜色自定义 + 右键快捷切换。
 >
-> Cross-platform AI quota monitor (Windows / macOS / Linux). Every AI plan limit — MiniMax, DeepSeek, Claude Code, Cursor, OpenRouter, relay stations — pinned on your desktop in a floating window + tray icon.
+> Cross-platform AI quota monitor (Windows / macOS / Linux). Every AI plan limit — MiniMax, DeepSeek, Claude Code, Cursor, OpenRouter, Volcengine Ark, relay stations — pinned on your desktop in a floating window + tray icon. **v0.2.7**: tray data source switchable to any provider (incl. balance-style DeepSeek/OpenRouter/SiliconFlow/ZenMux wallet numbers) + custom color + right-click quick switch.
 
 ![platforms](https://img.shields.io/badge/platforms-Windows%20%7C%20macOS%20%7C%20Linux-blue) ![tauri](https://img.shields.io/badge/Tauri-2-orange) ![rust](https://img.shields.io/badge/rust-1.77+-orange) ![license](https://img.shields.io/badge/license-MIT-green)
 

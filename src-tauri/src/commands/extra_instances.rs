@@ -98,6 +98,10 @@ pub struct TestExtraInstanceRequest {
     pub provider_id: String,
     pub api_key: Option<String>,
     pub api_cookie: Option<String>,
+    // 2026-08-06 cross-verify (#3): 火山方舟 Coding Plan 双字段 (AK + SK)。
+    // add 路径用 2-step (addExtraInstance 设 AK + setSourceCredential 设 SK),
+    // test 必须同时带 AK + SK 才能 HMAC-SHA256 v4 签名验证。
+    pub secret_key: Option<String>,
     pub custom: Option<CustomSourceSpec>,
 }
 
@@ -493,7 +497,7 @@ pub async fn delete_extra_instance(
     Ok(())
 }
 
-/// 前端 modal 的 provider picker 数据源：12 内置 + 1 custom。
+/// 前端 modal 的 provider picker 数据源：13 内置 + 1 custom。
 ///
 /// v0.2.1 commit 4:`display_name` 由后端 `t!()` 注入翻译好的字符串,前端
 /// 不再走 `t("provider_name.xxx")`。`name_key` 字段保留但 `skip_serializing_if`
@@ -592,6 +596,18 @@ pub async fn list_picker_providers() -> Result<Vec<PickerProvider>, String> {
             auth_kind: "cookie".to_string(),
             is_builtin: true,
         },
+        // 2026-08-06 cross-verify (#3): volcengine_ark 之前漏在 picker 里,用户
+        // 无法从 picker 加副本。双字段 (AccessKey ID + SecretAccessKey),
+        // auth_kind = api_key_with_secret。前端 extra-instance-form 走 2-step:
+        // addExtraInstance(AK) + setSourceCredential(SK, field="secret_key");
+        // test 带双字段验证 HMAC-SHA256 v4 签名。
+        PickerProvider {
+            id: "volcengine_ark".to_string(),
+            name_key: String::new(),
+            display_name: t!("provider_name.volcengine_ark").into_owned(),
+            auth_kind: "api_key_with_secret".to_string(),
+            is_builtin: true,
+        },
         PickerProvider {
             id: "custom".to_string(),
             name_key: String::new(),
@@ -621,6 +637,7 @@ pub async fn test_extra_instance(
 ) -> Result<ProviderSnapshot, String> {
     let api_key_trimmed = req.api_key.as_deref().map(str::trim).unwrap_or("");
     let api_cookie_trimmed = req.api_cookie.as_deref().map(str::trim).unwrap_or("");
+    let api_secret_trimmed = req.secret_key.as_deref().map(str::trim).unwrap_or("");
     if api_key_trimmed.is_empty() && api_cookie_trimmed.is_empty() {
         return Err(t!("commands.api_key_empty").into_owned());
     }
@@ -636,7 +653,13 @@ pub async fn test_extra_instance(
         } else {
             Some(api_cookie_trimmed.to_string())
         },
-        secret_key: None,
+        // 2026-08-06 cross-verify (#3): volcengine Coding Plan 的 SecretAccessKey,
+        // test 路径带 SK 才能完成 HMAC-SHA256 v4 签名。
+        secret_key: if api_secret_trimmed.is_empty() {
+            None
+        } else {
+            Some(api_secret_trimmed.to_string())
+        },
     };
 
     if req.provider_id == "custom" {

@@ -18,6 +18,7 @@ import {
   testExtraInstance,
   listExtraInstances,
   listPickerProviders,
+  setSourceCredential,
 } from "./api";
 import { t } from "../i18n";
 import type {
@@ -201,6 +202,31 @@ function renderBuiltinFields(host: HTMLElement, provider: PickerProvider): void 
           placeholder: t("extra.form.cookie_placeholder"),
         }),
         el("div", { class: "help" }, t("extra.form.cookie_help")),
+      ),
+    );
+  } else if (kind === "api_key_with_secret") {
+    // 2026-08-06 cross-verify (#3): volcengine Coding Plan 双字段
+    // (AccessKey ID + SecretAccessKey)。复用主凭据面板的 i18n label。
+    host.appendChild(
+      el("div", { class: "field" },
+        el("label", { for: "ei-api-key" }, t("credentials.volcengine_ak_label")),
+        el("input", {
+          type: "password",
+          id: "ei-api-key",
+          autocomplete: "off",
+          placeholder: t("credentials.volcengine_ak_placeholder"),
+        }),
+      ),
+    );
+    host.appendChild(
+      el("div", { class: "field" },
+        el("label", { for: "ei-secret-key" }, t("credentials.volcengine_sk_label")),
+        el("input", {
+          type: "password",
+          id: "ei-secret-key",
+          autocomplete: "off",
+          placeholder: t("credentials.volcengine_sk_placeholder"),
+        }),
       ),
     );
   } else {
@@ -449,8 +475,12 @@ async function submitBuiltin(body: HTMLElement, providerId: string): Promise<boo
   // P1-2: 根据 auth_kind 决定从哪里取值
   const cookieVal = (body.querySelector<HTMLInputElement>("#ei-api-cookie")?.value ?? "").trim();
   const apiKeyVal = (body.querySelector<HTMLInputElement>("#ei-api-key")?.value ?? "").trim();
+  // 2026-08-06 cross-verify (#3): #ei-secret-key 仅 api_key_with_secret (volcengine)
+  // 分支渲染,其他 auth_kind 查不到 -> hasSecret=false, 走原流程。
+  const secretKeyVal = (body.querySelector<HTMLInputElement>("#ei-secret-key")?.value ?? "").trim();
   const hasCookie = cookieVal.length > 0;
   const hasApiKey = apiKeyVal.length > 0;
+  const hasSecret = secretKeyVal.length > 0;
 
   if (!hasApiKey && !hasCookie) {
     flash(t("extra.err.api_key_required"), true);
@@ -463,6 +493,7 @@ async function submitBuiltin(body: HTMLElement, providerId: string): Promise<boo
       provider_id: providerId,
       api_key: hasApiKey ? apiKeyVal : undefined,
       api_cookie: hasCookie ? cookieVal : undefined,
+      secret_key: hasSecret ? secretKeyVal : undefined,
     });
     if (!snap.success) {
       flash(t("extra.err.test_failed", { err: snap.error ?? t("floating.error.unknown") }), true);
@@ -481,6 +512,12 @@ async function submitBuiltin(body: HTMLElement, providerId: string): Promise<boo
       api_key: hasApiKey ? apiKeyVal : undefined,
       api_cookie: hasCookie ? cookieVal : undefined,
     });
+    // 2026-08-06 cross-verify (#3): volcengine 双字段 -- addExtraInstance 已把
+    // AccessKey 落 api_key 槽, SecretAccessKey 走独立 secret_key 槽 (2-step:
+    // add_extra_instance req 不带 secret_key, 用 set_source_credential 补)。
+    if (hasSecret) {
+      await setSourceCredential(inst.api_key_ref, secretKeyVal, "secret_key");
+    }
     flash(t("extra.added", { id: inst.api_key_ref }));
     await rebuildProvidersSection();
     return true;

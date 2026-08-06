@@ -245,6 +245,8 @@ export interface TestExtraInstanceRequest {
   provider_id: string;
   api_key?: string;
   api_cookie?: string;
+  // 2026-08-06 cross-verify (#3): volcengine Coding Plan 双字段, test 带 SK 验 HMAC。
+  secret_key?: string;
   custom?: Omit<CustomSourceSpec, "id" | "created_at">;
 }
 export async function testExtraInstance(

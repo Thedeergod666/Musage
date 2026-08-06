@@ -157,6 +157,28 @@
       },
       "tray_style_changed": "托盘样式已切换：{name}",
       "tray_style_failed": "切换失败: {err}",
+      "tray_source_title": "托盘数据源",
+      "tray_source_help": "选择托盘图标显示哪个 provider 的 5h/周 用量。无数据时退化为图标。tooltip 仍显示全部 provider。",
+      "tray_source": {
+        "options": {
+          "minimax": "MiniMax",
+          "kimi": "Kimi",
+          "volcengine_ark": "火山方舟",
+          "zhipu": "智谱 GLM",
+          "claude_official": "Claude 官方",
+          "deepseek": "DeepSeek",
+          "openrouter": "OpenRouter",
+          "siliconflow": "SiliconFlow",
+          "zenmux": "ZenMux"
+        }
+      },
+      "tray_source_changed": "托盘数据源已切换：{name}",
+      "tray_source_failed": "切换失败: {err}",
+      "tray_color_title": "托盘图标颜色",
+      "tray_color_help": "托盘数字/进度条的颜色。自动 = 按菜单栏明暗选黑/白。",
+      "tray_color_auto": "自动",
+      "tray_color_changed": "托盘颜色已切换",
+      "tray_color_failed": "切换失败: {err}",
       "config_saved": "配置已保存",
       "config_save_failed": "保存失败: {err}",
       "switch_failed": "切换显示失败: {err}"

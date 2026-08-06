@@ -605,7 +605,15 @@ pub async fn refresh_now(
     let final_snap = state2.snapshot.read().await.clone();
     let _ = app.emit("musage://snapshot", &final_snap);
     let tray_style = cfg.tray_icon_style;
-    if let Err(e) = crate::tray::update_tray_from_snapshot(&app, &final_snap, tray_style) {
+    let tray_source = cfg.tray_source.as_deref().unwrap_or("minimax").to_string();
+    let tray_color = crate::tray::tray_fill_color(cfg.tray_icon_color.as_deref());
+    if let Err(e) = crate::tray::update_tray_from_snapshot(
+        &app,
+        &final_snap,
+        tray_style,
+        &tray_source,
+        tray_color,
+    ) {
         tracing::warn!(error = %e, "刷新托盘失败");
     }
     Ok(final_snap)
@@ -1737,8 +1745,17 @@ async fn publish_snapshot(
     // 推送给前端 (浮窗 + settings 面板)
     let _ = app.emit("musage://snapshot", &snap);
     // 刷新托盘 (tray_style 从 cfg 读, 浮窗不需要但 tray 渲染需要)
-    let tray_style = state.config.read().await.tray_icon_style;
-    if let Err(e) = crate::tray::update_tray_from_snapshot(app, &snap, tray_style) {
+    let (tray_style, tray_source, tray_color) = {
+        let cfg = state.config.read().await;
+        (
+            cfg.tray_icon_style,
+            cfg.tray_source.as_deref().unwrap_or("minimax").to_string(),
+            crate::tray::tray_fill_color(cfg.tray_icon_color.as_deref()),
+        )
+    };
+    if let Err(e) =
+        crate::tray::update_tray_from_snapshot(app, &snap, tray_style, &tray_source, tray_color)
+    {
         tracing::warn!(error = %e, "刷新托盘失败 (publish_snapshot)");
     }
 }
@@ -2130,6 +2147,72 @@ pub async fn set_show_footer_hint(
 }
 
 /// 即时切换托盘图标样式：写 cfg + 立即用新 style 重渲托盘（不等下次 poller）。
+/// 即时切换托盘图标前景色：写 cfg + 立即重渲。color=null 切回自动（按菜单栏明暗）。
+#[tauri::command]
+pub async fn set_tray_icon_color(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    color: Option<String>,
+) -> Result<(), String> {
+    {
+        let mut cfg = state.config.write().await;
+        if cfg.tray_icon_color == color {
+            return Ok(());
+        }
+        cfg.tray_icon_color = color;
+        cfg.save()?;
+    }
+    let state2 = app.state::<AppState>();
+    let snap = state2.snapshot.read().await.clone();
+    let (style, tray_source, tray_color) = {
+        let cfg = state2.config.read().await;
+        (
+            cfg.tray_icon_style,
+            cfg.tray_source.as_deref().unwrap_or("minimax").to_string(),
+            crate::tray::tray_fill_color(cfg.tray_icon_color.as_deref()),
+        )
+    };
+    if let Err(e) =
+        crate::tray::update_tray_from_snapshot(&app, &snap, style, &tray_source, tray_color)
+    {
+        tracing::warn!(error = %e, "切换托盘颜色后重渲失败");
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_tray_source(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    source: Option<String>,
+) -> Result<(), String> {
+    {
+        let mut cfg = state.config.write().await;
+        if cfg.tray_source == source {
+            return Ok(());
+        }
+        cfg.tray_source = source;
+        cfg.save()?;
+    }
+    // 立即重渲（不阻塞 cmd 返回）。source=None 时切回默认 minimax。
+    let state2 = app.state::<AppState>();
+    let snap = state2.snapshot.read().await.clone();
+    let (style, tray_source, tray_color) = {
+        let cfg = state2.config.read().await;
+        (
+            cfg.tray_icon_style,
+            cfg.tray_source.as_deref().unwrap_or("minimax").to_string(),
+            crate::tray::tray_fill_color(cfg.tray_icon_color.as_deref()),
+        )
+    };
+    if let Err(e) =
+        crate::tray::update_tray_from_snapshot(&app, &snap, style, &tray_source, tray_color)
+    {
+        tracing::warn!(error = %e, "切换托盘数据源后重渲失败");
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn set_tray_icon_style(
     state: State<'_, AppState>,
@@ -2147,7 +2230,16 @@ pub async fn set_tray_icon_style(
     // 立即重渲（不阻塞 cmd 返回）
     let state2 = app.state::<AppState>();
     let snap = state2.snapshot.read().await.clone();
-    if let Err(e) = crate::tray::update_tray_from_snapshot(&app, &snap, style) {
+    let (tray_source, tray_color) = {
+        let cfg = state2.config.read().await;
+        (
+            cfg.tray_source.as_deref().unwrap_or("minimax").to_string(),
+            crate::tray::tray_fill_color(cfg.tray_icon_color.as_deref()),
+        )
+    };
+    if let Err(e) =
+        crate::tray::update_tray_from_snapshot(&app, &snap, style, &tray_source, tray_color)
+    {
         tracing::warn!(error = %e, "切换托盘样式后重渲失败");
     }
     Ok(())

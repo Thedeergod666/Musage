@@ -5,7 +5,8 @@
       "settings": "Settings...",
       "refresh": "Refresh now",
       "force_top": "Force top",
-      "quit": "Quit"
+      "quit": "Quit",
+      "source_title": "Tray data source"
     },
     "tooltip": {
       "loading": "Musage - loading...",

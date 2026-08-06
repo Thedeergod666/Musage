@@ -7,7 +7,7 @@
 // - 「测试连接」按钮（拉一次所有 source + 摘要）
 
 import { el, flash } from "./utils";
-import { setTrayIconStyle } from "./api";
+import { setTrayIconStyle, setTraySource, setTrayIconColor } from "./api";
 import { testConn } from "./test";
 import { t } from "../i18n";
 import type { AppConfig } from "./types";
@@ -69,6 +69,59 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
   }
 
   // ── 测试连接按钮 ──
+  // ── 托盘数据源 (方案 A: 选 tray icon 显示哪个 provider) ──
+  const traySourceOptions = [
+    { value: "minimax", label: t("settings.app.tray_source.options.minimax") },
+    { value: "kimi", label: t("settings.app.tray_source.options.kimi") },
+    { value: "volcengine_ark", label: t("settings.app.tray_source.options.volcengine_ark") },
+    { value: "zhipu", label: t("settings.app.tray_source.options.zhipu") },
+    { value: "claude_official", label: t("settings.app.tray_source.options.claude_official") },
+    { value: "deepseek", label: t("settings.app.tray_source.options.deepseek") },
+    { value: "openrouter", label: t("settings.app.tray_source.options.openrouter") },
+    { value: "siliconflow", label: t("settings.app.tray_source.options.siliconflow") },
+    { value: "zenmux", label: t("settings.app.tray_source.options.zenmux") },
+  ];
+  const currentSource = cfg.tray_source ?? "minimax";
+  const traySourceSelect = el("select", { id: "tray-source" }) as HTMLSelectElement;
+  for (const opt of traySourceOptions) {
+    const o = el("option", { value: opt.value }, opt.label) as HTMLOptionElement;
+    if (currentSource === opt.value) o.selected = true;
+    traySourceSelect.appendChild(o);
+  }
+  traySourceSelect.addEventListener("change", () => {
+    const v = traySourceSelect.value;
+    void setTraySource(v)
+      .then(() =>
+        flash(
+          t("settings.app.tray_source_changed", {
+            name: traySourceOptions.find((o) => o.value === v)?.label ?? v,
+          }),
+        ),
+      )
+      .catch((e) => {
+        flash(t("settings.app.tray_source_failed", { err: String(e) }), true);
+        traySourceSelect.value = currentSource;
+      });
+  });
+
+  // ── 托盘图标颜色 (方案 A: 选 tray icon 数字/进度条颜色) ──
+  const trayColorInput = el("input", { type: "color", id: "tray-color" }) as HTMLInputElement;
+  trayColorInput.value = cfg.tray_icon_color ?? "#ffffff";
+  const trayColorAutoBtn = el("button", { type: "button", class: "tray-color-auto" }, t("settings.app.tray_color_auto")) as HTMLButtonElement;
+  trayColorInput.addEventListener("change", () => {
+    void setTrayIconColor(trayColorInput.value)
+      .then(() => flash(t("settings.app.tray_color_changed")))
+      .catch((e) => flash(t("settings.app.tray_color_failed", { err: String(e) }), true));
+  });
+  trayColorAutoBtn.addEventListener("click", () => {
+    void setTrayIconColor(null)
+      .then(() => {
+        trayColorInput.value = "#ffffff";
+        flash(t("settings.app.tray_color_changed"));
+      })
+      .catch((e) => flash(t("settings.app.tray_color_failed", { err: String(e) }), true));
+  });
+
   const testBtn = el("button", { id: "test", class: "primary" }, t("settings.common.test")) as HTMLButtonElement;
   testBtn.addEventListener("click", () => void testConn());
 
@@ -94,6 +147,23 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
         el("label", {}, t("settings.app.tray_style_title")),
         trayMode,
         el("div", { class: "help" }, t("settings.app.tray_style_help")),
+      ),
+      el("div", { class: "divider" }),
+      // 托盘数据源（方案 A）
+      el("div", { class: "field" },
+        el("label", { for: "tray-source" }, t("settings.app.tray_source_title")),
+        traySourceSelect,
+        el("div", { class: "help" }, t("settings.app.tray_source_help")),
+      ),
+      el("div", { class: "divider" }),
+      // 托盘图标颜色
+      el("div", { class: "field" },
+        el("label", { for: "tray-color" }, t("settings.app.tray_color_title")),
+        el("div", { class: "row" },
+          trayColorInput,
+          trayColorAutoBtn,
+        ),
+        el("div", { class: "help" }, t("settings.app.tray_color_help")),
       ),
       el("div", { class: "divider" }),
       // 测试连接

@@ -92,6 +92,11 @@ export interface AppConfig {
   schema_overrides?: Record<string, ProviderOverrides>;
   /// v0.6+ 托盘图标样式（Rust 端 TrayIconStyle enum）
   tray_icon_style?: "logo" | "bars" | "percent";
+  /// 托盘图标显示哪个 provider 的数据（方案 A）。undefined = 默认 minimax。
+  /// 值为 source id 的 base（"minimax" / "kimi" / "volcengine_ark" 等）。
+  tray_source?: string;
+  /// 托盘图标前景色（"#RRGGBB"）。undefined = 自动按菜单栏明暗选黑/白。
+  tray_icon_color?: string;
   /// 4 档色阈值分界（从小到大，3 个分界点切出 4 段：
   /// `[..t0]`=ok 绿 / `[t0..t1]`=cyan 青 / `[t1..t2]`=warn 黄 /
   /// `[t2..]`=alert 红）。默认 [50, 70, 88]。老 config.json 缺这字段

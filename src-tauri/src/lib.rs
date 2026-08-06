@@ -182,9 +182,19 @@ pub fn run() {
                     {
                         let state = app_for_locale.state::<crate::AppState>();
                         let snap = state.snapshot.blocking_read().clone();
-                        let style = state.config.blocking_read().tray_icon_style;
-                        let _ =
-                            crate::tray::update_tray_from_snapshot(&app_for_locale, &snap, style);
+                        let cfg = state.config.blocking_read();
+                        let style = cfg.tray_icon_style;
+                        let tray_source =
+                            cfg.tray_source.as_deref().unwrap_or("minimax").to_string();
+                        let tray_color =
+                            crate::tray::tray_fill_color(cfg.tray_icon_color.as_deref());
+                        let _ = crate::tray::update_tray_from_snapshot(
+                            &app_for_locale,
+                            &snap,
+                            style,
+                            &tray_source,
+                            tray_color,
+                        );
                     }
                     // 同步 settings 窗口 title
                     if let Some(w) = app_for_locale.get_webview_window("settings") {
@@ -372,6 +382,8 @@ pub fn run() {
             commands::set_low_power_mode,
             commands::set_auto_hide_in_fullscreen,
             commands::set_show_footer_hint,
+            commands::set_tray_icon_color,
+            commands::set_tray_source,
             commands::set_tray_icon_style,
             commands::set_display_thresholds,
             commands::quit_app,

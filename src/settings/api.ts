@@ -139,6 +139,17 @@ export async function setTrayIconStyle(
   await invoke("set_tray_icon_style", { style });
 }
 
+/// 方案 A：即时切换托盘图标显示哪个 provider 的数据。
+/// source = null 切回默认 minimax。后端落盘 + 立即重渲。
+export async function setTraySource(source: string | null): Promise<void> {
+  await invoke("set_tray_source", { source });
+}
+
+/// 即时切换托盘图标前景色。color = null 切回自动（按菜单栏明暗）。
+export async function setTrayIconColor(color: string | null): Promise<void> {
+  await invoke("set_tray_icon_color", { color });
+}
+
 /**
  * 即时更新"显示阈值"：色档分界 + 钱包余额告警阈值 + 4 档自定义色。即时生效。
  *

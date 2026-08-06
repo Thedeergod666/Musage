@@ -17,7 +17,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{
     image::Image,
-    menu::{Menu, MenuItem},
+    menu::{IsMenuItem, Menu, MenuItem, Submenu},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Manager,
 };
@@ -64,6 +64,8 @@ enum TrayRequest {
     Update {
         snap: Box<QuotaSnapshot>,
         style: TrayIconStyle,
+        source_id: String,
+        color: Rgba<u8>,
     },
     /// 重建菜单（locale 切换时，menu label 走 t!() 重新拿当前 locale）
     RebuildMenu,
@@ -322,6 +324,24 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
             "quit" => {
                 app.exit(0);
             }
+            id if id.starts_with("tray_source:") => {
+                let source = id.strip_prefix("tray_source:").unwrap().to_string();
+                let app2 = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    // 复用 set_tray_source：写 cfg + 重渲 icon（数据立即变）
+                    if let Err(e) = crate::commands::set_tray_source(
+                        app2.state::<crate::AppState>(),
+                        app2.clone(),
+                        Some(source),
+                    )
+                    .await
+                    {
+                        tracing::warn!(error = %e, "托盘菜单切换数据源失败");
+                    }
+                    // 重建菜单更新 ✓ 标记
+                    let _ = crate::tray::rebuild_tray(&app2);
+                });
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
@@ -396,6 +416,25 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
 /// `AllowSetForegroundWindow(ASFW_ANY) + SetForegroundWindow`，靠**抢前台**
 /// 把浮窗真顶到最上面（**会**抢焦点，但用户点菜单那一瞬间本来就在
 /// 操作我们 app，UX 可接受）。
+/// 托盘数据源 provider 的显示名（菜单子项用）。复用后端 provider_name.*
+/// 的显示名（跟设置面板/浮窗一致）；rust-i18n t! 只吃编译期字面量，
+/// 不能用动态 key，所以这里 match 到具体 key。
+fn tray_source_label(id: &str) -> String {
+    let key = match id {
+        "minimax" => "provider_name.minimax",
+        "kimi" => "provider_name.kimi",
+        "volcengine_ark" => "provider_name.volcengine_ark",
+        "zhipu" => "provider_name.zhipu_cn",
+        "claude_official" => "provider_name.claude_official",
+        "deepseek" => "provider_name.deepseek",
+        "openrouter" => "provider_name.openrouter",
+        "siliconflow" => "provider_name.siliconflow",
+        "zenmux" => "provider_name.zenmux",
+        _ => return id.to_string(),
+    };
+    t!(key).to_string()
+}
+
 fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let toggle_i = MenuItem::with_id(app, "toggle", &t!("tray.menu.toggle"), true, None::<&str>)?;
     let settings_i = MenuItem::with_id(
@@ -414,10 +453,54 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         cfg!(target_os = "windows"),
         None::<&str>,
     )?;
+    // 托盘数据源子菜单（方案 A 快捷切换）：当前选中的打 ✓。
+    // provider 名复用 settings.app.tray_source.options.* 的 i18n，避免重复定义。
+    let current_source = app
+        .state::<crate::AppState>()
+        .config
+        .blocking_read()
+        .tray_source
+        .clone()
+        .unwrap_or_else(|| "minimax".to_string());
+    let source_opts = [
+        "minimax",
+        "kimi",
+        "volcengine_ark",
+        "zhipu",
+        "claude_official",
+        "deepseek",
+        "openrouter",
+        "siliconflow",
+        "zenmux",
+    ];
+    let source_items: Vec<MenuItem<tauri::Wry>> = source_opts
+        .iter()
+        .map(|id| {
+            let label = if *id == current_source {
+                format!("✓ {}", tray_source_label(id))
+            } else {
+                tray_source_label(id)
+            };
+            MenuItem::with_id(app, format!("tray_source:{id}"), &label, true, None::<&str>)
+        })
+        .collect::<tauri::Result<_>>()?;
+    let source_refs: Vec<&dyn IsMenuItem<tauri::Wry>> = source_items
+        .iter()
+        .map(|i| i as &dyn IsMenuItem<tauri::Wry>)
+        .collect();
+    let source_submenu =
+        Submenu::with_items(app, &t!("tray.menu.source_title"), true, &source_refs)?;
     let quit_i = MenuItem::with_id(app, "quit", &t!("tray.menu.quit"), true, None::<&str>)?;
     Menu::with_items(
         app,
-        &[&toggle_i, &settings_i, &refresh_i, &force_top_i, &quit_i],
+        &[
+            &toggle_i,
+            &settings_i,
+            &refresh_i,
+            &source_submenu,
+            &force_top_i,
+            &quit_i,
+        ],
     )
 }
 
@@ -477,12 +560,17 @@ fn start_tray_request_receiver(app: &AppHandle) {
 /// drop 是在 main thread 跑（`assertBarrierOnQueue` 通过），不会闪退。
 fn handle_tray_request(app: &AppHandle, req: TrayRequest) {
     match req {
-        TrayRequest::Update { snap, style } => {
+        TrayRequest::Update {
+            snap,
+            style,
+            source_id,
+            color,
+        } => {
             let Some(tray) = app.tray_by_id("main-tray") else {
                 tracing::warn!("tray 还没建好（tray_by_id 返 None）");
                 return;
             };
-            if let Err(e) = tray.set_icon(Some(render_icon(&snap, style))) {
+            if let Err(e) = tray.set_icon(Some(render_icon(&snap, style, &source_id, color))) {
                 tracing::warn!(error = %e, "set_icon 失败");
                 return;
             }
@@ -534,10 +622,14 @@ pub fn update_tray_from_snapshot(
     _app: &AppHandle,
     snap: &QuotaSnapshot,
     style: TrayIconStyle,
+    source_id: &str,
+    color: Rgba<u8>,
 ) -> tauri::Result<()> {
     dispatch_tray_request(TrayRequest::Update {
         snap: Box::new(snap.clone()),
         style,
+        source_id: source_id.to_string(),
+        color,
     });
     Ok(())
 }
@@ -579,12 +671,17 @@ fn make_placeholder_icon() -> Image<'static> {
 /// v0.6+ 托盘图标渲染：根据 [`TrayIconStyle`] 分发。
 ///
 /// - `Logo`   ：画 icons/tray-base.png（白底 M），不显示实时数据
-/// - `Bars`   ：MiniMax 双水平进度条
-/// - `Percent`：MiniMax 双行百分比文本（font 缺失时 fallback 到 Bars）
+/// - `Bars`   ：双水平进度条（上 = 5h，下 = 周）
+/// - `Percent`：双行百分比文本（font 缺失时 fallback 到 Bars）
 ///
-/// bars / percent 模式在 MiniMax 没有/失败时**退化到 logo**（不再走旧
+/// bars / percent 模式在所选 source 没有/失败时**退化到 logo**（不再走旧
 /// DeepSeek 大数字 —— v0.6+ 3 选 1 心智模型，深向文本风格作 v2 扩展）。
-fn render_icon(snap: &QuotaSnapshot, style: TrayIconStyle) -> Image<'static> {
+fn render_icon(
+    snap: &QuotaSnapshot,
+    style: TrayIconStyle,
+    source_id: &str,
+    color: Rgba<u8>,
+) -> Image<'static> {
     if style == TrayIconStyle::Logo {
         return make_placeholder_icon();
     }
@@ -592,14 +689,20 @@ fn render_icon(snap: &QuotaSnapshot, style: TrayIconStyle) -> Image<'static> {
     let mut img: image::ImageBuffer<Rgba<u8>, Vec<u8>> =
         image::ImageBuffer::from_fn(ICON_SIZE, ICON_SIZE, |_x, _y| Rgba([0, 0, 0, 0]));
 
-    match pick_minimax_rows(snap) {
-        Some((five_h, weekly)) => match style {
-            TrayIconStyle::Bars => draw_mini_bars(&mut img, five_h, weekly),
-            TrayIconStyle::Percent => draw_percent(&mut img, five_h, weekly),
-            TrayIconStyle::Logo => unreachable!("logo handled above"),
-        },
+    match pick_tray_rows(snap, source_id) {
+        Some((top, bot)) => {
+            // 余额系（Balance）bars 模式无意义 -> fallback 到 percent（数字）
+            let has_balance =
+                matches!(top, TrayCell::Balance(..)) || matches!(bot, TrayCell::Balance(..));
+            match style {
+                TrayIconStyle::Percent => draw_percent(&mut img, top, bot, color),
+                TrayIconStyle::Bars if !has_balance => draw_mini_bars(&mut img, top, bot, color),
+                TrayIconStyle::Bars => draw_percent(&mut img, top, bot, color),
+                TrayIconStyle::Logo => unreachable!("logo handled above"),
+            }
+        }
         None => {
-            // bars / percent 模式：MiniMax 没有/失败 → 退化为 logo
+            // bars / percent 模式：所选 source 没有/失败 → 退化为 logo
             // 单独重建一张避免在主 img 上画占位
             return make_placeholder_icon();
         }
@@ -609,33 +712,33 @@ fn render_icon(snap: &QuotaSnapshot, style: TrayIconStyle) -> Image<'static> {
     Image::new_owned(img.into_raw(), w, h)
 }
 
-/// 取 MiniMax 行的 5h / 周 utilization（缺则 0.0）。
-/// MiniMax 不存在或失败时返回 None。
+/// 取指定 source 的 5h / 周 utilization（缺则 0.0）。
+/// 指定 source 不存在或失败时返回 None。
 ///
 /// v0.2.1 commit 5:多 instance 时遍历所有 minimax instance,选 5h utilization
 /// 最高的(快耗尽的副本最该被高亮);并列时取 instance_index 小的优先。
 /// 失败/无数据时 fallback 到任意一份成功的。进度条小图标只画 1 份,
 /// tooltip 列出所有 instance 拼 #N 后缀(由 tooltip() 统一处理)。
-fn pick_minimax_rows(snap: &QuotaSnapshot) -> Option<(f64, f64)> {
+fn pick_tray_rows(snap: &QuotaSnapshot, source_id: &str) -> Option<(TrayCell, TrayCell)> {
     // H1 fix (2026-07-03 audit): 之前精确匹配 "minimax",extra instance 的 source_id
     // 是 "minimax#2" 被过滤掉,托盘图标不显示副本数据。改为按 base id 匹配
-    // (split('#')[0] == "minimax")。
-    let minimaxes: Vec<&ProviderSnapshot> = snap
+    // (split('#')[0] == source_id)。
+    let candidates: Vec<&ProviderSnapshot> = snap
         .providers
         .iter()
         .filter(|p| {
             p.success
                 && p.source_id
                     .as_deref()
-                    .map(|s| s.split('#').next().unwrap_or(s) == "minimax")
+                    .map(|s| s.split('#').next().unwrap_or(s) == source_id)
                     .unwrap_or(false)
         })
         .collect();
-    if minimaxes.is_empty() {
+    if candidates.is_empty() {
         return None;
     }
-    // 选 5h 利用率最高(快耗尽)
-    let best = minimaxes
+    // 选 5h 利用率最高(快耗尽)；余额系（无 5h）所有候选都 0 -> 取第一个
+    let best = candidates
         .iter()
         .max_by(|a, b| {
             five_hour_util(a)
@@ -643,8 +746,98 @@ fn pick_minimax_rows(snap: &QuotaSnapshot) -> Option<(f64, f64)> {
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
         .copied()
-        .unwrap_or(minimaxes[0]);
-    Some((five_hour_util(best), weekly_util(best)))
+        .unwrap_or(candidates[0]);
+    // 阶段 2：优先百分比系（有 FiveHour/Weekly row），否则余额系（取 remaining）
+    let five = best.rows.iter().find(|r| r.kind == Some(RowKind::FiveHour));
+    let weekly = best.rows.iter().find(|r| r.kind == Some(RowKind::Weekly));
+    if five.is_some() || weekly.is_some() {
+        let top = five
+            .and_then(|r| r.utilization)
+            .map(TrayCell::Percent)
+            .unwrap_or(TrayCell::Empty);
+        let bot = weekly
+            .and_then(|r| r.utilization)
+            .map(TrayCell::Percent)
+            .unwrap_or(TrayCell::Empty);
+        Some((top, bot))
+    } else {
+        // 余额系：取第一个有 remaining 的 row
+        let row = best.rows.iter().find(|r| r.remaining.is_some())?;
+        let v = row.remaining.unwrap_or(0.0);
+        let u = row.unit.clone().unwrap_or_default();
+        Some((TrayCell::Balance(v, u), TrayCell::Empty))
+    }
+}
+
+/// 托盘图标一个格子的数据。阶段 2（方案 A）：让 tray icon 能显示余额系
+/// provider（deepseek/openrouter/siliconflow/zenmux），不再只画百分比。
+#[derive(Debug, Clone)]
+enum TrayCell {
+    /// 百分比（0-100+），画 "N%"
+    Percent(f64),
+    /// 余额（值 + 单位），画 "¥128" / "$74"
+    Balance(f64, String),
+    /// 空格子，不画那行
+    Empty,
+}
+
+impl TrayCell {
+    /// 渲染成 tray 文本。Empty 返 None（不画那行）。
+    fn to_tray_text(&self) -> Option<String> {
+        match self {
+            TrayCell::Percent(p) => Some(format!("{}%", sanitize_percent(*p))),
+            TrayCell::Balance(v, u) => Some(format_balance_tray(*v, u)),
+            TrayCell::Empty => None,
+        }
+    }
+}
+
+/// 余额格式化：货币符号 + 短数字。32px icon 空间小，<1000 取整数（不带小数，
+/// 区别于 tooltip 的 format_amount_short 用 {:.2}）。
+fn format_balance_tray(v: f64, unit: &str) -> String {
+    let symbol = match unit {
+        "CNY" | "RMB" | "¥" => "¥",
+        "USD" | "$" => "$",
+        _ => "",
+    };
+    let num = if !v.is_finite() {
+        "?".to_string()
+    } else {
+        let r = v.round() as i64;
+        if r >= 100_000 {
+            format!("{}k", r / 1000)
+        } else if v >= 1000.0 {
+            format!("{:.1}k", v / 1000.0)
+        } else {
+            format!("{}", r)
+        }
+    };
+    format!("{symbol}{num}")
+}
+
+/// 解析 "#RRGGBB" / "RRGGBB" 为 Rgba。无效返 None。
+fn parse_hex_color(s: &str) -> Option<Rgba<u8>> {
+    let s = s.strip_prefix('#').unwrap_or(s);
+    if s.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+    Some(Rgba([r, g, b, 255]))
+}
+
+/// 计算托盘图标前景色：用户配了固定色（tray_icon_color）就用它，否则按菜单栏
+/// 明暗自动黑/白（macOS 浅色 -> 黑，其它 -> 白）。
+pub(crate) fn tray_fill_color(cfg_color: Option<&str>) -> Rgba<u8> {
+    if let Some(c) = cfg_color.and_then(parse_hex_color) {
+        return c;
+    }
+    if crate::platform::menu_bar_is_light() {
+        Rgba([0u8, 0, 0, 255])
+    } else {
+        Rgba([255u8, 255, 255, 255])
+    }
 }
 
 fn five_hour_util(p: &ProviderSnapshot) -> f64 {
@@ -655,14 +848,6 @@ fn five_hour_util(p: &ProviderSnapshot) -> f64 {
         // tray 端 t!() 重新求值拿到的是当前 locale,切语言后两个字符串
         // 不一致 → util 永远 0%。改用枚举匹配彻底跟 locale 解耦。
         .find(|r| r.kind == Some(RowKind::FiveHour))
-        .and_then(|r| r.utilization)
-        .unwrap_or(0.0)
-}
-
-fn weekly_util(p: &ProviderSnapshot) -> f64 {
-    p.rows
-        .iter()
-        .find(|r| r.kind == Some(RowKind::Weekly))
         .and_then(|r| r.utilization)
         .unwrap_or(0.0)
 }
@@ -679,7 +864,12 @@ fn weekly_util(p: &ProviderSnapshot) -> f64 {
 /// └──────────────────────────┘
 ///     ↑ 3px                  ↑ 3px
 /// ```
-fn draw_mini_bars(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64, util_bot: f64) {
+fn draw_mini_bars(
+    img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>,
+    cell_top: TrayCell,
+    cell_bot: TrayCell,
+    fill: Rgba<u8>,
+) {
     // 所有像素常量按 32x32 原设计折算到当前 ICON_SIZE，比例：
     //   PAD_X 3/32, BAR_H 9/32, GAP 2/32, TOP 6/32, RADIUS 2/32
     // 32→64 时这些值整体翻倍（6/12/4/12/4/52/18/4），布局完全等比。
@@ -691,15 +881,12 @@ fn draw_mini_bars(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64
     let top = s * 6 / 32; // 6  → 12
     let radius = s * 2 / 32; // 2  →  4
     let track = Rgba([60u8, 60, 60, 255]);
-    // H2 fix (2026-07-29 审查): macOS 浅色菜单栏下白字不可见 → 改黑字。
-    // Win/Linux tray 永远渲染在深色任务栏上,固定白字保持不变。
-    let fill = if crate::platform::menu_bar_is_light() {
-        Rgba([0u8, 0, 0, 255])
-    } else {
-        Rgba([255u8, 255, 255, 255])
+    let pct_of = |c: &TrayCell| -> u32 {
+        match c {
+            TrayCell::Percent(p) => sanitize_percent(*p),
+            _ => 0,
+        }
     };
-
-    let pct = |u: f64| -> u32 { (u.clamp(0.0, 100.0)).round() as u32 };
 
     draw_rounded_bar(
         img,
@@ -707,7 +894,7 @@ fn draw_mini_bars(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64
         top,
         bar_w,
         bar_h,
-        pct(util_top),
+        pct_of(&cell_top),
         track,
         fill,
         radius,
@@ -718,7 +905,7 @@ fn draw_mini_bars(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64
         top + bar_h + gap,
         bar_w,
         bar_h,
-        pct(util_bot),
+        pct_of(&cell_bot),
         track,
         fill,
         radius,
@@ -825,9 +1012,14 @@ pub(crate) fn sanitize_percent(v: f64) -> u32 {
     v.clamp(0.0, 100.0).round() as u32
 }
 
-fn draw_percent(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64, util_bot: f64) {
+fn draw_percent(
+    img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>,
+    cell_top: TrayCell,
+    cell_bot: TrayCell,
+    color: Rgba<u8>,
+) {
     let Some(font) = load_font() else {
-        return draw_mini_bars(img, util_top, util_bot);
+        return draw_mini_bars(img, cell_top, cell_bot, color);
     };
 
     let s = ICON_SIZE as i32;
@@ -837,20 +1029,15 @@ fn draw_percent(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64, 
     let y_top = 0; //  0 →  0
     let y_bot = s / 2; // 16 → 32
     let pad_right = s * 2 / 32; // 右边留 2px 内边距
-                                // H2 fix: 同 draw_mini_bars,浅色菜单栏改黑字
-    let color = if crate::platform::menu_bar_is_light() {
-        Rgba([0u8, 0, 0, 255])
-    } else {
-        Rgba([255u8, 255, 255, 255])
-    };
+                                // color passed by caller (tray_fill_color: user color or menu-bar-adaptive)
 
     // M5 fix (2026-07-30 audit): util_top/utility 可能 NaN/负值/>100
     // (MiniMax 旧 count schema 在 remaining>total 时算出负百分比,某些 provider
     // 返 Infinity).round()/.round() as i64 都 unsound 行为,直接 format 会显示
     // "-25%" / "NaN%" / "999%" 触发 H1 严重裁切。
     // sanitize_percent 先 NaN/Infinity → 0,再 clamp 到 0..=100,再 round。
-    let top = format!("{}%", sanitize_percent(util_top));
-    let bot = format!("{}%", sanitize_percent(util_bot));
+    let top_text = cell_top.to_tray_text();
+    let bot_text = cell_bot.to_tray_text();
 
     // H1 fix (2026-07-29 审查): 100% 时 3 位数字 + % 比 99% 多 1 字符,
     // 原 scale 20/40 下文本宽度约 48/96 px,超出 ICON_SIZE 32/64 → 左边
@@ -858,11 +1045,14 @@ fn draw_percent(img: &mut image::ImageBuffer<Rgba<u8>, Vec<u8>>, util_top: f64, 
     // 缩放比例按"目标宽度 / 实际宽度"算,1 字符增量损失 ~20% 字号,
     // 仍清晰可读。
     let max_w = s - pad_right;
-    let top_scale = fit_scale(font, &top, base_scale_f, max_w);
-    let bot_scale = fit_scale(font, &bot, base_scale_f, max_w);
-
-    draw_right_text(img, &top, top_scale, y_top, pad_right, font, color);
-    draw_right_text(img, &bot, bot_scale, y_bot, pad_right, font, color);
+    if let Some(t) = &top_text {
+        let scale = fit_scale(font, t, base_scale_f, max_w);
+        draw_right_text(img, t, scale, y_top, pad_right, font, color);
+    }
+    if let Some(t) = &bot_text {
+        let scale = fit_scale(font, t, base_scale_f, max_w);
+        draw_right_text(img, t, scale, y_bot, pad_right, font, color);
+    }
 }
 
 /// 按给定文本 + 基准 scale 起步,自动缩小到能放进 max_w 像素。

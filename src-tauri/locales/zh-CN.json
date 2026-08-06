@@ -5,7 +5,8 @@
       "settings": "设置...",
       "refresh": "立即刷新",
       "force_top": "置顶一下",
-      "quit": "退出"
+      "quit": "退出",
+      "source_title": "托盘数据源"
     },
     "tooltip": {
       "loading": "Musage - 加载中…",

@@ -157,6 +157,28 @@
       },
       "tray_style_changed": "Tray style switched: {name}",
       "tray_style_failed": "Switch failed: {err}",
+      "tray_source_title": "Tray data source",
+      "tray_source_help": "Choose which provider's 5h/weekly usage the tray icon shows. Falls back to the logo when no data. Tooltip still shows all providers.",
+      "tray_source": {
+        "options": {
+          "minimax": "MiniMax",
+          "kimi": "Kimi",
+          "volcengine_ark": "Volcengine Ark",
+          "zhipu": "Zhipu GLM",
+          "claude_official": "Claude Official",
+          "deepseek": "DeepSeek",
+          "openrouter": "OpenRouter",
+          "siliconflow": "SiliconFlow",
+          "zenmux": "ZenMux"
+        }
+      },
+      "tray_source_changed": "Tray data source switched: {name}",
+      "tray_source_failed": "Switch failed: {err}",
+      "tray_color_title": "Tray icon color",
+      "tray_color_help": "Color of tray numbers/bars. Auto = black/white by menu bar brightness.",
+      "tray_color_auto": "Auto",
+      "tray_color_changed": "Tray color switched",
+      "tray_color_failed": "Switch failed: {err}",
       "config_saved": "Config saved",
       "config_save_failed": "Save failed: {err}",
       "switch_failed": "Toggle failed: {err}"

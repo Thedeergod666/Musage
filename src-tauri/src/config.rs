@@ -226,6 +226,19 @@ pub struct AppConfig {
     /// 缺字段时走 `Percent`（也是新装用户默认值）。
     #[serde(default)]
     pub tray_icon_style: TrayIconStyle,
+    /// 托盘图标显示哪个 provider 的数据（v0.2.7+ 新增，方案 A）。
+    /// `None` = 默认 minimax（向后兼容，老 config.json 无感）。
+    /// 值为 source id 的 base（"minimax" / "kimi" / "volcengine_ark" /
+    /// "zhipu" / "claude_official" 等），extra instance 按此 base 匹配后
+    /// 选最紧急的副本（跟现有 minimax 多副本选择逻辑一致）。
+    /// 跟 `tray_icon_style`（bars/percent/logo 渲染样式）正交：本字段决定
+    /// "显示谁"，`tray_icon_style` 决定"怎么画"。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tray_source: Option<String>,
+    /// 托盘图标前景色（"#RRGGBB"）。None = 自动按菜单栏明暗选黑/白（默认）。
+    /// 用户可设固定色（如 "#30d158" 绿）覆盖自适应。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tray_icon_color: Option<String>,
     /// 4 档色阈值（用户可调）。从小到大排列 3 个分界点，把 0..100 切成
     /// 4 段 [ok / cyan / warn / alert]。默认 [50, 70, 88]（与 v0.6 之前的
     /// main.ts::colorClass 硬编码值保持一致，老 config.json 缺这字段时
@@ -434,6 +447,10 @@ impl Default for AppConfig {
             zenmux_payg_concise_mode: None,
             zhipu_region: None,
             tray_icon_style: TrayIconStyle::default(),
+            // None = 默认 minimax（向后兼容，老 config.json 无此字段）
+            tray_source: None,
+            // None = 自动黑/白（按菜单栏明暗）
+            tray_icon_color: None,
             color_thresholds: default_color_thresholds(),
             wallet_alert_threshold: None,
             color_overrides: BTreeMap::new(),
@@ -924,6 +941,14 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
             "percent" => TrayIconStyle::Percent,
             _ => cfg.tray_icon_style,
         };
+    }
+    if let Some(s) = obj.get("tray_source").and_then(|x| x.as_str()) {
+        recognized_any = true;
+        cfg.tray_source = Some(s.to_string());
+    }
+    if let Some(s) = obj.get("tray_icon_color").and_then(|x| x.as_str()) {
+        recognized_any = true;
+        cfg.tray_icon_color = Some(s.to_string());
     }
     // C6 fix (2026-07-28 审查): 以下字段之前全部漏挑,一次 JSON typo 触发
     // best-effort 恢复后这些设置被默认值静默覆盖。对照 AppConfig 定义补齐。

@@ -64,7 +64,7 @@ use serde_json::Value;
 
 use super::{
     text_body_limited, AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow,
-    QuotaSource,
+    QuotaSource, RowKind,
 };
 use crate::t;
 
@@ -479,11 +479,19 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
             0.0
         };
 
-        let (label, reset_period) = match level.as_str() {
-            "session" => (t!("row.five_hour").to_string(), "five_hour"),
-            "daily" => (t!("row.daily").to_string(), "daily"),
-            "weekly" => (t!("row.weekly_7d").to_string(), "weekly"),
-            "monthly" => (t!("row.monthly").to_string(), "monthly"),
+        let (label, reset_period, kind) = match level.as_str() {
+            "session" => (
+                t!("row.five_hour").to_string(),
+                "five_hour",
+                Some(RowKind::FiveHour),
+            ),
+            "daily" => (t!("row.daily").to_string(), "daily", None),
+            "weekly" => (
+                t!("row.weekly_7d").to_string(),
+                "weekly",
+                Some(RowKind::Weekly),
+            ),
+            "monthly" => (t!("row.monthly").to_string(), "monthly", None),
             // 未知 Level → 跳过（schema 漂移保护，不让单条坏数据炸整个 snapshot）
             _ => continue,
         };
@@ -497,7 +505,7 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
             resets_at,
             unit: None, // Coding Plan 是次数，无单位
             extra: Some(serde_json::json!({ "reset_period": reset_period })),
-            kind: None,
+            kind,
         });
     }
 

@@ -51,12 +51,13 @@ jobs:
           # v0.2.0 砍 msi 是为避 WiX 镜像 timeout；v0.2.1 试一次,失败下次发板回退
           # v0.2.5 (audit D8-002): 每发都撞 timeout, 正式砍回 nsis
           - os: windows-latest
-            # D8-003 fix (2026-07-30 audit): 改 GNU target 对齐本地维护者工具链
-            # (per AGENTS.md, 维护者 dev-env.bat 走 x86_64-pc-windows-gnu + MinGW).
-            # MSVC target 走 vcruntime140_1.dll 动态链接, 用户机器裸装会
-            # 报缺 DLL; GNU 静态链 libstd/libgcc, 用户机器零依赖. 跟 AGENTS.md
-            # 第 75-79 行"工具链"段一致.
-            target: x86_64-pc-windows-gnu
+            # v0.2.7 回退 MSVC (2026-08-06): D8-003 切 GNU 后 CI 链接必挂 —
+            # tauri-build 的 embed-resource 在 windows-latest runner 上走了
+            # MSVC rc.exe 生成 resource.lib, GNU ld 报 "file format not
+            # recognized" (v0.2.6/v0.2.7 两次 release 全挂). v0.2.5 (MSVC)
+            # 构建验证过. vcruntime140_1.dll 动态依赖用下方 RUSTFLAGS
+            # crt-static 静态链接解决, 用户机器仍零依赖.
+            target: x86_64-pc-windows-msvc
             label: windows-x64
             bundles: nsis
           # v0.2.1 新增：Linux x64 三产物
@@ -99,20 +100,14 @@ jobs:
         if: runner.os == 'macOS'
         run: echo "MACOSX_DEPLOYMENT_TARGET=11.0" >> $GITHUB_ENV
 
-      # ── Windows MinGW: GNU target 链接时必须 dlltool + linker ──
-      # D8-003 fix (2026-07-30 audit): CI 走 GNU target → 必须 MinGW 提供 dlltool
-      # 否则 'error calling dlltool: program not found'. 用 choco 装 (GitHub
-      # Actions windows-latest runner 默认带 choco).
-      - name: Install Windows MinGW
+      # ── Windows MSVC 静态 CRT (v0.2.7 回退 MSVC 后) ──
+      # MSVC target 默认动态链接 vcruntime140_1.dll, 用户机器裸装会报缺 DLL
+      # (D8-003 当初切 GNU 的动机). crt-static 静态链接 CRT, 用户零依赖,
+      # 同时保留 MSVC 工具链的构建稳定性 (v0.2.5 验证过).
+      - name: Set RUSTFLAGS (Windows static CRT)
         if: runner.os == 'Windows'
-        run: choco install mingw -y --no-progress
-        shell: cmd
-      # D8-003 fix: choco mingw 装到 C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin
-      # PATH 默认不带, 显式 echo 到 GITHUB_PATH 让 cargo 找 dlltool.
-      - name: Add MinGW to PATH
-        if: runner.os == 'Windows'
-        run: echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin" | Out-File -Append -FilePath $env:GITHUB_PATH -Encoding utf8
-        shell: pwsh
+        run: echo "RUSTFLAGS=-C target-feature=+crt-static" >> $GITHUB_ENV
+        shell: bash
 
       # ── Linux 系统依赖：webkit2gtk-4.1 + libappindicator3 + librsvg + patchelf ──
       # 跟 Tauri 2 官方 GitHub Actions 文档示例同一组包；

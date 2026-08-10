@@ -11,6 +11,34 @@
 //!
 //! ## 响应 schema
 //!
+//! ### 新版积分套餐（2026-07-30 起上线，type = `CREDIT_LIMIT`）
+//!
+//! ```json
+//! {
+//!   "code": 200,
+//!   "msg": "Operation successful",
+//!   "data": {
+//!     "level": "lite",
+//!     "limits": [
+//!       {
+//!         "type": "CREDIT_LIMIT",
+//!         "unit": 3,            // 3 = 5小时, 6 = 每周
+//!         "number": 5,
+//!         "usage": 2000,        // 积分总额度
+//!         "currentValue": 266,  // 已用积分
+//!         "remaining": 1733,    // 剩余积分
+//!         "percentage": 13.0,   // 已用百分比 0-100
+//!         "nextResetTime": 1786374303216  // epoch 毫秒
+//!       },
+//!       { "type": "CREDIT_LIMIT", "unit": 6, "number": 1, "usage": 2000, "currentValue": 266, "remaining": 1733, "percentage": 13.0, "nextResetTime": 1786960728998 }
+//!     ]
+//!   },
+//!   "success": true
+//! }
+//! ```
+//!
+//! ### 老版 Token 套餐（type = `TOKENS_LIMIT`，2026-07-30 前订阅）
+//!
 //! ```json
 //! {
 //!   "success": true,
@@ -31,7 +59,7 @@
 //!         "percentage": 86.0,
 //!         "nextResetTime": 1749800000000
 //!       },
-//!       { "type": "TIME_LIMIT", "percentage": 7.0 }  // 非 TOKENS_LIMIT 跳过
+//!       { "type": "TIME_LIMIT", "percentage": 7.0 }  // 非 TOKENS/CREDIT 跳过
 //!     ]
 //!   }
 //! }
@@ -46,6 +74,11 @@
 //!    resetTime 的，剩下的按 reset 升序填入仍空缺的槽位
 //! 4. **老套餐只回 1 条 TOKENS_LIMIT**：自然降级为只显示 5h
 //! 5. **国际版（api.z.ai）**：与国区 schema 完全一致；base_url 二选一
+//! 6. **2026-07-30 积分制改版**：新套餐 `limits[].type` 从 `TOKENS_LIMIT`
+//!    改为 `CREDIT_LIMIT`，且新增 `usage` / `currentValue` / `remaining`
+//!    三个积分绝对值字段。两种 type 都按 `unit` + `percentage` 解析，
+//!    绝对值字段当前不展示（前端窗口行只渲染百分比 + 重置倒计时），
+//!    但保留兼容 —— 老用户 TOKENS_LIMIT 套餐不受影响。
 
 use std::borrow::Cow;
 use std::pin::Pin;
@@ -397,7 +430,11 @@ fn classify_zhipu_limits(data: &Value) -> (Option<(f64, Option<i64>)>, Option<(f
         for item in limits {
             let limit_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
             // 大小写不敏感：上游若把 "TOKENS_LIMIT" 改成小写或驼峰，依然识别
-            if !limit_type.eq_ignore_ascii_case("TOKENS_LIMIT") {
+            // 2026-07-30 积分制改版：新套餐 type = CREDIT_LIMIT，老套餐 TOKENS_LIMIT，
+            // 两种都解析（按 unit + percentage），其余 type（如 TIME_LIMIT）跳过
+            if !limit_type.eq_ignore_ascii_case("TOKENS_LIMIT")
+                && !limit_type.eq_ignore_ascii_case("CREDIT_LIMIT")
+            {
                 continue;
             }
             // 2026-08-03 audit (Raman P2): 走共享 parse::num_f64 拿 NaN/Inf
@@ -494,6 +531,77 @@ mod tests {
         assert_eq!(weekly.kind, Some(RowKind::Weekly));
         assert!((weekly.utilization.unwrap() - 53.0).abs() < 0.001);
         assert_eq!(weekly.resets_at, Some(2_000_000_000_000));
+    }
+
+    #[test]
+    fn parse_credit_plan_two_tiers() {
+        // 2026-07-30 积分制改版后的真实 schema（抓自 open.bigmodel.cn）：
+        // limits[].type 从 TOKENS_LIMIT 改为 CREDIT_LIMIT，新增 usage/currentValue/
+        // remaining 绝对值字段。解析仍按 unit + percentage，行为与老套餐一致。
+        rust_i18n::set_locale("zh-CN");
+        let raw = json!({
+            "code": 200,
+            "msg": "Operation successful",
+            "success": true,
+            "data": {
+                "level": "lite",
+                "limits": [
+                    { "type": "CREDIT_LIMIT", "unit": 3, "number": 5, "usage": 2000, "currentValue": 266, "remaining": 1733, "percentage": 13.0, "nextResetTime": 1_786_374_303_216_i64 },
+                    { "type": "CREDIT_LIMIT", "unit": 6, "number": 1, "usage": 2000, "currentValue": 266, "remaining": 1733, "percentage": 13.0, "nextResetTime": 1_786_960_728_998_i64 }
+                ]
+            }
+        });
+        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "Zhipu GLM").expect("parse");
+        assert!(snap.success);
+        assert_eq!(snap.plan_name.as_deref(), Some("lite"));
+        assert_eq!(snap.rows.len(), 2);
+
+        let five_h = &snap.rows[0];
+        assert_eq!(five_h.kind, Some(RowKind::FiveHour));
+        assert!((five_h.utilization.unwrap() - 13.0).abs() < 0.001);
+        assert_eq!(five_h.resets_at, Some(1_786_374_303_216));
+
+        let weekly = &snap.rows[1];
+        assert_eq!(weekly.kind, Some(RowKind::Weekly));
+        assert!((weekly.utilization.unwrap() - 13.0).abs() < 0.001);
+        assert_eq!(weekly.resets_at, Some(1_786_960_728_998));
+    }
+
+    #[test]
+    fn parse_credit_plan_case_insensitive() {
+        // 防御性：上游若把 "CREDIT_LIMIT" 改成 "credit_limit" 仍能识别
+        let raw = json!({
+            "success": true,
+            "data": {
+                "level": "pro",
+                "limits": [
+                    { "type": "credit_limit", "unit": 3, "percentage": 21.0, "nextResetTime": 1_000_000_000_000_i64 },
+                    { "type": "Credit_Limit", "unit": 6, "percentage": 42.0, "nextResetTime": 2_000_000_000_000_i64 }
+                ]
+            }
+        });
+        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "Zhipu GLM").expect("parse");
+        assert_eq!(snap.rows.len(), 2);
+        assert_eq!(snap.rows[0].kind, Some(RowKind::FiveHour));
+        assert_eq!(snap.rows[1].kind, Some(RowKind::Weekly));
+    }
+
+    #[test]
+    fn parse_credit_plan_skips_time_limit() {
+        // 积分制响应里仍可能混入 TIME_LIMIT（MCP 每月）条目，必须跳过
+        let raw = json!({
+            "success": true,
+            "data": {
+                "level": "lite",
+                "limits": [
+                    { "type": "CREDIT_LIMIT", "unit": 3, "percentage": 13.0, "nextResetTime": 1_000_000_000_000_i64 },
+                    { "type": "CREDIT_LIMIT", "unit": 6, "percentage": 13.0, "nextResetTime": 2_000_000_000_000_i64 },
+                    { "type": "TIME_LIMIT", "percentage": 7.0 }
+                ]
+            }
+        });
+        let snap = parse(&raw, ZhipuRegion::Cn, "zhipu", "Zhipu GLM").expect("parse");
+        assert_eq!(snap.rows.len(), 2, "TIME_LIMIT 必须被跳过");
     }
 
     #[test]

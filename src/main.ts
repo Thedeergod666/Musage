@@ -524,9 +524,40 @@ function rowsForRender(p: ProviderSnapshot): QuotaRow[] {
 let userResizedAt = 0;
 const USER_RESIZE_PROTECT_MS = 800;
 let lastFitContentH = -1;
-let lastFitWindowH = -1;     // 我们刚刚 set_size 出去的目标窗口高
+let lastFitWindowH = -1;     // 我们刚刚 set_size 出去的目标窗口高（已按 Rust 端 [100,2400] 钳位，回声比对用）
 let observerInstalled = false;
 let observerBusy = false;
+
+/// 缩窗防抖：provider 出错时 err-card 塌成矮 err-msg（无 lastGood 兜底），
+/// 内容高度骤降；但下一个 snapshot（恢复 / 重试）内容又涨回来。直接缩窗会
+/// 触发 resize→observer→fit 反馈环在「矮 / 高」之间反复抖动 —— 用户看到
+/// 浮窗猛缩到最矮再弹回（"provider 出错时浮窗缩到最小"回归，见
+/// PixPin_2026-08-10_18-11-51.gif：767→231→645→231→682 来回跳）。
+///
+/// 修法：**涨立刻应用，缩走 SHRINK_SETTLE_MS 防抖**。缩窗目标必须连续
+/// SHRINK_SETTLE_MS 不变才执行；期间内容一旦回升（target 变大 → 重新计时
+/// / 触发 grow 立即取消挂起），就不缩。错误风暴期间窗口保持高位，内容稳定
+/// 后再温和缩到实际高度。ed461df 修的是滚动触发 getBoundingClientRect 漂移，
+/// 这条修的是错误态内容骤降 + 反馈环抖动，正交。
+const SHRINK_SETTLE_MS = 250;
+let pendingShrinkTarget = -1;
+let pendingShrinkTimer: number | null = null;
+
+function clampWindowH(h: number): number {
+  // 与 Rust resize_floating_window 的 height.clamp(100.0, 2400.0) 同步。
+  // lastFitWindowH 必须存钳位后的值，否则 Rust 把 50 钳到 100 后 emit 100，
+  // 前端 100≠50 → 误判为用户拖动 → bump userResizedAt → fit 被冻 800ms
+  // → 窗口卡在 100（最小）回不来。
+  return Math.max(100, Math.min(2400, h));
+}
+
+function cancelPendingShrink() {
+  if (pendingShrinkTimer !== null) {
+    clearTimeout(pendingShrinkTimer);
+    pendingShrinkTimer = null;
+  }
+  pendingShrinkTarget = -1;
+}
 
 function installAutoResizeObserver() {
   if (observerInstalled) return;
@@ -535,6 +566,33 @@ function installAutoResizeObserver() {
   observerInstalled = true;
   const ro = new ResizeObserver(() => { void fitOnObserverTick(); });
   ro.observe(appEl);
+}
+
+async function applyFitResize(target: number): Promise<void> {
+  if (Math.abs(window.innerHeight - target) <= 1) return;
+  lastFitWindowH = clampWindowH(target);
+  try {
+    await invoke("resize_floating_window", { height: target });
+  } catch (e) {
+    console.debug("[floating] auto-resize 失败", e);
+  }
+}
+
+async function commitPendingShrink(): Promise<void> {
+  // 防抖到期：重新测一次，落地**当前**实测高度。
+  // 不沿用挂起时的 pendingShrinkTarget —— 防抖期内 content 可能已回升
+  // （err-card 恢复成真数据卡），直接缩到旧目标会过矮。重测拿当下值，
+  // 涨则涨、缩则缩，跟稳态 fit 同一套规则。
+  if (Date.now() - userResizedAt < USER_RESIZE_PROTECT_MS) return;
+  const appEl = document.getElementById("app");
+  if (!appEl) return;
+  const contentH = measureContentHeight(appEl);
+  const screenH = window.screen?.availHeight ?? 2400;
+  const maxH = Math.max(200, screenH);
+  const target = Math.round(Math.min(contentH, maxH));
+  pendingShrinkTarget = -1;
+  lastFitContentH = contentH;
+  await applyFitResize(target);
 }
 
 async function fitOnObserverTick() {
@@ -546,18 +604,36 @@ async function fitOnObserverTick() {
     const appEl = document.getElementById("app");
     if (!appEl) return;
     const contentH = measureContentHeight(appEl);
+    // 去重：内容跟上次落地的高度一致就跳过（observer 回声 / hover 抖动时不白跑）。
+    // 防抖期 lastFitContentH 不更新（保持上次落地值），所以内容骤降时这里不会误跳过。
     if (contentH === lastFitContentH) return;
-    lastFitContentH = contentH;
     const screenH = window.screen?.availHeight ?? 2400;
     const maxH = Math.max(200, screenH);  // 余量 0 -- availHeight 已扣菜单栏/Dock，榨干每像素（旧 -80 在 stepfun 加入后内容顶过屏幕被裁）
     const target = Math.round(Math.min(contentH, maxH));
-    if (Math.abs(window.innerHeight - target) <= 1) return;
-    lastFitWindowH = target;
-    try {
-      await invoke("resize_floating_window", { height: target });
-    } catch (e) {
-      console.debug("[floating] auto-resize 失败", e);
+
+    if (target > window.innerHeight + 1) {
+      // 涨 —— 立即应用，并撤销挂起的缩窗
+      cancelPendingShrink();
+      lastFitContentH = contentH;
+      await applyFitResize(target);
+      return;
     }
+    if (Math.abs(window.innerHeight - target) <= 1) {
+      // 内容刚好等于窗口高 —— 稳态，清挂起
+      cancelPendingShrink();
+      lastFitContentH = contentH;
+      return;
+    }
+    // 缩 —— 防抖：target 必须稳定 SHRINK_SETTLE_MS 不变才执行。
+    if (pendingShrinkTarget !== target) {
+      pendingShrinkTarget = target;
+      if (pendingShrinkTimer !== null) clearTimeout(pendingShrinkTimer);
+      pendingShrinkTimer = window.setTimeout(() => {
+        pendingShrinkTimer = null;
+        void commitPendingShrink();
+      }, SHRINK_SETTLE_MS);
+    }
+    // 不更新 lastFitContentH：内容回升时需要能再次进入 grow 分支
   } finally {
     observerBusy = false;
   }

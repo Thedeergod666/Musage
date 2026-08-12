@@ -3,13 +3,13 @@
 //! ⚠️ AnySearch 的用量查询**只走 console 内部 API**，不是公开 endpoint，也**不接受**
 //! `as_sk_` 形式的 MCP API key（实测 `as_sk_` 调 console 端点返 401
 //! “管理员会话或用户访问令牌无效”）：
-//! - `GET https://www.anysearch.com/api/api/user/billing/overview`
+//! - `GET https://www.anysearch.com/api/user/billing/overview`
 //! - 鉴权：`Authorization: Bearer <user_session_jwt>` —— 用户在 anysearch.com 登录后
 //!   浏览器 localStorage `search-template-auth-state.state.accessToken` 里的那个 JWT。
 //!
-//! **端点选择**：之前误用 `/api/api/user/keys`（那是 API key 元数据接口，quota_used
+//! **端点选择**：之前误用 `/api/user/keys`（那是 API key 元数据接口，quota_used
 //! 是「全 key 累计调用数」、无日配额/剩余额度）；**真正展示给用户看的用量在
-//! `/api/api/user/billing/overview`**（overview 页直接调它）。
+//! `/api/user/billing/overview`**（overview 页直接调它）。
 //!
 //! ## ⭐ access token 短命 + 主动续期（refresh token 方案）
 //!
@@ -21,7 +21,7 @@
 //! 1. 按 `...` 哨兵 split 出 access / refresh 两半（无 `...` = 老格式/手动粘贴的裸
 //!    access，退化成只有 access、无法续期）。
 //! 2. **本地预检** access 的 `exp` claim：已过期或 `SKEW_SECS`(120s) 内将过期，
-//!    且有 refresh token → 先调 `POST /api/ssuser/auth/refresh` 换新的 access+refresh。
+//!    且有 refresh token → 先调 `POST /api/auth/refresh` 换新的 access+refresh。
 //! 3. 用（可能刚换的）access 请求 billing/overview。
 //! 4. **兜底**：若请求仍返 401（本地预检没抓到、但服务端已作废），有 refresh 时
 //!    再 refresh 一次 + 重试一遍请求。
@@ -98,16 +98,16 @@ static REFRESH_LOCKS: OnceLock<tokio::sync::Mutex<HashMap<String, Arc<tokio::syn
     OnceLock::new();
 
 /// console 内部用量端点（需要 user session JWT，不接受 `as_sk_` API key）。
-/// 必须是 `/api/api/user/billing/overview` —— overview 页直接调它，
-/// 返回用户的日/月配额、剩余、QPS、重置时间。`/api/api/user/keys` 只返
+/// 必须是 `/api/user/billing/overview` —— overview 页直接调它，
+/// 返回用户的日/月配额、剩余、QPS、重置时间。`/api/user/keys` 只返
 /// API key 元数据，不是用户用量。
-const URL: &str = "https://www.anysearch.com/api/api/user/billing/overview";
+const URL: &str = "https://www.anysearch.com/api/user/billing/overview";
 
 /// access token 刷新端点（逆向自 anysearch.com 前端 bundle）。
 /// `POST` body `{"refresh_token": "..."}` → 返
 /// `{code:0, data:{access_token, refresh_token, expires_in_seconds}}`。
 /// ⚠️ refresh token 单次轮换：每次换发新的、作废旧的。
-const REFRESH_URL: &str = "https://www.anysearch.com/api/ssuser/auth/refresh";
+const REFRESH_URL: &str = "https://www.anysearch.com/api/auth/refresh";
 
 /// combined token 的哨兵分隔符：`<access>...<refresh>`。`...` 不是 base64url
 /// 合法字符（JWT 只含 `A-Za-z0-9-_` + `.`），拿它当分隔符绝不跟 token 内容冲突。
@@ -482,7 +482,7 @@ async fn do_fetch_once(
     parse(&raw, unique_id, display_name)
 }
 
-/// 解析 `/api/api/user/billing/overview` 响应。
+/// 解析 `/api/user/billing/overview` 响应。
 ///
 /// data 必含 `used` + `total` + `remaining` + `rate_limit_qps` + `next_reset_at`
 /// 以及 `tier_name`。`next_reset_at` 是 ISO 8601 UTC 字符串（`"2026-07-23T00:00:00Z"`），

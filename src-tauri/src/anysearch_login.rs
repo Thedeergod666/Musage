@@ -7,7 +7,7 @@
 //!
 //! ## 为什么不走 cookie（跟 Xiaomi 不同）
 //!
-//! AnySearch 的 console API（`/api/api/user/keys`）鉴权**只**认
+//! AnySearch 的 console API（`/api/user/keys`）鉴权**只**认
 //! `Authorization: Bearer <jwt>`，而这个 JWT 存在浏览器 **localStorage**
 //! （`search-template-auth-state.state.accessToken`），**不在 cookie jar 里**
 //! （cookie 只有 _ga / _fbp 等分析 cookie）。所以 [`xiaomi_login`] 那套
@@ -34,7 +34,7 @@
 //!
 //! AnySearch 的 access token 是 **OAuth 短命令牌，寿命仅 30 分钟**（实测 JWT
 //! `exp - iat = 1800s`）。只存 access → 用户出门吃个饭回来必掉线（浮窗 401）。
-//! auth-state 里同时有一个长效 `refreshToken`，配 `POST /api/ssuser/auth/refresh`
+//! auth-state 里同时有一个长效 `refreshToken`，配 `POST /api/auth/refresh`
 //! 端点（body `{refresh_token}` → 返新的 `{access_token, refresh_token,
 //! expires_in_seconds}`）可换新的 access。所以这里把 access + refresh 一起抓下来
 //! （combined 存进 cookie 槽位），provider 侧在 access 快过期时主动 refresh

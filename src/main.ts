@@ -88,9 +88,19 @@ function escapeXml(s: string): string {
 /// 不导入 settings/utils.ts 的 flash —— 跨模块会拖进 setCurrentKnownIds /
 /// currentProviderOrder 等 settings-only 状态,污染浮窗 runtime。
 /// 自己写一个最小实现,setTimeout 3 秒淡出。复用浮窗 .card 的 err-card 样式。
+///
+/// **挂到 `document.body` 而不是 #app** (.mini-flash 是 position:fixed,
+/// 原本就跟 #app 布局无关) —— 2026-08-12 fix：之前挂 #app 时 #app 是
+/// `height:100%; overflow-y:auto` 容器,appendChild 后 mini-flash 成了
+/// #app 的 lastEl,即便它 position:fixed 不参与布局,`measureContentHeight`
+/// 仍读 `lastEl.offsetTop + lastEl.offsetHeight`(fixed 时两者都很小,
+/// ≈30),contentH 从 ~250 跌到 ~30 → auto-fit 把窗口缩到 100(用户报告
+/// "anysearch 出错时点复制按钮窗口缩到最小")。挂 body 后 measureContentHeight
+/// 看不到它,根本不会触发 fit。measureContentHeight 同时加了加 position:fixed
+/// 过滤做双保险。
 let miniFlashTimer: ReturnType<typeof setTimeout> | null = null;
 function showMiniFlash(msg: string): void {
-  const root = document.getElementById("app");
+  const root = document.body ?? document.getElementById("app");
   if (!root) return;
   let el = root.querySelector<HTMLElement>(".mini-flash");
   if (!el) {
@@ -708,7 +718,19 @@ function measureContentHeight(appEl: HTMLElement): number {
   const cs = getComputedStyle(appEl);
   const padTop = parseFloat(cs.paddingTop) || 0;
   const padBottom = parseFloat(cs.paddingBottom) || 0;
-  const children = Array.from(appEl.children) as HTMLElement[];
+  // **2026-08-12 fix**：过滤 `position: fixed / absolute` 子元素。它们不进
+  // #app 的布局流（fixed 跟视口、absolute 跟最近 positioned 祖先），
+  // 但仍算 #app.children —— 之前 showMiniFlash 把 .mini-flash (position:fixed)
+  // append 到 #app 时它成了 lastEl，offsetTop≈0 + offsetHeight≈30 让 contentH
+  // 从 ~250 跌到 ~30 → auto-fit 把窗口缩到 100（"anysearch 出错点复制按钮
+  // 窗口缩到最小"回归）。absolute 用 `getComputedStyle` 显式判；fixed 可用
+  // `offsetParent === null && offsetWidth > 0` 一次判（更便宜），但
+  // getComputedStyle 调用下方 boxShadow 也要做，统一一次风格。
+  const allChildren = Array.from(appEl.children) as HTMLElement[];
+  const children = allChildren.filter((el) => {
+    const pos = getComputedStyle(el).position;
+    return pos !== "fixed" && pos !== "absolute";
+  });
   if (children.length === 0) return padTop + padBottom;
   const firstEl = children[0];
   const lastEl = children[children.length - 1];

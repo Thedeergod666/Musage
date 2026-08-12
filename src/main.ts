@@ -542,6 +542,17 @@ let observerBusy = false;
 const SHRINK_SETTLE_MS = 250;
 let pendingShrinkTarget = -1;
 let pendingShrinkTimer: number | null = null;
+/// 用户手动拖动过的窗口高度。auto-fit 缩窗不会缩到比这个还矮：
+/// - 拖到 130 后 provider 持续出错 (contentH ≈ 50) → 窗口保持 130，
+///   而不是 commit 后被 Rust clamp 到 100（最小高度）。这才是用户要的
+///   "provider 出错时浮窗不会缩到最小"语义。
+/// - 拖到 700 后 content 涨到 800 → 窗口涨到 800（grow 不受此限，
+///   用户希望看到全部数据）。
+/// - 用户从未拖过（0）→ 此约束不生效，按当前行为走（content 很矮时
+///   窗口会被钳到 100）。首启值通过 `applyFitResize` 第一次调用时
+///   从 `window.innerHeight` lazy-init（处理重启后窗口被 geom_persister
+///   恢复到非默认尺寸但 listener 还没触发过的场景）。
+let userLastManualH = 0;
 
 function clampWindowH(h: number): number {
   // 与 Rust resize_floating_window 的 height.clamp(100.0, 2400.0) 同步。
@@ -569,7 +580,17 @@ function installAutoResizeObserver() {
 }
 
 async function applyFitResize(target: number): Promise<void> {
+  // Lazy-init 用户手动高度：第一次 fit 时如果用户从未拖过，记录当前
+  // 窗口高度作为下限。这覆盖了"重启后 geom_persister 把窗口恢复到非
+  // 默认尺寸但 listener 还没触发过"的场景 —— 不写这一步，userLastManualH
+  // 一直为 0，重启后第一次错误事件仍会把窗口钳到 100。
+  if (userLastManualH === 0) userLastManualH = window.innerHeight;
   if (Math.abs(window.innerHeight - target) <= 1) return;
+  // 尊重用户手动拖动的高度：缩窗不能比用户拖过的还矮。
+  // 拖到 130 → provider 出错 contentH=50 → target=50 → 提到 130，
+  // window.innerHeight 已是 130 → 上面 1px 早退命中 → no-op。
+  // Grow 不受此约束（Math.max 不影响更大的值）。
+  target = Math.max(target, userLastManualH);
   lastFitWindowH = clampWindowH(target);
   try {
     await invoke("resize_floating_window", { height: target });
@@ -583,7 +604,16 @@ async function commitPendingShrink(): Promise<void> {
   // 不沿用挂起时的 pendingShrinkTarget —— 防抖期内 content 可能已回升
   // （err-card 恢复成真数据卡），直接缩到旧目标会过矮。重测拿当下值，
   // 涨则涨、缩则缩，跟稳态 fit 同一套规则。
-  if (Date.now() - userResizedAt < USER_RESIZE_PROTECT_MS) return;
+  if (Date.now() - userResizedAt < USER_RESIZE_PROTECT_MS) {
+    // 保护窗内被拦下：清掉残留的 pendingShrinkTarget，让下次 observer tick
+    // 重新挂 timer（不重置 → pendingShrinkTarget 残留 = target，下一次 tick
+    // 进入 shrink 分支时 `pendingShrinkTarget !== target` 为 false → 永远
+    // 不会重挂 timer，缩窗被永久吞掉 —— 配合 `userLastManualH` 缩窗下限
+    // 是「卡在用户拖的尺寸」，无下限是「永远拖不到位」）。注意 timer 回调
+    // 已经把 pendingShrinkTimer 置 null，无需再 clearTimeout。
+    pendingShrinkTarget = -1;
+    return;
+  }
   const appEl = document.getElementById("app");
   if (!appEl) return;
   const contentH = measureContentHeight(appEl);
@@ -1639,12 +1669,15 @@ async function init() {
   //   - 相等 → 这是我们自己 fit 的回声，**不** bump userResizedAt，
   //           否则 observer → set_size → bumped → observer 被冻结 → 死循环
   //   - 不等 → 用户拖动，bump userResizedAt 冻结 800ms 避免自动 fit 覆盖
+  //           + 记下 userLastManualH 作为 auto-shrink 下限（防错误态
+  //           contentH 跌到 50 时窗口被钳到 100，见 applyFitResize）。
   // 不变量：fit 期间我们 set_size 到 targetH → 立刻更新 lastFitHeight = targetH，
   //         Resized emit 回来时 lastFitHeight === payload → 忽略 ✓。
   trackUnlisten(listen<number>("musage://floating-resized", (e) => {
     const newH = e.payload;
     if (newH === lastFitWindowH) return; // 我们自己 fit 的回声
     userResizedAt = Date.now();
+    userLastManualH = newH;
   }), "musage://floating-resized");
 
   // ── 省电模式同步：body[data-low-power] 让 CSS 关掉 backdrop-filter + transition ──

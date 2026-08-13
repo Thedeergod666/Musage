@@ -77,6 +77,53 @@ fn retain_live_schedules(
     last_intervals.retain(|key, _| live_sources.contains(key));
 }
 
+/// P1 audit fix (2026-08-13): interval 直接来自用户可改的 config.json,
+/// 只做了 .max(10) 下限。`Instant + Duration::from_secs` 内部是
+/// checked_add().expect(), 超大值(如 u64::MAX)会 panic 杀死 poller 主循环
+/// 且无人重启 —— 轮询永久停摆。统一 clamp 到 save_config 同款上界 86400s。
+const MIN_INTERVAL_SECS: u64 = 10;
+const MAX_INTERVAL_SECS: u64 = 86400;
+
+/// pub(crate): commands 层的 next_fetch_at / backoff 计算同样消费
+/// per-provider interval, 必须用同款 clamp (u64::MAX → `(as i64)*1000` 溢出)。
+pub(crate) fn clamp_interval_secs(secs: u64) -> u64 {
+    secs.clamp(MIN_INTERVAL_SECS, MAX_INTERVAL_SECS)
+}
+
+/// P1 audit fix (2026-08-13): per-provider in-flight 去重。之前只按
+/// next_fetch deadline 调度: fetch 耗时 > interval (挂起 HTTP + 短间隔)时,
+/// 同一 unique_id 每轮循环重复 spawn 并发请求, 失败还重复计入 backoff。
+/// spawn 前插标记, task 结束(含 panic / SHUTDOWN abort)由 guard drop 移除;
+/// 被跳过的那轮 entry 保持过期, 下个 tick (1s) 重试。
+static PER_PROVIDER_IN_FLIGHT: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashSet<String>>,
+> = std::sync::OnceLock::new();
+
+fn per_provider_in_flight() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    PER_PROVIDER_IN_FLIGHT.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+/// false = 已有同 unique_id 的 fetch 在跑, 调用方应跳过本次调度。
+fn try_mark_provider_in_flight(unique: &str) -> bool {
+    per_provider_in_flight()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(unique.to_string())
+}
+
+struct ProviderInFlightGuard {
+    unique: String,
+}
+
+impl Drop for ProviderInFlightGuard {
+    fn drop(&mut self) {
+        per_provider_in_flight()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&self.unique);
+    }
+}
+
 /// per-provider 拉取 task 集合。poller 每秒检查时把过期的 provider spawn 进来，
 /// task 完成或 panic 后自动从 set 里清理（JoinSet::join_next 移除）。当前
 /// 不在 quit_app 时主动 abort —— 浮窗最常见关闭是"窗口关闭"拦截（tray 隐藏），
@@ -155,13 +202,13 @@ pub fn start(app: AppHandle) {
             let unique = src.unique_id();
             let id_str = unique.as_str();
             let base_id = src.id().into_owned();
-            let fallback_interval = cfg0
-                .providers
-                .get(id_str)
-                .or_else(|| cfg0.providers.get(&base_id))
-                .and_then(|p| p.refresh_interval_secs)
-                .unwrap_or(cfg0.refresh_interval_secs)
-                .max(10);
+            let fallback_interval = clamp_interval_secs(
+                cfg0.providers
+                    .get(id_str)
+                    .or_else(|| cfg0.providers.get(&base_id))
+                    .and_then(|p| p.refresh_interval_secs)
+                    .unwrap_or(cfg0.refresh_interval_secs),
+            );
             last_intervals.insert(unique.clone(), fallback_interval);
             next_fetch.insert(
                 unique,
@@ -295,13 +342,13 @@ pub fn start(app: AppHandle) {
                 if !enabled {
                     continue; // 用户关了，不拉
                 }
-                let cfg_interval_secs = cfg
-                    .providers
-                    .get(unique_str)
-                    .or_else(|| cfg.providers.get(base_str))
-                    .and_then(|p| p.refresh_interval_secs)
-                    .unwrap_or(cfg.refresh_interval_secs)
-                    .max(10);
+                let cfg_interval_secs = clamp_interval_secs(
+                    cfg.providers
+                        .get(unique_str)
+                        .or_else(|| cfg.providers.get(base_str))
+                        .and_then(|p| p.refresh_interval_secs)
+                        .unwrap_or(cfg.refresh_interval_secs),
+                );
                 // P8 fix: 用户改了 interval(全局或 per-provider)后,重排该
                 // provider 的 deadline —— 否则第一轮仍按启动时旧值到期,新值
                 // 要再等一轮才生效。用 cfg_interval_secs(不含 backoff)做变化
@@ -317,15 +364,23 @@ pub fn start(app: AppHandle) {
                 // 退避后的实际间隔：backoff 用 unique_id 写(见 refresh_single_inner),
                 // 这里也必须用 unique_id 读。base instance 的 unique_id == base_id,
                 // 自动兼容。
-                let interval_secs = backoff_snapshot
-                    .get(unique_str)
-                    .copied()
-                    .unwrap_or(cfg_interval_secs)
-                    .max(10);
+                let interval_secs = clamp_interval_secs(
+                    backoff_snapshot
+                        .get(unique_str)
+                        .copied()
+                        .unwrap_or(cfg_interval_secs),
+                );
 
                 let entry = next_fetch.entry(unique.clone()).or_insert(now);
                 if now < *entry {
                     continue; // 还没到点
+                }
+                // P1 audit fix (2026-08-13): 同一 provider 上次 fetch 还没
+                // 结束 (耗时 > interval) 时跳过本次 spawn —— 之前会重复
+                // spawn 并发请求 + 失败重复计入 backoff。entry 保持过期,
+                // 下个 tick (1s 后) 重试。
+                if !try_mark_provider_in_flight(unique_str) {
+                    continue;
                 }
                 // D5-074 fix (2026-07-30 audit): 长暂停 (sleep / 长时间不交互)
                 // 后唤醒时,12 个 next_fetch entry 全部过期, 同步连续 spawn 12
@@ -358,6 +413,12 @@ pub fn start(app: AppHandle) {
                         e.into_inner()
                     })
                     .spawn(async move {
+                        // P1 audit fix: guard 必须在最前 —— jitter 期间
+                        // SHUTDOWN abort / refresh panic / 正常完成, 全部靠
+                        // drop 移除 in-flight 标记, 释放该 provider 的调度。
+                        let _inflight_guard = ProviderInFlightGuard {
+                            unique: unique_owned.clone(),
+                        };
                         // H6 fix: jitter sleep 在 spawn task 里,且 select 守 SHUTDOWN
                         // —— quit_app 期间 task 立即退出,不阻塞 drain。
                         tokio::select! {

@@ -170,11 +170,24 @@ pub async fn set_provider_enabled(
         //    一次更新，行为完全等价。
         {
             let state_arc = app.state::<AppState>();
-            let mut snap = state_arc.snapshot.write().await;
+            // P1 audit fix (2026-08-13): 之前先拿 snapshot.write 再 await
+            // config.read / find_source(extra_instances.read) / backoff.read ——
+            // 与 set_provider_order 第二段的 "config.read → snapshot.write"
+            // 顺序相反, 三方竞争 (另有 config.write 排队) 时形成锁环,
+            // tokio runtime 卡死浮窗冻结。改为先 gather 全部依赖数据
+            // (不持 snapshot 锁), 最后拿 snapshot.write 只做纯内存操作。
+            let already_present = state_arc
+                .snapshot
+                .read()
+                .await
+                .providers
+                .iter()
+                .any(|p| snapshot_key(p) == id);
             // H2 fix (2026-08-03 audit): 同样改 snapshot_key,避免 placeholder
             // 在已存在的副本上重复 push(老 source_id 匹配置信 base)。
-            let already_present = snap.providers.iter().any(|p| snapshot_key(p) == id);
-            if !already_present {
+            let placeholder = if already_present {
+                None
+            } else {
                 let mut placeholder = ProviderSnapshot::placeholder(&state_arc, &id).await;
                 // **B-NEW-10（2026-06-19 audit）**：placeholder 默认 next_fetch_at=None，
                 // 浮窗错误卡片显示"未知"倒计时。
@@ -185,12 +198,14 @@ pub async fn set_provider_enabled(
                 // 默认 refresh_interval (跟 refresh_single_inner 同款策略)。
                 let default_secs = {
                     let cfg_read = state_arc.config.read().await;
-                    cfg_read
-                        .providers
-                        .get(&id)
-                        .and_then(|p| p.refresh_interval_secs)
-                        .unwrap_or(cfg_read.refresh_interval_secs)
-                        .max(10)
+                    // P1 audit fix: interval clamp 与 poller/refresh_inner 同款
+                    crate::poller::clamp_interval_secs(
+                        cfg_read
+                            .providers
+                            .get(&id)
+                            .and_then(|p| p.refresh_interval_secs)
+                            .unwrap_or(cfg_read.refresh_interval_secs),
+                    )
                 };
                 let interval_secs = {
                     let backoff = state_arc.backoff.read().await;
@@ -198,13 +213,23 @@ pub async fn set_provider_enabled(
                 };
                 placeholder.next_fetch_at =
                     Some(chrono::Utc::now().timestamp_millis() + (interval_secs as i64) * 1000);
-                snap.providers.push(placeholder);
+                Some(placeholder)
+            };
+            // 预读整份 config (apply_provider_order 需要 provider_order) ——
+            // 在 snapshot.write 之外, 不构成反向锁链
+            let cfg_snap = state_arc.config.read().await.clone();
+            let mut snap = state_arc.snapshot.write().await;
+            if let Some(placeholder) = placeholder {
+                // gather 期间可能有并发写入了同 id 条目 —— 二次检查保证
+                // check+push 在 snapshot.write 下原子, 不重复 push
+                let still_present = snap.providers.iter().any(|p| snapshot_key(p) == id);
+                if !still_present {
+                    snap.providers.push(placeholder);
+                }
             }
-            let cfg2 = state_arc.config.read().await;
-            apply_provider_order(&mut snap, &cfg2);
+            apply_provider_order(&mut snap, &cfg_snap);
             let emit = snap.clone();
             drop(snap);
-            drop(cfg2);
             let _ = app.emit("musage://snapshot", &emit);
         }
         // 后台 fetch（不 await）
@@ -1461,14 +1486,17 @@ pub async fn refresh_inner(
         }
         // 默认间隔（per-provider override 优先）—— backoff 写入时用。
         // extra instance 优先按 unique_id 查，否则 fallback 到 base id。
+        // P1 audit fix (2026-08-13): interval 来自用户可改 config, 用 poller
+        // 同款 clamp (10..86400) —— u64::MAX 会让 `(as i64)*1000` 溢出成
+        // 负数, next_fetch_at 落到 1970 / 倒计时负数。
         let base_id = src.id(); // Cow<'_, str>
-        let default_interval_secs = cfg
-            .providers
-            .get(id_str)
-            .or_else(|| cfg.providers.get(base_id.as_ref()))
-            .and_then(|p| p.refresh_interval_secs)
-            .unwrap_or(cfg.refresh_interval_secs)
-            .max(10);
+        let default_interval_secs = crate::poller::clamp_interval_secs(
+            cfg.providers
+                .get(id_str)
+                .or_else(|| cfg.providers.get(base_id.as_ref()))
+                .and_then(|p| p.refresh_interval_secs)
+                .unwrap_or(cfg.refresh_interval_secs),
+        );
 
         // 1. 同步加载凭据（避免在 tokio::spawn 里 await I/O）。
         // extra instance 按 unique_id 查 credential（"deepseek#2" → keys.json 里的 key）。

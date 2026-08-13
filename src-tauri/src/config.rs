@@ -560,7 +560,16 @@ impl AppConfig {
         }
 
         // 旧格式：顶层 region 字段 + 无 providers
+        //
+        // P1 audit fix (2026-08-13): 之前 Legacy 全 Option 且不拒绝未知字段，
+        // 任意 JSON object 都能反序列化成 Ok(Legacy) —— 现代 config 只要
+        // AppConfig 解析失败一次(一个 typo / 类型错误), 就掉进这个分支,
+        // 用 AppConfig::default() 重建并把原文件直接覆盖(无 .bak),
+        // 用户全部现代设置静默清空。deny_unknown_fields 让含 "providers" /
+        // "schema_version" 等现代字段的 JSON 不再匹配 Legacy, 落到下面
+        // best-effort 分支(保留可解析字段 + 原子备份)。
         #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
         struct Legacy {
             region: Option<Region>,
             refresh_interval_secs: Option<u64>,
@@ -883,6 +892,27 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
         recognized_any = true;
         cfg.refresh_interval_secs = x;
     }
+    // P1 audit fix (2026-08-13): Legacy 分支加了 deny_unknown_fields 后, 带
+    // 额外未知字段的 v0.1 老配置不再走 Legacy 迁移, 会落到本函数 —— 这里补
+    // 顶层 region 的迁移, 跟 Legacy 分支语义一致 (注入 providers.minimax)。
+    // v0.1 region 只有 "cn" / "en" (minimax Region 枚举), 其余按默认 Cn。
+    if let Some(s) = obj.get("region").and_then(|x| x.as_str()) {
+        recognized_any = true;
+        let region = match s {
+            "en" => Region::En,
+            _ => Region::Cn,
+        };
+        cfg.providers.insert(
+            "minimax".to_string(),
+            ProviderConfig {
+                enabled: true,
+                region: Some(region),
+                xiaomi_region: None,
+                refresh_interval_secs: None,
+                xiaomi_display_mode: None,
+            },
+        );
+    }
     if let Some(s) = obj.get("locale").and_then(|x| x.as_str()) {
         recognized_any = true;
         cfg.locale = s.to_string();
@@ -1178,8 +1208,14 @@ fn write_keys_atomic(map: &KeysMap) -> Result<(), String> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))
-            .map_err(|_e| t!("commands.keys_io", op = "chmod 0600").into_owned())?;
+        // P1 audit fix (2026-08-13): 之前 chmod 失败直接 ? 返回, 已写完的
+        // keys.json.tmp 以默认 0644 残留磁盘 —— 里面是全部 API key/cookie/
+        // JWT 明文。必须先删 tmp 再返 Err (extra_instances 路径因不含凭据
+        // 降级为 warn, 这里绝不能降级)。
+        if let Err(_e) = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(t!("commands.keys_io", op = "chmod 0600").into_owned());
+        }
     }
 
     if let Err(e) = std::fs::rename(&tmp, &path) {

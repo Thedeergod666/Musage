@@ -15,7 +15,7 @@ import { renderAdvancedSection } from "./advanced";
 import { renderLogsSection, loadLogs } from "./logs";
 import { renderAboutSection } from "./about";
 // v0.2.0 不再自动检查更新 —— 升级走"用户手动下 dmg/nsis 装"路径
-import { renderRegionSection } from "./region-wizard";
+import { renderRegionSection, maybeShowRegionBanner } from "./region-wizard";
 import { bindCredentialButtonsGlobal, bindXiaomiLoginEvents, bindAnysearchLoginEvents, bindStepfunLoginEvents, bindKimiLoginEvents, loadXiaomiDisplayMode, loadKimiSessionStatus } from "./credentials";
 import { bindOrderButtonsGlobal, updateOrderConfig, isSuppressingConfigRebuild } from "./order";
 import { flash } from "./utils";
@@ -190,6 +190,11 @@ async function init() {
     // P2 区域向导 + 语言切换：放在「应用」section 底部
     if (containers.app) {
       await renderRegionSection(containers.app);
+      // P3 audit fix (2026-08-13): 之前 maybeShowRegionBanner 从未被调用,
+      // M14 fix (首启自动 apply global + 区域 banner) 死代码 -> 美区用户
+      // 安装后 MiniMax card 仍显示 cn endpoint 直接 fail。在 cfg 拿到后立刻
+      // 调一次。
+      await maybeShowRegionBanner(cfg, containers.app);
     }
 
     // 拉每个 source 的 key 状态 + 日志

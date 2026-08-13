@@ -576,9 +576,21 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
                     cfg.floating_h = Some(h);
                     dirty = true;
                 }
+                // P3 audit fix (2026-08-13): 之前 cfg.save() 在 async 任务里
+                // 阻塞 tokio worker (tmp 写 + fsync + rename 慢盘可达数百 ms)。
+                // 克隆 cfg 在锁内, drop guard 后 spawn_blocking 落盘 --
+                // tokio worker 不阻塞, 后续 IPC 命令延迟不被 debouncer 拖慢。
                 if dirty {
-                    if let Err(e) = cfg.save() {
-                        tracing::warn!(error = %e, "保存浮窗几何失败 (debounced)");
+                    let cfg_clone = cfg.clone();
+                    drop(cfg);
+                    match tokio::task::spawn_blocking(move || cfg_clone.save()).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(e)) => {
+                            tracing::warn!(error = %e, "保存浮窗几何失败 (debounced)");
+                        }
+                        Err(e) => {
+                            tracing::warn!(error = %e, "保存浮窗几何 task join 失败 (debounced)");
+                        }
                     }
                 }
             }

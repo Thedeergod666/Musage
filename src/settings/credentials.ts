@@ -1035,14 +1035,19 @@ const _stepfunListeners: UnlistenFn[] = [];
 let _stepfunListenersBound = false;
 export function bindStepfunLoginEvents() {
   if (_stepfunListenersBound) return;
+  // P3 audit fix (2026-08-13): listen() 自身 reject 时避免未处理 rejection
+  // (settings 主面板 config-changed listener 已在 P2 加 .catch, 这 4 个
+  // login bind 漏了)。浮窗侧 trackUnlisten 有 catch, settings 对齐。
   void listen<number>("musage://stepfun-login-success", (e) => {
     const savedLen = e.payload;
     flash(t("credentials.stepfun_login_success", { bytes: savedLen }));
     void loadCredentialStatus("stepfun");
-  }).then((un) => _stepfunListeners.push(un));
+  }).then((un) => _stepfunListeners.push(un))
+    .catch((e) => console.warn("[settings] stepfun-login-success 订阅失败", e));
   void listen<string>("musage://stepfun-login-failed", (e) => {
     flash(t("credentials.stepfun_login_failure", { err: e.payload }), true);
-  }).then((un) => _stepfunListeners.push(un));
+  }).then((un) => _stepfunListeners.push(un))
+    .catch((e) => console.warn("[settings] stepfun-login-failed 订阅失败", e));
   _stepfunListenersBound = true;
 }
 
@@ -1057,10 +1062,12 @@ export function bindKimiLoginEvents() {
     const savedLen = e.payload;
     flash(t("credentials.kimi_login_success", { bytes: savedLen }));
     void loadKimiSessionStatus();
-  }).then((un) => _kimiListeners.push(un));
+  }).then((un) => _kimiListeners.push(un))
+    .catch((e) => console.warn("[settings] kimi-login-success 订阅失败", e));
   void listen<string>("musage://kimi-login-failed", (e) => {
     flash(t("credentials.kimi_login_failure", { err: e.payload }), true);
-  }).then((un) => _kimiListeners.push(un));
+  }).then((un) => _kimiListeners.push(un))
+    .catch((e) => console.warn("[settings] kimi-login-failed 订阅失败", e));
   _kimiListenersBound = true;
 }
 
@@ -1073,10 +1080,12 @@ export function bindAnysearchLoginEvents() {
     const savedLen = e.payload;
     flash(t("credentials.anysearch_login_success", { bytes: savedLen }));
     void loadCredentialStatus("anysearch");
-  }).then((un) => _anysearchListeners.push(un));
+  }).then((un) => _anysearchListeners.push(un))
+    .catch((e) => console.warn("[settings] anysearch-login-success 订阅失败", e));
   void listen<string>("musage://anysearch-login-failed", (e) => {
     flash(t("credentials.anysearch_login_failure", { err: e.payload }), true);
-  }).then((un) => _anysearchListeners.push(un));
+  }).then((un) => _anysearchListeners.push(un))
+    .catch((e) => console.warn("[settings] anysearch-login-failed 订阅失败", e));
   _anysearchListenersBound = true;
 }
 
@@ -1093,10 +1102,12 @@ export function bindXiaomiLoginEvents() {
     flash(t("credentials.xiaomi_login_success", { bytes: savedLen }));
     // 立即刷新状态徽章
     void loadCredentialStatus("xiaomimimo");
-  }).then((un) => _xiaomiListeners.push(un));
+  }).then((un) => _xiaomiListeners.push(un))
+    .catch((e) => console.warn("[settings] xiaomi-login-success 订阅失败", e));
   void listen<string>("musage://xiaomi-login-failed", (e) => {
     flash(t("credentials.xiaomi_login_failure", { err: e.payload }), true);
-  }).then((un) => _xiaomiListeners.push(un));
+  }).then((un) => _xiaomiListeners.push(un))
+    .catch((e) => console.warn("[settings] xiaomi-login-failed 订阅失败", e));
   _xiaomiListenersBound = true;
 }
 

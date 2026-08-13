@@ -846,12 +846,21 @@ fn apply_display_mode(
             // 但 label 在 parse() 时已按当时 locale 固化。运行时切 locale 后
             // t!("row.plan") 返回新语言字符串,label 仍是旧的 → filter 空 → 浮窗空白。
             // 改用 RowKind::Plan(语义分类,跨 locale 稳定)过滤。
-            let rows: Vec<QuotaRow> = s
-                .rows
-                .into_iter()
+            let original = s.rows.clone();
+            let rows: Vec<QuotaRow> = original
+                .iter()
                 .filter(|r| r.kind == Some(RowKind::Plan))
+                .cloned()
                 .collect();
-            ProviderSnapshot { rows, ..s }
+            // P1 audit fix (2026-08-13): 过滤后为空但 parse 有数据时
+            // (plan 行缺失 / schema 漂移), 退回全量行 —— 空白窗口比多一行更糟,
+            // 且 success=true 的语义 (parse 时已按非空 rows 算出) 保持一致。
+            if rows.is_empty() && !original.is_empty() {
+                tracing::warn!("xiaomi PlanOnly 过滤后为空, 退回全量行显示");
+                s
+            } else {
+                ProviderSnapshot { rows, ..s }
+            }
         }
         XiaomiDisplayMode::TotalOnly => {
             // 只留总额度行；如果 parse() 没给 resets_at（默认就没给），
@@ -860,10 +869,11 @@ fn apply_display_mode(
             // snap.rows 里其他行有 resets_at 的就借过来。
             let plan_resets_at = s.rows.iter().find_map(|r| r.resets_at);
             // H6 fix: 同上,改用 RowKind::MonthlyTotal 过滤(跨 locale 稳定)。
-            let rows: Vec<QuotaRow> = s
-                .rows
-                .into_iter()
+            let original = s.rows.clone();
+            let rows: Vec<QuotaRow> = original
+                .iter()
                 .filter(|r| r.kind == Some(RowKind::MonthlyTotal))
+                .cloned()
                 .map(|mut r| {
                     if r.resets_at.is_none() {
                         r.resets_at = plan_resets_at;
@@ -871,7 +881,15 @@ fn apply_display_mode(
                     r
                 })
                 .collect();
-            ProviderSnapshot { rows, ..s }
+            // P1 audit fix (2026-08-13): parse() 的去重 (|plan_pct − month_pct|
+            // < 0.5, 即典型"无补偿"用户) 会把 monthly_total 行隐藏, TotalOnly
+            // 过滤后为空 → 之前浮窗空白。退回全量行显示。
+            if rows.is_empty() && !original.is_empty() {
+                tracing::warn!("xiaomi TotalOnly 过滤后为空 (去重隐藏了总额度行), 退回全量行显示");
+                s
+            } else {
+                ProviderSnapshot { rows, ..s }
+            }
         }
     }
 }
@@ -1522,16 +1540,19 @@ mod tests {
 
     #[test]
     fn display_mode_plan_only_with_no_plan_row() {
-        // 极端：套餐缺失（schema 变了）→ 留个空 snapshot（success=true 但 0 行）
+        // 极端：套餐缺失（schema 变了）。P1 audit fix (2026-08-13): 之前
+        // 过滤后 0 行仍 success=true → 浮窗空白。现在退回全量行显示。
         let mut snap = snap_with_3_rows();
         snap.rows.retain(|r| r.kind != Some(RowKind::Plan));
+        let remaining = snap.rows.len();
+        assert!(remaining > 0);
         let out = apply_display_mode(
             snap,
             XiaomiDisplayMode::PlanOnly,
             "xiaomimimo",
             "Xiaomi MiMo",
         );
-        assert_eq!(out.rows.len(), 0);
+        assert_eq!(out.rows.len(), remaining);
         // 仍然算 success（parse 没报错，filter 不会改 success 标志）
         assert!(out.success);
     }

@@ -368,6 +368,27 @@ fn parse_with_extract(
                     t!("error.custom.newapi_divide_zero").into_owned(),
                 ));
             }
+            // P3 audit fix (2026-08-13): NewApi 中转站在 HTTP 200 上用
+            // {success:false, message} 标记鉴权失败 (而非 401)。有些中转站
+            // 还回显 stale/partial data, data.quota 解析成功但 key 已失效 ->
+            // 浮窗显示假余额 (success=true)。先查 success/status_code 再提取。
+            let relay_ok = raw
+                .get("success")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let status_code = raw
+                .get("status_code")
+                .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
+                .unwrap_or(0);
+            if !relay_ok || status_code != 0 {
+                let msg = raw
+                    .get("message")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                return Err(FetchError::auth(
+                    t!("error.custom.newapi_relay_error", msg = msg).into_owned(),
+                ));
+            }
             let remaining = read_path(raw, "data.quota")
                 .and_then(num_f64)
                 .map(|v| v / div);

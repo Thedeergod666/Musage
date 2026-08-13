@@ -290,7 +290,7 @@ static APPEND_JOB_TX: OnceLock<std::sync::mpsc::Sender<(LogStore, AppendJob)>> =
 fn spawn_append_job(store: LogStore, job: AppendJob) {
     let tx = APPEND_JOB_TX.get_or_init(|| {
         let (tx, rx) = std::sync::mpsc::channel::<(LogStore, AppendJob)>();
-        thread::Builder::new()
+        let handle_res = thread::Builder::new()
             .name("musage-logstore-append".into())
             .spawn(move || {
                 tracing::debug!("logstore 后台 append 线程启动");
@@ -319,8 +319,17 @@ fn spawn_append_job(store: LogStore, job: AppendJob) {
                     }
                 }
                 tracing::debug!("logstore 后台 append 线程退出");
-            })
-            .expect("启动 logstore 后台 append 线程");
+            });
+        // P3 audit fix (2026-08-13): 之前 .expect() 在 spawn 失败 (系统线程
+        // 上限 / 资源耗尽) 时 panic 整个 app。改为: spawn 失败也返回 tx,
+        // rx 随 closure drop -> push 的 send 返 Err (push 已有 ERROR 日志兜底),
+        // 日志不落盘但 app 不崩。
+        match handle_res {
+            Ok(_) => {}
+            Err(e) => {
+                tracing::error!(error = %e, "logstore 后台线程 spawn 失败 -- 日志将不落盘 (push 兜底)");
+            }
+        }
         tx
     });
     // M3 fix (2026-07-06 全量审查): send 返 Err 通常意味着后台 worker

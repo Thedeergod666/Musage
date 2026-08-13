@@ -513,7 +513,14 @@ async fn tick_with_source(
                 guard.providers.push(new_p.clone());
             }
         }
-        guard.fetched_at = new_snap.fetched_at;
+        // P3 audit fix (2026-08-13): 之前顶层 fetched_at 无条件覆盖 --
+        // per-provider fetch 若在 tick snapshot 收集后写入更旧的时间戳,
+        // 顶层"更新于 HH:MM:SS"会倒退。跟 per-provider 合并同款比较。
+        let new_top_ts = new_snap.fetched_at.unwrap_or(0);
+        let old_top_ts = guard.fetched_at.unwrap_or(0);
+        if new_top_ts >= old_top_ts {
+            guard.fetched_at = new_snap.fetched_at;
+        }
         // 顶层字段(钱包告警阈值)也要同步——refresh_inner 内部已 populate,
         // 这里只是按 snapshot_key 合并 providers,顶层字段会被忽略,所以手动搬过来。
         guard.wallet_alert_threshold = new_snap.wallet_alert_threshold;

@@ -261,7 +261,10 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
     if let (Some(u), Some(l)) = (used, limit) {
         if l > 0.0 {
             rows.push(QuotaRow {
-                label: t!("row.free_tier").to_string(),
+                // P3 audit fix (2026-08-13): 之前对所有套餐都标 "Free tier",
+                // paid (Researcher) 用户看到 "150/1000 credits" 顶着免费版标签。
+                // 改用中性 "额度" 标签, 套餐名只在 subheading 出现。
+                label: t!("row.credit_usage").to_string(),
                 // H4 fix (2026-07-03 audit): u > l (超用) 时 utilization > 100,
                 // 浮窗进度条越界。clamp 到 [0, 100]。
                 utilization: Some(((u / l) * 100.0).clamp(0.0, 100.0)),
@@ -276,7 +279,7 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
         } else {
             // limit = 0 → 理论上不该出现，但保险起见也列
             rows.push(QuotaRow {
-                label: t!("row.free_tier").to_string(),
+                label: t!("row.credit_usage").to_string(),
                 utilization: None,
                 remaining: None,
                 used: Some(u),
@@ -290,7 +293,7 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
     } else if let Some(u) = used {
         // 没有 limit（无限制套餐）：只显示 used
         rows.push(QuotaRow {
-            label: t!("row.free_tier").to_string(),
+            label: t!("row.credit_usage").to_string(),
             utilization: None,
             remaining: None,
             used: Some(u),
@@ -404,7 +407,7 @@ mod tests {
         // 英文, 测试不跟 i18n 走 — 当前 en/zh-CN 都用 "credits" 所以碰巧
         // 不失败, 但 "Free tier" 在 zh-CN 是 "免费版" 时必炸。 改为 t!()
         // 对齐生产代码。
-        assert_eq!(main.label, t!("row.free_tier").to_string());
+        assert_eq!(main.label, t!("row.credit_usage").to_string());
         assert_eq!(main.unit.as_deref(), Some(t!("row.credits").as_ref()));
         assert_eq!(main.used, Some(150.0));
         assert_eq!(main.total, Some(1000.0));

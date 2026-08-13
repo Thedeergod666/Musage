@@ -1251,7 +1251,12 @@ pub async fn reset_floating_window(app: AppHandle) -> Result<(), String> {
         let mut cfg = state.config.write().await;
         cfg.floating_x = Some(pos.x);
         cfg.floating_y = Some(pos.y);
-        let _ = cfg.save();
+        // P3 audit fix (2026-08-13): save 失败之前静默吞 -> 用户改了浮窗
+        // 位置/置顶模式但磁盘没更新, 下次启动回退, 无日志可查。补 warn
+        // (不返 Err -- IPC 已向前端返 Ok, 内存状态最新, 下次成功 save 覆盖)。
+        if let Err(e) = cfg.save() {
+            tracing::warn!(error = %e, "config save 失败 (内存状态已更新, 下次成功 save 会覆盖)");
+        }
     }
     Ok(())
 }
@@ -1306,7 +1311,12 @@ pub async fn set_floating_pin_mode(
         let mut cfg = state.config.write().await;
         if cfg.floating_pin_mode != parsed {
             cfg.floating_pin_mode = parsed;
-            let _ = cfg.save();
+            // P3 audit fix (2026-08-13): save 失败之前静默吞 -> 用户改了浮窗
+        // 位置/置顶模式但磁盘没更新, 下次启动回退, 无日志可查。补 warn
+        // (不返 Err -- IPC 已向前端返 Ok, 内存状态最新, 下次成功 save 覆盖)。
+        if let Err(e) = cfg.save() {
+            tracing::warn!(error = %e, "config save 失败 (内存状态已更新, 下次成功 save 会覆盖)");
+        }
         }
     }
     let _ = app.emit("musage://pin-mode-changed", &parsed);

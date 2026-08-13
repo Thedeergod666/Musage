@@ -602,7 +602,11 @@ impl AppConfig {
             cfg.autostart = legacy.autostart.unwrap_or(false);
             cfg.show_in_tray_on_close = legacy.show_in_tray_on_close.unwrap_or(true);
             // 落盘
-            let _ = cfg.save();
+            // P3 audit fix (2026-08-13): 静默吞 save 失败会让用户以为迁移成功
+            // 但磁盘没写, 下次启动重新迁移 (老文件仍在, 数据不丢, 仅无日志)。
+            if let Err(e) = cfg.save() {
+                tracing::warn!(error = %e, "legacy config 迁移后 save 失败 (老文件未改, 下次启动重试)");
+            }
             return Ok(cfg);
         }
 

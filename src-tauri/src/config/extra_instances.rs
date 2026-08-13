@@ -284,7 +284,12 @@ pub fn load_or_migrate() -> Result<Vec<ExtraInstance>, String> {
     // 写新文件(best-effort:写失败返空,不 panic —— 用户数据全在老文件)
     if let Err(e) = save(&new_instances) {
         tracing::error!(error = %e, "load_or_migrate: 写 extra_instances.json 失败");
-        return Ok(Vec::new());
+        // P2 audit fix (2026-08-13): 之前返 Ok(空) → 本会话所有 extra 实例
+        // 静默消失, 每个都报"未配置" (keys.json 凭据还在, 只是 extras 列表空)。
+        // 老文件没被改写, 数据安全; 返回迁移后的实例让本会话正常工作,
+        // 下次启动重新迁移落盘 (save 重试)。rename 老 .migrated 也跳过
+        // (留着下次再试), 保证下次启动能再读到老文件。
+        return Ok(new_instances);
     }
 
     // rename 老文件 → .migrated(best-effort)

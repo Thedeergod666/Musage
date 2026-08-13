@@ -136,6 +136,14 @@ pub fn redact_message(s: &str) -> std::borrow::Cow<'_, str> {
             // access_token= 防回显进日志的 URL query。
             r"|kimi-auth=[^\s;,]+",
             r"|access_token=[^\s;&]+",
+            // P2 audit fix (2026-08-13): 之前只覆盖厂商前缀白名单 (sk-/tvly-/
+            // tp-/tk-/eyJ), 裸的 client_secret= / secret_key= / refresh_token=
+            // 和 xai- 前缀的 key 直接落盘 0644 (虽已改 0600, 崩溃转储 / 备份
+            // 仍暴露)。补 key=value 形态 + xai- 前缀。
+            r"|client_secret=[^\s;,]+",
+            r"|secret_key=[^\s;,]+",
+            r"|refresh_token=[^\s;,]+",
+            r"|\bxai-[A-Za-z0-9_\-]{8,}",
             r"|(?:Cookie|Set-Cookie):[^\n]+",
             r")",
         ))

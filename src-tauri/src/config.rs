@@ -804,6 +804,19 @@ impl AppConfig {
     }
 
     pub fn save(&self) -> Result<(), String> {
+        // P2 audit fix (2026-08-13): 若本 build 读到一个 schema_version > CURRENT
+        // 的 config (用户降级 Musage), serde 已静默忽略未来字段, 此处 save()
+        // 会把整个文件重写成"当前 schema 视角"——未来字段永久丢失, 再升级也
+        // 找不回。降级场景下拒绝覆盖, 保留磁盘上的新版文件; 内存里的本会话
+        // 编辑会失效, 但那是降级的固有代价, 远好于静默数据丢失。
+        if self.schema_version > CURRENT_SCHEMA_VERSION {
+            tracing::warn!(
+                file_schema = self.schema_version,
+                app_schema = CURRENT_SCHEMA_VERSION,
+                "config schema_version 高于本 build, 拒绝 save 以保留未来字段 (降级场景); 升级后即可正常保存"
+            );
+            return Ok(());
+        }
         // save_lock 串行化并发 save：geom debouncer (500ms tick) + 用户改设置同时触发
         // 时，read-modify-write race 会让 last writer 覆盖另一方的内容。Mutex<()> 极小。
         let _g = save_lock().lock().unwrap_or_else(lock_recover);

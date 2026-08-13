@@ -456,8 +456,24 @@ fn classify_zhipu_limits(data: &Value) -> (Option<(f64, Option<i64>)>, Option<(f
             let entry = (sort_key, percentage, reset_ms);
 
             match item.get("unit").and_then(|v| v.as_i64()) {
-                Some(3) if five_h.is_none() => five_h = Some(entry),
-                Some(6) if weekly.is_none() => weekly = Some(entry),
+                // P2 audit fix (2026-08-13): 第二个同 unit 套餐 (CREDIT_LIMIT
+                // 多包 schema) 之前进 unclassified 兜底, 被 fallback 错填进
+                // 另一个槽 (5h 百分比显示成 7 天行)。显式 unit 只填对应槽,
+                // 槽已满就丢弃该条 (不偷别的槽), 未知 unit 仍进 unclassified。
+                Some(3) => {
+                    if five_h.is_none() {
+                        five_h = Some(entry);
+                    } else {
+                        tracing::debug!("zhipu: 第二个 unit=3 套餐, 五小时槽已满, 丢弃");
+                    }
+                }
+                Some(6) => {
+                    if weekly.is_none() {
+                        weekly = Some(entry);
+                    } else {
+                        tracing::debug!("zhipu: 第二个 unit=6 套餐, 周槽已满, 丢弃");
+                    }
+                }
                 _ => unclassified.push(entry),
             }
         }

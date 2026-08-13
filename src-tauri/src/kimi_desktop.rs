@@ -128,8 +128,17 @@ fn read_token_from_db(path: &std::path::Path) -> rusqlite::Result<Option<String>
 
 fn read_token_once(path: &std::path::Path, immutable: bool) -> rusqlite::Result<Option<String>> {
     let conn = if immutable {
+        // P3 audit fix (2026-08-13): 之前 `file:{path}?immutable=1` 在 Windows
+        // 上是非法 SQLite URI (C:\Users\... -> 需要 file:///C:/Users/...)。
+        // 规范化: 反斜杠转正斜杠, 绝对路径补 file:/// 前缀 (Unix 也兼容)。
+        // immutable=1 兜底跳过 WAL replay/锁, 主路径 busy_timeout 优先;
+        // 这里只在主路径失败时跑, stale/torn 风险可接受 (provider 侧 401
+        // 兜底会引导重登)。
+        let path_str = path.display().to_string();
+        let fwd = path_str.replace('\\', "/");
+        let prefix = if fwd.starts_with('/') { "file:" } else { "file:///" };
         rusqlite::Connection::open_with_flags(
-            format!("file:{}?immutable=1", path.display()),
+            format!("{}{}?immutable=1", prefix, fwd),
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
         )?
     } else {

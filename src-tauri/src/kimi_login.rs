@@ -333,7 +333,10 @@ fn is_fresh_token(value: &str) -> bool {
         return false;
     }
     match jwt_exp_seconds_ago(value) {
-        Some(secs_ago) => secs_ago < 0,
+        // P3 audit fix (2026-08-13): 加 60s skew 对齐 kimi_desktop::
+        // validate_auth_token (边界 token 拿到即死 -> 拒绝让 provider 自愈,
+        // 而非存下立刻 401)。
+        Some(secs_ago) => secs_ago + 60 < 0,
         None => true,
     }
 }

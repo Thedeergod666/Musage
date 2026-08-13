@@ -342,9 +342,13 @@ pub async fn update_extra_instance(
             // P1 audit fix: 回滚凭据迁移 (新槽删掉, 旧槽恢复), 保持两盘一致
             if let Some((old_ref, new_ref)) = &key_migration {
                 if let Ok(Some(cred)) = load_credential_for_id(new_ref) {
-                    let _ = save_credential_for_id(old_ref, &cred);
+                    if let Err(e) = save_credential_for_id(old_ref, &cred) {
+                        tracing::warn!(old_key = %old_ref, error = %e, "回滚: 恢复旧凭据槽失败");
+                    }
                 }
-                let _ = delete_credential_for_id(new_ref);
+                if let Err(e) = delete_credential_for_id(new_ref) {
+                    tracing::warn!(new_key = %new_ref, error = %e, "回滚: 删新凭据槽失败 (残留孤儿)");
+                }
             }
             return Err(e);
         }
@@ -550,17 +554,25 @@ pub async fn delete_extra_instance(
             // 1. 先撤销 compact migrations (后做的先撤销 → LIFO)
             // 2. 最后恢复 target_api_key_ref 凭据
             for (old_ref, new_ref, cred) in migrations_done.iter().rev() {
-                if let Some(inst) = snapshot_for_rollback
+                if snapshot_for_rollback
                     .iter()
-                    .find(|e| e.api_key_ref == *old_ref)
+                    .any(|e| e.api_key_ref == *old_ref)
                 {
                     // 找到原本指向 old_ref 的 instance,把凭据写回 old_ref
-                    let _ = save_credential_for_id(old_ref, cred);
-                    let _ = delete_credential_for_id(new_ref);
+                    // P3 audit fix: 之前 let _ 吞回滚错误 -> keys.json 半恢复
+                    // 状态不可见。补 warn 让运维能查。
+                    if let Err(e) = save_credential_for_id(old_ref, cred) {
+                        tracing::warn!(old_key = %old_ref, error = %e, "delete 回滚: 恢复旧凭据槽失败");
+                    }
+                    if let Err(e) = delete_credential_for_id(new_ref) {
+                        tracing::warn!(new_key = %new_ref, error = %e, "delete 回滚: 删新凭据槽失败 (残留孤儿)");
+                    }
                 }
             }
             if let Some(cred) = target_cred_backup {
-                let _ = save_credential_for_id(&target_api_key_ref, &cred);
+                if let Err(e) = save_credential_for_id(&target_api_key_ref, &cred) {
+                    tracing::warn!(key = %target_api_key_ref, error = %e, "delete 回滚: 恢复 target 凭据失败");
+                }
             }
             return Err(e);
         }

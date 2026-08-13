@@ -303,8 +303,14 @@ fn init_script() -> String {
                         // webview cookie store 截断 失败但 assignment 不抛错
                         // (assign 成功 ≠ cookie 落地). 验证失败时不清 interval,
                         // 下个 tick 重试; 验证成功才 clearInterval + 通知 Rust
+                        // P3 audit fix (2026-08-13): 之前按 length 比对
+                        // (c.length >= 写入长度) -- 截断到等长的脏值也通过,
+                        // Rust 读到截断后的 token。改成严格值相等。
                         var written = (document.cookie || "").split("; ")
-                            .some(function (c) { return c.indexOf(COOKIE_NAME + "=") === 0 && c.length >= (COOKIE_NAME + "=" + tok).length; });
+                            .some(function (c) {
+                                if (c.indexOf(COOKIE_NAME + "=") !== 0) return false;
+                                return c === COOKIE_NAME + "=" + tok;
+                            });
                         if (written) {
                             clearInterval(_musageIv);
                         }

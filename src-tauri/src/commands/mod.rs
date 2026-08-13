@@ -116,6 +116,19 @@ pub async fn set_provider_enabled(
     id: String,
     enabled: bool,
 ) -> Result<(), String> {
+    // P3 audit fix (2026-08-13): 之前任意字符串都写进 cfg.providers (entry
+    // .or_insert), 前端注入 / 手搓 IPC 会留垃圾 key, 还可能跟 snapshot_key
+    // / merge 逻辑冲突。校验 id 是已知 source (内置 base / 副本 unique_id /
+    // custom_<uuid>) 再写。all_sources 在 config.write 之前调 (锁顺序同
+    // set_provider_order)。
+    let known: std::collections::HashSet<String> = all_sources(&state)
+        .await
+        .iter()
+        .map(|s| s.unique_id())
+        .collect();
+    if !known.contains(&id) {
+        return Err(format!("unknown provider id: {id}"));
+    }
     {
         let mut cfg = state.config.write().await;
         // 缺 key 时插一份默认配置（保持 BTreeMap key 顺序 + 默认值）

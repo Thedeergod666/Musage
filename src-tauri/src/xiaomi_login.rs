@@ -139,6 +139,21 @@ fn is_dashboard_url(url: &Url) -> bool {
     host_ok && not_login
 }
 
+/// P3 audit fix (2026-08-13): SSO 回调 / dashboard URL 的 query 可能带
+/// 一次性 ticket / code 等凭据, 落盘 app_log.jsonl 会随 bug report 外泄。
+/// 日志只记 scheme://host/path, query/fragment 用 `<redacted>` 占位。
+fn redact_url_for_log(url: &Url) -> String {
+    let mut s = format!("{}://{}", url.scheme(), url.host_str().unwrap_or(""));
+    let p = url.path();
+    if !p.is_empty() {
+        s.push_str(p);
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        s.push_str("?<redacted>");
+    }
+    s
+}
+
 /// dashboard API 实际依赖的 cookie name 集合。不在白名单的丢弃（最小权限）。
 const WANTED_COOKIES: &[&str] = &[
     "api-platform_serviceToken",
@@ -268,7 +283,7 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
         )
         .on_page_load(move |window, payload| {
             let url = payload.url();
-            tracing::debug!(%url, "xiaomi login webview page load");
+            tracing::debug!(url = %redact_url_for_log(&url), "xiaomi login webview page load");
 
             // 提取已完成（或正在运行）→ 全部跳过，不再操作 webview
             if DONE.load(Ordering::SeqCst) {
@@ -288,7 +303,7 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
                 return;
             }
 
-            tracing::info!(%url, "on_page_load: ✅ 命中 dashboard，启动 cookie 提取");
+            tracing::info!(url = %redact_url_for_log(&url), "on_page_load: ✅ 命中 dashboard，启动 cookie 提取");
             let app2 = app_for_callback.clone();
             let window_clone = window.clone();
             let my_gen = gen;

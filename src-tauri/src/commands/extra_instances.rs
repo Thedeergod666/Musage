@@ -42,6 +42,43 @@ use crate::AppState;
 
 const TOTAL_EXTRA_LIMIT: usize = 50;
 
+/// P1 audit fix (2026-08-13): 前端传来的 custom spec.id 会原样当作 keys.json
+/// 的凭据键 (api_key_ref) 使用。恶意/异常 id 可注入他人凭据槽:
+/// - `"minimax"` → 覆盖内置 MiniMax 的 api_key
+/// - `"minimax:cookie"` → 覆盖内置的 cookie 槽 (keys.json 用 `{id}:cookie` 键)
+/// - `"minimax#2"` → 覆盖内置副本的槽
+/// - 与现有 extras 的 api_key_ref 重复 → 两个实例共享/互删凭据
+///
+/// 不安全时后端重新生成 `custom_<uuid>` (与 spec.id 为空时同款),
+/// add/update 的返回值携带最终 spec, 前端应采纳返回值。
+/// `exclude_ref`: update 场景排除实例自身当前的 api_key_ref (正常"不改 id"
+/// 的更新不能误判为重复)。
+fn sanitize_custom_spec_id(
+    mut spec: CustomSourceSpec,
+    extras: &[ExtraInstance],
+    exclude_ref: Option<&str>,
+) -> CustomSourceSpec {
+    let collides_builtin = crate::providers::builtin_sources()
+        .iter()
+        .any(|s| s.id() == spec.id.as_str());
+    let duplicate = extras
+        .iter()
+        .any(|e| Some(e.api_key_ref.as_str()) != exclude_ref && e.api_key_ref == spec.id);
+    let unsafe_id = spec.id.is_empty()
+        || spec.id.contains(':')
+        || spec.id.contains('#')
+        || collides_builtin
+        || duplicate;
+    if unsafe_id {
+        tracing::warn!(
+            id = %spec.id,
+            "custom spec.id 不安全 (碰撞内置 id / 含分隔符 / 重复), 后端重新生成"
+        );
+        spec.id = format!("custom_{}", uuid::Uuid::new_v4().simple());
+    }
+    spec
+}
+
 // ── DTOs ────────────────────────────────────────────────────────
 
 /// 前端 picker 用的 provider option（11 内置 + custom）。
@@ -178,9 +215,9 @@ pub async fn add_extra_instance(
         // 锁内算 idx + 构造 instance —— 没有 temp,没有 rename
         let (instance, final_api_key_ref) = if is_custom {
             let mut spec = req.custom.as_ref().unwrap().clone();
-            if spec.id.is_empty() {
-                spec.id = format!("custom_{}", uuid::Uuid::new_v4().simple());
-            }
+            // P1 audit fix (2026-08-13): spec.id 直接当 keys.json 键 —— 必须
+            // 先 sanitize (防撞内置槽 / 注入 / 重复), 不能信任前端。
+            spec = sanitize_custom_spec_id(spec, &extras, None);
             if spec.created_at == 0 {
                 spec.created_at = now;
             }
@@ -257,21 +294,43 @@ pub async fn update_extra_instance(
     // "找 pos → 替换 → save" 在同一把 write 锁内完成，pos 在锁内重新查
     // （已修复的 2026-06-25 TOCTOU bug）。
 
-    // 第一步：write 锁内读 api_key_ref + 更新 spec + save extras
+    // 第一步：write 锁内读 api_key_ref + 更新 spec + 迁移凭据(如 spec.id 变) + save extras
     let (updated, api_key_ref) = {
         let mut extras = state.extra_instances.write().await;
         let pos = extras.iter().position(|e| e.id == req.id).ok_or_else(|| {
             t!("commands.extra.not_found", id = req.id.to_string().as_str()).into_owned()
         })?;
         let mut updated = extras[pos].clone();
-        let api_key_ref = updated.api_key_ref.clone();
 
         // 改 custom spec
+        // P1 audit fix (2026-08-13): 之前只替换 custom spec 不同步 api_key_ref,
+        // spec.id 一变, 实例的凭据键 (api_key_ref) 与新 custom.id 分叉 ——
+        // CustomSource 按 custom.id 查凭据, 查不到 → 永久"未配置"。
+        // 现在同步 api_key_ref 并把凭据从旧槽迁移到新槽。
+        let mut key_migration: Option<(String, String)> = None; // (old_ref, new_ref)
         if let Some(spec) = req.custom {
             if updated.provider_id != "custom" {
                 return Err(t!("commands.extra.custom_only_for_custom_provider").into_owned());
             }
-            updated.custom = Some(spec);
+            let old_ref = updated.api_key_ref.clone();
+            let spec = sanitize_custom_spec_id(spec, &extras, Some(&old_ref));
+            updated.custom = Some(spec.clone());
+            updated.api_key_ref = spec.id.clone();
+            if updated.api_key_ref != old_ref {
+                key_migration = Some((old_ref, updated.api_key_ref.clone()));
+            }
+        }
+
+        // 凭据迁移先于 extras 落盘: 先复制到新槽。extras save 失败时回滚
+        // (恢复旧槽 + 删新槽), 成功后删旧槽 —— 任一路径都不丢凭据。
+        if let Some((old_ref, new_ref)) = &key_migration {
+            if let Ok(Some(cred)) = load_credential_for_id(old_ref) {
+                if let Err(e) = save_credential_for_id(new_ref, &cred) {
+                    return Err(
+                        t!("commands.extra.save_key_failed", err = e.as_str()).into_owned()
+                    );
+                }
+            }
         }
 
         // H12 fix (2026-07-03 audit): save 失败时回滚 extras[pos] 到旧值,
@@ -280,9 +339,23 @@ pub async fn update_extra_instance(
         extras[pos] = updated.clone();
         if let Err(e) = extra_instances::save(&extras) {
             extras[pos] = old_instance;
+            // P1 audit fix: 回滚凭据迁移 (新槽删掉, 旧槽恢复), 保持两盘一致
+            if let Some((old_ref, new_ref)) = &key_migration {
+                if let Ok(Some(cred)) = load_credential_for_id(new_ref) {
+                    let _ = save_credential_for_id(old_ref, &cred);
+                }
+                let _ = delete_credential_for_id(new_ref);
+            }
             return Err(e);
         }
-        (updated, api_key_ref)
+        // extras 落盘成功 → 删旧槽, 凭据所有权转移完成
+        if let Some((old_ref, _)) = &key_migration {
+            if let Err(e) = delete_credential_for_id(old_ref) {
+                tracing::warn!(old_key = %old_ref, error = %e, "spec.id 迁移后删旧凭据槽失败 (残留孤儿槽)");
+            }
+        }
+        let final_ref = updated.api_key_ref.clone();
+        (updated, final_ref)
     };
 
     // 第二步：锁外保存 key（save_credential_for_id 有独立 save_lock）

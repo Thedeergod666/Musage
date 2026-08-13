@@ -263,7 +263,7 @@ fn init_script() -> String {
                 if (isAllowed()) {
                     localStorage.removeItem(LS_KEY);
                     document.cookie = COOKIE_NAME + "=; path=/; max-age=0";
-                    document.cookie = READY_NAME + "=1; path=/; max-age=3600; SameSite=Lax";
+                    document.cookie = READY_NAME + "=1; path=/; max-age=900; SameSite=Lax; Secure";
                 }
             } catch (_) {}
             // ── 读 token ──
@@ -297,7 +297,7 @@ fn init_script() -> String {
                 var tok = readToken();
                 try {
                     if (tok) {
-                        document.cookie = COOKIE_NAME + "=" + tok + "; path=/; max-age=3600; SameSite=Lax";
+                        document.cookie = COOKIE_NAME + "=" + tok + "; path=/; max-age=900; SameSite=Lax; Secure";
                         // 2026-08-03 audit (McClintock P2): 写后回读 verify
                         // —— cookie 写入可能因 size limit / special chars /
                         // webview cookie store 截断 失败但 assignment 不抛错
@@ -530,9 +530,14 @@ async fn poll_token_from_cookie(
         if let Some(tok) = cookies.iter().find(|c| c.name() == COOKIE_NAME) {
             // cookie value 可能带引号（macOS WKWebView 习惯），剥掉
             let raw = tok.value().trim_matches('"');
-            // P2 audit fix: 加 exp 新鲜度门禁 (is_fresh_access) —— 形态合法
-            // 但已过期的缓存 token 不保存, 继续等用户真登录
+            // P2 audit fix: 形态合法但已过期的缓存 token 不保存, 继续等用户真登录
             if is_jwt_like(raw) && is_fresh_access(raw) {
+                // P2 audit fix (2026-08-13): 锁顶 gen 检查到此 (cookies_for_url
+                // 是 blocking call) 之间, 用户可能重新触发登录 → gen bump。
+                // 复查避免旧流程 token 覆盖新流程刚存的新 token。
+                if !is_current_gen(my_gen) {
+                    return PollOutcome::Cancelled;
+                }
                 return match save_token(raw) {
                     Ok(len) => PollOutcome::Saved(len),
                     Err(e) => PollOutcome::Failed(e),

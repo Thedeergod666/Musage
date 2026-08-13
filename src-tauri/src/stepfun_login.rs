@@ -371,6 +371,11 @@ async fn poll_token_from_cookie(
             // 错误接受并存盘,30min 后 access 过期 → refresh 401 → 强制重登
             let combined = combine_token(access, refresh);
             if is_fresh_token(&combined) {
+                // P2 audit fix (2026-08-13): cookies_for_url blocking 期间用户
+                // 可能重新登录 → gen bump, 复查避免旧流程 token 覆盖新 token。
+                if !is_current_gen(my_gen) {
+                    return PollOutcome::Cancelled;
+                }
                 return match save_token(&combined) {
                     Ok(len) => PollOutcome::Saved(len),
                     Err(e) => PollOutcome::Failed(e),

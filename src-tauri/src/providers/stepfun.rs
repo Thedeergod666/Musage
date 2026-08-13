@@ -564,6 +564,23 @@ async fn refresh_oasis_token(token: &str, unique_id: &str) -> Result<String, Fet
             .clone();
         Arc::clone(&lock).lock_owned().await
     };
+    // P2 audit fix (2026-08-13): BUG-001 注释声称"锁内读 keys.json → POST →
+    // 写回"但代码从未重读 —— 并发 caller (poller tick + 手动刷 + 401 兜底)
+    // 各自用进锁前的旧 combined token 发 POST, 第二个 caller POST 已被服务端
+    // rotate/吊销的 refresh 半段 → 40114 revoked 误报"请重新登录"。锁内重读
+    // keys.json: 若 token 已被别的 caller 换掉, 直接复用新 token, 跳过 POST。
+    let token: &str = match config::load_credential_for_id(unique_id)
+        .ok()
+        .flatten()
+        .and_then(|c| c.cookie)
+        .and_then(|raw| normalize_oasis_token(&raw).filter(|t| !t.is_empty()))
+    {
+        Some(latest) if latest.as_str() != token => {
+            tracing::info!(unique_id, "stepfun refresh: 锁内重读发现 token 已更新, 复用, 跳过 POST");
+            return Ok(latest);
+        }
+        _ => token,
+    };
     let client = shared_client();
     let webid = device_id_for_token(token).unwrap_or_else(|| DEFAULT_WEBID.to_string());
 

@@ -293,6 +293,11 @@ async fn poll_token_from_cookie(
             // cookie value 可能带引号（macOS WKWebView 习惯），剥掉
             let token = tok.value().trim_matches('"');
             if is_fresh_token(token) {
+                // P2 audit fix (2026-08-13): cookies_for_url blocking 期间用户
+                // 可能重新登录 → gen bump, 复查避免旧流程 token 覆盖新 token。
+                if !is_current_gen(my_gen) {
+                    return PollOutcome::Cancelled;
+                }
                 return match save_token(token) {
                     Ok(len) => PollOutcome::Saved(len),
                     Err(e) => PollOutcome::Failed(e),

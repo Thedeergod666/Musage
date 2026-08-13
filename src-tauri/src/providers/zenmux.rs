@@ -226,12 +226,19 @@ async fn do_fetch(
         ));
     }
     // H7 fix (2026-07-03 audit): 同 custom.rs 的 SSRF 防护。
-    if let Some(host) = super::extract_host(url) {
-        if super::is_ssrf_blocked(&host) {
-            return Err(FetchError::auth(
-                t!("error.common.ssrf_blocked", host = host.as_str()).into_owned(),
-            ));
-        }
+    // P2 audit fix (2026-08-13): 规范化 URL 判定优先, 字符串路径兜底 (同 custom.rs)。
+    let blocked = reqwest::Url::parse(url)
+        .map(|u| super::url_is_ssrf_blocked(&u))
+        .unwrap_or_else(|_| {
+            super::extract_host(url)
+                .map(|h| super::is_ssrf_blocked(&h))
+                .unwrap_or(false)
+        });
+    if blocked {
+        let host = super::extract_host(url).unwrap_or_else(|| url.to_string());
+        return Err(FetchError::auth(
+            t!("error.common.ssrf_blocked", host = host.as_str()).into_owned(),
+        ));
     }
     let client = shared_client();
 

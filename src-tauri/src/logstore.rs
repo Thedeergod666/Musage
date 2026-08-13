@@ -223,8 +223,13 @@ impl LogStore {
         if needs_truncate {
             g.pop_front();
         }
-        drop(g);
+        // P2 audit fix (2026-08-13): 之前 drop 锁后才 send job —— enqueue
+        // 顺序与 ring 变更顺序不一致: push(A) 先拿锁改 ring, clear() 后拿锁
+        // 清 ring 但先 enqueue ClearMarker, 通道顺序变 [Clear, Append(A)]
+        // → worker 删完文件再 append A → 已清条目在磁盘复活。锁内 enqueue
+        // (mpsc send 非阻塞, worker 不反向等这把锁) 保证通道顺序 == 锁顺序。
         spawn_append_job(self.clone(), AppendJob::Append(entry, needs_truncate));
+        drop(g);
     }
 
     /// 快照：返回最近 n 条（按时间正序）。n == None → 全部。
@@ -248,12 +253,15 @@ impl LogStore {
     ///
     /// **L2 fix（2026-06-19）**：跟 push 共用同一 channel —— 避免 push 写文件
     /// 后被抢断 + clear 删文件造成的文件-内存不一致窗口。
+    ///
+    /// P2 audit fix (2026-08-13): enqueue 移到锁内 (同 push), 通道顺序与
+    /// ring 变更顺序严格一致 —— 否则 push 的 Append 可能排在 clear 的
+    /// ClearMarker 之后, 已清条目复活到磁盘。
     pub fn clear(&self) {
-        {
-            let mut g = self.inner.lock().unwrap_or_else(lock_recover);
-            g.clear();
-        }
+        let mut g = self.inner.lock().unwrap_or_else(lock_recover);
+        g.clear();
         spawn_append_job(self.clone(), AppendJob::ClearMarker);
+        drop(g);
     }
 }
 

@@ -418,14 +418,26 @@ fn parse_f64(v: Option<&Value>) -> Option<f64> {
 }
 
 /// 从 JSON 值提取重置时间（毫秒），兼容字符串和数字格式。
-/// - 字符串：直接解析为 ISO 8601 → 毫秒
+/// - 字符串：ISO 8601 → 毫秒；不是 ISO 8601 时继续按数字字符串解析
 /// - 数字：自动判断秒/毫秒（< 1e12 当作秒，否则毫秒）→ 毫秒
 fn extract_reset_ms(v: Option<&Value>) -> Option<i64> {
     let v = v?;
     if let Some(s) = v.as_str() {
-        return DateTime::parse_from_rfc3339(s)
-            .ok()
-            .map(|dt| dt.timestamp_millis());
+        if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+            return Some(dt.timestamp_millis());
+        }
+        // P2 audit fix (2026-08-13): 之前 RFC3339 解析失败直接 return None,
+        // 数字字符串 (如 "1749840000" —— 该 API 序列化数字字段的习惯,
+        // 见 fixture parse_total_quota_populated_builds_row) 永远落不到
+        // 数字分支 → reset 倒计时丢失。改为继续尝试数字解析。
+        if let Ok(n) = s.trim().parse::<i64>() {
+            if n > 0 {
+                let ms = if n < 1_000_000_000_000 { n * 1000 } else { n };
+                // sanity check：转回 DateTime 避免溢出
+                return DateTime::<Utc>::from_timestamp_millis(ms).map(|_| ms);
+            }
+        }
+        return None;
     }
     if let Some(n) = v.as_i64() {
         // D-013 fix (2026-07-30 audit): 拒绝 n <= 0 (epoch 0 / 负数 /
@@ -455,7 +467,11 @@ fn build_total_plan_row(
     // 官方 UI 双色堆叠条的蓝色段（总池里 Kimi Code 消耗占比），
     // 塞 extra 供后续堆叠条渲染用。
     if let Some(c) = code_used_ratio_pct {
-        extra["kimi_code_used_ratio"] = serde_json::json!(c);
+        // P2 audit fix (2026-08-13): clamp 到 [0, utilization] —— 之前原样
+        // 存储, API 数据异常时 (code 段 > 总利用率) 前端"总 − Code"算出负段,
+        // 堆叠条渲染破裂。
+        let clamped = c.clamp(0.0, utilization.clamp(0.0, 100.0));
+        extra["kimi_code_used_ratio"] = serde_json::json!(clamped);
     }
     QuotaRow {
         label: t!("row.total_plan").to_string(),

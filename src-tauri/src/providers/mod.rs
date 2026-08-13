@@ -239,13 +239,48 @@ pub fn is_ssrf_blocked(host: &str) -> bool {
     if ipv4_mapped == "0.0.0.0" {
         return true;
     }
-    if host.starts_with("169.254.") {
+    // P2 audit fix (2026-08-13): 之前用 host 而不是剥离 ::ffff: 后的
+    // ipv4_mapped 做 169.254. 检查 —— "[::ffff:169.254.169.254]" /
+    // "::ffff:169.254.169.254" 全部绕过, 可路由到云元数据端点。
+    if ipv4_mapped.starts_with("169.254.") {
         return true;
     }
     if host.starts_with("[fe80") || host.starts_with("fe80:") {
         return true;
     }
     false
+}
+
+/// P2 audit fix (2026-08-13): 字符串前缀比对覆盖不了 WHATWG 归一化的
+/// IPv4 变体 (十进制 "2130706433" / 十六进制 "0x7f000001" / 八进制
+/// "0177.0.0.1" 全部等价 127.0.0.1), 也覆盖不了 "localhost." 尾点域名。
+/// 用 url crate 的解析结果 (Host 枚举, 已归一化) 做判定:
+/// loopback / link-local / unspecified 一律拦截。
+///
+/// 两处调用: custom/zenmux 的 base_url 门 (有完整 URL 字符串) + redirect
+/// policy (reqwest 已解析出 Url)。
+pub fn url_is_ssrf_blocked(url: &reqwest::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Ipv4(ip4)) => {
+            ip4.is_loopback() || ip4.is_link_local() || ip4.is_unspecified()
+        }
+        Some(url::Host::Ipv6(ip6)) => {
+            if ip6.is_loopback() || ip6.is_unspecified() {
+                return true;
+            }
+            // IPv4-mapped (::ffff:a.b.c.d) → 检查内嵌 IPv4
+            if let Some(mapped) = ip6.to_ipv4_mapped() {
+                if mapped.is_loopback() || mapped.is_link_local() || mapped.is_unspecified() {
+                    return true;
+                }
+            }
+            // IPv6 link-local fe80::/10
+            ip6.segments()[0] & 0xffc0 == 0xfe80
+        }
+        // url crate 已把 "localhost." 尾点归一化为 "localhost"
+        Some(url::Host::Domain(d)) => d == "localhost",
+        None => false,
+    }
 }
 
 /// 结构化 fetch 错误。Phase 1 引入，用来替代散落在各 provider 里的中文 `String` 错误。
@@ -914,8 +949,9 @@ pub fn shared_client() -> &'static reqwest::Client {
             // local target 不 follow(3xx 原样返 caller,provider 当非成功
             // status 处理);合法外网 redirect(relay -> CDN)不受影响。
             .redirect(reqwest::redirect::Policy::custom(|attempt| {
-                let host = attempt.url().host_str().unwrap_or("");
-                if is_ssrf_blocked(host) {
+                // P2 audit fix (2026-08-13): 用规范化 URL 判定 (Host 枚举),
+                // 覆盖 host_str 字符串比对的 IPv4 变体 / mapped link-local 绕过。
+                if url_is_ssrf_blocked(attempt.url()) {
                     attempt.stop()
                 } else {
                     attempt.follow()

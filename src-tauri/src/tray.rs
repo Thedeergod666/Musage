@@ -322,7 +322,14 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                 });
             }
             "quit" => {
-                app.exit(0);
+                // P2 audit fix (2026-08-13): 之前直接 app.exit(0) 绕过
+                // quit_app 的优雅关闭链路 (SHUTDOWN_REQUESTED / notify /
+                // SHUTDOWN_NATIVE_THREADS / JoinSet drain), 在飞 fetch 被
+                // 强杀 + OS tracker 线程收不到退出信号。改走 quit_app。
+                let app2 = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    crate::commands::quit_app(app2).await;
+                });
             }
             id if id.starts_with("tray_source:") => {
                 let source = id.strip_prefix("tray_source:").unwrap().to_string();

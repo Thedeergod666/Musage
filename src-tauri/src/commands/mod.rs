@@ -320,6 +320,16 @@ pub async fn set_schema_overrides(
     // key = provider id ("minimax" / "xiaomimimo"), value = 该 provider 的 overrides
     overrides: std::collections::BTreeMap<String, config::ProviderOverrides>,
 ) -> Result<(), String> {
+    // P2 audit fix (2026-08-13): 本命令不走 save_config 的 256 上限, 之前可
+    // 直接灌 100k entry / 单 tier 100k candidates → O(n) 校验 + 序列化 +
+    // 写盘 DoS。与 save_config 同款上限 + 单 tier candidates 上限。
+    if overrides.len() > SCHEMA_OVERRIDES_MAX {
+        return Err(format!(
+            "commands.schema_overrides_too_many: count={} max={}",
+            overrides.len(),
+            SCHEMA_OVERRIDES_MAX
+        ));
+    }
     // 1. 校验（避免 N+1 个 3-tuple 静默通过，最后 parse 时才报错 —— 早 fail 早定位）
     for (id, prov) in &overrides {
         for (tier_name, tier) in [
@@ -327,6 +337,15 @@ pub async fn set_schema_overrides(
             ("weekly", &prov.weekly),
             ("monthly", &prov.monthly),
         ] {
+            if tier.count_candidates.len() > COUNT_CANDIDATES_MAX {
+                return Err(format!(
+                    "commands.schema_overrides_candidates_too_many: id={} tier={} count={} max={}",
+                    id,
+                    tier_name,
+                    tier.count_candidates.len(),
+                    COUNT_CANDIDATES_MAX
+                ));
+            }
             for (i, ft) in tier.count_candidates.iter().enumerate() {
                 if ft.total.trim().is_empty() || ft.remaining.trim().is_empty() {
                     return Err(t!(
@@ -660,6 +679,8 @@ const PROVIDERS_MAP_MAX: usize = 256;
 // 上限 256。
 const ORDER_LIST_MAX: usize = 256;
 const SCHEMA_OVERRIDES_MAX: usize = 256;
+// P2 audit fix (2026-08-13): set_schema_overrides 单 tier 候选字段数上限
+const COUNT_CANDIDATES_MAX: usize = 64;
 
 #[tauri::command]
 pub async fn save_config(
@@ -691,6 +712,13 @@ pub async fn save_config(
             cfg.schema_overrides.len(),
             SCHEMA_OVERRIDES_MAX
         ));
+    }
+    // P2 audit fix (2026-08-13): set_app_locale 白名单 (zh-CN / en) 在
+    // save_config 全量路径被绕过 —— 非法 locale 落盘后, 下次启动
+    // rust_i18n::set_locale 吃到未知 locale, 全部 t!() 回退原始键, 界面
+    // 显示 key 名而不是文案。
+    if !matches!(cfg.locale.as_str(), "zh-CN" | "en") {
+        return Err(format!("unsupported locale: {}（仅支持 zh-CN / en）", cfg.locale));
     }
     // L2 fix (2026-07-30 audit): 上限 1 天,挡住 webhook 入口塞 86400 * 365
     // 把轮询当 background daemon 跑的死循环。前端 settings panel 默认 60s。
@@ -1588,15 +1616,19 @@ pub async fn refresh_inner(
     }
     let mut snap = QuotaSnapshot::default();
     let mut recs: Vec<Rec> = Vec::with_capacity(tasks.len());
+    // P2 audit fix (2026-08-13): 之前直接 task.await 无超时 —— 单个 provider
+    // 挂起 (deepseek/stepfun 曾实测挂 30s+) 会把 refresh_now / poller tick
+    // 整体阻塞到挂起时长, UI 一直转圈。与 dump CLI (lib.rs) 的 30s 超时对齐。
+    const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
     for (id, default_interval_secs, task) in tasks {
-        match task.await {
-            Ok(Ok(s)) => recs.push(Rec {
+        match tokio::time::timeout(FETCH_TIMEOUT, task).await {
+            Ok(Ok(Ok(s))) => recs.push(Rec {
                 id,
                 snap: s,
                 default_secs: default_interval_secs,
                 is_join_err: false,
             }),
-            Ok(Err(e)) => {
+            Ok(Ok(Err(e))) => {
                 // P1 重构:kind 直接从 FetchError 取,不再走 classify_error_message
                 // 子串匹配(旧实现 i18n 一动就破)。
                 log_provider_error(app, &id, e.kind, &e.message);
@@ -1615,7 +1647,7 @@ pub async fn refresh_inner(
                     is_join_err: false,
                 });
             }
-            Err(join_err) => {
+            Ok(Err(join_err)) => {
                 let msg =
                     t!("error.common.join_task_failed", err = join_err.to_string()).into_owned();
                 log_provider_error(app, &id, ErrorKind::Other, &msg);
@@ -1632,6 +1664,26 @@ pub async fn refresh_inner(
                     snap: err_snap,
                     default_secs: default_interval_secs,
                     is_join_err: true,
+                });
+            }
+            Err(_elapsed) => {
+                // P2 audit fix: 超时 provider 记错误卡, 不阻塞其余结果
+                let msg = t!("error.common.fetch_timeout", provider = id.as_str(), secs = 30)
+                    .into_owned();
+                log_provider_error(app, &id, ErrorKind::Network, &msg);
+                let err_snap = ProviderSnapshot::empty_error(
+                    &app.state::<AppState>(),
+                    &id,
+                    ErrorKind::Network,
+                    msg,
+                    false,
+                )
+                .await;
+                recs.push(Rec {
+                    id,
+                    snap: err_snap,
+                    default_secs: default_interval_secs,
+                    is_join_err: false,
                 });
             }
         }

@@ -28,6 +28,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# P2 audit fix (2026-08-13): SSRF 校验需要 url::Host 枚举做规范化判定
+# (WHATWG 归一化十进制/十六进制/八进制 IPv4 变体)。reqwest 已传递依赖
+# url 2.x, 显式声明避免传递依赖被移除时 break (同 regex 的注释)。
+url = "2"
 image = { version = "0.25", default-features = false, features = ["png"] }
 imageproc = { version = "0.25", default-features = false }
 ab_glyph = "0.2"

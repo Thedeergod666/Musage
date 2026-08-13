@@ -269,7 +269,22 @@ async fn do_fetch(
     let mut token = match access_token_exp_seconds_ago(oasis_token) {
         Some(secs_ago) if secs_ago >= -SKEW_SECS => {
             if refresh_half(oasis_token).is_some() {
-                refresh_oasis_token(oasis_token, source_id).await?
+                // P2 audit fix (2026-08-13): 之前刷新失败直接 ? 短路整个
+                // fetch, 即便当前 access 还有 ≤ SKEW_SECS (120s) 有效期。
+                // 刷新端点网络抖动 / 5xx 时不该丢掉还能用的 token ——
+                // 只有明确 AuthFailed (refresh 已吊销) 才放弃, 其余继续
+                // 用当前 token 拉一次 (fetch_once 的 401 兜底会再试刷新)。
+                match refresh_oasis_token(oasis_token, source_id).await {
+                    Ok(new_token) => new_token,
+                    Err(e) if e.kind == ErrorKind::AuthFailed => return Err(e),
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e.message,
+                            "stepfun 主动续期失败(非 auth), 用当前 access 继续"
+                        );
+                        oasis_token.to_string()
+                    }
+                }
             } else if secs_ago >= 0 {
                 // 无 refresh 半段（手动粘贴的裸 access）且已过期 → 友好错误
                 return Err(FetchError::auth(

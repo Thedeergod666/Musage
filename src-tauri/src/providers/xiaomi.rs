@@ -318,16 +318,26 @@ pub(crate) enum AuthStrategy {
 
 /// BUG-003 fix (2026-07-29 审查): 判断 HTTP 401 body 是否是 HTML 错误页
 /// (CDN/origin outage 而非真实 auth 失败)。仅当 body 明显是 HTML
-/// (DOCTYPE / `<html>` + error 关键字) 时才归 ServerError,其他所有情况
-/// (空 / 中文 / 短 JSON / 普通 text) 一律归 AuthFailed。
+/// (DOCTYPE / `<html>`) **且带错误页关键字** 时才归 ServerError,其他所有情况
+/// (空 / 中文 / 短 JSON / 普通 text / 无 error 关键字的 HTML) 一律归 AuthFailed。
+///
+/// P2 audit fix (2026-08-13): 之前只要 body 是 HTML 就判 server 错 ——
+/// 浏览器会话网关在 cookie 过期时返回的 SPA 外壳/登录页也是 HTML,
+/// 被错归 ServerError, 用户看不到"重新登录"引导。收紧为 HTML + error 关键字。
 ///
 /// 返回 true 表示"这是 HTML 错误页,401 应该是 server 错",false 表示
 /// "401 是真 auth 失败,引导用户重新登录"。
 pub(crate) fn is_html_error_page(body: &str) -> bool {
     let body_lc = body.to_lowercase();
-    body_lc.starts_with("<!doctype")
+    let is_html = body_lc.starts_with("<!doctype")
         || body_lc.starts_with("<html")
-        || (body_lc.contains("<html") && body_lc.contains("error"))
+        || body_lc.contains("<html");
+    is_html
+        && (body_lc.contains("error")
+            || body_lc.contains("unavailable")
+            || body_lc.contains("outage")
+            || body_lc.contains("<title>50")
+            || body_lc.contains("temporarily"))
 }
 
 pub(crate) fn decide_auth_strategy(creds: &Credentials) -> AuthStrategy {
@@ -1072,10 +1082,19 @@ mod tests {
 
     #[test]
     fn is_html_error_page_basic_html() {
+        // HTML + error 关键字 → CDN/origin 错误页 (server 错)
         assert!(is_html_error_page(
-            "<!DOCTYPE html><html><body>403</body></html>"
+            "<!DOCTYPE html><html><body>error 403</body></html>"
         ));
         assert!(is_html_error_page("<html><body>error</body></html>"));
+        // P2 audit fix: 无 error 关键字的 HTML (SPA 外壳/登录页) 不再算错误页,
+        // 401 按真 auth 失败引导重新登录
+        assert!(!is_html_error_page(
+            "<!DOCTYPE html><html><head><title>登录</title></head><body><div id=\"app\"></div></body></html>"
+        ));
+        assert!(!is_html_error_page(
+            "<html><head><title>Sign in</title></head><body></body></html>"
+        ));
     }
 
     #[test]
@@ -1104,8 +1123,14 @@ mod tests {
     #[test]
     fn is_html_error_page_handles_doctype_variants() {
         // DOCTYPE 大小写不敏感 (HTML5 标准是小写,但实际 server 常返大写)
-        assert!(is_html_error_page("<!DOCTYPE html><body>...</body>"));
-        assert!(is_html_error_page("<!doctype html><body>...</body>"));
+        // P2 audit fix: 需带错误页关键字 (CDN outage 页的常见形态)
+        assert!(is_html_error_page(
+            "<!DOCTYPE html><body>502 Bad Gateway error</body>"
+        ));
+        assert!(is_html_error_page(
+            "<!doctype html><body>Service Temporarily Unavailable</body>"
+        ));
+        assert!(!is_html_error_page("<!DOCTYPE html><body>...</body>"));
     }
 
     #[test]

@@ -259,12 +259,21 @@ async fn do_fetch(
     // 169.254.169.254 是 AWS/GCP/Azure 元数据端点,可泄露实例凭据。
     // 127.x / ::1 是本机,可访问本地管理接口。
     // 不拦 192.168.x / 10.x / 172.16-31.x —— 用户可能有合法的自建中转站。
-    if let Some(host) = super::extract_host(&url) {
-        if super::is_ssrf_blocked(&host) {
-            return Err(FetchError::auth(
-                t!("error.common.ssrf_blocked", host = host.as_str()).into_owned(),
-            ));
-        }
+    // P2 audit fix (2026-08-13): 优先用 URL 解析器做规范化 SSRF 校验
+    // (WHATWG 归一化十进制/十六进制/八进制 IPv4 + localhost 尾点),
+    // 解析失败 (极脏 URL) 才回退 extract_host 字符串路径。
+    let blocked = reqwest::Url::parse(&url)
+        .map(|u| super::url_is_ssrf_blocked(&u))
+        .unwrap_or_else(|_| {
+            super::extract_host(&url)
+                .map(|h| super::is_ssrf_blocked(&h))
+                .unwrap_or(false)
+        });
+    if blocked {
+        let host = super::extract_host(&url).unwrap_or_else(|| url.clone());
+        return Err(FetchError::auth(
+            t!("error.common.ssrf_blocked", host = host.as_str()).into_owned(),
+        ));
     }
 
     let client = shared_client();

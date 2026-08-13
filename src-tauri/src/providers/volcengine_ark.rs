@@ -361,6 +361,30 @@ async fn do_fetch(
 fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
 
+    // P2 audit fix (2026-08-13): 火山 OpenAPI 的业务错误常放在顶层
+    // ResponseMetadata.Error (此时没有 Result 节点)。之前先查 Result →
+    // 真实 Code/Message 被"缺 Result 字段"的通用 Parse 错误吞掉, 用户
+    // 看不到权限/参数错误原因。先查这里。
+    if let Some(err) = raw
+        .get("ResponseMetadata")
+        .and_then(|m| m.get("Error"))
+    {
+        let code = err.get("Code").and_then(|v| v.as_str()).unwrap_or("");
+        let msg = err
+            .get("Message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        return Err(FetchError::server(
+            t!(
+                "error.common.business_code",
+                provider = "Volcengine Ark",
+                code = 0,
+                msg = format!("{code}: {msg}")
+            )
+            .into_owned(),
+        ));
+    }
+
     let result = raw.get("Result").ok_or_else(|| {
         FetchError::parse(
             t!(
@@ -373,7 +397,11 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
     })?;
 
     // 业务级失败检查
-    if let Some(code) = result.get("Code").and_then(|v| v.as_str()) {
+    // P3 audit fix (2026-08-13): Code 兼容数字形式 (0/1), 不只 as_str。
+    if let Some(code) = result
+        .get("Code")
+        .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+    {
         if code != "Success" {
             let msg = result.get("Message").and_then(|v| v.as_str()).unwrap_or("");
             return Err(FetchError::server(

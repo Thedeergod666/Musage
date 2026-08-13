@@ -183,6 +183,21 @@ fn is_jwt_like(s: &str) -> bool {
         && s.matches('.').count() >= 2
 }
 
+/// P2 audit fix (2026-08-13): is_jwt_like 只查形态不查 exp —— SPA 在
+/// bootstrap 时从 localStorage 恢复的**已过期**缓存 token 会被当成新登录
+/// 存下, 用户看到"登录成功"但浮窗立刻 401。对齐 kimi_login::is_fresh_token
+/// / stepfun 的 freshness 门禁:
+/// - 可解出 exp 且已过期 (留 60s skew) → 拒绝, 继续轮询等新 token
+/// - 解不出 exp (非 JWT / 格式变化) → 放行, 交给服务端校验 (不卡死登录)
+/// combined token (`<access>...<refresh>`) 只检查 access 半段。
+fn is_fresh_access(token: &str) -> bool {
+    let access = token.split("...").next().unwrap_or(token);
+    match crate::kimi_desktop::jwt_exp_seconds_ago(access) {
+        Some(secs_ago) => secs_ago + 60 < 0,
+        None => true,
+    }
+}
+
 /// 注入页面的 init script：
 /// - 把 cookie / storage 读取锁在受信 host（挡第三方 tracker 偷 JWT）
 /// - **打开即清理**：删 localStorage 里上一次残留的 auth state + 清旧中转
@@ -515,16 +530,18 @@ async fn poll_token_from_cookie(
         if let Some(tok) = cookies.iter().find(|c| c.name() == COOKIE_NAME) {
             // cookie value 可能带引号（macOS WKWebView 习惯），剥掉
             let raw = tok.value().trim_matches('"');
-            if is_jwt_like(raw) {
+            // P2 audit fix: 加 exp 新鲜度门禁 (is_fresh_access) —— 形态合法
+            // 但已过期的缓存 token 不保存, 继续等用户真登录
+            if is_jwt_like(raw) && is_fresh_access(raw) {
                 return match save_token(raw) {
                     Ok(len) => PollOutcome::Saved(len),
                     Err(e) => PollOutcome::Failed(e),
                 };
             }
-            // cookie 在但不是 JWT（空 / 脏字符）—— 继续等
+            // cookie 在但不是 JWT（空 / 脏字符 / 已过期缓存）—— 继续等
             tracing::debug!(
                 len = raw.len(),
-                "MUSAGE_TOKEN cookie 存在但形态不合法，继续轮询"
+                "MUSAGE_TOKEN cookie 存在但形态不合法或已过期，继续轮询"
             );
         }
         // 没有 MUSAGE_TOKEN cookie = 用户还没登录或 interval 还没写 —— 继续等

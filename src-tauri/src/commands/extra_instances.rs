@@ -422,6 +422,7 @@ pub async fn delete_extra_instance(
     // 让它继续指向有凭据的旧 key(而非指向不存在的新 key)。
     let provider_id;
     let target_api_key_ref;
+    let target_ref_now_used;
     let extras_snapshot: Vec<ExtraInstance>;
     {
         let mut extras = state.extra_instances.write().await;
@@ -531,7 +532,7 @@ pub async fn delete_extra_instance(
         // 误删刚写进来的 d#3 凭据。 修复: 删前确认 compact 之后 target_api_key_ref
         // 是否已被其他 instance 占用, 是则跳过删除 (该 key 已被迁移覆盖,
         // 不能再清; 凭据所有权转给 compacted instance)。
-        let target_ref_now_used = extras.iter().any(|e| e.api_key_ref == target_api_key_ref);
+        target_ref_now_used = extras.iter().any(|e| e.api_key_ref == target_api_key_ref);
         if !target_ref_now_used {
             delete_credential_for_id(&target_api_key_ref).ok();
         } else {
@@ -566,6 +567,29 @@ pub async fn delete_extra_instance(
     }
 
     let _ = app.emit("musage://config-changed", ());
+    // P2 audit fix (2026-08-13): 之前删完只 emit config-changed —— 浮窗
+    // snapshot 里残留已删实例的最后一张卡片 (下次 refresh 前一直显示),
+    // cfg.providers 里的 enabled 条目也残留。同步清理。
+    // compact 复用了该 ref 时不删 (该键已属于迁移过来的实例, 其卡片由
+    // 后续 fetch 刷新)。
+    if !target_ref_now_used {
+        {
+            let mut snap = state.snapshot.write().await;
+            let before = snap.providers.len();
+            snap.providers.retain(|p| crate::commands::snapshot_key(p) != target_api_key_ref);
+            if snap.providers.len() != before {
+                let s = snap.clone();
+                drop(snap);
+                let _ = app.emit("musage://snapshot", &s);
+            }
+        }
+        {
+            let mut cfg = state.config.write().await;
+            if cfg.providers.remove(&target_api_key_ref).is_some() {
+                let _ = cfg.save();
+            }
+        }
+    }
     // **B-NEW-6（2026-06-19 audit 同款）**：删 source 后不要 refresh_single_inner。
     Ok(())
 }

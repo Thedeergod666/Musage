@@ -474,7 +474,11 @@ function render(snap: QuotaSnapshot) {
 /// 按 RenderPrefs 过滤 / 改写 rows（影响渲染前的数据，不动后端）
 function rowsForRender(p: ProviderSnapshot): QuotaRow[] {
   const id = p.unique_id ?? p.source_id ?? p.provider;
-  if (id === "tavily" && renderPrefs.tavilyConciseMode) {
+  // P2 audit fix (2026-08-13): 副本的 unique_id 带 #N 后缀 ("zenmux#2"),
+  // 直接 === "zenmux" 永远不中 → 副本不享受 PAYG/concise 处理。跟
+  // updateCard 的 baseId 同款剥离 (zhipu 区域路由的既有做法)。
+  const baseId = id.replace(/#\d+$/, "");
+  if (baseId === "tavily" && renderPrefs.tavilyConciseMode) {
     // 简洁模式：只保留主指标行（"209/1000 credits" 那条），隐藏 5 个
     // endpoint 细分行（search/extract/crawl/map/research）。
     // 进度条保留在 rowLabel 下方，跟 MiniMax 5h/周 一致。
@@ -485,7 +489,7 @@ function rowsForRender(p: ProviderSnapshot): QuotaRow[] {
     // 导致浮窗空卡片。
     return p.rows.length > 0 ? [p.rows[0]] : [];
   }
-  if (id === "zenmux" && renderPrefs.zenmuxPaygConciseMode) {
+  if (baseId === "zenmux" && renderPrefs.zenmuxPaygConciseMode) {
     // ZenMux PAYG 简洁模式：只保留余额行，隐藏「充值 / 奖励」细分。
     // 检测：PAYG 模式第一行 remaining 字段非空且 utilization 为空；
     // subscription 模式第一行 utilization 非空（不受此 toggle 影响）。
@@ -861,7 +865,8 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
   // ZenMux PAYG 模式：第 1 行有 remaining 但无 utilization 时 → 加 class
   // 让 CSS 把所有行 (含充值/奖励) 统一成余额样式（17px、白色、hover 不变色）。
   // subscription 模式第 1 行有 utilization → 不加 class，保留 MiniMax-style。
-  if (id === "zenmux" && p.success) {
+  // P2 audit fix: 副本 (zenmux#2) 用 baseId 匹配 (同 rowsForRender)。
+  if (baseId === "zenmux" && p.success) {
     const isPayg = p.rows[0]?.remaining != null && p.rows[0]?.utilization == null;
     card.classList.toggle("zenmux-payg", isPayg);
   } else {

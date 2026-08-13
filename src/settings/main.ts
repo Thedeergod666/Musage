@@ -60,8 +60,15 @@ async function initI18n() {
     applyDataI18n();
     // region section 的 radio title / section title / apply 按钮全走 t() 烘焙，
     // 不是 data-i18n 静态元素，必须整个 section 重渲。
-    const regionContainer = document.getElementById("section-region");
-    if (regionContainer) void renderRegionSection(regionContainer);
+    // P2 audit fix (2026-08-13): 之前查 #section-region 但实际渲染 id 是
+    // #region-section → getElementById 恒 null, 整个重渲是死代码, 切语言后
+    // 向导停在旧语言; 且直接把旧 section 当 container 传会把新 section
+    // 嵌套进旧 section。改为移除旧节点后在父容器里重渲。
+    const existing = document.getElementById("region-section");
+    if (existing?.parentElement) {
+      existing.remove();
+      void renderRegionSection(existing.parentElement);
+    }
   });
 }
 
@@ -211,7 +218,11 @@ async function init() {
       } catch (e) {
         console.warn("[settings] config-changed 刷新失败", e);
       }
-    }).then((fn) => (unlistenCfg = fn));
+    })
+      .then((fn) => (unlistenCfg = fn))
+      // P3 audit fix (2026-08-13): listen() 自身 reject 时避免未处理
+      // rejection (浮窗侧 trackUnlisten 有 catch, settings 侧补齐)
+      .catch((e) => console.warn("[settings] config-changed 订阅失败", e));
     window.addEventListener("beforeunload", () => {
       if (unlistenCfg) unlistenCfg();
     });

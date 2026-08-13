@@ -1051,10 +1051,16 @@ export function computeSameSectionMove(args: {
   const srcDomIdx = dragSrcIdx >= boundary ? dragSrcIdx + 1 : dragSrcIdx;
   let refIdx: number;
   if (orderIdx >= boundary) {
-    // src + target 都在 disabled 段: refIdx 恒为 orderIdx + 2
-    // (mousedown-after DOM 中, target 后一位 logical = orderIdx + 1, DOM 映射
-    //  = (orderIdx + 1) + 1 = orderIdx + 2). 拖向上 / 拖向下对称.
-    refIdx = orderIdx + 2;
+    // src + target 都在 disabled 段 (mousedown-after DOM 中, target 后一位
+    // logical = orderIdx + 1, DOM 映射 = (orderIdx + 1) + 1 = orderIdx + 2):
+    //   拖向下 (orderIdx > dragSrcIdx): ref = target 后一位 → orderIdx + 2
+    //     → insertBefore 把 src 插到 target 之后
+    //   拖向上 (orderIdx < dragSrcIdx): ref = target 自身 → orderIdx + 1
+    //     → insertBefore 把 src 插到 target 之前
+    // P2 audit fix (2026-08-13): 之前向上拖也恒用 orderIdx + 2 —— 一格
+    // 上移时 ref 指向 src 自身 (DOM no-op), 多格上移时 ref 指向 target
+    // 后一位 (落位比 drop 点低一格), 与已提交的顺序错位闪烁。
+    refIdx = orderIdx > dragSrcIdx ? orderIdx + 2 : orderIdx + 1;
   } else {
     // target 在 enabled 段:
     //   拖向下 (orderIdx > dragSrcIdx): ref = target 后一位 logical = orderIdx + 1

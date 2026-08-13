@@ -235,9 +235,11 @@ describe("computeSameSectionMove", () => {
   it("disabled 段内往上拖一格：dragSrcIdx=8 (Novita), orderIdx=7 (Step), boundary=6", () => {
     // src = Novita, 目标 = Step 位置
     //   srcDomIdx = 8+1 = 9
-    //   refIdx = orderIdx + 2 = 9 (Step in mousedown-after)
+    //   P2 audit fix: refIdx = orderIdx + 1 = 8 (Step 自身) —— 插入 Step
+    //   之前。旧值 orderIdx + 2 = 9 指向 src 自身 → insertBefore no-op,
+    //   DOM 不动但顺序已提交。
     const r = computeSameSectionMove({ dragSrcIdx: 8, orderIdx: 7, boundary: 6 });
-    expect(r).toEqual({ srcDomIdx: 9, refDomIdx: 9, shouldMove: true });
+    expect(r).toEqual({ srcDomIdx: 9, refDomIdx: 8, shouldMove: true });
   });
 
   it("disabled 段同位置：dragSrcIdx=7, orderIdx=7, boundary=6 → no-op", () => {
@@ -256,8 +258,10 @@ describe("computeSameSectionMove", () => {
   it("disabled 段拖到最首：dragSrcIdx=10 (Claude), orderIdx=6 (Kimi), boundary=6", () => {
     // src = Claude, 目标 = Kimi 位置 (disabled 段首位)
     //   srcDomIdx = 10+1 = 11
-    //   refIdx = orderIdx + 2 = 8 (Kimi in mousedown-after)
+    //   P2 audit fix: refIdx = orderIdx + 1 = 7 (Kimi 自身) —— 插入 Kimi
+    //   之前, 落位在 disabled 段首位。旧值 8 (Step) 会把 Claude 插到
+    //   Kimi 之后, 落位比 drop 点低一格。
     const r = computeSameSectionMove({ dragSrcIdx: 10, orderIdx: 6, boundary: 6 });
-    expect(r).toEqual({ srcDomIdx: 11, refDomIdx: 8, shouldMove: true });
+    expect(r).toEqual({ srcDomIdx: 11, refDomIdx: 7, shouldMove: true });
   });
 });

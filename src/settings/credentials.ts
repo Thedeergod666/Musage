@@ -646,7 +646,16 @@ export function cookieLabelText(id: string): string {
 // ── 统一 id-based 凭据操作（动态 panel 按钮事件委托走这里）──
 
 export async function loadCredentialStatus(id: string) {
-  const has = await hasSourceCredential(id);
+  // P2 audit fix (2026-08-13): 之前 hasSourceCredential 单条 reject 会炸掉
+  // loadAllCredentialStatus 的 Promise.all → settings init() 整个中断,
+  // config-changed 订阅 / 日志 / 显示模式等后续初始化全部不跑, 面板实时
+  // 同步永久失效。单条失败按"未配置"兜底, 不拖垮整批。
+  let has = false;
+  try {
+    has = await hasSourceCredential(id);
+  } catch (e) {
+    console.warn(`[settings] loadCredentialStatus(${id}) 失败, 按未配置处理`, e);
+  }
   const text = has
     ? t("credentials.cookie_status_saved")
     : t("credentials.cookie_status_unset");

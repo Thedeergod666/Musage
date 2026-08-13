@@ -439,11 +439,17 @@ fn classify_zhipu_limits(data: &Value) -> (Option<(f64, Option<i64>)>, Option<(f
             }
             // 2026-08-03 audit (Raman P2): 走共享 parse::num_f64 拿 NaN/Inf
             // 过滤 + 字符串数字支持,再 clamp 到 [0.0, 100.0]
-            let percentage = item
+            // P3 audit fix (2026-08-13): 之前缺 percentage 字段 unwrap_or(0.0)
+            // 渲染假 0% 行 (新积分套餐 schema 可能带绝对额度字段不带百分比)。
+            // 缺字段直接跳过该条, 不污染 five_h/weekly 槽。
+            let percentage = match item
                 .get("percentage")
                 .and_then(|v| super::parse::num_f64(v))
                 .map(|p| p.clamp(0.0, 100.0))
-                .unwrap_or(0.0);
+            {
+                Some(p) => p,
+                None => continue,
+            };
             let reset_ms = item
                 .get("nextResetTime")
                 .and_then(|v| v.as_i64())

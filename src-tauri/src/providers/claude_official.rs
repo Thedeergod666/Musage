@@ -320,7 +320,10 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
 /// `kind` 由调用方显式传入 —— M2 fix: 让下游(tray/浮窗 rowKey)按枚举
 /// 匹配 row,不被 locale 字符串绑定。
 fn build_tier_row(label: &str, kind: RowKind, tier: &Value) -> Option<QuotaRow> {
-    let raw_util = tier.get("utilization").and_then(|v| v.as_f64())?;
+    // P3 audit fix (2026-08-13): 之前 as_f64 只吃 JSON 数字, 字符串形式
+    // ("72") 直接 ? drop 整行 (两个 tier 都字符串 -> 整卡报"缺字段")。
+    // 用共享 num_f64 (字符串/整数/浮点都吃), 跟 kimi/zhipu 同款。
+    let raw_util = super::parse::num_f64(tier.get("utilization")?)?;
     // 回归防御（2026-07-17）：达上限时 utilization 可能报 100.x（overage）。
     // 旧逻辑 `!(0.0..=100.0).contains` 直接 drop → 5h/周达上限后行消失
     // （跟 kimi / MiniMax 同源 bug）。改为 clamp：负值视为无效 drop（脏数据），

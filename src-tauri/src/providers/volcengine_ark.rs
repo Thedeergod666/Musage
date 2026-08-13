@@ -465,6 +465,15 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
             // 同款保护,这块 2026-07-30 audit 漏了 volcengine_ark,本次补回。
             // 否则 ts=0 → from_timestamp_millis(0) 返 epoch 1970-01-01,
             // ts=-1 → ts*1000 负数溢出 i64 / 浮窗显示诡异过去重置。
+            // P3 audit fix (2026-08-13): 补字符串数字解析 -- sibling API
+            // (stepfun/kimi) 实测序列化时间戳为字符串, 之前只吃数字 ->
+            // 字符串 ResetTimestamp 永远解析不出 reset 倒计时。
+            .or_else(|| {
+                entry
+                    .get("ResetTimestamp")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| s.trim().parse::<i64>().ok())
+            })
             .filter(|ts| *ts > 0)
             .map(|ts| {
                 if ts < 1_000_000_000_000 {

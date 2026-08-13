@@ -880,14 +880,18 @@ fn credit_plan_reset(data: &Value) -> (Option<i64>, bool) {
 fn credit_plan_left_rate(data: &Value) -> Option<f64> {
     let credit = data.get("plan_credit_rate_limit")?;
 
+    // P3 audit fix (2026-08-13): 统一 clamp 到 [0,1] -- 之前 buckets 加权
+    // sum_r/sum_t 可能 > 1.0 (credit_residual > credit_total, 充值瞬态 /
+    // 边界), 调用方 (0..=1).contains 检查会 drop 整行 -> rows.is_empty()
+    // -> 整卡报错。clamp 后调用方永不 drop (跟 minimax/volcengine 一致)。
     if let Some(v) = credit
         .get("subscription_credit_left_rate")
         .and_then(flex_f64)
     {
-        return Some(v);
+        return Some(v.clamp(0.0, 1.0));
     }
     if let Some(v) = credit.get("topup_credit_left_rate").and_then(flex_f64) {
-        return Some(v);
+        return Some(v.clamp(0.0, 1.0));
     }
     // 兜底：credit_buckets 加权平均 (residual / total)
     if let Some(arr) = credit.get("credit_buckets").and_then(|x| x.as_array()) {
@@ -903,7 +907,7 @@ fn credit_plan_left_rate(data: &Value) -> Option<f64> {
                 }
             }
             if sum_t > 0.0 {
-                return Some(sum_r / sum_t);
+                return Some((sum_r / sum_t).clamp(0.0, 1.0));
             }
         }
     }

@@ -668,8 +668,17 @@ pub fn parse_tier_count(
 fn smart_reset_to_ms(raw: i64) -> i64 {
     const EPOCH_MS_MIN: i64 = 1_000_000_000_000; // 2001-09-09
     const EPOCH_MS_MAX: i64 = 4_102_444_800_000; // 2100-01-01
+    // P3 audit fix (2026-08-13): 之前只认 epoch ms (>=1e12), epoch **秒**
+    // (1.7e9, 10 位, 2026 年范围) 落到 duration 分支 -> now + raw*1000 ≈
+    // 56 年后, 倒计时荒谬。补 epoch 秒分支 (1e9..4.1e9 = 2001..2100)。
+    // [4.1e9, 1e12) 区间: 既不是合法 epoch 秒 (2100 后), 当 duration 也
+    // 荒谬 (>31 年), 维持原 duration 行为兜底。
+    const EPOCH_S_MIN: i64 = 1_000_000_000; // 2001-09-09 (s)
+    const EPOCH_S_MAX: i64 = 4_102_444_800; // 2100-01-01 (s)
     if (EPOCH_MS_MIN..=EPOCH_MS_MAX).contains(&raw) {
         raw
+    } else if (EPOCH_S_MIN..=EPOCH_S_MAX).contains(&raw) {
+        raw * 1000
     } else if raw < 0 {
         // D-011: 负 duration 视作已过期 (clamp 到 0)
         chrono::Utc::now().timestamp_millis()

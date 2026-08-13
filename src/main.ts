@@ -1111,7 +1111,10 @@ function buildRowSkeleton(r: QuotaRow): HTMLElement {
 function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
   // Phase 1: credits 行（MiniMax 风格：大 % + used/total 副文字 + 进度条 + row-foot）
   if (r.used != null && r.total != null) {
-    const util = r.utilization ?? (r.used / r.total) * 100;
+    // P3 audit fix (2026-08-13): total=0 时 (used/total)*100 = Infinity ->
+    // formatPct(Math.round(Infinity)) 渲染 "Infinity%"。utilization 优先,
+    // 否则 total>0 才算比例, total=0 兜底 0 (无限额度按未用)。
+    const util = r.utilization ?? (r.total > 0 ? (r.used / r.total) * 100 : 0);
     const cls = colorClass(util);
     // 左侧标签：
     // - 滚动窗口行（kind = five_hour / weekly，如 Kimi / MiniMax / GLM）→
@@ -1330,7 +1333,9 @@ function dotClass(p: ProviderSnapshot): string {
 
 function barWidth(util: number | null | undefined): number {
   if (util == null) return 0;
-  return Math.min(util, 100);
+  // P3 audit fix (2026-08-13): 负 utilization (数据异常) 会产出负 CSS width,
+  // clamp 到 [0,100] (跟 clampPct 同款)。
+  return Math.min(Math.max(util, 0), 100);
 }
 
 /// Kimi 总套餐堆叠条分段宽用的 [0,100] clamp（NaN / 负值 / 超界防御，

@@ -592,7 +592,13 @@ impl Xiaomimimo {
         {
             Ok(r) if r.status().is_success() => json_body_limited(r)
                 .await
-                .unwrap_or(serde_json::Value::Null),
+                // P3 audit fix (2026-08-13): 之前 unwrap_or(Null) 静默吞解析错误
+                // (bearer 路径有 warn, cookie 路径没有) -> 用户无声丢失
+                // resets_at/plan 过期信息, 难区分 schema 漂移 vs 暂态。补 warn。
+                .unwrap_or_else(|e| {
+                    tracing::warn!(error = %e, "xiaomi detail 端点解析失败, 丢失 resets_at/plan 过期信息");
+                    serde_json::Value::Null
+                }),
             _ => serde_json::Value::Null,
         };
 

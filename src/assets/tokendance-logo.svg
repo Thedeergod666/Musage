@@ -1,7 +1,15 @@
 <svg width="160" height="160" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <!-- 占位 logo:深色圆角底 + 白色 "T" 字 (TokenDance 首字母) -->
-  <!-- 配色 #1A1A2E 跟 stepfun/siliconflow/volcengine-ark 同款深 slate 背景 -->
+  <!-- 官方真 mark（词元跳动 favicon: tokendance.space/TokenDance品牌图标-单logo.svg）
+       原 viewBox 0 0 480 480，纯黑底 + 白色"TD"连字 mark（"T"竖横 + "D"弧 + 两道斜向"dance"短笔）。
+       改 #1A1A2E 深 slate 跟 stepfun / siliconflow / volcengine-ark / claude 同款（跟纯黑的区别是
+       提一点点蓝紫调，浮窗卡片底色 #0F0F14 上不会跟纯黑"糊"一块儿，肉眼区分度高）。
+       整体 scale 0.075 = 36/480 缩放；stroke-width 由 transform 自动按比例缩放到位。 -->
   <rect width="36" height="36" rx="7" fill="#1A1A2E"/>
-  <!-- T 字主体:横 (M8 10 H28) + 竖 (M18 10 V26) -->
-  <path d="M8 10 H28 M18 10 V26" stroke="#FFFFFF" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+  <g transform="scale(0.075)" fill="#FFFFFF">
+    <!-- TD 连字主体 (M159 162 → outer trace → inner counter) -->
+    <path d="M159 162H52.789C51.4198 162 50.4555 160.655 50.8947 159.358L66.8591 112.225C69.3344 104.918 76.192 100 83.9077 100H321.388C324.459 100 327.524 100.21 330.551 100.726C336.545 101.747 347.179 103.791 354.5 106.5C395.04 121.504 418.5 160 426 191C433.5 222 432 274.5 390.5 327C349 379.5 284 380.5 282 380.5H175.767C174.399 380.5 173.451 379.159 173.886 377.863L192.567 322.275C193.123 320.623 194.677 319.52 196.42 319.545C207.729 319.703 230.558 319.865 251 319.5C279 319 286 318.5 310 305.5C334 292.5 360.5 252.5 352 209.5C345.2 175.1 315.5 163.5 301.5 162H228.992C221.236 162 214.351 166.969 211.908 174.331L147.592 368.169C145.149 375.531 138.264 380.5 130.508 380.5H73.7532C72.3943 380.5 71.4179 379.214 71.8379 377.922C89.6259 323.19 124.669 214.961 129 200C133.4 184.8 150.833 168.333 159 162Z"/>
+    <!-- D 内部两条斜向 dance 短笔,呼应"词元跳动" -->
+    <path d="M233 264L248 216" stroke="#FFFFFF" stroke-width="25" stroke-linecap="round"/>
+    <path d="M280 264L295 216" stroke="#FFFFFF" stroke-width="25" stroke-linecap="round"/>
+  </g>
 </svg>

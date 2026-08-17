@@ -62,7 +62,7 @@ function buildProviderMeta(): Record<string, { name: string; logo: string; accen
     anysearch: { name: t("provider.anysearch.name"), logo: anysearchLogo, accent: "#2563eb" },
     // 火山方舟 Volcengine Ark：橙底白火山 mark（自绘，见 assets/volcengine-ark-logo.svg）
     volcengine_ark: { name: t("provider.volcengine_ark.name"), logo: volcengineArkLogo, accent: "#ff6633" },
-    // TokenDance (词元跳动):深 slate 底 + 白色 "T" 字（占位 logo,见 assets/tokendance-logo.svg）
+    // TokenDance (词元跳动):深 slate 底 + 白色"TD"连字 mark(官方 favicon,见 assets/tokendance-logo.svg)
     tokendance: { name: t("provider.tokendance.name"), logo: tokendanceLogo, accent: "#8b5cf6" },
   };
 }

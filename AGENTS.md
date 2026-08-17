@@ -151,7 +151,7 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 
 ✅ 项目骨架完整
 ✅ 14 个 provider 全实装（13 内置 + custom），全部加 `instance_index` + `unique_id()` + `with_instance_index()`
-   - **托盘数据源多 provider 可切换 + 余额显示 + 颜色自定义 + 右键快捷切换（v0.2.7，方案 A）**: 内置 TokenDance 余额 provider (commit `tokendance`, 2026-08-14) —— 13 个内置 + custom 实装完毕, Bearer 鉴权 /portal/api/v1/user/balance 端点, 仿 deepseek / siliconflow 纯余额模式; 设置面板「余额查询」分组 + 托盘数据源下拉同步新增; logo 占位 SVG (`assets/tokendance-logo.svg`) 后续按官方品牌替换
+   - **托盘数据源多 provider 可切换 + 余额显示 + 颜色自定义 + 右键快捷切换（v0.2.7，方案 A）**: 内置 TokenDance 余额 provider (commit `tokendance`, 2026-08-14) —— 13 个内置 + custom 实装完毕, Bearer 鉴权 /portal/api/v1/user/balance 端点, 仿 deepseek / siliconflow 纯余额模式; 设置面板「余额查询」分组 + 托盘数据源下拉同步新增; logo 用官方 favicon 的"TD"连字 mark(`assets/tokendance-logo.svg`, 36×36 viewBox + #1A1A2E 底)
 ✅ 14 个 provider 全部支持**多实例**（`minimax#2` / `minimax#3` 共存）
 ✅ Rust 核心代码：main / lib / poller / poller_backoff / tray / config / commands / xiaomi_login / logstore（icon.rs 已并入 tray.rs，api.rs 已拆进 providers/）
 ✅ 前端：main.ts / settings.ts + settings/ 21 个子模块

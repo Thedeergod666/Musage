@@ -437,6 +437,7 @@ fn tray_source_label(id: &str) -> String {
         "openrouter" => "provider_name.openrouter",
         "siliconflow" => "provider_name.siliconflow",
         "zenmux" => "provider_name.zenmux",
+        "tokendance" => "provider_name.tokendance",
         _ => return id.to_string(),
     };
     t!(key).to_string()
@@ -479,6 +480,7 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         "openrouter",
         "siliconflow",
         "zenmux",
+        "tokendance",
     ];
     let source_items: Vec<MenuItem<tauri::Wry>> = source_opts
         .iter()

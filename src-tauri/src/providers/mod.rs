@@ -26,6 +26,7 @@ pub mod parse;
 pub mod siliconflow;
 pub mod stepfun;
 pub mod tavily;
+pub mod tokendance;
 pub mod volcengine_ark;
 pub mod xiaomi;
 pub mod zenmux;
@@ -751,6 +752,8 @@ pub fn builtin_sources() -> Vec<Box<dyn QuotaSource>> {
         Box::new(claude_official::ClaudeOfficialSource::default()),
         // v0.2.5: 火山方舟 Coding Plan —— 5h/周/月 三个窗口
         Box::new(volcengine_ark::VolcengineArkSource::default()),
+        // TokenDance (词元跳动) 余额 —— Bearer 模型 API Key 同款鉴权
+        Box::new(tokendance::TokendanceSource::default()),
     ]
 }
 
@@ -864,6 +867,7 @@ pub fn instantiate_builtin(provider_id: &str) -> Option<Box<dyn QuotaSource>> {
         "claude_official" => Some(Box::new(claude_official::ClaudeOfficialSource::default())),
         "anysearch" => Some(Box::new(anysearch::AnysearchSource::default())),
         "volcengine_ark" => Some(Box::new(volcengine_ark::VolcengineArkSource::default())),
+        "tokendance" => Some(Box::new(tokendance::TokendanceSource::default())),
         _ => None,
     }
 }
@@ -916,6 +920,9 @@ pub fn instantiate_builtin_with_index(
         )),
         "volcengine_ark" => Some(Box::new(
             volcengine_ark::VolcengineArkSource::default().with_instance_index(index),
+        )),
+        "tokendance" => Some(Box::new(
+            tokendance::TokendanceSource::default().with_instance_index(index),
         )),
         _ => None,
     }

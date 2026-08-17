@@ -8,8 +8,8 @@
 
 - 形态：**小悬浮窗 + 系统托盘**（始终置顶、可拖动、双行数据：5h 限额 / 周限额 + 重置时间）
 - 鉴权：仅需 API Key / Cookie（Bearer Token），不依赖浏览器 session
-- **13 个 provider 全实装**（12 内置 + custom），全部加 `instance_index` + `unique_id()` + `with_instance_index()`
-- **12 内置 provider + 任意 New API 中转站 (custom_<uuid>) + 同 provider 多实例副本**
+- **14 个 provider 全实装**（13 内置 + custom），全部加 `instance_index` + `unique_id()` + `with_instance_index()`
+- **13 内置 provider + 任意 New API 中转站 (custom_<uuid>) + 同 provider 多实例副本**
 - 关键 schema 见下方"关键 API"章节（2026-06-01 MiniMax 改 schema，v0.2.0 已实现兼容）
 
 ## 技术栈（已拍板）
@@ -26,7 +26,7 @@
 | 日志 | tracing + tracing-subscriber |
 | 自动启动 | tauri-plugin-autostart |
 | 前端类型 | `@types/node` 20.x（vite.config.ts 用 `node:url`） |
-| Providers | minimax / deepseek / xiaomimimo / tavily / zenmux / openrouter / kimi / zhipu / stepfun / siliconflow / claude_official / anysearch / **volcengine_ark** + 用户自定义 New API 中转站 (custom_<uuid>)（13 内置 + N 动态） |
+| Providers | minimax / deepseek / xiaomimimo / tavily / zenmux / openrouter / kimi / zhipu / stepfun / siliconflow / claude_official / anysearch / volcengine_ark / **tokendance** + 用户自定义 New API 中转站 (custom_<uuid>)（14 内置 + N 动态） |
 
 ## 环境与工具链
 
@@ -150,8 +150,9 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 ✅ v0.2.1 全部完成 + v0.2.2/v0.2.3/v0.2.4 增量（详见 CHANGELOG 对应段）
 
 ✅ 项目骨架完整
-✅ 13 个 provider 全实装（12 内置 + custom），全部加 `instance_index` + `unique_id()` + `with_instance_index()`
-✅ 13 个 provider 全部支持**多实例**（`minimax#2` / `minimax#3` 共存）
+✅ 14 个 provider 全实装（13 内置 + custom），全部加 `instance_index` + `unique_id()` + `with_instance_index()`
+   - **托盘数据源多 provider 可切换 + 余额显示 + 颜色自定义 + 右键快捷切换（v0.2.7，方案 A）**: 内置 TokenDance 余额 provider (commit `tokendance`, 2026-08-14) —— 13 个内置 + custom 实装完毕, Bearer 鉴权 /portal/api/v1/user/balance 端点, 仿 deepseek / siliconflow 纯余额模式; 设置面板「余额查询」分组 + 托盘数据源下拉同步新增; logo 占位 SVG (`assets/tokendance-logo.svg`) 后续按官方品牌替换
+✅ 14 个 provider 全部支持**多实例**（`minimax#2` / `minimax#3` 共存）
 ✅ Rust 核心代码：main / lib / poller / poller_backoff / tray / config / commands / xiaomi_login / logstore（icon.rs 已并入 tray.rs，api.rs 已拆进 providers/）
 ✅ 前端：main.ts / settings.ts + settings/ 21 个子模块
 ✅ 托盘图标动态绘制（颜色 + 百分比文字 + 多实例 `#N` 后缀）
@@ -186,7 +187,7 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 - 错误卡"忽略本次错误"按钮
 - Frontend 单元测试 4 核心函数（contentFingerprint / render / updateCard / autoResizeWindow）
 - ~~`http_status_to_error_kind` helper~~ → 已落地为 [`classify_http_status`](src-tauri/src/providers/mod.rs)（2026-07-02 audit L1 fix），kimi 先用；其余 provider 保留各自的具体 msg 短路，**全面推广留 v0.3**
-- `refresh_inner` 每次 `Box::new` 12 个 source 优化（按 Arc 缓存）
+- `refresh_inner` 每次 `Box::new` 13 个 source 优化（按 Arc 缓存）
 - Backoff 状态持久化到 disk
 - Per-provider poller task shutdown signal（App 退出时不泄漏）
 - `delete_extra_instance` v2（重命名 keys.json + spec）
@@ -315,7 +316,7 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 ```
 ~/Project/Musage/                  ← 当前在 macOS 上,Win 路径 D:\Codes\Musage\
 ├── AGENTS.md                 ← 本文件（项目 handoff 文档）
-├── README.md                 ← GitHub 访客入口,11 内置 + N 动态 + 多实例介绍
+├── README.md                 ← GitHub 访客入口,13 内置 + N 动态 + 多实例介绍
 ├── CHANGELOG.md              ← 版本变更日志
 ├── ROADMAP.md                ← 当前路线图
 ├── FUTURE.md                 ← 暂缓 / 砍掉的想法
@@ -332,7 +333,7 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 │   ├── settings.ts           ← 设置面板入口
 │   ├── assets.d.ts           ← *.png/svg/?url 模块声明
 │   ├── styles.css / tokens.css
-│   ├── assets/               ← provider logo 资源（11 内置 + 部分 SVG）
+│   ├── assets/               ← provider logo 资源（13 内置 + 部分 SVG）
 │   └── settings/             ← 设置面板 21 个子模块
 │       ├── main.ts / app.ts / config.ts / api.ts / types.ts / utils.ts
 │       ├── credentials.ts / providers.ts / floating.ts / order.ts
@@ -370,7 +371,7 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 │       │   └── i18n.rs           ← set_app_locale + locale 切换
 │       ├── config/            ← 持久化子模块
 │       │   └── extra_instances.rs ← ExtraInstance + load/save/compact_indexes (9 单测)
-│       ├── providers/         ← 12 provider (11 内置 + custom)
+│       ├── providers/         ← 14 provider (13 内置 + custom)
 │       │   ├── mod.rs             ← QuotaSource trait + builtin_sources 注册表
 │       │   ├── parse.rs           ← JSONPath + num_f64 helpers
 │       │   ├── custom.rs          ← CustomSource + CustomSourceSpec + ExtractSpec
@@ -472,7 +473,7 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 3. **错误卡"忽略本次错误"按钮**：P2-A-7 增量 2/3
 4. **Frontend 单元测试 4 核心函数**：contentFingerprint / render / updateCard / autoResizeWindow
 5. **~~`http_status_to_error_kind` helper~~ → 已落地为 `classify_http_status`**（[providers/mod.rs](src-tauri/src/providers/mod.rs)，2026-07-02 audit L1 fix；kimi 先用）：剩 10 个 provider 各自保留具体 msg 短路，全面推广留 v0.3
-6. **`refresh_inner` 每次 `Box::new` 12 个 source 优化**：按 `Arc<dyn QuotaSource>` 缓存避免每 tick 重建（参考 [memory/source-instance-rebuild-footgun](memory/source-instance-rebuild-footgun.md)）
+6. **`refresh_inner` 每次 `Box::new` 13 个 source 优化**：按 `Arc<dyn QuotaSource>` 缓存避免每 tick 重建（参考 [memory/source-instance-rebuild-footgun](memory/source-instance-rebuild-footgun.md)）
 7. **Backoff 状态持久化到 disk**：重启后 30min 退避归零是用户痛点
 8. **Per-provider poller task shutdown signal**：App 退出时不泄漏 task
 9. **`delete_extra_instance` v2**：改 instance_index 时同步重命名 keys.json 里的 key
@@ -511,10 +512,10 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 ## 关键文件链接（按重要性）
 
 - **核心 schema 解析**：`src-tauri/src/providers/minimax.rs`（兼容 2026-06-01 前后的两种 schema）
-- **Provider 实现**：`src-tauri/src/providers/{minimax,deepseek,xiaomi,tavily,zenmux,openrouter,kimi,zhipu,stepfun,siliconflow,claude_official,anysearch,volcengine_ark}.rs`（PR 1b + v0.2.5/v0.2.7：12 内置 + custom 全加 `instance_index` + `with_instance_index` + override `unique_id` / `display_name`）
+- **Provider 实现**：`src-tauri/src/providers/{minimax,deepseek,xiaomi,tavily,zenmux,openrouter,kimi,zhipu,stepfun,siliconflow,claude_official,anysearch,volcengine_ark,tokendance}.rs`（PR 1b + v0.2.5/v0.2.7：13 内置 + custom 全加 `instance_index` + `with_instance_index` + override `unique_id` / `display_name`）
 - **Extra instance 持久化**（PR 1b）：`src-tauri/src/config/extra_instances.rs`（`ExtraInstance` + `load` / `save` / `next_index_for` / `compact_indexes_for`，9 单测）
 - **Extra instance IPC**（PR 1b）：`src-tauri/src/commands/extra_instances.rs`（6 IPC + DTOs；DTO `#[serde(rename_all = "camelCase")]`）
-- **Provider 注册 + all_sources**：`src-tauri/src/providers/mod.rs`（`builtin_sources()` + `instantiate_builtin_with_index()` 11 provider 全实装）
+- **Provider 注册 + all_sources**：`src-tauri/src/providers/mod.rs`（`builtin_sources()` + `instantiate_builtin_with_index()` 13 provider 全实装）
 - **托盘 UI**：`src-tauri/src/tray.rs`（合并了原 icon.rs：动态图标 + 文字绘制 + 菜单 + tooltip；PR 3 待做：tooltip 多实例聚合）
 - **悬浮窗 UI**：`src/main.ts` + `src/styles.css`（PR 3 待做：`data-source-id` 改 `unique_id`）
 - **设置面板**：`src/settings/main.ts` + `settings.html`（PR 1b 后 21 个文件：`extra-instance-form.ts` 替 `custom-source-form.ts`）

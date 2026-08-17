@@ -576,7 +576,10 @@ async fn refresh_oasis_token(token: &str, unique_id: &str) -> Result<String, Fet
         .and_then(|raw| normalize_oasis_token(&raw).filter(|t| !t.is_empty()))
     {
         Some(latest) if latest.as_str() != token => {
-            tracing::info!(unique_id, "stepfun refresh: 锁内重读发现 token 已更新, 复用, 跳过 POST");
+            tracing::info!(
+                unique_id,
+                "stepfun refresh: 锁内重读发现 token 已更新, 复用, 跳过 POST"
+            );
             return Ok(latest);
         }
         _ => token,

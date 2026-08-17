@@ -5,9 +5,9 @@
 //
 // ## 分组定义
 //
-// - `token_plan`：Token Plan 套餐（5h/周百分比窗口）—— minimax / kimi / zhipu
-// - `balance`：余额查询（钱包数字）—— deepseek / siliconflow / stepfun / openrouter
-// - `official`：官方/特殊（Cookie 鉴权 or 第三方）—— tavily / zenmux / claude_official
+// - `token_plan`：Token Plan 套餐（5h/周百分比窗口）—— minimax / kimi / zhipu / volcengine_ark
+// - `balance`：余额查询（钱包数字）—— deepseek / siliconflow / stepfun / openrouter / tokendance
+// - `official`：官方/特殊（Cookie 鉴权 or 第三方）—— tavily / zenmux / claude_official / anysearch
 // - `xiaomi`：Xiaomi MiMo 单独一组（cookie 登录流程特殊）
 // - `custom`：用户自定义 New API（id 以 `custom_` 开头）
 // - `misc`：catch-all（不应该到这里，但留兜底）
@@ -44,7 +44,7 @@ export function buildGroupDefinitions(): Record<GroupKey, GroupDef> {
       title: t("groups.balance_title"),
       icon: "piggy-bank",
       predicate: (m) =>
-        ["deepseek", "siliconflow", "stepfun", "openrouter"].includes(m.id),
+        ["deepseek", "siliconflow", "stepfun", "openrouter", "tokendance"].includes(m.id),
     },
     official: {
       title: t("groups.official_title"),

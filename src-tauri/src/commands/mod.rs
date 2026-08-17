@@ -731,7 +731,10 @@ pub async fn save_config(
     // rust_i18n::set_locale 吃到未知 locale, 全部 t!() 回退原始键, 界面
     // 显示 key 名而不是文案。
     if !matches!(cfg.locale.as_str(), "zh-CN" | "en") {
-        return Err(format!("unsupported locale: {}（仅支持 zh-CN / en）", cfg.locale));
+        return Err(format!(
+            "unsupported locale: {}（仅支持 zh-CN / en）",
+            cfg.locale
+        ));
     }
     // L2 fix (2026-07-30 audit): 上限 1 天,挡住 webhook 入口塞 86400 * 365
     // 把轮询当 background daemon 跑的死循环。前端 settings panel 默认 60s。
@@ -1325,11 +1328,11 @@ pub async fn set_floating_pin_mode(
         if cfg.floating_pin_mode != parsed {
             cfg.floating_pin_mode = parsed;
             // P3 audit fix (2026-08-13): save 失败之前静默吞 -> 用户改了浮窗
-        // 位置/置顶模式但磁盘没更新, 下次启动回退, 无日志可查。补 warn
-        // (不返 Err -- IPC 已向前端返 Ok, 内存状态最新, 下次成功 save 覆盖)。
-        if let Err(e) = cfg.save() {
-            tracing::warn!(error = %e, "config save 失败 (内存状态已更新, 下次成功 save 会覆盖)");
-        }
+            // 位置/置顶模式但磁盘没更新, 下次启动回退, 无日志可查。补 warn
+            // (不返 Err -- IPC 已向前端返 Ok, 内存状态最新, 下次成功 save 覆盖)。
+            if let Err(e) = cfg.save() {
+                tracing::warn!(error = %e, "config save 失败 (内存状态已更新, 下次成功 save 会覆盖)");
+            }
         }
     }
     let _ = app.emit("musage://pin-mode-changed", &parsed);
@@ -1691,8 +1694,12 @@ pub async fn refresh_inner(
             }
             Err(_elapsed) => {
                 // P2 audit fix: 超时 provider 记错误卡, 不阻塞其余结果
-                let msg = t!("error.common.fetch_timeout", provider = id.as_str(), secs = 30)
-                    .into_owned();
+                let msg = t!(
+                    "error.common.fetch_timeout",
+                    provider = id.as_str(),
+                    secs = 30
+                )
+                .into_owned();
                 log_provider_error(app, &id, ErrorKind::Network, &msg);
                 let err_snap = ProviderSnapshot::empty_error(
                     &app.state::<AppState>(),

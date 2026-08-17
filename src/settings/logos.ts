@@ -24,6 +24,7 @@ import stepfunLogo from "../assets/stepfun-logo.svg";
 import siliconflowLogo from "../assets/siliconflow-logo.svg";
 import claudeLogo from "../assets/claude-logo.svg";
 import volcengineArkLogo from "../assets/volcengine-ark-logo.svg";
+import tokendanceLogo from "../assets/tokendance-logo.svg";
 
 export interface ProviderMeta {
   name: string;
@@ -73,6 +74,8 @@ export function buildProviderMeta(): Record<string, ProviderMeta> {
     anysearch: { name: t("provider.anysearch.name"), logo: anysearchLogo, accent: "#2563eb" },
     // 火山方舟 Volcengine Ark：橙底白火山 mark（自绘，见 assets/volcengine-ark-logo.svg）
     volcengine_ark: { name: t("provider.volcengine_ark.name"), logo: volcengineArkLogo, accent: "#ff6633" },
+    // TokenDance (词元跳动):深 slate 底 + 白色 "T" 字（占位 logo,见 assets/tokendance-logo.svg）
+    tokendance: { name: t("provider.tokendance.name"), logo: tokendanceLogo, accent: "#8b5cf6" },
   };
 }
 

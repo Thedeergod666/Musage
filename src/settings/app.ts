@@ -80,6 +80,7 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
     { value: "openrouter", label: t("settings.app.tray_source.options.openrouter") },
     { value: "siliconflow", label: t("settings.app.tray_source.options.siliconflow") },
     { value: "zenmux", label: t("settings.app.tray_source.options.zenmux") },
+    { value: "tokendance", label: t("settings.app.tray_source.options.tokendance") },
   ];
   const currentSource = cfg.tray_source ?? "minimax";
   const traySourceSelect = el("select", { id: "tray-source" }) as HTMLSelectElement;

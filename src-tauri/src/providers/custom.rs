@@ -372,19 +372,16 @@ fn parse_with_extract(
             // {success:false, message} 标记鉴权失败 (而非 401)。有些中转站
             // 还回显 stale/partial data, data.quota 解析成功但 key 已失效 ->
             // 浮窗显示假余额 (success=true)。先查 success/status_code 再提取。
-            let relay_ok = raw
-                .get("success")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(true);
+            let relay_ok = raw.get("success").and_then(|v| v.as_bool()).unwrap_or(true);
             let status_code = raw
                 .get("status_code")
-                .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok())))
+                .and_then(|v| {
+                    v.as_i64()
+                        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+                })
                 .unwrap_or(0);
             if !relay_ok || status_code != 0 {
-                let msg = raw
-                    .get("message")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
                 return Err(FetchError::auth(
                     t!("error.custom.newapi_relay_error", msg = msg).into_owned(),
                 ));

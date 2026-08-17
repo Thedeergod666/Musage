@@ -25,6 +25,7 @@ import siliconflowLogo from "./assets/siliconflow-logo.svg?url";
 import claudeLogo from "./assets/claude-logo.svg?url";
 import anysearchLogo from "./assets/anysearch-logo.svg?url";
 import volcengineArkLogo from "./assets/volcengine-ark-logo.svg?url";
+import tokendanceLogo from "./assets/tokendance-logo.svg?url";
 import "./styles.css";
 
 /// 静态映射：provider id → 官网 logo + 显示名 + accent 色
@@ -61,6 +62,8 @@ function buildProviderMeta(): Record<string, { name: string; logo: string; accen
     anysearch: { name: t("provider.anysearch.name"), logo: anysearchLogo, accent: "#2563eb" },
     // 火山方舟 Volcengine Ark：橙底白火山 mark（自绘，见 assets/volcengine-ark-logo.svg）
     volcengine_ark: { name: t("provider.volcengine_ark.name"), logo: volcengineArkLogo, accent: "#ff6633" },
+    // TokenDance (词元跳动):深 slate 底 + 白色 "T" 字（占位 logo,见 assets/tokendance-logo.svg）
+    tokendance: { name: t("provider.tokendance.name"), logo: tokendanceLogo, accent: "#8b5cf6" },
   };
 }
 

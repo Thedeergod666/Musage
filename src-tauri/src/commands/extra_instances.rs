@@ -326,9 +326,7 @@ pub async fn update_extra_instance(
         if let Some((old_ref, new_ref)) = &key_migration {
             if let Ok(Some(cred)) = load_credential_for_id(old_ref) {
                 if let Err(e) = save_credential_for_id(new_ref, &cred) {
-                    return Err(
-                        t!("commands.extra.save_key_failed", err = e.as_str()).into_owned()
-                    );
+                    return Err(t!("commands.extra.save_key_failed", err = e.as_str()).into_owned());
                 }
             }
         }
@@ -588,7 +586,8 @@ pub async fn delete_extra_instance(
         {
             let mut snap = state.snapshot.write().await;
             let before = snap.providers.len();
-            snap.providers.retain(|p| crate::commands::snapshot_key(p) != target_api_key_ref);
+            snap.providers
+                .retain(|p| crate::commands::snapshot_key(p) != target_api_key_ref);
             if snap.providers.len() != before {
                 let s = snap.clone();
                 drop(snap);
@@ -718,6 +717,13 @@ pub async fn list_picker_providers() -> Result<Vec<PickerProvider>, String> {
             is_builtin: true,
         },
         PickerProvider {
+            id: "tokendance".to_string(),
+            name_key: String::new(),
+            display_name: t!("provider_name.tokendance").into_owned(),
+            auth_kind: "api_key".to_string(),
+            is_builtin: true,
+        },
+        PickerProvider {
             id: "custom".to_string(),
             name_key: String::new(),
             // v0.2.1 commit 4:custom 走 `extra.provider.custom` key,不在
@@ -837,8 +843,11 @@ mod tests {
     }
 
     #[test]
-    fn picker_providers_includes_all_11_builtin_and_custom() {
-        // 同步测试：list_picker_providers 是 async，简化测 build 函数本身
+    fn picker_providers_includes_all_13_builtin_and_custom() {
+        // 同步测试：list_picker_providers 是 async，简化测 build 函数本身。
+        // 实际 list_picker_providers() 已包含 13 个 builtin + custom = 14 项
+        // (含 v0.2.5 anysearch / v0.2.5 volcengine_ark / v0.2.8 tokendance),
+        // 这里只测本地 vec 字面量正确,跑过表明 sync 编译期检测 pass。
         let ids: Vec<&str> = vec![
             "minimax",
             "deepseek",
@@ -851,8 +860,11 @@ mod tests {
             "stepfun",
             "siliconflow",
             "claude_official",
+            "anysearch",
+            "volcengine_ark",
+            "tokendance",
             "custom",
         ];
-        assert_eq!(ids.len(), 12);
+        assert_eq!(ids.len(), 15);
     }
 }

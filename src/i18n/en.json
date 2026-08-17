@@ -46,6 +46,9 @@
     "volcengine_ark": {
       "name": "Volcengine Ark"
     },
+    "tokendance": {
+      "name": "TokenDance"
+    },
     "suffix": {
       "dup": " #{}"
     },
@@ -169,7 +172,8 @@
           "deepseek": "DeepSeek",
           "openrouter": "OpenRouter",
           "siliconflow": "SiliconFlow",
-          "zenmux": "ZenMux"
+          "zenmux": "ZenMux",
+          "tokendance": "TokenDance"
         }
       },
       "tray_source_changed": "Tray data source switched: {name}",
@@ -630,6 +634,7 @@
     "xiaomi_cookie": "️ Xiaomi usage goes through dashboard admin API, requires browser login state.<br><br><strong>How to get it</strong>: Chrome login <a href=\"https://platform.xiaomimimo.com/console/plan-manage\" target=\"_blank\" class=\"link-ext\">platform.xiaomimimo.com</a> → F12 → Network → any <code>/api/v1/tokenPlan/*</code> request → right-click → Copy → Copy request headers → find <code>cookie:</code> row and paste the whole line above.<br><br>Cookie expires when logged out; on expiry (HTTP 401) error message will guide you to re-paste.",
     "anysearch": "AnySearch is an AI-agent search API (1000 free calls/day). Musage tracks its quota via the <strong>console session token</strong>, not the <code>as_sk_</code> MCP API key (the key alone returns 401 on the usage endpoint).<br><br><strong>Recommended</strong>: click \"Login AnySearch\" above → login in the popup → token auto-extracted.<br><br><strong>Manual fallback</strong>: Chrome login <a href=\"https://www.anysearch.com/console/api-keys\" target=\"_blank\" class=\"link-ext\">anysearch.com/console</a> → F12 → Application → Local Storage → <code>search-template-auth-state</code> → copy <code>state.accessToken</code> (the <code>eyJ…</code> JWT) and paste above.<br><br>The token expires with your web session; on expiry (HTTP 401) re-login.",
     "volcengine_ark": "Volcengine Ark (火山方舟) Coding Plan — 5h + 7d + monthly windows.<br><br><strong>Auth special</strong>: this is a <em>control-plane</em> API, so a <strong>regular Coding Plan API key does <u>not</u> work</strong> — you need account-level <strong>AccessKey ID + SecretAccessKey</strong>.<br><br><strong>How to fill</strong>: paste each value into its own input field above (<em>AccessKey ID</em> + <em>SecretAccessKey</em>). Saving writes both atomically to <code>keys.json</code>.<br><br><strong>How to get them</strong>: <a href=\"https://console.volcengine.com/iam/keymanage\" target=\"_blank\" class=\"link-ext\">console.volcengine.com → 账号菜单 → API 访问密钥</a>. Use a sub-account with read-only permissions on <code>ark:GetCodingPlanUsage</code> for least privilege.<br><br><strong>Plan types</strong>: only <em>Coding Plan</em> is supported for now. If you only have an <em>Agent Plan</em>, this card will show 0 rows.",
+    "tokendance": "TokenDance (词元跳动) unified AI gateway — credits balance from <code>/portal/api/v1/user/balance</code>.<br><br><strong>Same key as model calls</strong>: TokenDance uses <em>one</em> API key for both inference and balance, so the same key you use to call models works here. No extra IAM / sub-account needed (unlike Volcengine Ark).<br><br><strong>How to get it</strong>: <a href=\"https://tokendance.space/keys\" target=\"_blank\" class=\"link-ext\">tokendance.space/keys</a> → 创建 API Key → paste the <code>td-...</code> value above.<br><br><strong>What you'll see</strong>: a single balance row showing remaining credits (no reset time, no 5h/weekly window — TokenDance doesn't expose windowed quotas).",
     "default": "API key saved to local keys.json."
   },
   "login": {

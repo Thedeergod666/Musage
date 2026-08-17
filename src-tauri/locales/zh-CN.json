@@ -205,7 +205,8 @@
     "siliconflow": "SiliconFlow",
     "claude_official": "Claude 官方",
     "anysearch": "AnySearch",
-    "volcengine_ark": "火山方舟 Coding Plan"
+    "volcengine_ark": "火山方舟 Coding Plan",
+    "tokendance": "词元跳动"
   },
   "provider": {
     "suffix": {

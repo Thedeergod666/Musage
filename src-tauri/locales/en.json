@@ -205,7 +205,8 @@
     "siliconflow": "SiliconFlow",
     "claude_official": "Claude",
     "anysearch": "AnySearch",
-    "volcengine_ark": "Volcengine Ark Coding Plan"
+    "volcengine_ark": "Volcengine Ark Coding Plan",
+    "tokendance": "TokenDance"
   },
   "provider": {
     "suffix": {

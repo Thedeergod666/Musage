@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **TokenDance (词元跳动) 内置 provider**：Bearer 鉴权，余额走 `/portal/api/v1/user/balance`（实测 2026-08-14）。仿 deepseek / siliconflow 纯余额模式，单余额行（unit=None，托盘显示 `162k` 之类短数字）。14 内置 + custom 计数：settings 面板「余额查询」分组 + 托盘数据源下拉 + 「加内置副本」picker 同步新增。Logo 占位 SVG (`assets/tokendance-logo.svg`) 待官方品牌替换。详情见 [memory/token-dance-balance-integration.md](memory/token-dance-balance-integration.md)。
+
 ## [0.2.7] - 2026-08-06
 
 ### Added (托盘数据源多 provider 可切换 + 余额显示 + 颜色自定义 + 右键快捷切换, 方案 A)

@@ -234,12 +234,13 @@ Musage/
         │   └── extra_instances.rs     # 6 IPC (list/add/update/delete/list_picker/test)
         ├── config/                    # 持久化
         │   └── extra_instances.rs     # ExtraInstance + load/save/compact_indexes
-        ├── providers/                 # 12 provider (11 内置 + custom)
+        ├── providers/                 # 14 provider (13 内置 + custom)
         │   ├── mod.rs                 # QuotaSource trait + builtin_sources 注册表
         │   ├── parse.rs               # JSONPath + num_f64 helper
         │   ├── custom.rs              # CustomSource + CustomSourceSpec
         │   └── minimax/deepseek/xiaomi/tavily/zenmux/openrouter/
-        │       kimi/zhipu/stepfun/siliconflow/claude_official.rs
+        │       kimi/zhipu/stepfun/siliconflow/claude_official/
+        │       anysearch/volcengine_ark/tokendance.rs
         └── platform/                  # 平台特定代码
             ├── macos.rs               # PinBottom 走 NSWindow.setLevel(-1) + hover emitter
             └── windows.rs             # hover emitter（dwell hysteresis + 两级命中）

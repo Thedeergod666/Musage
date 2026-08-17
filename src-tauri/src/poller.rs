@@ -561,6 +561,7 @@ mod tests {
             "siliconflow",
             "stepfun",
             "anysearch",
+            "tokendance",
         ];
         let mut seen = std::collections::HashSet::new();
         for id in &providers {

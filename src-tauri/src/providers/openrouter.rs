@@ -188,7 +188,12 @@ async fn do_fetch(
             // P3 audit fix (2026-08-13): Parse 错误 (HTTP 200 + 非 schema body,
             // 如中转站 200 回显错误 payload / schema 漂移) 也 fallback 到 /key,
             // 否则该 key 卡在错误直到 body 形态变化。
-            Err(e) if matches!(e.kind, ErrorKind::AuthFailed | ErrorKind::ServerError | ErrorKind::Parse) => {
+            Err(e)
+                if matches!(
+                    e.kind,
+                    ErrorKind::AuthFailed | ErrorKind::ServerError | ErrorKind::Parse
+                ) =>
+            {
                 // M12 fix: AuthFailed 时清缓存，下次重新探测两个端点
                 // (用户可能换了 key 类型：普通 → Management，/credits 应重试)
                 if e.kind == ErrorKind::AuthFailed {

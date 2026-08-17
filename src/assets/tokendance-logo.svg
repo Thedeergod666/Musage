@@ -1,0 +1,7 @@
+<svg width="160" height="160" viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- 占位 logo:深色圆角底 + 白色 "T" 字 (TokenDance 首字母) -->
+  <!-- 配色 #1A1A2E 跟 stepfun/siliconflow/volcengine-ark 同款深 slate 背景 -->
+  <rect width="36" height="36" rx="7" fill="#1A1A2E"/>
+  <!-- T 字主体:横 (M8 10 H28) + 竖 (M18 10 V26) -->
+  <path d="M8 10 H28 M18 10 V26" stroke="#FFFFFF" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

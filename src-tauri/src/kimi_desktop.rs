@@ -136,7 +136,11 @@ fn read_token_once(path: &std::path::Path, immutable: bool) -> rusqlite::Result<
         // 兜底会引导重登)。
         let path_str = path.display().to_string();
         let fwd = path_str.replace('\\', "/");
-        let prefix = if fwd.starts_with('/') { "file:" } else { "file:///" };
+        let prefix = if fwd.starts_with('/') {
+            "file:"
+        } else {
+            "file:///"
+        };
         rusqlite::Connection::open_with_flags(
             format!("{}{}?immutable=1", prefix, fwd),
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,

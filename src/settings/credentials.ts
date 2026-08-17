@@ -596,6 +596,7 @@ export function apiKeyPlaceholder(id: string): string {
     case "siliconflow":return "sk-...";
     case "claude_official": return t("credentials.cookie_value_hint");
     case "volcengine_ark": return "AK...SK";
+    case "tokendance":   return "td-...";
     default:           return "...";
   }
 }
@@ -1308,7 +1309,8 @@ function parseBatchLine(raw: string): BatchMatch[] {
 /// 已知 provider id 集合 (用于 `provider=value` 显式标注解析)。
 const KNOWN_PROVIDER_IDS = new Set([
   "minimax", "deepseek", "xiaomimimo", "tavily", "zenmux", "openrouter",
-  "kimi", "zhipu", "stepfun", "siliconflow", "claude_official", "custom",
+  "kimi", "zhipu", "stepfun", "siliconflow", "claude_official",
+  "anysearch", "volcengine_ark", "tokendance", "custom",
 ]);
 
 /// 批量粘贴入口:粘贴多行 → split → 逐行识别 → 批量 setSourceCredential。

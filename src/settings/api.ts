@@ -278,7 +278,10 @@ export async function setMinimaxRegion(region: "cn" | "en"): Promise<void> {
 }
 
 export async function setXiaomiRegion(region: "cn" | "sgp" | "ams"): Promise<void> {
-  await invoke("set_xiaomi_region", { region });
+  // 2026-08-17 audit H-05: 后端注册名是 set_xiaomi_region_field，不是 set_xiaomi_region
+  // （config.rs 同名方法是 Config 结构体方法，非 IPC）。原写法 invoke 必 reject
+  // "command not found"，区域永远保存不了。
+  await invoke("set_xiaomi_region_field", { region });
 }
 
 export async function setTavilyConciseMode(enabled: boolean): Promise<void> {

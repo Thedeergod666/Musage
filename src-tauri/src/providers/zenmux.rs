@@ -225,6 +225,15 @@ async fn do_fetch(
             t!("error.common.url_scheme_invalid", url = url).into_owned(),
         ));
     }
+    // 2026-08-17 audit C-01: 拒绝 URL authority 含 `@`（userinfo bypass）。
+    // custom.rs 早有 H3 同款拦截，zenmux 漏了 —— `https://zenmux.ai@evil.com`
+    // 会被 reqwest 把 `zenmux.ai` 当 userinfo、`evil.com` 当 host，SSRF 检查看到
+    // 公网 host 放行 → Bearer key 泄漏给 evil.com。共享 helper 与 custom.rs 统一。
+    if super::url_authority_has_userinfo(url) {
+        return Err(FetchError::auth(
+            t!("error.common.url_authority_has_userinfo", url = url).into_owned(),
+        ));
+    }
     // H7 fix (2026-07-03 audit): 同 custom.rs 的 SSRF 防护。
     // P2 audit fix (2026-08-13): 规范化 URL 判定优先, 字符串路径兜底 (同 custom.rs)。
     let blocked = reqwest::Url::parse(url)

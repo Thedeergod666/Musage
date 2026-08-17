@@ -7,27 +7,68 @@
 // - 「测试连接」按钮（拉一次所有 source + 摘要）
 
 import { el, flash } from "./utils";
-import { setTrayIconStyle, setTraySource, setTrayIconColor } from "./api";
+import { setTrayIconStyle, setTraySource, setTrayIconColor, getConfig, saveConfig } from "./api";
 import { testConn } from "./test";
 import { t } from "../i18n";
 import type { AppConfig } from "./types";
 
 export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
   // ── 全局轮询间隔 ──
+  // 2026-08-17 audit H-06: 之前只创建+回显，无 change handler → 死控件，改了静默丢失。
+  // max 对齐后端 save_config 的 86_400 上限（原 3600 会误拦合法值）。走 getConfig→
+  // mutate→saveConfig，与 providers.ts renderIntervalOverride 同款。
   const intervalInput = el("input", {
     type: "number",
     id: "interval",
     min: "10",
-    max: "3600",
+    max: "86400",
     value: String(cfg.refresh_interval_secs),
   }) as HTMLInputElement;
+  intervalInput.addEventListener("change", async () => {
+    const raw = intervalInput.value.trim();
+    let secs: number;
+    const n = parseInt(raw, 10);
+    if (!Number.isFinite(n) || n < 10 || n > 86400) {
+      flash(t("settings.providers.invalid_interval", { val: raw }), true);
+      // 回滚到盘上当前值
+      intervalInput.value = String(cfg.refresh_interval_secs);
+      return;
+    }
+    secs = n;
+    try {
+      const latest = await getConfig();
+      latest.refresh_interval_secs = secs;
+      await saveConfig(latest);
+      cfg.refresh_interval_secs = secs;
+      flash(t("settings.app.refresh_interval_saved", { secs: String(secs) }));
+    } catch (e) {
+      flash(t("credentials.flash_save_failed", { err: String(e) }), true);
+      intervalInput.value = String(cfg.refresh_interval_secs);
+    }
+  });
 
   // ── 开机自启 ──
+  // 2026-08-17 audit H-06: 同样补 change handler。save_config 落盘后会同步
+  // 调 tauri-plugin-autostart 的 enable/disable（commands/mod.rs:833-843）。
   const autostartCb = el("input", {
     type: "checkbox",
     id: "autostart",
   }) as HTMLInputElement;
   autostartCb.checked = cfg.autostart;
+  autostartCb.addEventListener("change", async () => {
+    const target = autostartCb.checked;
+    try {
+      const latest = await getConfig();
+      latest.autostart = target;
+      await saveConfig(latest);
+      cfg.autostart = target;
+      flash(target ? t("settings.app.autostart_enabled") : t("settings.app.autostart_disabled"));
+    } catch (e) {
+      // 失败回滚 checkbox 到盘上旧值
+      autostartCb.checked = cfg.autostart;
+      flash(t("credentials.flash_save_failed", { err: String(e) }), true);
+    }
+  });
 
   // ── 托盘图标样式 (3 选 1) ──
   const currentStyle = cfg.tray_icon_style ?? "percent";

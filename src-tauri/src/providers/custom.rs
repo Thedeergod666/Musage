@@ -232,19 +232,16 @@ async fn do_fetch(
         ));
     }
     let url = format!("{}{}", spec.base_url.trim_end_matches('/'), spec.path);
-    // H3 fix (2026-08-03 audit SECURITY): reject URL authority with @ (userinfo bypass).
-    // base_url = "https://api.legit.com@evil.com" + path = "/foo"
-    // → reqwest parses `api.legit.com` as userinfo, `evil.com` as host.
-    // is_ssrf_blocked("evil.com") returns false (not loopback), Bearer API key
-    // leaks to attacker's server. Only the **authority** (between "https://" and
-    // the first "/") is checked — legitimate "@" in the path is preserved.
-    if let Some(rest) = url.strip_prefix("https://") {
-        let authority_end = rest.find('/').unwrap_or(rest.len());
-        if rest[..authority_end].contains('@') {
-            return Err(FetchError::auth(
-                t!("error.common.url_authority_has_userinfo", url = url).into_owned(),
-            ));
-        }
+    // H3 fix (2026-08-03 audit SECURITY) + 2026-08-17 audit C-01: 拒绝 URL authority
+    // 含 `@`（userinfo bypass）。base_url = "https://api.legit.com@evil.com" + path
+    // = "/foo" → reqwest 把 `api.legit.com` 当 userinfo、`evil.com` 当 host，
+    // SSRF 检查看到公网 host 放行 → Bearer API key 泄漏给攻击者。共享 helper
+    // super::url_authority_has_userinfo（与 zenmux.rs 统一），只检 authority 段，
+    // path 里的合法 `@` 保留。
+    if super::url_authority_has_userinfo(&url) {
+        return Err(FetchError::auth(
+            t!("error.common.url_authority_has_userinfo", url = url).into_owned(),
+        ));
     }
     // H9 fix: SSRF / protocol confusion 防护 —— user-provided base_url 必须 https://
     // 拒绝 http:// (泄露 API key 走明文) / file:// / javascript: / 其他 scheme。

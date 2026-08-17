@@ -529,6 +529,11 @@ pub async fn set_zenmux_base_url(
     if !trimmed.is_empty() && !trimmed.starts_with("https://") {
         return Err(t!("error.common.url_scheme_invalid", url = trimmed).into_owned());
     }
+    // 2026-08-17 audit C-01: 写入侧也拦 userinfo bypass（`https://zenmux.ai@evil.com`），
+    // 与 fetch 侧 providers::url_authority_has_userinfo 对齐，防御纵深。
+    if !trimmed.is_empty() && crate::providers::url_authority_has_userinfo(trimmed) {
+        return Err(t!("error.common.url_authority_has_userinfo", url = trimmed).into_owned());
+    }
     {
         let mut cfg = state.config.write().await;
         cfg.zenmux_base_url = if trimmed.is_empty() {

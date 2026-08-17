@@ -141,7 +141,10 @@
       "section_title": "应用",
       "refresh_interval": "刷新间隔（秒）",
       "refresh_interval_help": "最少 10 秒，默认 60。对所有 provider 同时生效。",
+      "refresh_interval_saved": "刷新间隔已保存：{secs} 秒",
       "autostart": "开机自启",
+      "autostart_enabled": "开机自启已开启",
+      "autostart_disabled": "开机自启已关闭",
       "tray_style_title": "托盘图标样式",
       "tray_style_help": "改动会立即生效（不需点保存）。tooltip 仍显示完整数据。",
       "tray_options": {

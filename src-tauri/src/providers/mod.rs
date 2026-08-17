@@ -284,6 +284,27 @@ pub fn url_is_ssrf_blocked(url: &reqwest::Url) -> bool {
     }
 }
 
+/// 2026-08-17 audit C-01: 拒绝 URL authority 含 `@`（userinfo bypass）。
+///
+/// `https://api.legit.com@evil.com` 会被 reqwest 解析成 userinfo=`api.legit.com`、
+/// host=`evil.com` —— `url_is_ssrf_blocked` 看到的是公网攻击者 host，不在拦截名单里，
+/// 请求带着 `Authorization: Bearer <key>` 直接送达 evil.com。custom.rs 早有 H3 同款
+/// 拦截（2026-08-03 audit），zenmux 漏了，抽成共享 helper 统一调用。
+///
+/// 只检 **authority**（`https://` 后到第一个 `/` 之间），path 里的合法 `@` 保留。
+pub fn url_authority_has_userinfo(url: &str) -> bool {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"));
+    match rest {
+        Some(r) => {
+            let authority_end = r.find('/').unwrap_or(r.len());
+            r[..authority_end].contains('@')
+        }
+        None => false,
+    }
+}
+
 /// 结构化 fetch 错误。Phase 1 引入，用来替代散落在各 provider 里的中文 `String` 错误。
 ///
 /// 配套 [`crate::commands::error_kind`] 把它转成 [`ErrorKind`]。

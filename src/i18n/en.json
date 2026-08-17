@@ -141,7 +141,10 @@
       "section_title": "Application",
       "refresh_interval": "Refresh interval (seconds)",
       "refresh_interval_help": "Min 10 seconds, default 60. Applies to all providers.",
+      "refresh_interval_saved": "Refresh interval saved: {secs}s",
       "autostart": "Auto-start on boot",
+      "autostart_enabled": "Auto-start enabled",
+      "autostart_disabled": "Auto-start disabled",
       "tray_style_title": "Tray icon style",
       "tray_style_help": "Changes take effect immediately (no save needed). Tooltip still shows full data.",
       "tray_options": {

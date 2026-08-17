@@ -414,6 +414,21 @@ body[data-hover] #app .card[data-provider="openrouter"] .pct {
   color: var(--text-bright) !important;
 }
 
+/* ── TokenDance (词元跳动)：余额 hover 不变蓝 ──
+ * 跟 OpenRouter / ZenMux PAYG 一致：base + hover 都锁白色，不走
+ * .pct.balance 默认的蓝（--c-data-info）。用户实测反馈 2026-08-17：
+ * "余额数字 hover 时不用像 deepseek 一样变色，保持白色就行"。
+ * 注：base 也覆盖（不只 hover）—— 否则 base 蓝 + hover 白会"颜色翻转"
+ * 也算变色,违背用户诉求"保持白色就行"。代价:wallet_alert_threshold
+ * 低额翻红的逻辑对 tokendance 不生效（被 !important 盖住），接受。
+ */
+.card[data-provider="tokendance"] .pct {
+  color: var(--text-bright) !important;
+}
+body[data-hover] #app .card[data-provider="tokendance"] .pct {
+  color: var(--text-bright) !important;
+}
+
 /* ── 状态行（DeepSeek） ── */
 
 .status-row {

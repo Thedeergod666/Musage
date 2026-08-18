@@ -5,11 +5,63 @@ All notable changes to Musage will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.8] - 2026-08-18
+
+**TL;DR**: 基于 2026-08-17 全量代码审查（[audit-reports/2026-08-17-full/SUMMARY.md](audit-reports/2026-08-17-full/SUMMARY.md)）完成 1 Critical + 6 High + 多项 Medium 修复；新增 TokenDance 余额 provider（14 号内置）、Zhipu GLM 积分套餐、用户手动拖浮窗高度。本版距 v0.2.7 共 30 commit，测试 +12、命中率 100%。
 
 ### Added
 
-- **TokenDance (词元跳动) 内置 provider**：Bearer 鉴权，余额走 `/portal/api/v1/user/balance`（实测 2026-08-14）。仿 deepseek / siliconflow 纯余额模式，单余额行（unit=None，托盘显示 `162k` 之类短数字）。14 内置 + custom 计数：settings 面板「余额查询」分组 + 托盘数据源下拉 + 「加内置副本」picker 同步新增。Logo 占位 SVG (`assets/tokendance-logo.svg`) 待官方品牌替换。详情见 [memory/token-dance-balance-integration.md](memory/token-dance-balance-integration.md)。
+- **TokenDance（词元跳动）内置 provider**（commits `e9315e1` + `d00de2a` + `7702983` + `6047711`）：Bearer 鉴权，余额走 `/portal/api/v1/user/balance`（实测 2026-08-14），仿 deepseek / siliconflow 纯余额模式，单余额行（unit=None，托盘显示 `¥128` 之类短数字）。Logo 用官方 "TD" 连字 mark（跟 stepfun / siliconflow 同款 `#1A1A2E` 底 + 36×36 viewBox）；balance 字段单位换算 `raw 微元 → 元`；托盘数字 hover 保持白色。Settings 面板「余额查询」分组 + 托盘数据源下拉 + 「加内置副本」picker 同步新增。内置 provider 计数 13 → **14**。详情见 [memory/token-dance-balance-integration.md](memory/token-dance-balance-integration.md)。
+- **Zhipu GLM「积分套餐」支持**（commit `bba3b11`）：更新 zhipu 响应 schema + 解析逻辑；浮窗新增 `.split-note` 渲染 GLM 行（`src/main.ts` +92 行）。
+- **用户手动拖动浮窗高度**（commit `9ee28e2`）：auto-shrink 之前先记录 `userLastManualH` 作下限，出错态钳制不再清掉用户偏好；浮窗联动修 mini-flash toast 位置不再污染 `lastEl` 高度测量（commit `bde18d0`，`measureContentHeight` 过滤 fixed/absolute）。
+
+### Fixed (P0 / Critical)
+
+- **C-01 ZenMux 自定义 base_url 缺 userinfo(`@`) 校验 → Bearer key 发往攻击者域名**（commit `efb1736`，[2026-08-17 audit](audit-reports/2026-08-17-full/SUMMARY.md)）：ZenMux 用户可配 base_url 但漏了 authority-userinfo 拦截（同款 custom.rs H3 fix 已加）。`https://zenmux.ai@attacker.com/v1/usage` 会绕过所有 URL 校验，导致 **Bearer API key 被每次轮询发往 attacker.com**；共享 config.json 投毒同样生效。修复：抽 `url_authority_has_userinfo` 共享 helper，custom + zenmux 统一调用；`set_zenmux_base_url` 写入时一并校验。
+- **Poller 锁序反转死锁**（commit `e1aeeb4`）：`refresh_inner` 持 read 锁时反向去争 write 锁 → 死锁（App 半死）。修复后顺带每 provider 拉取去重 + interval 溢出 clamp。
+- **minimax 5h 用量达 100% 上限时浮窗行不消失**（commit `265f229`）：`status` 门控恢复 `percent=0` 语义，避免 `status=2/3` 不在套餐时 percent 返 0 误判为满载（v0.2.5 `de6668b` 修过的同款回归）。
+
+### Fixed (P1 / High, 2026-08-17 全量审查 8 域并行)
+
+| ID | Commit | 简述 |
+|---|---|---|
+| **H-01** | `9bf3b66` | `parse_hex_color` 字节切片可 panic（6 字节但含多字节 UTF-8、偏移不在 char boundary）→ 启动 tick panic 后**整个 poller 永久停摆**。改 `s.as_bytes()` 逐字节判断，写入/加载侧复用 `is_valid_hex_color` 拒非法值。 |
+| **H-02** | `b2c2930` | poller 的「禁 base 顺带禁副本」与 config 的 `is_enabled_id` 精确匹配语义不一致 → 禁用 base 后**副本仍被全量刷新抓取**，卡片永久残留陈旧数据。抽 `cfg.is_enabled_unique(unique, base)` 共享函数。 |
+| **H-03** | `f15cea8` | `delete_extra_instance` compact 重命名后，**幸存实例旧 unique_id 的 snapshot 条目永不清理** → 浮窗永久多出幽灵卡。compact 后同步 retain snapshot 旧键条目并 emit。 |
+| **H-04** | `1d594a1` | `order.ts` 向下拖拽落点偏移一格：拖期间源 li `display:none` 仍占 children index，`newIdx` 漏扣隐藏源行 → 期望 `[B,A,C]` 实际 `[B,C,A]`。补 `if (orderIdx > dragSrcIdx) orderIdx -= 1`。 |
+| **H-05** | `efb1736` | 小米区域切换调不存在的命令 `set_xiaomi_region` → 后端只注册了 `set_xiaomi_region_field`，invoke 必然 reject，区域永远保存不了。 |
+| **H-06** | `efb1736` | 「应用」section 全局轮询间隔与开机自启是无事件绑定的死控件 → 配置静默丢失（后端 `save_config` 明确会同步 OS autostart，纯前端入口断了）。补 `change` 监听 + IPC wrapper。 |
+
+### Fixed (P2 / P3 批次, 按域分组, 仅概述)
+
+- **后端 providers+commands P2 批**（commit `fb48f10`, 16 文件 +296 行）：SSRF 规范化校验 + kimi / stepfun / volcengine_ark / xiaomi / zenmux / custom / mod.rs / logstore / tray 等十余处稳健性增强。
+- **前端 P2 批**（commit `16b6756`）：区域向导重渲 / init 容错 / 副本 baseId 归一化。
+- **P3 数值边界/解析健壮性批**（commit `41fcd47`, 7 文件）：epoch 秒 / credit clamp / 字符串时间戳 / 字符串 utilization / 假 0% / Infinity% / NaN/Inf 全过滤（minimax + stepfun + volcengine_ark + xiaomi + zhipu + claude_official + main.ts）。
+- **P3 安全批**（commit `511d03e`）：id 校验 / SSO URL 脱敏 / freshness skew / 回滚 warn / file URI / cookie 值相等。
+- **P3 稳健性批**（commit `37fd5f7`）：`/credits` fallback / 中转 relay 校验 / 标签 / `save` 吞错 / logstore spawn / `fetched_at` 倒退防御。
+- **P3 持久化+解析批**（commit `b2e9013`）：zhipu 多套餐溢出 + config 降级保字段 + 迁移失败返实例 + 日志脱敏盲区。
+- **P3 login + stepfun 批**（commit `d534ef8`）：token 刷新竞态 + 登录存盘 gen 复查 + anysearch cookie 加固。
+- **P3 frontend + 平台批**（commit `e2affc5`）：region banner 激活 / login bind catch / geom `spawn_blocking`（对齐 v0.3 task shutdown）。
+- **extra-instances**（commit `eb70ad4`）：custom spec.id 凭据槽注入 + update id 分叉迁移（H-03 同款 compact 漏洞的彻底闭合）。
+- **config 收尾**（commits `12297dd` + `5740975`）：Legacy 结构体匹配任意 JSON 静默清空现代配置 + `keys.tmp` 明文残留 + M-07/M-09。
+- **xiaomi TotalOnly**（commit `004ad5b`）：display mode 过滤空行时回退全量显示，修 TotalOnly 空白窗口。
+- **anysearch 路由小修**（commit `06fc3fa`）：console 私有端点路由修正 + stale 注释清理。
+- **P2 一行 / 小段批量**（commit `ca77f60`）：M-01/02/04/19/22 + L-24 一次性清完。
+
+**Audit 报告存档**（commit `9c4f8d5`）：[SUMMARY.md](audit-reports/2026-08-17-full/SUMMARY.md) 222 行，8 域并行审查 + 4 域 spot-check 坐实 + **1 C / 6 H / 26 M / 41 L = 74 条**（原始 79 跨域去重 5），留作未来 PR 索引；未修 Medium / Low 留 v0.2.9。
+
+### Changed (Flutter 高度 / mini-flash)
+
+- 浮窗 `main.ts` +30 行：用户拖高交互 + auto-shrink 防抖解耦（`userLastManualH` 作下限 + commit-bail state-reset 解锁防抖链，对齐 [user-preferred-min-h-shrink-fix.md](memory/user-preferred-min-h-shrink-fix.md)）。
+- 浮窗 mini-flash toast 移到 body + `measureContentHeight` 过滤 `fixed/absolute` 子元素（[floating-window-shrink-triggers.md](memory/floating-window-shrink-triggers.md) 第 3 条触发链根治）。
+
+### 守门
+
+- `cargo test --lib` **416 passed / 0 failed / 1 ignored**（v0.2.7 是 404，本版 +12 主要来自 audit hotfix 批次：`refresh_inner` 锁序重构 / extra_instances update 分叉迁移 / parse 数值边界 / commands lock 等）。
+- `pnpm tsc --noEmit` 0 errors
+- `pnpm vitest` 29/29 passed
+- `cargo fmt --all -- --check` 0 违规
+- `cargo clippy --locked --all-targets` 0 errors（24 pre-existing warnings，20 duplicates，与 v0.2.7 同，未触发本版 `inst` 警告之外的新增）
 
 ## [0.2.7] - 2026-08-06
 

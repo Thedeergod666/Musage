@@ -1,6 +1,6 @@
 # Musage 项目说明
 
-> 任何新打开此项目的 AI 会话应先读这个文件。这是当前对话的精炼版（v0.2.7 已发版，含托盘数据源多 provider 切换 + 余额显示 + 颜色自定义 + 右键快捷切换 + 2026-08-06 cross-verify hotfix / 2026-08-06 快照）。
+> 任何新打开此项目的 AI 会话应先读这个文件。这是当前对话的精炼版（v0.2.8 已发版，含 C-01 zenmux 泄密钥修复 + 6 High audit 修 + TokenDance (14 号内置) + Zhipu GLM 积分套餐 + 用户手动拖浮窗高度 / 2026-08-17 全量 audit / 2026-08-18 快照）。
 
 ## 这是什么
 
@@ -130,9 +130,9 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 - `*_remaining_percent=100` 不代表"还有 100%"，可能是 `status=2/3`（不在套餐内）
 - 旧字段对 Plus 订阅者全为 0
 
-## 当前进度（v0.2.7 快照，2026-08-06）
+## 当前进度（v0.2.8 快照，2026-08-18）
 
-✅ **v0.2.4 / v0.2.5 / v0.2.6 / v0.2.7 已发布**（v0.2.4 tag 2026-07-17 / v0.2.5 tag 2026-07-29 / v0.2.6 tag 2026-08-05 / v0.2.7 tag 2026-08-06）。v0.2.7 = 托盘数据源多 provider 可切换 + 余额显示 + 颜色自定义 + 右键快捷切换（方案 A）+ 2026-08-06 cross-verify hotfix（SSRF redirect 防护 / volcengine body 泄露 / picker 补 anysearch+volcengine_ark+stepfun auth_kind / backoff key 对齐 / redact 补 kimi-auth），详见 CHANGELOG 对应段。
+✅ **v0.2.4 / v0.2.5 / v0.2.6 / v0.2.7 / v0.2.8 已发布**（v0.2.4 tag 2026-07-17 / v0.2.5 tag 2026-07-29 / v0.2.6 tag 2026-08-05 / v0.2.7 tag 2026-08-06 / **v0.2.8 tag 2026-08-18**）。v0.2.8 = C-01 zenmux 泄密钥修复 + 2026-08-17 全量 audit (1 C + 6 H) 修 + TokenDance (14 号内置 provider) + Zhipu GLM 积分套餐 + 用户手动拖浮窗高度 + 8-13 P3 批 (providers/security/parse/persist/login) + 8-18 P2/L 收尾 (cart fmt / config M-07+09 / P2 一行批)，详见 CHANGELOG 对应段 + [audit-reports/2026-08-17-full/SUMMARY.md](audit-reports/2026-08-17-full/SUMMARY.md)。
    - feat(kimi)：浮窗左侧标签改动态窗口剩余（剩 <1 天 → `5h`，≥1 天 → `7d`），替代 used/total；foot 前缀跟随（`5h重置`/`7d重置`），Tavily 无 kind 标记保持原样（commit `75a5d8f`）
    - feat(floating)：双击浮窗打开设置面板（原双击"立即刷新"移除，托盘菜单仍可触发；跳过 button/input/select/a 防误触）（commit `361fc55`）
    - fix：5h 用量达 100% 上限时 kimi / zhipu / claude_official 行被隐藏（commit `de6668b`）
@@ -140,8 +140,24 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
    - v0.2.3 macOS 26 tray icon visual hotfix：[src-tauri/icons/tray-base.png](src-tauri/icons/tray-base.png) 重做为 64×64（48px 内容 + 8px 透明 padding 四边），圆外径 32→24 (-25%)，halo 消失
    - v0.2.2 + v0.2.3 都没正式 ship（v0.2.1 → v0.2.3 直接跨度），CHANGELOG 两段都保留
 
-✅ **v0.2.5 + v0.2.6 + v0.2.7 已 ship（v0.2.5/v0.2.6 详见 CHANGELOG 对应段 + git log；v0.2.7 详见下方专节）**：
-   - **托盘数据源多 provider 可切换 + 余额显示 + 颜色自定义 + 右键快捷切换（v0.2.7，方案 A）**：`tray_source` 配置（None = 默认 minimax，向后兼容）+ `pick_tray_rows(snap, source_id)` 通用化（保留 extra instance 选 5h 最高实例逻辑）+ `TrayCell { Percent / Balance / Empty }` enum + `format_balance_tray`（`¥128` / `$74` / `1.3k`，<1000 取整数适配 32px）+ volcengine_ark 补 `RowKind::FiveHour/Weekly`（前置必做）+ `tray_icon_color` + `tray_fill_color` + `parse_hex_color` 全链路透传（`TrayRequest::Update` / `update_tray_from_snapshot` / `render_icon`）+ 右键菜单子菜单（9 provider + 当前 `✓` 标记，复用后端 `provider_name.*` 显示名）+ 设置面板「托盘数据源」下拉 + 「托盘图标颜色」选择器（取色器 + 自动按钮）+ `set_tray_source` / `set_tray_icon_color` IPC + 删死代码 `weekly_util`。`cargo test --lib` 404 passed。
+✅ **v0.2.5 + v0.2.6 + v0.2.7 + v0.2.8 已 ship（v0.2.5/v0.2.6 详见 CHANGELOG 对应段 + git log；v0.2.7 详见下方专节；v0.2.8 详见再下方专节）**：
+   - **2026-08-17 全量 audit 修复 + 新增功能（v0.2.8）**：基于 8 域并行审查的 74 条发现（[audit-reports/2026-08-17-full/SUMMARY.md](audit-reports/2026-08-17-full/SUMMARY.md), 1 C / 6 H / 26 M / 41 L）原子修复：
+      - **C-01 zenmux userinfo(`@`) 校验漏**（commit `efb1736`）：ZenMux 用户可配 base_url 但漏了 authority-userinfo 拦截 → 共享 config 投毒可把 Bearer API key 持续发往 attacker.com。抽 `url_authority_has_userinfo` 共享 helper，custom + zenmux 统一调用。
+      - **H-01 `parse_hex_color` panic 致 poller 永久停摆**（commit `9bf3b66`）：字节切片 panic（`s.len() != 6` 是字节长，含多字节 UTF-8 偏移不在 char boundary 时 panic）→ 启动首个 tick panic 后整个 poller spawn task 死亡，主循环永不启动。改 `s.as_bytes()` 逐字节判断 + 写入/加载侧复用 `is_valid_hex_color` 拒非法值。
+      - **H-02 poller 与 config 的 `is_enabled_id` enabled 语义不一致**（commit `b2c2930`）：poller 注释意图「禁 base 顺带禁副本」但其余消费点走精确匹配；副本通常无独立 entry → 禁用 base 后副本仍被全量刷新抓取且 `get_snapshot` 放行 → 浮窗持续显示「MiniMax #2」陈旧卡。抽 `cfg.is_enabled_unique(unique, base)` 共享函数。
+      - **H-03 `delete_extra_instance` compact 幽灵卡**（commit `f15cea8`）：compact 重命名后幸存实例**旧身份**的 snapshot 条目永不清理 → 浮窗永久多出幽灵卡。compact 后同步 retain snapshot 旧键条目并 emit。
+      - **H-04 order.ts 向下拖拽 off-by-one**（commit `1d594a1`）：`[A,B,C]` 向下拖 A 到 B、C 之间 → 期望 `[B,A,C]`，实际 `[B,C,A]`（拖期间源 li `display:none` 仍占 children index，`newIdx` 漏扣隐藏源行）。补 `if (orderIdx > dragSrcIdx) orderIdx -= 1`。
+      - **H-05 `set_xiaomi_region` 命令名错**（commit `efb1736`）：前端 invoke `set_xiaomi_region`，后端只注册 `set_xiaomi_region_field` → invoke 必然 reject，小米区域永远保存不了。
+      - **H-06 死控件**（commit `efb1736`）：「应用」section 全局轮询间隔与开机自启无事件绑定 → 配置静默丢失；后端 `save_config` 同步 OS autostart 是工作的，纯前端入口断了。补 `change` 监听 + IPC wrapper。
+      - **Poller 锁序反转死锁**（commit `e1aeeb4`）：`refresh_inner` 持 read 锁时反向争 write 锁 → App 半死。修后顺带每 provider fetch 去重 + interval 溢出 clamp。该修是 v0.3 待做「Per-provider poller task shutdown」前置（仍留 v0.3）。
+   - **8-13 P3 修补批次**（10 commit, `511d03e`/`37fd5f7`/`41fcd47`/`b2e9013`/`d534ef8`/`16b6756`/`fb48f10`/`004ad5b`/`e1aeeb4`/`eb70ad4`/`12297dd`/`e2affc5`，详见 [CHANGELOG.md](CHANGELOG.md) v0.2.8 段）：security / robust / parse / persist+parse / login+stepfun / frontend / providers+commands / xiaomi TotalOnly / commands+poller / extra-instances / config / frontend+plat，每批一处或多处修。
+   - **新功能（v0.2.8）**：
+      - **TokenDance (词元跳动) 14 号内置 provider**（commits `e9315e1` + `d00de2a` + `7702983` + `6047711`）：Bearer 鉴权 + `/portal/api/v1/user/balance` 余额端点；仿 deepseek / siliconflow 纯余额模式；logo 用官方 "TD" 连字 mark 替换占位（跟 stepfun / siliconflow 同款 `#1A1A2E` 底 + 36×36 viewBox）；balance 字段 `raw 微元 → 元` 单位换算；托盘数字 hover 保持白色。详情见 [memory/token-dance-balance-integration.md](memory/token-dance-balance-integration.md)。
+      - **Zhipu GLM「积分套餐」支持**（commit `bba3b11`）：更新 zhipu 响应 schema + 解析逻辑，`src/main.ts` +92 行 `.split-note` 渲染 GLM 行。
+      - **用户手动拖动浮窗高度**（commit `9ee28e2`）：`userLastManualH` 作 auto-shrink 下限 + commit-bail state-reset 解锁防抖链，对齐 [memory/user-preferred-min-h-shrink-fix.md](memory/user-preferred-min-h-shrink-fix.md)；联动修 mini-flash toast 位置污染 `measureContentHeight`（commit `bde18d0`，对齐 [memory/floating-window-shrink-triggers.md](memory/floating-window-shrink-triggers.md) 第 3 条触发链根治）。
+   - **8-18 P2/L 收尾**（commits `ca77f60`/`5740975`/`67392fa`，详见 CHANGELOG）：audit 剩余 M-01/02/04/19/22 + L-24 + M-07 + M-09 一行/小段批量清理 + cargo fmt --all。
+   - **8-17 audit 报告存档**（commit `9c4f8d5`）：222 行 SUMMARY，含 4 域 spot-check 坐实 + 完整 26 M + 41 L 索引，留 v0.2.9 复审。
+   - **托盘数据源多 provider 可切换 + 余额显示 + 颜色自定义 + 右键快捷切换（v0.2.7，方案 A）**：`tray_source` 配置（None = 默认 minimax，向后兼容）+ `pick_tray_rows(snap, source_id)` 通用化（保留 extra instance 选 5h 最高实例逻辑）+ `TrayCell { Percent / Balance / Empty }` enum + `format_balance_tray`（`¥128` / `$74` / `1.3k`，<1000 取整数适配 32px）+ volcengine_ark 补 `RowKind::FiveHour/Weekly`（前置必做）+ `tray_icon_color` + `tray_fill_color` + `parse_hex_color` 全链路透传（`TrayRequest::Update` / `update_tray_from_snapshot` / `render_icon`）+ 右键菜单子菜单（9 provider + 当前 `✓` 标记，复用后端 `provider_name.*` 显示名）+ 设置面板「托盘数据源」下拉 + 「托盘图标颜色」选择器（取色器 + 自动按钮）+ `set_tray_source` / `set_tray_icon_color` IPC + 删死代码 `weekly_util`。`cargo test --lib` v0.2.7 时 404 passed。
    - **2026-08-06 cross-verify hotfix（v0.2.7）**：基于 v0.2.6 (`398e441`) 独立交叉验证 prior 8-domain audit。P0 security：`shared_client()` 加 `redirect::Policy::custom` 每跳重跑 `is_ssrf_blocked`，堵 custom/zenmux 30x → 169.254.169.254 / 127.0.0.1 时 Bearer API key 跟随落内网。P0 privacy：volcengine_ark 删 v0.2.5 临时诊断的 unconditional `tracing::warn!`（成功 fetch 不再打 2000 字符 body 到 stderr，堵 PlanName / UsageList 账户信息外泄；错误 body 仍由非成功分支 200 字符带出）。P0 correctness：`list_picker_providers` 修 stepfun auth_kind api_key→cookie（对齐 `AuthKind::Cookie`，picker 加副本渲染单 key 导致 fetch 永远 UnconfiguredKey）+ 补 anysearch（Cookie 形态）+ volcengine_ark 进 picker（2-field AK/SK 表单，#3 完整修复）。Defensive：`refresh_single_inner` backoff.record 改用 `src.unique_id()` 显式对齐 poller 读取键（前端 main.ts 已传 uniqueId 当前不触发 bug）。P0 privacy：`redact_message` regex 补 `kimi-auth=` + `access_token=`。
    - **Windows Release 工具链回退 MSVC + crt-static（v0.2.7 commit `51d10d9`）**：v0.2.6/v0.2.7 两次 release windows-x64 job 都因 `resource.lib: file not recognized` 失败——audit D8-003 把 CI Windows target 从 MSVC 切到 GNU，但 windows-latest runner 自带 Visual Studio，tauri-build embed-resource 在 GNU target 下走了 MSVC `rc.exe` 生成 MSVC 格式资源库，GNU ld 不认。回退到 `x86_64-pc-windows-msvc`（v0.2.5 验证过）+ `RUSTFLAGS=-C target-feature=+crt-static` 静态链接 CRT，既保持构建稳定又实现 D8-003 当初"用户机器零 vcruntime 依赖"目标。
    - **v0.2.5 / v0.2.6 详情**：StepFun 集成重写 + 一键登录三轮实测修复（commit `0d51124` 起 + `8d485bf` 等）；Win PinBottom hover-raise 重写（commit `ff309bb`，2026-07-20，dwell hysteresis + 两级命中）；玻璃 backdrop throttling 三层防御（commit `1a38d89`）；AnySearch 集成（commits `1e0c877` + `54a8937`，v0.2.5，仿 Xiaomi 一键登录但 JWT 在 localStorage，init script 写 `MUSAGE_TOKEN` cookie 提取）；Kimi「总套餐」月度共享池（v0.2.6，hybrid enrich 失败只少一行 + WebView 一键登录兜底）。详见 [CHANGELOG.md](CHANGELOG.md) 对应段 + [memory/anysearch-provider-integration.md](memory/anysearch-provider-integration.md)。
@@ -167,12 +183,12 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 ✅ AnySearch 一键登录 WebView（v0.2.5，commit `1e0c877`）：仿 Xiaomi 但鉴权不同 —— JWT 在 localStorage 不在 cookie jar，所以 init script 用 `setInterval` 把 token 写到 `MUSAGE_TOKEN` cookie（同源），Rust 端 `cookies_for_url` + 白名单 `COOKIE_NAME` 读。**第一版用 `document.title` 中转失败**——Tauri 2 `WebviewWindow::title()` 读 OS 窗口标题不是 `document.title`，两套 API。这条经验加 [memory/anysearch-provider-integration.md](memory/anysearch-provider-integration.md)。
 ✅ import/export 配置（无 keys）
 ❌ ~~自动更新~~：**v0.2.0 已删 tauri-plugin-updater**（`TAURI_SIGNING_PRIVATE_KEY` GitHub Secret 未配 → Windows build 报 "Missing comment in secret key" 整批 release 挂，commit `586e55c`）。升级走「GitHub release 手动下载 dmg/nsis/AppImage/deb/rpm 覆盖装」，设置面板「关于」页放 releases 链接（[src/settings/about.ts](src/settings/about.ts)）。详见 [RELEASING.md](RELEASING.md)
-✅ **`cargo check` 0 错**（v0.2.7 唯一 warning = pre-existing `inst` @extra_instances.rs:475，方案 A + 2026-08-06 hotfix 后均无新 warning）
-✅ **`cargo test --lib` 404 passed**（v0.2.7 阶段：v0.2.6 403 + 26 跨 verify hotfix + -1 删除 `weekly_util` 死代码 + ±0 方案 A 净增测试）
+✅ **`cargo check` 0 错**（v0.2.8 阶段：pre-existing `inst` @extra_instances.rs:475 仍是唯一 warning；`cargo clippy` 24 pre-existing warnings / 20 duplicates / 0 errors，与 v0.2.7 同；本版 12 commit 净增测试无新增 warning）
+✅ **`cargo test --lib` 416 passed / 0 failed / 1 ignored**（v0.2.8 阶段：v0.2.7 404 + 12 audit hotfix 批次（refresh_inner 锁序重构 + extra_instances update 分叉迁移 + parse 数值边界 + commands lock + backoff unique_id 对齐 + comfyui 等新覆盖测试））
 ✅ **`cargo fmt --check` 0 违规**
-✅ **`pnpm tsc --noEmit` 0 errors**
+✅ **`pnpm tsc --noEmit` 0 errors**（1 个 `[WARN]` = pnpm 9.x 弃用 `package.json` 的 `pnpm.onlyBuiltDependencies` 字段，非阻塞，待 v0.2.9 切到 `pnpm-workspace.yaml`）
 ✅ **`pnpm vitest` 29/29 passed**
-✅ **`pnpm tauri build` 通过**（v0.2.7 CI matrix：macOS dmg ×2 + Windows NSIS + Linux AppImage/deb/rpm 全绿；windows-x64 commit `51d10d9` 回退 MSVC + `crt-static` 静态 CRT）
+✅ **`pnpm tauri build` 通过**（v0.2.8 待验证 CI matrix：v0.2.7 全绿模板基础上，加 C-01 zenmux SSRF + 8-13 P3 批 + 8-17 audit 修；windows-x64 仍走 MSVC + `crt-static`）
 
 ⚠️ **坑：MinGW 工具链 16-bit 导出表上限**
 - 现象：`cdylib` 链接时 `ld.exe: error: export ordinal too large: 141874`
@@ -181,16 +197,18 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 - 依据：Tauri 2 在 Windows 上只用 staticlib 就够，cdylib 是为 iOS/Android 准备的
 - **别再用 RUSTFLAGS 全局加 `-Wl,--no-export-all-symbols`**：会污染 build script exe
 
-⏳ **v0.3 待做**（tech debt 收尾 + 新需求）：
-- Claude cookie 一键重登（小米已做，Claude cookie 抓取要研究）
+⏳ **v0.3 待做**（v0.2.8 后剩余，已修完的项已删）：
+- ~~Claude cookie 一键重登~~ → **AnySearch 已落地**（v0.2.5，commit `1e0c877`）；Claude cookie 抓取仍待研究
 - monitor hotplug 监听（拔插副屏时实时重新判定浮窗位置）
 - 错误卡"忽略本次错误"按钮
 - Frontend 单元测试 4 核心函数（contentFingerprint / render / updateCard / autoResizeWindow）
 - ~~`http_status_to_error_kind` helper~~ → 已落地为 [`classify_http_status`](src-tauri/src/providers/mod.rs)（2026-07-02 audit L1 fix），kimi 先用；其余 provider 保留各自的具体 msg 短路，**全面推广留 v0.3**
-- `refresh_inner` 每次 `Box::new` 13 个 source 优化（按 Arc 缓存）
+- `refresh_inner` 每次 `Box::new` 13 个 source 优化（按 Arc 缓存）—— v0.2.8 修过 lock 序但未做 Arc 缓存
 - Backoff 状态持久化到 disk
-- Per-provider poller task shutdown signal（App 退出时不泄漏）
-- `delete_extra_instance` v2（重命名 keys.json + spec）
+- Per-provider poller task shutdown signal（App 退出时不泄漏）—— v0.2.8 `e2affc5` 给 geom persist 加了 `SHUTDOWN.notified()` 分支，**poller shutdown 仍未做**
+- ~~`delete_extra_instance` v2（重命名 keys.json + spec）~~ → **v0.2.8 commit `eb70ad4` 已做**（custom spec.id 凭据槽注入 + update id 分叉迁移；compact 重命名后身份迁移 H-03 `f15cea8` 配套补全）
+- i18n 收尾：`types.ts` 6 行 / `credentials.ts:307/387` 等 <5% 残留硬编码中文
+- 2026-08-17 audit 26 Medium + 41 Low 见 [SUMMARY.md](audit-reports/2026-08-17-full/SUMMARY.md) 主表（v0.2.9 复审）
 
 ## 构建与打包（2026-06-13 实测）
 

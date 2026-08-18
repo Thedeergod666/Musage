@@ -31,7 +31,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::config::{
     delete_credential_for_id, extra_instances, load_credential_for_id, save_credential_for_id,
-    ExtraInstance,
+    ExtraInstance, ProviderConfig,
 };
 use crate::providers::{
     instantiate_builtin_with_index, Credentials, CustomSource, CustomSourceSpec, ProviderSnapshot,
@@ -426,6 +426,8 @@ pub async fn delete_extra_instance(
     let target_api_key_ref;
     let target_ref_now_used;
     let extras_snapshot: Vec<ExtraInstance>;
+    // 2026-08-17 audit H-03/M-06: 提到函数作用域,块外的 snapshot/cfg 清理要用。
+    let mut migrations_done: Vec<(String, String, Credentials)>;
     {
         let mut extras = state.extra_instances.write().await;
         let pos = extras.iter().position(|e| e.id == id).ok_or_else(|| {
@@ -475,7 +477,9 @@ pub async fn delete_extra_instance(
         // 用于 save 失败反向操作。备份必须在 migration loop 前读取，否则
         // gap-filling 时目标槽位已经被后一个实例的凭据覆盖。
         let target_cred_backup = load_credential_for_id(&target_api_key_ref).ok().flatten();
-        let mut migrations_done: Vec<(String, String, Credentials)> = Vec::new();
+        // migrations_done 已在函数作用域声明(2026-08-17 audit H-03/M-06)，块外
+        // compact 清理要用它做 snapshot/cfg 迁移。
+        migrations_done = Vec::new();
         for (inst_id, old_ref) in &old_refs {
             if let Some(inst) = extras.iter_mut().find(|e| &e.id == inst_id) {
                 if inst.api_key_ref != *old_ref {
@@ -597,6 +601,62 @@ pub async fn delete_extra_instance(
         {
             let mut cfg = state.config.write().await;
             if cfg.providers.remove(&target_api_key_ref).is_some() {
+                let _ = cfg.save();
+            }
+        }
+    }
+    // 2026-08-17 audit H-03 + M-06: compact 重命名幸存实例后,旧 unique_id 的
+    // snapshot 条目 + cfg.providers 条目要跟着迁移,否则:
+    //  (H-03) snapshot 残留旧身份 "minimax#3" 幽灵卡片 → 点重试 refresh_single
+    //    ("minimax#3") find_source 返 None 报 unknown source,持续到重启。
+    //  (M-06) cfg.providers 不迁移 → 幸存实例继承被删实例的 enabled/interval
+    //    (被删实例若 enabled=false 会被补位副本继承 → 静默停止轮询并从浮窗
+    //    消失),旧键条目成孤儿残留。
+    // migrations_done 仅当 compact 发生(target_ref 被复用)时非空,与上面
+    // !target_ref_now_used 分支互斥。
+    if !migrations_done.is_empty() {
+        // H-03: 清 snapshot 中旧身份幽灵条目。new_ref 条目保留(其卡片由后续
+        // fetch 刷新,见上方 583-584 注释的既有设计意图)。
+        {
+            let mut snap = state.snapshot.write().await;
+            let old_refs: Vec<&str> =
+                migrations_done.iter().map(|(o, _, _)| o.as_str()).collect();
+            let before = snap.providers.len();
+            snap.providers
+                .retain(|p| !old_refs.contains(&crate::commands::snapshot_key(p)));
+            if snap.providers.len() != before {
+                let s = snap.clone();
+                drop(snap);
+                let _ = app.emit("musage://snapshot", &s);
+            }
+        }
+        // M-06: 迁移 cfg.providers。两阶段(先全部 remove old_ref,再写 new_ref)
+        // 防多实例链式迁移(#3→#2、#4→#3)时后一条的 new_ref 撞前一条的 old_ref
+        // clobber。survivor 有独立配置 → 迁到 new_ref(覆盖被删实例配置);
+        // survivor 默认态 → 清 new_ref 上被删实例残留,让 survivor 回默认。
+        {
+            let mut cfg = state.config.write().await;
+            let mut changed = false;
+            // phase 1: 读出所有 old_ref 条目
+            let relocations: Vec<(String, Option<ProviderConfig>)> = migrations_done
+                .iter()
+                .map(|(old_ref, new_ref, _)| {
+                    let entry = cfg.providers.remove(old_ref);
+                    if entry.is_some() {
+                        changed = true;
+                    }
+                    (new_ref.clone(), entry)
+                })
+                .collect();
+            // phase 2: 写入 new_ref
+            for (new_ref, entry) in relocations {
+                if let Some(e) = entry {
+                    cfg.providers.insert(new_ref, e);
+                } else if cfg.providers.remove(&new_ref).is_some() {
+                    changed = true;
+                }
+            }
+            if changed {
                 let _ = cfg.save();
             }
         }

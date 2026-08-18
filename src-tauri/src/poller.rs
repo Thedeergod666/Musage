@@ -333,12 +333,10 @@ pub fn start(app: AppHandle) {
                 let base_str: &str = &base_id;
                 // enabled: 优先查 instance 自己的 entry,没配置则 fallback 到 base
                 // (用户关 base 时 extra 也跟着关,除非显式启用 extra)
-                let enabled = cfg
-                    .providers
-                    .get(unique_str)
-                    .map(|c| c.enabled)
-                    .or_else(|| cfg.providers.get(base_str).map(|c| c.enabled))
-                    .unwrap_or(true);
+                // 2026-08-17 audit H-02: 抽成 AppConfig::is_enabled_unique 共享,
+                // refresh_inner / get_snapshot / refresh_single_inner 等消费点统一用,
+                // 避免此处有 fallback 而其余只走 is_enabled_id 精确匹配的语义不一致。
+                let enabled = cfg.is_enabled_unique(unique_str, base_str);
                 if !enabled {
                     continue; // 用户关了，不拉
                 }

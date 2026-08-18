@@ -807,6 +807,23 @@ impl AppConfig {
         self.providers.get(id).map(|c| c.enabled).unwrap_or(true)
     }
 
+    /// 2026-08-17 audit H-02: 按 unique_id 查 enabled，副本无独立 entry 时
+    /// fallback 到 base id。
+    ///
+    /// 副本（"minimax#2"）通常无独立 cfg.providers entry（默认态，凭据在
+    /// keys.json），`is_enabled_id("minimax#2")` 恒返 true。但 poller 主循环
+    /// 的设计意图是"用户关 base 时 extra 也跟着关，除非显式启用 extra"
+    /// ——所以全量刷新 refresh_inner / get_snapshot / refresh_single_inner /
+    /// publish retain 都要用这个两级 fallback，否则禁用 base 后副本仍被
+    /// 全量刷新抓取并在浮窗永久残留陈旧卡片。
+    pub fn is_enabled_unique(&self, unique: &str, base: &str) -> bool {
+        self.providers
+            .get(unique)
+            .map(|c| c.enabled)
+            .or_else(|| self.providers.get(base).map(|c| c.enabled))
+            .unwrap_or(true)
+    }
+
     pub fn save(&self) -> Result<(), String> {
         // P2 audit fix (2026-08-13): 若本 build 读到一个 schema_version > CURRENT
         // 的 config (用户降级 Musage), serde 已静默忽略未来字段, 此处 save()

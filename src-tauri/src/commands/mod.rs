@@ -616,7 +616,9 @@ pub async fn get_snapshot(state: State<'_, AppState>) -> Result<QuotaSnapshot, S
     filtered.providers.retain(|p| {
         // H2 fix (2026-08-03 audit): 改用 snapshot_key —— 副本 (minimax#2)
         // 关闭后浮窗不再显示,跟 set_provider_enabled 的 disable/retain 口径一致。
-        cfg.is_enabled_id(snapshot_key(p))
+        // 2026-08-17 audit H-02: 副本默认态无独立 entry → fallback 到 base id
+        // (p.provider)，否则禁用 base 后副本卡片仍残留。
+        cfg.is_enabled_unique(snapshot_key(p), &p.provider)
     });
     // 按用户配置的 provider_order 排序（空 = 用 builtin_sources() 顺序）
     apply_provider_order(&mut filtered, &cfg);
@@ -909,7 +911,7 @@ pub async fn list_sources(state: State<'_, AppState>) -> Result<Vec<SourceMeta>,
                 AuthKind::ApiKeyOrCookie => "api_key_or_cookie",
                 AuthKind::ApiKeyWithSecret => "api_key_with_secret",
             },
-            enabled: cfg.is_enabled_id(s.id().as_ref()),
+            enabled: cfg.is_enabled_unique(s.unique_id().as_ref(), s.id().as_ref()),
             // Xiaomi: API key (Bearer) 永远 401，手动 cookie 是兜底 → 都放高级 tab
             hide_credentials: {
                 let id = s.id();
@@ -994,7 +996,7 @@ pub async fn set_source_credential(
     // 在下一分钟才 fire（启动时初始化为 now+interval），不手动拉一次用户得
     // 等 1 分钟甚至更久。refresh_single_inner 内部会更新 in-memory
     // snapshot + emit，浮窗自动跟着变。
-    let enabled = state.config.read().await.is_enabled_id(&id);
+    let enabled = state.config.read().await.is_enabled_unique(&id, base_id_of(&id));
     tracing::debug!(provider = %id, enabled, "set_source_credential: refresh decision");
     if enabled {
         // CM11 fix (2026-07-28 审查): 之前在这里 await refresh_single_inner,
@@ -1134,7 +1136,7 @@ pub async fn delete_source_credential(
     }
     // 跟 set_source_credential 对称：删了 key 浮窗应该立刻看到 "未配置"
     // 错误态，而不是等下一次 poller 周期。
-    let enabled = state.config.read().await.is_enabled_id(&id);
+    let enabled = state.config.read().await.is_enabled_unique(&id, base_id_of(&id));
     if enabled {
         if let Err(e) =
             refresh_single_inner(&app, &id, crate::poller_backoff::RefreshSource::Manual).await
@@ -1553,7 +1555,9 @@ pub async fn refresh_inner(
         let id_str = id.as_str(); // "deepseek#2" 而非 "deepseek"
                                   // id() 仍用在 enabled / credential 查找前做 enabled check ——
                                   // enabled 状态按 api_key_ref("deepseek#2") 查 config。
-        if !cfg.is_enabled_id(id_str) {
+        // 2026-08-17 audit H-02: 副本默认态无独立 entry → fallback 到 base id，
+        // 否则禁用 base 后副本仍被全量刷新抓取。
+        if !cfg.is_enabled_unique(id_str, src.id().as_ref()) {
             continue;
         }
         // 默认间隔（per-provider override 优先）—— backoff 写入时用。
@@ -1765,7 +1769,9 @@ pub async fn refresh_inner(
     snap.providers.retain(|p| {
         // P3 fix (2026-07-28 审查): 统一 snapshot_key 规则(unique_id 优先)。
         let id = snapshot_key(p);
-        cfg_read.is_enabled_id(id)
+        // 2026-08-17 audit H-02: 副本默认态 fallback 到 base id(p.provider)，
+        // 否则禁用 base 后副本卡片仍 emit 给浮窗。
+        cfg_read.is_enabled_unique(id, &p.provider)
     });
     apply_provider_order(&mut snap, &cfg_read);
     // 把全局余额告警阈值带到 snapshot —— health_label 据此翻红/翻黄
@@ -1792,6 +1798,14 @@ pub(crate) fn snapshot_key(p: &ProviderSnapshot) -> &str {
         .as_deref()
         .or(p.source_id.as_deref())
         .unwrap_or(&p.provider)
+}
+
+/// 2026-08-17 audit H-02: 从 unique_id（"minimax#2"）剥离出 base id（"minimax"）。
+/// base id / custom id（"minimax" / "custom_xxx"，无 '#'）自返。
+/// 用于只有 unique_id 字符串、拿不到 source 对象的调用点配合
+/// [`AppConfig::is_enabled_unique`] 做两级 enabled fallback。
+pub(crate) fn base_id_of(unique: &str) -> &str {
+    unique.rsplit_once('#').map(|(b, _)| b).unwrap_or(unique)
 }
 
 /// 按 AppConfig.provider_order 给 snapshot.providers 排序。
@@ -1907,7 +1921,9 @@ pub async fn refresh_single_inner(
     caller: crate::poller_backoff::RefreshSource,
 ) -> Result<(), String> {
     let cfg = app.state::<AppState>().config.read().await.clone();
-    if !cfg.is_enabled_id(id) {
+    // 2026-08-17 audit H-02: 副本默认态无独立 entry → fallback 到 base id
+    // (base_id_of 从 id 剥 '#' 后缀；base/custom id 自返)。
+    if !cfg.is_enabled_unique(id, base_id_of(id)) {
         return Ok(()); // 已被关掉，跳过
     }
     // H1: builtin_sources() 不含 custom sources,改用 find_source(state, id)
@@ -1981,7 +1997,8 @@ pub async fn refresh_single_inner(
         // 读取端(poller.rs 用 src.unique_id())一致。之前用 IPC 入参 `id`(前端
         // main.ts refresh_single 实际传 uniqueId,故当前未触发 bug;但若误传
         // base id 会写错副本槽位 -> 副本永退避 / 永不退避)。显式取 src.unique_id()
-        // 杜绝 latent 风险。find_source / is_enabled_id 仍按 base+unique 双匹配。
+        // 杜绝 latent 风险。find_source 按 base+unique 双匹配;enabled 检查走
+        // is_enabled_unique(unique, base) 两级 fallback（2026-08-17 audit H-02）。
         let backoff_key = src.unique_id();
         backoff.record(&backoff_key, &provider_snap, default_interval_secs, caller);
     }
@@ -2018,7 +2035,8 @@ pub async fn refresh_single_inner(
     snap.providers.retain(|p| {
         // P3 fix (2026-07-28 审查): 统一 snapshot_key 规则(unique_id 优先;
         // 之前 source_id 优先,跟合并链的口径相反)。
-        cfg2_snapshot.is_enabled_id(snapshot_key(p))
+        // 2026-08-17 audit H-02: 副本默认态 fallback 到 base id(p.provider)。
+        cfg2_snapshot.is_enabled_unique(snapshot_key(p), &p.provider)
     });
     apply_provider_order(&mut snap, &cfg2_snapshot);
     // 同步全局余额告警阈值(per-provider 调度只更一个 provider,不能丢顶层字段)

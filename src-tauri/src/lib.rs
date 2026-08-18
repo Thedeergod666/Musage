@@ -735,7 +735,11 @@ fn run_dump_subcommand(provider_filter: Option<&str>) -> i32 {
             );
 
             // 加载凭据
-            let creds = match config::load_credential_for_id(src.id().as_ref()) {
+            // 2026-08-17 audit M-01 (3 域独立命中): dump CLI 用 src.id() 加载副本
+            // 凭据是错的——副本 keys.json 槽位是 unique_id()("minimax#2"),
+            // src.id() 永远返 base id("minimax")。refresh 路径都用 unique_id,
+            // dump 是唯一违反者。改为 unique_id 与 refresh 口径一致。
+            let creds = match config::load_credential_for_id(src.unique_id().as_ref()) {
                 Ok(Some(c)) => c,
                 Ok(None) => {
                     eprintln!("{}", t!("cli.dump_no_credentials"));

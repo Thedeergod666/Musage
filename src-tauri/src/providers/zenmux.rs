@@ -493,7 +493,11 @@ fn parse_subscription(
         fetched_at: Some(now_ms),
         next_fetch_at: None,
         raw: Some(raw.clone()),
-        is_healthy: true,
+        // 2026-08-17 audit M-22: account_status (suspended/unhealthy) 之前只拼
+        // 进 plan_name 展示,is_healthy 硬编码 true → 停用账号浮窗仍亮绿点。
+        // 对照 siliconflow.rs:241-245 对同类 data.status 字段的处理:缺失按
+        // 健康,非 "healthy" 视作不健康。
+        is_healthy: account_status.is_empty() || account_status == "healthy",
         source_id: Some(source_id.to_string()),
         unique_id: None,
         source_display_name: Some(display_name.to_string()),

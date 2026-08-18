@@ -655,12 +655,27 @@ pub async fn refresh_now(
                 .iter()
                 .position(|p| snapshot_key(p) == new_id)
             {
-                guard.providers[idx] = new_p.clone();
+                // 2026-08-17 audit M-02: tick 路径已加 fetched_at 比较防
+                // per-provider 并发回滚 (poller.rs:505-509),refresh_now 漏了
+                // 同款修复——per-provider fetch 若在 refresh_now 拿 TICK_RUNNING
+                // 之前已起飞并写入更新数据,refresh_now 收集期间那份新数据会
+                // 被旧版无条件覆盖。比较 fetched_at 仅在新数据 >= 已有数据时
+                // 覆盖,下个周期自愈。
+                let old_ts = guard.providers[idx].fetched_at.unwrap_or(0);
+                let new_ts = new_p.fetched_at.unwrap_or(0);
+                if new_ts >= old_ts {
+                    guard.providers[idx] = new_p.clone();
+                }
             } else {
                 guard.providers.push(new_p.clone());
             }
         }
-        guard.fetched_at = snap.fetched_at;
+        // 同款:顶层 fetched_at 也比较,避免"更新于 HH:MM:SS"倒退。
+        let new_top_ts = snap.fetched_at.unwrap_or(0);
+        let old_top_ts = guard.fetched_at.unwrap_or(0);
+        if new_top_ts >= old_top_ts {
+            guard.fetched_at = snap.fetched_at;
+        }
         guard.wallet_alert_threshold = snap.wallet_alert_threshold;
     }
     // refresh_inner 内部已经 emit 过一次，这里再 emit 合并后的完整快照
@@ -1988,8 +2003,11 @@ pub async fn refresh_single_inner(
         .get(id)
         .or_else(|| cfg.providers.get(src.id().as_ref()))
         .and_then(|p| p.refresh_interval_secs)
-        .unwrap_or(cfg.refresh_interval_secs)
-        .max(10);
+        .unwrap_or(cfg.refresh_interval_secs);
+    // 2026-08-17 audit M-04 (域1+域3 命中): 之前只 .max(10) 无上限,
+    // u64::MAX 会让 fill_next_fetch_at 的 (as i64)*1000 溢出 (poller.rs:80-91
+    // P1 注释明确要求统一 clamp 10..86400)。统一走 poller::clamp_interval_secs。
+    let default_interval_secs = crate::poller::clamp_interval_secs(default_interval_secs);
     {
         let state = app.state::<AppState>();
         let mut backoff = state.backoff.write().await;

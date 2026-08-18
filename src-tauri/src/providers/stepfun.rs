@@ -104,7 +104,7 @@ use serde_json::Value;
 
 use super::{
     json_body_limited, shared_client, text_body_limited, AuthKind, Credentials, ErrorKind,
-    FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
+    FetchError, ProviderSnapshot, QuotaRow, QuotaSource, RowKind,
 };
 use crate::config;
 use crate::t;
@@ -211,6 +211,10 @@ impl QuotaSource for StepfunSource {
         // AuthKind::Cookie 让 settings 面板走纯 cookie 模式 +
         // quick-login-banner 路径,跟 anysearch 同款 UX。
         AuthKind::Cookie
+    }
+
+    fn needs_state_update(&self) -> bool {
+        false
     }
 
     fn set_state<'a>(
@@ -779,7 +783,11 @@ fn parse(
                     resets_at: reset,
                     unit: Some("%".to_string()),
                     extra: None,
-                    kind: None,
+                    // 2026-08-17 audit M-19: tray 按 RowKind 枚举匹配(同 M2 fix 路径),
+                    // 之前 kind=None → tray 永远 find 不到该行,图标退化为静态 logo
+                    // (tooltip 仍正常,形成分裂状态)。minimax/kimi/zhipu/xiaomi 都已
+                    // 填,唯独 stepfun 漏掉。
+                    kind: Some(RowKind::FiveHour),
                 });
             }
         }
@@ -800,7 +808,8 @@ fn parse(
                     resets_at: reset,
                     unit: Some("%".to_string()),
                     extra: None,
-                    kind: None,
+                    // 2026-08-17 audit M-19: 同上,周限额行填 Weekly。
+                    kind: Some(RowKind::Weekly),
                 });
             }
         }

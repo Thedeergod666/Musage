@@ -126,6 +126,10 @@ impl QuotaSource for ClaudeOfficialSource {
         AuthKind::Cookie
     }
 
+    fn needs_state_update(&self) -> bool {
+        false
+    }
+
     fn set_state<'a>(
         &'a self,
         _cfg: serde_json::Value,

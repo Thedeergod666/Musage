@@ -334,6 +334,14 @@ function onDragMouseUp(e: MouseEvent) {
       const divIdx = [...listRef.children].indexOf(dividerEl);
       if (newIdx > divIdx) orderIdx = newIdx - 1;
     }
+    // 2026-08-17 audit H-04: 拖拽期间源 li 被 display:none 但仍留在 children。
+    // children.indexOf(placeholder) 计 DOM 位置,包含隐藏源行 → 向下拖时
+    // placeholder 在源行之后,newIdx 把源行多算 1,orderIdx 偏大 1(向上拖时
+    // placeholder 在源行之前不受影响,方向不对称)。例 [A,B,C] 全 enabled,
+    // 把 A 拖到 B、C 之间 → DOM=[A(h),B,ph,C,divider] newIdx=2 divIdx=4
+    // → 期望 orderIdx=1, 实际 =2 → splice(2,0,A) 得 [B,C,A] 而非 [B,A,C],
+    // 错误顺序持久化到后端。
+    if (orderIdx > dragSrcIdx) orderIdx -= 1;
   }
 
   if (orderIdx === dragSrcIdx && !crossedDivider) {
@@ -348,12 +356,11 @@ function onDragMouseUp(e: MouseEvent) {
 
   // 执行移位（在 currentProviderOrder 里 splice）
   const moved = currentProviderOrder.splice(dragSrcIdx, 1)[0];
-  // splice(adjusted, 0, moved) 直接把 moved 放到 adjusted，**不需要 -1**：
-  //   targetIdx > srcIdx（往下拖）时，splice 移除 src 后 array 短了 1，
-  //   但 splice 的第二个参数是「插入位置」而不是「目标位置」，所以
-  //   adjusted 直接 = orderIdx 即可，移到 targetIdx。
-  //   之前 `targetIdx - 1` 是错的：arr=[A,B,C,D,E] 从 idx=0 拖到 idx=4
-  //   应该变 [B,C,D,E,A]（A 在 4），旧公式给 [B,C,D,A,E]（A 在 3）。
+  // splice(adjusted, 0, moved) 直接把 moved 放到 adjusted,这里**不再 -1**:
+  //   splice 的第二个参数是「插入位置」,splice(0) 删 src 后 array 已经短 1,
+  //   adjusted 直接用上方已修正的 orderIdx(divider + 隐藏源行 都已校正,H-04)。
+  //   之前 `targetIdx - 1` 是错的:arr=[A,B,C,D,E] 从 idx=0 拖到末尾 idx=4
+  //   应得 [B,C,D,E,A] (末尾场景 splice 越界 clamp 掩盖了隐藏源行未扣的问题)。
   const adjusted = orderIdx;
   currentProviderOrder.splice(adjusted, 0, moved);
 

@@ -651,7 +651,14 @@ impl AppConfig {
         // best-effort: 从 raw JSON 挑出能解析的字段
         if let Ok(value) = serde_json::from_str::<serde_json::Value>(&s) {
             if let Some(best) = best_effort_from_value(&value) {
-                return Ok(best);
+                // 2026-08-17 audit M-07: best-effort 之前不跑 migrated(),builtin
+                // 兜底条目 + schema_version 迁移都缺位;另 best_effort_from_value
+                // 用 cfg.providers = parsed 整表替换,丢失 AppConfig::default() 的
+                // 11 个 builtin 兜底条目(被跳过 provider 的 is_enabled_id 缺省
+                // true → 已禁用 provider 重新轮询;minimax region 回退 Cn → EN
+                // 用户突然请求 CN 端点)。修:best 跑 migrated(),providers 按 key
+                // 合并(default 打底 + parsed 覆盖)而非整表替换。
+                return Ok(best.migrated());
             }
         }
         Ok(Self::default())
@@ -851,7 +858,7 @@ impl AppConfig {
         // 原子写：tmp + rename（参考 write_keys_atomic 的同款 pattern）
         // 避免 panic / 断电把 config.json 截断成空 → 启动时 unwrap_or_default 把用户配置清零
         let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, &s)
+        crate::config::write_tmp_secure(&tmp, s.as_bytes())
             .map_err(|e| t!("commands.config_write", err = e.to_string()).into_owned())?;
         // M1 fix (2026-07-06 全量审查): tmp 写完立刻 sync_all,确保元数据+数据
         // 都落盘,再 rename。否则掉电 / kernel panic 可能在 rename 之前发生,
@@ -920,7 +927,12 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
                 }
             }
         }
-        cfg.providers = parsed;
+        // 2026-08-17 audit M-07: 之前 cfg.providers = parsed 整表替换,
+        // 丢失 AppConfig::default() 预置的 11 builtin 兜底条目。改为按 key
+        // 合并:cfg.providers(已含 default builtin)打底,parsed 覆盖/追加。
+        for (k, v) in parsed {
+            cfg.providers.insert(k, v);
+        }
     }
     if let Some(x) = obj.get("refresh_interval_secs").and_then(|x| x.as_u64()) {
         recognized_any = true;
@@ -1225,6 +1237,26 @@ pub(crate) fn truncate_old_backups(
 /// 同线程第二次 lock 会永久阻塞（commit 320c4fb 加的"双层防御"恰好
 /// 就是这个 bug，曾导致每次设置面板保存 Key / 删 Key / 改 Cookie 都
 /// 永久挂住 IPC handler，2026-06-20 audit 修复）。
+/// 2026-08-17 audit M-09: 原子写时 tmp 文件创建即 0600（之前按 umask 0644
+/// 短暂落盘,keys.json 含明文 API key / cookie / SK —— 多用户 Unix 机
+/// 可读）。std::os::unix::fs::OpenOptionsExt 提供 mode()。chmod 仅作兜底。
+/// 非 Unix 平台（Windows）无 mode 概念,退回 std::fs::write。
+#[cfg(unix)]
+pub(crate) fn write_tmp_secure(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(path)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, data))
+}
+#[cfg(not(unix))]
+pub(crate) fn write_tmp_secure(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
+    std::fs::write(path, data)
+}
+
 fn write_keys_atomic(map: &KeysMap) -> Result<(), String> {
     let path = keys_path()?;
     if let Some(parent) = path.parent() {
@@ -1233,7 +1265,8 @@ fn write_keys_atomic(map: &KeysMap) -> Result<(), String> {
     let tmp = path.with_extension("json.tmp");
     let s = serde_json::to_string_pretty(map)
         .map_err(|e| t!("commands.config_serialize", err = e.to_string()).into_owned())?;
-    std::fs::write(&tmp, &s).map_err(|_| t!("commands.keys_io", op = "write tmp").into_owned())?;
+    crate::config::write_tmp_secure(&tmp, s.as_bytes())
+        .map_err(|_| t!("commands.keys_io", op = "write tmp").into_owned())?;
     // M1 fix (2026-07-06 全量审查): fsync tmp 再 rename,确保掉电不丢 cookie/key。
     if let Ok(f) = std::fs::OpenOptions::new().write(true).open(&tmp) {
         let _ = f.sync_all();

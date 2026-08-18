@@ -827,13 +827,23 @@ fn format_balance_tray(v: f64, unit: &str) -> String {
 /// 解析 "#RRGGBB" / "RRGGBB" 为 Rgba。无效返 None。
 fn parse_hex_color(s: &str) -> Option<Rgba<u8>> {
     let s = s.strip_prefix('#').unwrap_or(s);
-    if s.len() != 6 {
+    let b = s.as_bytes();
+    if b.len() != 6 {
         return None;
     }
-    let r = u8::from_str_radix(&s[0..2], 16).ok()?;
-    let g = u8::from_str_radix(&s[2..4], 16).ok()?;
-    let b = u8::from_str_radix(&s[4..6], 16).ok()?;
-    Some(Rgba([r, g, b, 255]))
+    // 2026-08-17 audit H-01: 旧实现先判 s.len()==6（字节长度）再 &s[0..2] 切片。
+    // 6 字节但含多字节 UTF-8 且偏移不在 char boundary 时（如 "aé123"，'é' 占
+    // 字节 1-2）直接 panic —— 函数本意"无效返 None"却在能返 None 之前 panic。
+    // tray_fill_color 被每条刷新路径调用（publish_snapshot / refresh_now /
+    // set_tray_*），启动首个 tick panic → 整个 poller task 死亡、轮询永久停摆。
+    // 改为逐字节判 ascii hexdigit 后再 from_str_radix，panic 之前返 None。
+    if !b.iter().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let r = u8::from_str_radix(std::str::from_utf8(&b[0..2]).ok()?, 16).ok()?;
+    let g = u8::from_str_radix(std::str::from_utf8(&b[2..4]).ok()?, 16).ok()?;
+    let bl = u8::from_str_radix(std::str::from_utf8(&b[4..6]).ok()?, 16).ok()?;
+    Some(Rgba([r, g, bl, 255]))
 }
 
 /// 计算托盘图标前景色：用户配了固定色（tray_icon_color）就用它，否则按菜单栏

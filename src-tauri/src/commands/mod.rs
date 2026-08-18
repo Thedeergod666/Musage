@@ -815,6 +815,19 @@ pub async fn save_config(
             .into_owned());
         }
     }
+    // 2026-08-17 audit H-01: tray_icon_color 同样校验 hex，挡住手搓 save_config
+    // 写入 6 字节非 ASCII 串致 parse_hex_color 旧实现 panic（已 panic-safe，此处
+    // 是防御纵深 + 让非法值不落盘）。
+    if let Some(c) = cfg.tray_icon_color.as_deref() {
+        if !c.is_empty() && !is_valid_hex_color(c) {
+            return Err(t!(
+                "commands.color_value_invalid",
+                k = "tray_icon_color",
+                v = c
+            )
+            .into_owned());
+        }
+    }
     // H2 fix: 先更 in-memory state，再 save + 副作用。
     // 原顺序 cfg.save() → autostart → emit → *guard = cfg，进程若在 save 与 guard 写之间
     // crash，盘上是新值、内存是旧值，下次启动加载新值，但 run-time 一致性已坏。
@@ -2275,6 +2288,18 @@ pub async fn set_tray_icon_color(
     app: AppHandle,
     color: Option<String>,
 ) -> Result<(), String> {
+    // 2026-08-17 audit H-01: 写入侧也校验 hex，防御纵深（即使 parse_hex_color
+    // 已 panic-safe，落盘非法值仍会让旧 build / 其他消费点踩雷）。
+    if let Some(c) = color.as_deref() {
+        if !c.is_empty() && !is_valid_hex_color(c) {
+            return Err(t!(
+                "commands.color_value_invalid",
+                k = "tray_icon_color",
+                v = c
+            )
+            .into_owned());
+        }
+    }
     {
         let mut cfg = state.config.write().await;
         if cfg.tray_icon_color == color {

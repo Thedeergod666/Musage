@@ -619,8 +619,7 @@ pub async fn delete_extra_instance(
         // fetch 刷新,见上方 583-584 注释的既有设计意图)。
         {
             let mut snap = state.snapshot.write().await;
-            let old_refs: Vec<&str> =
-                migrations_done.iter().map(|(o, _, _)| o.as_str()).collect();
+            let old_refs: Vec<&str> = migrations_done.iter().map(|(o, _, _)| o.as_str()).collect();
             let before = snap.providers.len();
             snap.providers
                 .retain(|p| !old_refs.contains(&crate::commands::snapshot_key(p)));

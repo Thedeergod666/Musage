@@ -837,12 +837,9 @@ pub async fn save_config(
     // 是防御纵深 + 让非法值不落盘）。
     if let Some(c) = cfg.tray_icon_color.as_deref() {
         if !c.is_empty() && !is_valid_hex_color(c) {
-            return Err(t!(
-                "commands.color_value_invalid",
-                k = "tray_icon_color",
-                v = c
-            )
-            .into_owned());
+            return Err(
+                t!("commands.color_value_invalid", k = "tray_icon_color", v = c).into_owned(),
+            );
         }
     }
     // H2 fix: 先更 in-memory state，再 save + 副作用。
@@ -1011,7 +1008,11 @@ pub async fn set_source_credential(
     // 在下一分钟才 fire（启动时初始化为 now+interval），不手动拉一次用户得
     // 等 1 分钟甚至更久。refresh_single_inner 内部会更新 in-memory
     // snapshot + emit，浮窗自动跟着变。
-    let enabled = state.config.read().await.is_enabled_unique(&id, base_id_of(&id));
+    let enabled = state
+        .config
+        .read()
+        .await
+        .is_enabled_unique(&id, base_id_of(&id));
     tracing::debug!(provider = %id, enabled, "set_source_credential: refresh decision");
     if enabled {
         // CM11 fix (2026-07-28 审查): 之前在这里 await refresh_single_inner,
@@ -1151,7 +1152,11 @@ pub async fn delete_source_credential(
     }
     // 跟 set_source_credential 对称：删了 key 浮窗应该立刻看到 "未配置"
     // 错误态，而不是等下一次 poller 周期。
-    let enabled = state.config.read().await.is_enabled_unique(&id, base_id_of(&id));
+    let enabled = state
+        .config
+        .read()
+        .await
+        .is_enabled_unique(&id, base_id_of(&id));
     if enabled {
         if let Err(e) =
             refresh_single_inner(&app, &id, crate::poller_backoff::RefreshSource::Manual).await
@@ -1570,8 +1575,8 @@ pub async fn refresh_inner(
         let id_str = id.as_str(); // "deepseek#2" 而非 "deepseek"
                                   // id() 仍用在 enabled / credential 查找前做 enabled check ——
                                   // enabled 状态按 api_key_ref("deepseek#2") 查 config。
-        // 2026-08-17 audit H-02: 副本默认态无独立 entry → fallback 到 base id，
-        // 否则禁用 base 后副本仍被全量刷新抓取。
+                                  // 2026-08-17 audit H-02: 副本默认态无独立 entry → fallback 到 base id，
+                                  // 否则禁用 base 后副本仍被全量刷新抓取。
         if !cfg.is_enabled_unique(id_str, src.id().as_ref()) {
             continue;
         }
@@ -2328,12 +2333,9 @@ pub async fn set_tray_icon_color(
     // 已 panic-safe，落盘非法值仍会让旧 build / 其他消费点踩雷）。
     if let Some(c) = color.as_deref() {
         if !c.is_empty() && !is_valid_hex_color(c) {
-            return Err(t!(
-                "commands.color_value_invalid",
-                k = "tray_icon_color",
-                v = c
-            )
-            .into_owned());
+            return Err(
+                t!("commands.color_value_invalid", k = "tray_icon_color", v = c).into_owned(),
+            );
         }
     }
     {

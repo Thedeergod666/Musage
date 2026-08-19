@@ -16,6 +16,27 @@ body {
 h1 { font-size: 16px; margin-bottom: 16px; font-weight: 600; }
 h2 { font-size: 12px; margin-bottom: 10px; color: #aaa; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
 .field { margin-bottom: 14px; }
+/* A 选项：关于 section 的「检查更新」按钮 + 状态文字一行布局。
+   按钮跟状态文字不要换行 —— 状态变化频繁, 按钮位置抖动会让用户误以为
+   段在重渲。inline-flex + align-items:center 让按钮高度 (32px) 主导。
+   类名沿用 .about-* 前缀（feature-specific）跟 .update-banner 对齐。 */
+.about-check-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.about-check-row .btn-secondary[disabled] {
+  /* disable 时按钮灰, 配合 JS 的 setAttribute("disabled") */
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* 按钮旁的轻量 inline 状态文字 (灰色 12px), 不要用 .help 因为 .help 有
+   block margin-bottom 会把按钮挤到下一行 */
+.about-check-status {
+  color: #888;
+  font-size: 12px;
+}
 label { display: block; margin-bottom: 6px; color: #aaa; font-size: 12px; }
 input, select {
   width: 100%;
@@ -541,6 +562,21 @@ details.logs .row > #logs-count {
 
 /* 外链蓝色（替换 `<a ... style="color:#4a90e2">`） */
 .link-ext { color: #4a90e2; }
+
+/* A 选项：「关于」section 的"有新版本"高亮横幅。
+   蓝色左边框 + 半透明蓝底 —— 跟 .link-ext 链接色一致, 视觉上是同一类信号。
+   不用 .field 是因为 .field 有 14px margin-bottom, 这里 banner 跟下面按钮
+   应该贴在一起。margin 由父 .field 控制。 */
+.update-banner {
+  background: rgba(74, 144, 226, 0.12);
+  border-left: 3px solid #4a90e2;
+  padding: 8px 12px;
+  border-radius: 4px;
+  margin: 4px 0 10px;
+  font-size: 13px;
+  color: #e0e0e0;
+}
+.update-banner strong { color: #4a90e2; }
 
 /* `.check` 容器里 checkbox 旁的 label 跟普通 label 样式不同：
    取消底部 margin，文字用主前景色。原 inline `margin: 0; color: #e0e0e0;` */

@@ -2515,6 +2515,7 @@ dependencies = [
  "reqwest 0.12.28",
  "rusqlite",
  "rust-i18n",
+ "semver",
  "serde",
  "serde_json",
  "sha2",

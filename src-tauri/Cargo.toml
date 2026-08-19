@@ -32,6 +32,11 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 # (WHATWG 归一化十进制/十六进制/八进制 IPv4 变体)。reqwest 已传递依赖
 # url 2.x, 显式声明避免传递依赖被移除时 break (同 regex 的注释)。
 url = "2"
+# A 选项：updater_check 解析 GitHub release tag_name ("v0.2.8" → "0.2.8")
+# 跟当前 version 比较判断"有新版本"。semver::Version 实现 Ord,可直接 > / <。
+# 用户决策: "pre 不用算" —— GitHub /releases/latest 端点本身只返 stable release
+# (drafts 排除, prerelease 退到上一个 stable), 这里不用额外 filter。
+semver = "1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 imageproc = { version = "0.25", default-features = false }
 ab_glyph = "0.2"

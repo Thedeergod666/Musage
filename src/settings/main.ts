@@ -14,7 +14,9 @@ import { renderAppSection } from "./app";
 import { renderAdvancedSection } from "./advanced";
 import { renderLogsSection, loadLogs } from "./logs";
 import { renderAboutSection } from "./about";
-// v0.2.0 不再自动检查更新 —— 升级走"用户手动下 dmg/nsis 装"路径
+// A 选项（2026-08-19）：设置页「关于」section 现在显示 GitHub releases
+// 新版本检测 —— 见 [src/settings/about.ts] + [src-tauri/src/commands/updater_check.rs]。
+// pre-release 不算（GitHub /releases/latest 端点天然只返 stable）。
 import { renderRegionSection, maybeShowRegionBanner } from "./region-wizard";
 import { bindCredentialButtonsGlobal, bindXiaomiLoginEvents, bindAnysearchLoginEvents, bindStepfunLoginEvents, bindKimiLoginEvents, loadXiaomiDisplayMode, loadKimiSessionStatus } from "./credentials";
 import { bindOrderButtonsGlobal, updateOrderConfig, isSuppressingConfigRebuild } from "./order";

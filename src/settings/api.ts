@@ -208,6 +208,33 @@ export async function getAppVersion(): Promise<string> {
   return invoke<string>("get_app_version");
 }
 
+/**
+ * A 选项：设置页「关于」section 显示的 GitHub 新版本提示。
+ *
+ * `null` = 当前版本 >= 最新 stable，或 repo 还没 release。
+ * `latest_version` 是 semver 字符串（无 "v" 前缀，跟 CARGO_PKG_VERSION 一致）。
+ * `html_url` 直接给 `<a target="_blank">` 用。
+ */
+export interface UpdateInfo {
+  latest_version: string;
+  html_url: string;
+}
+
+/**
+ * 检查 GitHub releases 是否有新版本。
+ *
+ * - `force=false`：读后端缓存同步返回；缓存为空时**后端**自动 spawn 后台
+ *   fetch 更新缓存（fire-and-forget，调用方不等）。设置页打开 about section
+ *   用这个模式 —— 立刻有缓存可显示。
+ * - `force=true`：await fetch 写缓存 + 返回结果。「检查更新」按钮用。
+ *
+ * 设计：单一 command 让前端不用做"先读缓存再触发 fetch"的两步串联，
+ * 后端的 force=false 已经 cover "立刻拿缓存 + 后台更新" 的语义。
+ */
+export async function checkForUpdate(force: boolean): Promise<UpdateInfo | null> {
+  return invoke<UpdateInfo | null>("check_for_update", { force });
+}
+
 // ── PR 1b: 用户额外 source 实例 (内置副本 + New API 中转站) ──────────
 
 /** PR 1b：列出所有 extra instance（包含 custom + 内置副本） */

@@ -21,6 +21,9 @@
 // PR 1b：用户额外 source 实例 IPC (6 commands)
 pub mod extra_instances;
 pub mod i18n;
+// A 选项：设置页「关于」section 显示 GitHub releases 新版本提示。
+// 详细见 [crate::commands::updater_check]。
+pub mod updater_check;
 
 use std::time::Duration;
 

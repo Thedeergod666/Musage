@@ -60,6 +60,9 @@ pub struct AppState {
     /// 写：add/update/delete_extra_instance IPC 命令（会 persist）。
     /// 读：providers::all_sources / find_source 拼 extras 进去。
     pub extra_instances: Arc<RwLock<Vec<extra_instances::ExtraInstance>>>,
+    // update_info 不放 AppState —— 该字段读写都是冷路径（设置页 + 手动按钮），
+    // 而 snapshot / config / backoff 是 poller 主循环每 tick 都读的"热路径"。
+    // 缓存走模块私有 OnceLock，见 [crate::commands::updater_check::UPDATE_CACHE]。
 }
 
 pub use crate::commands::i18n::get_app_locale;
@@ -232,6 +235,10 @@ pub fn run() {
 
             // 启动后台轮询
             poller::start(app.handle().clone());
+
+            // A 选项：启动 5s 后探测 GitHub releases 写缓存。
+            // 关于 section 打开时 force=false 立刻读缓存 + spawn 后台 fetch。
+            commands::updater_check::spawn_startup_check();
 
             // 启动 hover emitter：始终运行，不管 pin mode 是哪个
             // macOS 上这是绕过 WKWebView "非 key window 不分发 mouseMoved"
@@ -416,6 +423,9 @@ pub fn run() {
             stepfun_login::open_stepfun_login_window,
             kimi_login::open_kimi_login_window,
             kimi_login::clear_kimi_session,
+            // A 选项：设置页「关于」section 的 GitHub releases 检查
+            // （单 command，force 参数切缓存读 vs 强制刷新两模式）
+            commands::updater_check::check_for_update,
         ])
         .on_window_event(|window, event| {
             // 关闭悬浮窗时拦截，避免退出整个 app

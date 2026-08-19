@@ -257,6 +257,18 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                     }
                 });
             }
+            "reset_floating" => {
+                // 复用 settings.html "🪟 浮窗" 段同款 IPC handler（settings/api.ts
+                // `await invoke("reset_floating_window")`）。handler 内部走 Tauri
+                // 内置 win.center()（比手算 monitor 几何稳，多显示器 / 负坐标也
+                // 不偏）+ 持久化 floating_x/y。
+                let app2 = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = crate::commands::reset_floating_window(app2).await {
+                        tracing::warn!(error = %e, "托盘菜单归位浮窗失败");
+                    }
+                });
+            }
             "force_top_floating" => {
                 // fix (2026-07-28 审查): 两步收进同一个 async 块按序执行 ——
                 // 之前同步 set_always_on_top(true) + spawn 异步 set_floating_pin_mode，
@@ -499,14 +511,25 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         .collect();
     let source_submenu =
         Submenu::with_items(app, &t!("tray.menu.source_title"), true, &source_refs)?;
+    // 归位：复用 settings.html "🪟 浮窗" 段同款 IPC（reset_floating_window），
+    // 走 Tauri 内置 win.center() + 持久化位置。放到 source_submenu 之后、
+    // force_top 之前 —— 归位比"置顶一下"使用频次高。
+    let reset_floating_i = MenuItem::with_id(
+        app,
+        "reset_floating",
+        &t!("tray.menu.reset_to_center"),
+        true,
+        None::<&str>,
+    )?;
     let quit_i = MenuItem::with_id(app, "quit", &t!("tray.menu.quit"), true, None::<&str>)?;
     Menu::with_items(
         app,
         &[
             &toggle_i,
-            &settings_i,
+            &reset_floating_i,
             &refresh_i,
             &source_submenu,
+            &settings_i,
             &force_top_i,
             &quit_i,
         ],

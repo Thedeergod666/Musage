@@ -2,11 +2,12 @@
   "tray": {
     "menu": {
       "toggle": "Toggle floating window",
-      "settings": "Settings...",
+      "settings": "Open settings...",
       "refresh": "Refresh now",
       "force_top": "Force top",
       "quit": "Quit",
-      "source_title": "Tray data source"
+      "source_title": "Tray data source",
+      "reset_to_center": "Recenter window"
     },
     "tooltip": {
       "loading": "Musage - loading...",

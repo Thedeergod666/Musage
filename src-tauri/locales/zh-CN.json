@@ -2,11 +2,12 @@
   "tray": {
     "menu": {
       "toggle": "切换悬浮窗",
-      "settings": "设置...",
+      "settings": "打开设置…",
       "refresh": "立即刷新",
       "force_top": "置顶一下",
       "quit": "退出",
-      "source_title": "托盘数据源"
+      "source_title": "托盘数据源",
+      "reset_to_center": "归位悬浮窗"
     },
     "tooltip": {
       "loading": "Musage - 加载中…",

@@ -2,14 +2,22 @@
 <!--
   lang attr 在 src/i18n/index.ts initLocale() 启动时被改成当前 locale
   （默认 "zh-CN" 在 initLocale 跑之前短暂存在，跟旧行为 byte-for-byte 一致）
+
+  2026-08-25 Win 透明修复：html/body 行内 style="background: transparent" +
+  <meta name="color-scheme"> 在 stylesheet 加载前就把根容器刷透明。
+  WebView2 首帧（HTML 解析 ~几十 ms 内）如果 surface 是系统默认白色，CSS
+  里 `html, body { background: transparent }` 来不及救。配合 Rust 端
+  build_floating_window 的 background_color(Color(0,0,0,0))（原生层
+  ICoreWebView2Controller::DefaultBackgroundColor 设为 alpha=0）双保险。
 -->
-<html lang="zh-CN">
+<html lang="zh-CN" style="background: transparent">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
     <title>Musage</title>
   </head>
-  <body>
+  <body style="background: transparent">
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

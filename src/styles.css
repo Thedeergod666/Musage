@@ -99,6 +99,9 @@ html, body {
 #app {
   width: 100%;
   height: 100%;
+  /* 2026-08-25 Win 透明防御：显式声明 transparent，跟 html, body 同一来源，
+     即使上层被某天改动覆盖也能兜住 —— 见 build_floating_window 注释。 */
+  background: transparent;
   padding: 5px;
   display: flex;
   flex-direction: column;

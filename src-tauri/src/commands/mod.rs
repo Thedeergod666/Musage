@@ -1236,6 +1236,49 @@ pub(crate) fn build_settings_window(app: &AppHandle) -> tauri::Result<tauri::Web
     .build()
 }
 
+/// 浮窗 builder —— 跟 [`build_settings_window`] 同款程序化构造模式。
+///
+/// **Win 透明修复（2026-08-25）**：原 `tauri.conf.json` 里的 floating 条目
+/// 只设 `transparent: true`，但 WebView2 在 Windows 上**不会**自动把
+/// `ICoreWebView2Controller::DefaultBackgroundColor` 设为 alpha=0，
+/// 默认涂白 → CSS `html, body { background: transparent }` 来不及救
+/// （HTML 解析前那 ~几十 ms 首帧已经白闪）。macOS NSWindow 走 CALayer
+/// 真透明所以 bug 只在 Windows 出。
+///
+/// **修法**：跟 settings 窗口同款，build 时显式 `background_color(0,0,0,0)`
+/// 在原生层（Win32 chrome + WebView2 surface）就预先涂成全透明，CSS 来不及
+/// 的那几十 ms 也不闪。`transparent: true` 自身只设 Win32 `WS_EX_LAYERED`
+/// 扩展位（让窗口接受 per-pixel alpha），但**不会**动 WebView2 surface
+/// 默认背景 —— 这就是为什么必须叠一层 `background_color(0,0,0,0)`。
+/// 注意：opaque 窗口（settings）的 alpha 通道被 webview 层忽略（见
+/// [`build_settings_window`] 注释），但 transparent 窗口走分层合成，
+/// alpha=0 真的有效。
+///
+/// **调用顺序**：必须在 `tray::setup` 之前 build —— `reset_floating_window` /
+/// `force_top_floating` 等 tray handler 会 `get_webview_window("floating")`，
+/// 提前建好避免 race。
+///
+/// **跟 settings 窗口的反向 skip_taskbar**：浮窗是小悬浮 overlay，不该
+/// 出现在 Win 任务栏（settings 在 [`build_settings_window`] 反着设
+/// `skip_taskbar(false)`，两侧一反一正，否则 Win 用户看到一个 "Musage"
+/// 任务栏条目对应错误的窗口）。
+pub(crate) fn build_floating_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
+    let transparent = tauri::webview::Color(0, 0, 0, 0);
+    tauri::WebviewWindowBuilder::new(app, "floating", tauri::WebviewUrl::App("index.html".into()))
+        .title("Musage")
+        .inner_size(300.0, 100.0)
+        .min_inner_size(180.0, 100.0)
+        .max_inner_size(420.0, 2400.0)
+        .resizable(true)
+        .decorations(false)
+        .transparent(true)
+        .skip_taskbar(true)
+        .shadow(false)
+        .visible(true)
+        .background_color(transparent)
+        .build()
+}
+
 #[tauri::command]
 pub async fn open_settings_window(app: AppHandle, section: Option<String>) -> Result<(), String> {
     // v0.2.1 commit 8: section 参数取值 "providers" / "floating" / "app" /

@@ -11,26 +11,7 @@
   },
   "app": {
     "macOSPrivateApi": true,
-    "windows": [
-      {
-        "label": "floating",
-        "title": "Musage",
-        "width": 300,
-        "height": 100,
-        "minWidth": 180,
-        "minHeight": 100,
-        "maxWidth": 420,
-        "maxHeight": 2400,
-        "resizable": true,
-        "decorations": false,
-        "transparent": true,
-        "alwaysOnTop": false,
-        "skipTaskbar": true,
-        "visible": true,
-        "shadow": false,
-        "url": "index.html"
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' ipc:; font-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'"
     }

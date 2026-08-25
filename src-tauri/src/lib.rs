@@ -165,6 +165,16 @@ pub fn run() {
                 *guard = config;
             }
 
+            // 2026-08-25 Win 透明修复：浮窗改成程序化构造（见
+            // commands::build_floating_window），必须在 tray::setup 之前
+            // 建好 —— reset_floating_window / force_top_floating 等 tray
+            // handler 后续会 get_webview_window("floating")，提前建好避免
+            // race。静态配置已从 tauri.conf.json 删（"windows": []），由
+            // Rust 端独家拥有 floating window 的 builder 参数，避免配置漂移。
+            if app.get_webview_window("floating").is_none() {
+                commands::build_floating_window(app.handle())?;
+            }
+
             // P0：监听 locale-changed 事件 → 重建 tray menu（用新 locale 的 label）
             // + 同步 settings / xiaomi 窗口 title。
             // 用 cloned AppHandle 在闭包外 spawn 一个长生命周期监听。
@@ -301,7 +311,7 @@ pub fn run() {
                 }
 
                 if let (Some(w), Some(h)) = (cfg.floating_w, cfg.floating_h) {
-                    // 尊重 tauri.conf.json 里的 minWidth/minHeight（保持同步）
+                    // 尊重 build_floating_window 里的 minWidth/minHeight（保持同步）
                     let min_w = (180.0 * scale) as u32;
                     let min_h = (100.0 * scale) as u32;
                     let ww = w.max(min_w as i32) as u32;

@@ -1293,6 +1293,24 @@ fn write_keys_atomic(map: &KeysMap) -> Result<(), String> {
     Ok(())
 }
 
+/// keys.json 文件内容 → map 的**纯**判定，不碰磁盘，供单元测试锁定不变量。
+///
+/// 契约（H-1 / F3 fix）：只有能完整 parse 出 map 时才返回 `Ok`。空内容和
+/// parse 失败都返回 `Err`，**绝不降级成空 map** —— 空 map 一旦进入
+/// `save_credential_for_id` 的写回基线，磁盘上其余凭据会被全量覆盖清除。
+fn parse_keys_payload(s: &str) -> Result<KeysMap, KeysPayloadError> {
+    if s.trim().is_empty() {
+        return Err(KeysPayloadError::Empty);
+    }
+    serde_json::from_str::<KeysMap>(s).map_err(|e| KeysPayloadError::Parse(e.to_string()))
+}
+
+#[derive(Debug)]
+enum KeysPayloadError {
+    Empty,
+    Parse(String),
+}
+
 fn read_keys() -> Result<KeysMap, String> {
     let path = keys_path()?;
     if !path.exists() {
@@ -1300,66 +1318,49 @@ fn read_keys() -> Result<KeysMap, String> {
     }
     let s = std::fs::read_to_string(&path)
         .map_err(|e| t!("commands.read_keys", err = e.to_string()).into_owned())?;
-    if s.trim().is_empty() {
-        // 空文件 → 对外返回空 map，但先 backup 原文件。
-        // 极端场景（磁盘坏块写入空文件）下，若直接返回空 map，下一次
-        // save_*_key 会拿空 map 覆盖实体 keys.json → 永久丢失所有 key。
-        // backup 保留 forensic 副本用作恢复。
-        tracing::warn!(path = %path.display(), "keys.json 为空, 备份后返回空 map");
-        let ts = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let backup = path.with_extension(format!("json.bak.{ts}"));
-        // D4-005 fix (2026-07-30 audit): 之前 `let _ =` 静默吞掉 copy 错误,
-        // 用户看见日志里没有任何线索, debug 时无法判断 backup 是否成功。
-        // copy 失败时升 ERROR 级(backup 失败 = 损坏版本未被保留, 用户丢全部 key),
-        // 跟 load_from_disk 的损坏 config.json 备份保持同一日志级别语义。
-        if let Err(e) = std::fs::copy(&path, &backup) {
-            tracing::error!(
-                error = %e,
-                path = %path.display(),
-                backup = %backup.display(),
-                "keys.json 为空且 backup 失败, 后续 save_*_key 会用空 map 覆盖原文件 → 永久丢失所有 key"
-            );
-        } else {
-            tracing::warn!(
-                backup = %backup.display(),
-                "keys.json 为空, 已 backup 后返回空 map (注意:下次 save_*_key 会用空 map 覆盖)"
-            );
-        }
-        return Ok(BTreeMap::new());
+    // H-1 fix (2026-08-27 audit): 空文件曾经返回 Ok(空 map)，与 parse 失败分支的
+    // 规则自相矛盾 —— 空 map 会成为 save_credential_for_id 的写回基线，insert
+    // 一条后全量写盘，磁盘上其余所有凭据被物理清除，且全程只 WARN、UI 还显示
+    // "保存成功"。空文件（磁盘满 / 进程中断写出的 0 字节）与 parse 失败同属
+    // "文件损坏"，两条分支统一走 parse_keys_payload → Err，绝不让降级 map
+    // 进入写回路径。合法的"没有任何凭据"是 `{}` 或文件不存在，不是空文件。
+    let err = match parse_keys_payload(&s) {
+        Ok(m) => return Ok(m),
+        Err(e) => e,
+    };
+    // 损坏文件先备份到 .bak.<ts> 再返回 Err，保留 forensic 恢复副本。
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let backup = path.with_extension(format!("json.bak.{ts}"));
+    // D4-005 fix (2026-07-30 audit): 之前 `let _ =` 静默吞掉 copy 错误，用户在
+    // 日志里看不到任何线索。copy 失败 = 损坏版本未被保留、用户失去恢复路径，
+    // 必须 ERROR 级，跟 load_from_disk 的损坏 config.json 备份同一语义。
+    if let Err(copy_err) = std::fs::copy(&path, &backup) {
+        tracing::error!(
+            error = %copy_err,
+            path = %path.display(),
+            backup = %backup.display(),
+            "keys.json 损坏且 backup 失败, 用户失去恢复路径"
+        );
+    } else {
+        tracing::error!(
+            path = %path.display(),
+            backup = %backup.display(),
+            "keys.json 损坏, 已备份并拒绝读取, 避免后续 save 用空 map 覆盖"
+        );
     }
-    // parse 失败：先备份损坏的 keys.json 到 .bak.<ts>，再返回 Err。
-    // 不静默 fallback 到空 map —— 否则下一次 save_*_key 会用空 map 写回，
-    // 把所有其他 provider 的 key 一起删光（这是 review 报告里的 F3 critical bug）。
-    match serde_json::from_str::<KeysMap>(&s) {
-        Ok(m) => Ok(m),
-        Err(e) => {
-            let ts = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0);
-            let backup = path.with_extension(format!("json.bak.{ts}"));
-            // D4-005 fix (2026-07-30 audit): 同上 —— copy 失败不能静默吞。
-            // 此分支返 Err, caller 不会拿空 map 覆盖, 但用户需要知道 backup
-            // 是否成功(若 copy 失败, 损坏文件 + parse 失败的组合场景下用户
-            // 失去恢复路径, 必须 ERROR 级告警)。
-            if let Err(copy_err) = std::fs::copy(&path, &backup) {
-                tracing::error!(
-                    error = %copy_err,
-                    path = %path.display(),
-                    backup = %backup.display(),
-                    "keys.json 损坏且 backup 失败, 用户失去恢复路径"
-                );
-            }
-            Err(t!(
-                "commands.parse_keys",
-                err = format!("{e}; 备份到 {}", backup.display())
-            )
-            .into_owned())
+    Err(match err {
+        KeysPayloadError::Empty => {
+            t!("commands.empty_keys", backup = backup.display().to_string()).into_owned()
         }
-    }
+        KeysPayloadError::Parse(e) => t!(
+            "commands.parse_keys",
+            err = format!("{e}; 备份到 {}", backup.display())
+        )
+        .into_owned(),
+    })
 }
 
 // v0.2 (2026-06-22) 删除 7 个 enum-based helper:
@@ -1554,6 +1555,37 @@ mod tests {
             .get("minimax")
             .map(|p| p.enabled)
             .unwrap_or(true));
+    }
+
+    /// H-1 regression (2026-08-27 audit): 空/损坏的 keys.json 内容**绝不能**
+    /// 降级成空 map —— 空 map 会成为 save_credential_for_id 的全量写回基线，
+    /// 把磁盘上其余所有 provider 的凭据一起清除。F3 当年只堵了 parse 分支，
+    /// 空文件分支漏了；这个测试同时锁住两条分支 + 合法的 `{}`。
+    #[test]
+    fn parse_keys_payload_never_degrades_to_empty_map() {
+        // 损坏形态一律 Err
+        for corrupt in ["", "   ", "\n\t \r\n", "{", "not json", "[]", "null", "123"] {
+            assert!(
+                parse_keys_payload(corrupt).is_err(),
+                "corrupt payload {corrupt:?} 必须返 Err, 不能降级成空 map"
+            );
+        }
+        // 空文件走 Empty 分支（对应"拒绝覆盖 + 已备份"文案），parse 失败走 Parse
+        assert!(matches!(
+            parse_keys_payload("  "),
+            Err(KeysPayloadError::Empty)
+        ));
+        assert!(matches!(
+            parse_keys_payload("{oops"),
+            Err(KeysPayloadError::Parse(_))
+        ));
+        // 合法的"没有任何凭据"是 `{}`，必须 Ok(空 map)
+        let empty = parse_keys_payload("{}").expect("`{}` 是合法的空凭据表");
+        assert!(empty.is_empty());
+        // 正常内容照常 parse
+        let m = parse_keys_payload(r#"{"minimax":"sk-cp-x","deepseek":"sk-y"}"#).unwrap();
+        assert_eq!(m.get("minimax").map(|s| s.as_str()), Some("sk-cp-x"));
+        assert_eq!(m.len(), 2);
     }
 
     #[test]

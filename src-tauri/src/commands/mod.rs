@@ -443,6 +443,27 @@ pub async fn get_xiaomi_display_mode(state: State<'_, AppState>) -> Result<Strin
 // change handler，改了静默丢失。现在每个 setter 后端做：改 cfg 顶层字段 →
 // 落盘 → emit config-changed → 立即 refresh_single 让浮窗/托盘立刻反映。
 
+/// M-5 fix (2026-08-27 audit): 单字段 setter 里的"保存后立即 refresh"必须走
+/// 后台 task，不能在 IPC handler 里内联 await —— provider 网络慢时（超时最长
+/// 十几秒）整个设置面板的这次 invoke 会一直挂着，用户以为界面卡死。
+/// 与 `set_provider_enabled` / `set_xiaomi_display_mode` 的既有模式对齐：
+/// cfg 已落盘 → spawn 后台 refresh → 立刻返回，refresh 完成后自己 emit snapshot。
+fn spawn_refresh_single(app: &AppHandle, id: &str) {
+    let app_clone = app.clone();
+    let id_owned = id.to_string();
+    tokio::spawn(async move {
+        if let Err(e) = refresh_single_inner(
+            &app_clone,
+            &id_owned,
+            crate::poller_backoff::RefreshSource::Manual,
+        )
+        .await
+        {
+            tracing::warn!(error = %e, provider = %id_owned, "设置变更后立即拉取失败");
+        }
+    });
+}
+
 #[tauri::command]
 pub async fn set_minimax_region(
     state: State<'_, AppState>,
@@ -463,12 +484,7 @@ pub async fn set_minimax_region(
         entry.region = Some(parsed);
         cfg.save()?;
     }
-    let _ = refresh_single_inner(
-        &app,
-        "minimax",
-        crate::poller_backoff::RefreshSource::Manual,
-    )
-    .await;
+    spawn_refresh_single(&app, "minimax");
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -495,12 +511,7 @@ pub async fn set_xiaomi_region_field(
         entry.xiaomi_region = Some(parsed);
         cfg.save()?;
     }
-    let _ = refresh_single_inner(
-        &app,
-        "xiaomimimo",
-        crate::poller_backoff::RefreshSource::Manual,
-    )
-    .await;
+    spawn_refresh_single(&app, "xiaomimimo");
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -516,8 +527,7 @@ pub async fn set_tavily_concise_mode(
         cfg.tavily_concise_mode = enabled;
         cfg.save()?;
     }
-    let _ =
-        refresh_single_inner(&app, "tavily", crate::poller_backoff::RefreshSource::Manual).await;
+    spawn_refresh_single(&app, "tavily");
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -546,8 +556,7 @@ pub async fn set_zenmux_base_url(
         };
         cfg.save()?;
     }
-    let _ =
-        refresh_single_inner(&app, "zenmux", crate::poller_backoff::RefreshSource::Manual).await;
+    spawn_refresh_single(&app, "zenmux");
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -566,8 +575,7 @@ pub async fn set_zenmux_mode(
         cfg.zenmux_mode = Some(mode.clone());
         cfg.save()?;
     }
-    let _ =
-        refresh_single_inner(&app, "zenmux", crate::poller_backoff::RefreshSource::Manual).await;
+    spawn_refresh_single(&app, "zenmux");
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -583,8 +591,7 @@ pub async fn set_zenmux_payg_concise(
         cfg.zenmux_payg_concise_mode = Some(enabled);
         cfg.save()?;
     }
-    let _ =
-        refresh_single_inner(&app, "zenmux", crate::poller_backoff::RefreshSource::Manual).await;
+    spawn_refresh_single(&app, "zenmux");
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -603,7 +610,7 @@ pub async fn set_zhipu_region(
         cfg.zhipu_region = Some(region);
         cfg.save()?;
     }
-    let _ = refresh_single_inner(&app, "zhipu", crate::poller_backoff::RefreshSource::Manual).await;
+    spawn_refresh_single(&app, "zhipu");
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -1161,11 +1168,10 @@ pub async fn delete_source_credential(
         .await
         .is_enabled_unique(&id, base_id_of(&id));
     if enabled {
-        if let Err(e) =
-            refresh_single_inner(&app, &id, crate::poller_backoff::RefreshSource::Manual).await
-        {
-            tracing::warn!(error = %e, provider = %id, "delete 后立即拉取失败");
-        }
+        // M-5 fix (2026-08-27 audit): 同样改后台 spawn。删凭据的 refresh 必定
+        // 走完整网络往返（拿 unconfigured 错误态），内联 await 会让"删除"按钮
+        // 卡到超时；日志里的失败提示改由 spawn 内部打。
+        spawn_refresh_single(&app, &id);
     }
     let _ = app.emit("musage://config-changed", ());
     Ok(())

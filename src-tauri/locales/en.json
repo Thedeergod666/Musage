@@ -159,6 +159,7 @@
     "config_dir_not_found": "Cannot locate config directory",
     "read_keys": "read keys: %{err}",
     "parse_keys": "parse keys.json: %{err}",
+    "empty_keys": "keys.json is empty (likely disk corruption); refusing to overwrite. Backed up to %{backup} — restore it or delete keys.json to start over.",
     "keys_io": "%{op} keys: %{err}",
     "schema_override_empty_field": "%{id}.%{tier}[%{idx}]: total/remaining must be non-empty strings",
     "schema_override_duplicate_field": "%{id}.%{tier}[%{idx}]: total and remaining cannot be the same field (self-reference)",

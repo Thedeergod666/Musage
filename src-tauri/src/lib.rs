@@ -322,6 +322,12 @@ pub fn run() {
                 // 恢复浮窗的置顶/置底模式（用户上次选的）
                 apply_pin_mode_to_window(app.handle(), cfg.floating_pin_mode);
 
+                // 恢复浮窗的 frosted glass effect（Win Part 2, 2026-08-25）：
+                // low_power_mode=on 时关掉 OS 层 Acrylic —— CSS 关不掉
+                // compositor 效果，必须在 Rust 端补一刀才不会让省电模式
+                // escape hatch 失效（见 apply_floating_window_blur 注释）。
+                commands::apply_floating_window_blur(app.handle(), !cfg.low_power_mode);
+
                 // 同步「全屏自动隐藏」开关到平台层（watcher 已经启动，这里只翻开关）
                 crate::platform::set_auto_hide_in_fullscreen(
                     app.handle(),

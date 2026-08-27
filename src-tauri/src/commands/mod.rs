@@ -1503,6 +1503,59 @@ pub fn apply_pin_mode_to_window(app: &AppHandle, mode: FloatingPinMode) {
     }
 }
 
+/// Win 浮窗 frosted glass 切换 (Part 2 of Win 透明修复, 见
+/// [`build_floating_window`] 注释 + commit 2a6de3c)。
+///
+/// WebView2 在 `transparent: true` 下 sample 不到 surface 之下的 OS 像素,
+/// 所以 CSS `backdrop-filter` 在 Win 上完全无效 —— 见
+/// [tauri-apps/tauri#15512](https://github.com/tauri-apps/tauri/issues/15512)
+/// (closed as not planned)。Tauri 2 内置 `Window::set_effects` 走
+/// `window-vibrancy` crate (已是 tauri 传递依赖 0.6.0) → Win32 端
+/// `DwmSetWindowAttribute(DWMWA_SYSTEMBACKDROP_TYPE=DWMSBT_TRANSIENTWINDOW)`
+/// 在 Win11 22H2+、`SetWindowCompositionAttribute(ACCENT_ENABLE_ACRYLICBLURBEHIND)`
+/// 在 Win10 v1803+,OS 自己采样桌面像素并涂薄。
+///
+/// **`enabled=false` 必须 clear 掉 effect** —— 用户开 `low_power_mode` 时
+/// CSS `body[data-low-power] * { backdrop-filter: none !important }` 已经
+/// 关掉 CSS 层 backdrop-filter,但 OS 层 Acrylic 是 compositor 级、CSS 关不掉,
+/// 必须在这里也 clear 才不会让省电模式 escape hatch 失效(见 styles.css:710
+/// + [`set_low_power_mode`] IPC 注释)。
+///
+/// tint color 不传 —— 仅 Win10 v1903 接受 tint,Win11 DWM 忽略 alpha
+/// 自动选 Mica-like 色调,不传让 OS 选默认避免双重暗化 `.card`
+/// (`.card --tile-bg` 本身已 rgba(28,30,38,0.30))。
+///
+/// Win7/8 Acrylic 不支持 → 返回 `Result::Err`,这里 log warn 不 panic
+/// (退化为 Part 1 状态:透明无模糊)。
+///
+/// macOS: NSVisualEffectView 暂时不调,WKWebView 的 CSS backdrop-filter
+/// 在 macOS 上本身有效(已在 `.card` 上 `blur(28px) saturate(180%)`)。
+/// 后续要统一 OS 层效果再加 `apply_vibrancy`,会改 macOS 视觉,
+/// 单独一个 PR 评估。
+#[allow(unused_variables)]
+pub fn apply_floating_window_blur(app: &AppHandle, enabled: bool) {
+    #[cfg(target_os = "windows")]
+    {
+        let Some(win) = app.get_webview_window("floating") else {
+            return;
+        };
+        let result = if enabled {
+            use tauri::window::{Effect, EffectsBuilder};
+            win.set_effects(EffectsBuilder::new().effect(Effect::Acrylic).build())
+        } else {
+            // clear: set_effects(None) 走 std blanket From<T> for Option<T>
+            win.set_effects(None)
+        };
+        if let Err(e) = result {
+            tracing::warn!(
+                error = %e,
+                "Win 浮窗 set_effects({}) 失败,继续运行 (Win7/8 不支持 Acrylic)",
+                if enabled { "Acrylic" } else { "clear" }
+            );
+        }
+    }
+}
+
 /// P2 区域向导：用户选定区域后 apply 该区域的默认 provider 顺序 + 默认
 /// endpoint（MiniMax/Zhipu CN/EN），并把 user_region 标为 Custom
 /// （之后用户手动改顺序/endpoint 不会触发 wizard 重新弹出）。
@@ -2310,6 +2363,12 @@ fn log_provider_error(app: &AppHandle, provider_id: &str, kind: ErrorKind, messa
 
 /// 即时切换省电模式：写 cfg + emit `musage://low-power-mode-changed` 给浮窗
 /// 让它 toggle body[data-low-power]（styles.css 切玻璃材质）。
+///
+/// **Win 浮窗 frosted glass 联动**（2026-08-25, commit after 2a6de3c）：
+/// `body[data-low-power] * { backdrop-filter: none !important }` CSS 关得掉
+/// `.card` 的 CSS backdrop-filter，但**关不掉** OS 层 Acrylic（compositor 级），
+/// 低功耗模式 escape hatch 会失效。`apply_floating_window_blur(!enabled)`
+/// 在这里补一刀 —— enabled=true (省电) → blur 关闭。
 #[tauri::command]
 pub async fn set_low_power_mode(
     state: State<'_, AppState>,
@@ -2325,6 +2384,7 @@ pub async fn set_low_power_mode(
         cfg.save()?;
     }
     let _ = app.emit("musage://low-power-mode-changed", enabled);
+    apply_floating_window_blur(&app, !enabled);
     Ok(())
 }
 

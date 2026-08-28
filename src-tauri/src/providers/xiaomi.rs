@@ -340,6 +340,31 @@ pub(crate) fn is_html_error_page(body: &str) -> bool {
             || body_lc.contains("temporarily"))
 }
 
+/// M-7 fix (2026-08-27 audit): 小米 dashboard 的 HTTP 200 + 业务 code 路径
+/// 一刀切归 ServerError, 把鉴权失败(如 `{"code":40101,"msg":"未登录"}`)也
+/// 错归成服务端错误。前端 ServerError 分支只渲重试倒计时、不显示重新登录
+/// 引导,而这个 range 实际上等价于 HTTP 401 的语义,应该走 AuthFailed。
+///
+/// 与上方 HTTP 401 判定对称:code ∈ 40100..40199 一律归 AuthFailed,让前端的
+/// `err-btn-relogin` 按钮亮起来。`FetchError::auth()` 的 message 沿用
+/// `error.xiaomi.cookie_invalid_hint`(与 401 路径文案对齐),UI 看到的就是
+/// "凭据无效, 请重新登录"。
+pub(crate) fn classify_xiaomi_business_code(code: i64) -> XiaomiBusinessCode {
+    if (40100..40200).contains(&code) {
+        XiaomiBusinessCode::Auth
+    } else {
+        XiaomiBusinessCode::Server
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum XiaomiBusinessCode {
+    /// 401xx 业务码 → 归 AuthFailed, 触发重新登录引导
+    Auth,
+    /// 其他非零业务码 → 归 ServerError, 走退避重试
+    Server,
+}
+
 pub(crate) fn decide_auth_strategy(creds: &Credentials) -> AuthStrategy {
     let has_key = creds
         .api_key
@@ -428,6 +453,11 @@ impl Xiaomimimo {
         if let Some(code) = raw.get("code").and_then(|v| v.as_i64()) {
             if code != 0 {
                 let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                if classify_xiaomi_business_code(code) == XiaomiBusinessCode::Auth {
+                    return Err(FetchError::auth(
+                        t!("error.xiaomi.cookie_invalid_hint").into_owned(),
+                    ));
+                }
                 return Err(FetchError::server(
                     t!("error.xiaomi.business_code", code = code, msg = msg).into_owned(),
                 ));
@@ -576,6 +606,11 @@ impl Xiaomimimo {
         if let Some(code) = raw.get("code").and_then(|v| v.as_i64()) {
             if code != 0 {
                 let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                if classify_xiaomi_business_code(code) == XiaomiBusinessCode::Auth {
+                    return Err(FetchError::auth(
+                        t!("error.xiaomi.cookie_invalid_hint").into_owned(),
+                    ));
+                }
                 return Err(FetchError::server(
                     t!("error.xiaomi.business_code", code = code, msg = msg).into_owned(),
                 ));
@@ -1807,5 +1842,50 @@ mod tests {
     fn format_end_utc_none_returns_fallback() {
         let s = format_end_utc(None);
         assert!(s.contains("未知") || s.contains("unknown") || s.contains("到期"));
+    }
+
+    /// M-7 regression (2026-08-27 audit): HTTP 200 + 业务 code 401xx 等价于
+    /// HTTP 401 的鉴权失败语义, 必须归 AuthFailed → 前端亮 "重新登录" 按钮。
+    /// 旧实现一刀切 ServerError → 用户看不到引导 + 退避涨到 30min 空转。
+    #[test]
+    fn classify_xiaomi_business_code_routes_401xx_to_auth() {
+        // 40101 是测试 fixture 里就有的真实场景 (line 1109: {"code":40101,"msg":"未登录"})
+        assert_eq!(
+            classify_xiaomi_business_code(40101),
+            XiaomiBusinessCode::Auth
+        );
+        // 边界: range 端点 + 中段都归 Auth
+        assert_eq!(
+            classify_xiaomi_business_code(40100),
+            XiaomiBusinessCode::Auth
+        );
+        assert_eq!(
+            classify_xiaomi_business_code(40199),
+            XiaomiBusinessCode::Auth
+        );
+        assert_eq!(
+            classify_xiaomi_business_code(40150),
+            XiaomiBusinessCode::Auth
+        );
+
+        // range 之外的业务码保持 Server
+        assert_eq!(
+            classify_xiaomi_business_code(50001),
+            XiaomiBusinessCode::Server
+        );
+        assert_eq!(
+            classify_xiaomi_business_code(40099),
+            XiaomiBusinessCode::Server,
+            "401xx range 紧贴 40099 但不包含"
+        );
+        assert_eq!(
+            classify_xiaomi_business_code(40200),
+            XiaomiBusinessCode::Server,
+            "401xx range 上界 40200 不包含"
+        );
+        assert_eq!(
+            classify_xiaomi_business_code(-1),
+            XiaomiBusinessCode::Server
+        );
     }
 }

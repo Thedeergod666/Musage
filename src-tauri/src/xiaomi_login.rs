@@ -560,8 +560,14 @@ fn extract_user_id_from_url(url: &Url) -> Option<String> {
         url.host_str(),
         Some("platform.xiaomimimo.com") | Some("xiaomimimo.com")
     );
+    // M-8 fix (2026-08-27 audit): macOS 上 cookie 在 SSO 跳转中可能丢, 兜底
+    // 从 URL 抓 userId。原本白名单只有 /dashboard /oauth /, 但 dashboard_url =
+    // https://platform.xiaomimimo.com/console/plan-manage (LOGIN_URL, line 122)
+    // 走 SSO 回调后落地页就是 /console/plan-manage?userId=N, 在 /console 之外
+    // 全部走 None → 兜底实际不可达, 用户反复登录仍报 "cookie 不完整"。
     let path_ok = url.path().starts_with("/dashboard")
         || url.path().starts_with("/oauth")
+        || url.path().starts_with("/console")
         || url.path() == "/";
     if !host_ok || !path_ok {
         return None;
@@ -634,6 +640,20 @@ mod tests {
         // D3-005 fix: 受信任 host + dashboard path
         let url = url("https://platform.xiaomimimo.com/dashboard?userId=12345");
         assert_eq!(extract_user_id_from_url(&url), Some("12345".to_string()));
+    }
+
+    #[test]
+    fn extract_user_id_accepts_console_path() {
+        // M-8 fix (2026-08-27 audit): LOGIN_URL = /console/plan-manage, SSO 回调
+        // 落地就是这条路 (line 122)。macOS 丢 cookie 时必须能从 URL 兜底拿到
+        // userId, 之前白名单没 /console 前缀 → 兜底实际不可达。
+        let parsed =
+            url("https://platform.xiaomimimo.com/console/plan-manage?userId=12345&other=foo");
+        assert_eq!(extract_user_id_from_url(&parsed), Some("12345".to_string()));
+
+        // 嵌套 /console 也算
+        let parsed = url("https://platform.xiaomimimo.com/console/sub/page?userId=99999");
+        assert_eq!(extract_user_id_from_url(&parsed), Some("99999".to_string()));
     }
 
     #[test]

@@ -36,8 +36,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use super::{
-    json_body_limited, shared_client, text_body_limited, AuthKind, Credentials, ErrorKind,
-    FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
+    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, AuthKind,
+    Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
 };
 
 use crate::config::ProviderOverrides;
@@ -265,7 +265,7 @@ impl Minimax {
                     t!(
                         "error.common.network",
                         url = region.api_url(),
-                        err = e.to_string()
+                        err = humanize_reqwest_err(&e)
                     )
                     .into_owned(),
                 )

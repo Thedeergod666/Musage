@@ -27,8 +27,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use super::{
-    json_body_limited, shared_client, text_body_limited, AuthKind, Credentials, ErrorKind,
-    FetchError, ProviderSnapshot, QuotaRow, QuotaSource, RowKind,
+    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, AuthKind,
+    Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource, RowKind,
 };
 
 use crate::config::ProviderOverrides;
@@ -424,7 +424,12 @@ impl Xiaomimimo {
             .await
             .map_err(|e| {
                 FetchError::network(
-                    t!("error.common.network", url = USAGE_URL, err = e.to_string()).into_owned(),
+                    t!(
+                        "error.common.network",
+                        url = USAGE_URL,
+                        err = humanize_reqwest_err(&e)
+                    )
+                    .into_owned(),
                 )
             })?;
         let status = resp.status();
@@ -545,7 +550,12 @@ impl Xiaomimimo {
             .await
             .map_err(|e| {
                 FetchError::network(
-                    t!("error.common.network", url = USAGE_URL, err = e.to_string()).into_owned(),
+                    t!(
+                        "error.common.network",
+                        url = USAGE_URL,
+                        err = humanize_reqwest_err(&e)
+                    )
+                    .into_owned(),
                 )
             })?;
 

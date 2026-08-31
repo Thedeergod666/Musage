@@ -103,8 +103,8 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::{
-    json_body_limited, shared_client, text_body_limited, AuthKind, Credentials, ErrorKind,
-    FetchError, ProviderSnapshot, QuotaRow, QuotaSource, RowKind,
+    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, AuthKind,
+    Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource, RowKind,
 };
 use crate::config;
 use crate::t;
@@ -379,7 +379,7 @@ async fn fetch_rate_limit(token: &str) -> Result<Value, FetchError> {
                 t!(
                     "error.common.network",
                     url = URL_RATE_LIMIT,
-                    err = e.to_string()
+                    err = humanize_reqwest_err(&e)
                 )
                 .into_owned(),
             )
@@ -614,7 +614,7 @@ async fn refresh_oasis_token(token: &str, unique_id: &str) -> Result<String, Fet
                 t!(
                     "error.common.network",
                     url = URL_REFRESH,
-                    err = e.to_string()
+                    err = humanize_reqwest_err(&e)
                 )
                 .into_owned(),
             )

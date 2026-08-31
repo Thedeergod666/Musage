@@ -43,8 +43,8 @@ use serde_json::Value;
 
 use super::parse::{num_f64, read_path};
 use super::{
-    json_body_limited, shared_client, text_body_limited, AuthKind, Credentials, ErrorKind,
-    FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
+    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, AuthKind,
+    Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
 };
 use crate::t;
 
@@ -293,7 +293,7 @@ async fn do_fetch(
         .header("Accept", "application/json");
 
     let resp = req.send().await.map_err(|e| {
-        FetchError::network(t!("error.custom.network", err = e.to_string()).into_owned())
+        FetchError::network(t!("error.custom.network", err = humanize_reqwest_err(&e)).into_owned())
     })?;
 
     let status = resp.status();

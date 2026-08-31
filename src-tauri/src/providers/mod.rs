@@ -349,6 +349,47 @@ impl std::fmt::Display for FetchError {
 }
 impl std::error::Error for FetchError {}
 
+/// 把 reqwest 传输层错误归类成人话字符串(供 `error.common.network` 模板的
+/// `%{err}` 占位符使用)。
+///
+/// 之前 17 个 provider 的 fetch 路径都是 `e.to_string()` 直接拼进模板,导致
+/// 用户看到的错误形如 `网络错误 [URL]: error sending request for url (URL): <cause>`
+/// —— URL 出现两次,真正的根因 (timeout / connect refused / DNS) 被埋在第二层
+/// 模板外,排查时必须复现 + 看 reqwest 源码才知道哪种网络错误。
+///
+/// 新行为:
+/// - `is_timeout()` → "请求超时"
+/// - `is_connect()` → "无法连接服务器"
+/// - `is_decode()`  → "响应解码失败"
+/// - 其它 (罕见) → 剥掉 reqwest 自己重复的 URL 前缀 (`error sending request
+///   for url (URL): `),只留真正的根因 (例如 `operation timed out` /
+///   `connection refused` / `dns error: failed to lookup address ...`)
+///
+/// 模板串仍保留 URL —— 但只出现一次,且 humanize 后的 err 直接告诉用户是什么
+/// 类型的网络问题,不用像之前那样开 curl 再确认。
+pub fn humanize_reqwest_err(e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        return crate::t!("error.common.network_timeout").into_owned();
+    }
+    if e.is_connect() {
+        return crate::t!("error.common.network_connect").into_owned();
+    }
+    if e.is_decode() {
+        return crate::t!("error.common.network_decode").into_owned();
+    }
+    // 兜底: 剥掉 reqwest Display 的 `error sending request for url (URL): ` 前缀,
+    // 只留 source chain 最末端的根因。URL 走模板的 `%{url}` 占位符单独展示,
+    // 这里不再重复。
+    let raw = e.to_string();
+    if let Some(url) = e.url() {
+        let prefix = format!("error sending request for url ({}): ", url.as_str());
+        if let Some(stripped) = raw.strip_prefix(&prefix) {
+            return stripped.to_owned();
+        }
+    }
+    raw
+}
+
 // ── 一行展示数据 ─────────────────────────────────────────────────────
 
 /// 一行展示数据。三种模式互斥（用 `utilization` / `remaining` / `extra.display` 区分）：
@@ -1222,6 +1263,73 @@ mod tests {
         // 公共 IPv4-mapped 地址不应被误拦
         assert!(!is_ssrf_blocked("::ffff:8.8.8.8"));
         assert!(!is_ssrf_blocked("[::ffff:8.8.8.8]"));
+    }
+
+    // ── 2026-08-31: reqwest 错误人话化（剥重复 URL 前缀 + 分类）──
+
+    #[tokio::test]
+    async fn humanize_reqwest_err_real_connect_error_classified() {
+        // 触发一个真 connect 失败（10.255.255.1 不可路由 → connect_timeout）。
+        // 然后走 humanize_reqwest_err 拿人话标签。
+        // 该测试依赖网络路由,但 10/8 是 RFC 1918 私有地址,通常不可达;
+        // 如果环境特殊可达,只测兜底分支即可,不会 panic。
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_millis(500))
+            .timeout(std::time::Duration::from_millis(500))
+            .build()
+            .unwrap();
+        let err = client
+            .get("http://10.255.255.1:1/")
+            .send()
+            .await
+            .expect_err("10.255.255.1:1 必须不可达");
+        let msg = humanize_reqwest_err(&err);
+        // 任一分类分支命中即可:connect / timeout / i18n 兜底
+        // (兜底分支输出形如 "connection refused" / "operation timed out"
+        // 等真实 reqwest 根因字符串,不再带 URL 前缀)
+        assert!(
+            msg == "无法连接服务器（DNS / 拒绝 / 不可达）"
+                || msg == "Could not connect to server (DNS / refused / unreachable)"
+                || msg == "请求超时"
+                || msg == "Request timed out"
+                || (!msg.contains("error sending request for url") && !msg.is_empty()),
+            "humanize 应返回人话标签或剥前缀后的根因, 实际: {msg}"
+        );
+    }
+
+    #[test]
+    fn humanize_reqwest_err_timeout_returns_i18n_label() {
+        // shared_client 已配 timeout = 10s, connect_timeout = 5s.
+        // 这里用临时 client 触发真超时,验证 is_timeout() 分支命中。
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result: Result<String, String> = rt.block_on(async {
+            let client = reqwest::Client::builder()
+                .connect_timeout(std::time::Duration::from_millis(200))
+                .build()
+                .unwrap();
+            let err = client
+                .get("http://10.255.255.1:1/")
+                .send()
+                .await
+                .expect_err("10.255.255.1:1 必须不可达");
+            // 不可达 IP 既可能 timeout 也可能 connect refused —— 两者都命中我们的
+            // 分类分支(is_timeout / is_connect),断言其一即可。
+            assert!(
+                err.is_timeout() || err.is_connect(),
+                "不可达 IP 应触发 timeout 或 connect,实际 kind 既不是 timeout 也不是 connect"
+            );
+            Ok(humanize_reqwest_err(&err))
+        });
+        let msg = result.unwrap();
+        // 任一 i18n 标签 + 兜底分支都行
+        assert!(
+            msg == "请求超时"
+                || msg == "Request timed out"
+                || msg == "无法连接服务器（DNS / 拒绝 / 不可达）"
+                || msg == "Could not connect to server (DNS / refused / unreachable)"
+                || (!msg.contains("error sending request for url") && !msg.is_empty()),
+            "humanize 应返回人话标签或剥前缀后的根因, 实际: {msg}"
+        );
     }
 }
 

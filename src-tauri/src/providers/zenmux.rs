@@ -52,8 +52,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
-    json_body_limited, shared_client, text_body_limited, AuthKind, Credentials, ErrorKind,
-    FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
+    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, AuthKind,
+    Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
 };
 use crate::t;
 
@@ -259,7 +259,12 @@ async fn do_fetch(
         .await
         .map_err(|e| {
             FetchError::network(
-                t!("error.common.network", url = url, err = e.to_string()).into_owned(),
+                t!(
+                    "error.common.network",
+                    url = url,
+                    err = humanize_reqwest_err(&e)
+                )
+                .into_owned(),
             )
         })?;
 

@@ -86,8 +86,8 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::{
-    json_body_limited, shared_client, text_body_limited, AuthKind, Credentials, ErrorKind,
-    FetchError, ProviderSnapshot, QuotaRow, QuotaSource, RowKind,
+    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, AuthKind,
+    Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource, RowKind,
 };
 use crate::kimi_desktop::KimiSessionInfo;
 use crate::t;
@@ -205,7 +205,12 @@ async fn do_fetch(
         .await
         .map_err(|e| {
             FetchError::network(
-                t!("error.common.network", url = URL, err = e.to_string()).into_owned(),
+                t!(
+                    "error.common.network",
+                    url = URL,
+                    err = humanize_reqwest_err(&e)
+                )
+                .into_owned(),
             )
         })?;
 

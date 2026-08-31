@@ -84,8 +84,8 @@ use base64::Engine;
 use serde_json::{json, Value};
 
 use super::{
-    json_body_limited, shared_client, text_body_limited, AuthKind, Credentials, ErrorKind,
-    FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
+    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, AuthKind,
+    Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
 };
 
 use crate::t;
@@ -264,7 +264,7 @@ async fn refresh_token(refresh: &str, unique_id: &str) -> Result<String, FetchEr
                 t!(
                     "error.common.network",
                     url = REFRESH_URL,
-                    err = e.to_string()
+                    err = humanize_reqwest_err(&e)
                 )
                 .into_owned(),
             )
@@ -430,7 +430,12 @@ async fn do_fetch_once(
         .await
         .map_err(|e| {
             FetchError::network(
-                t!("error.common.network", url = URL, err = e.to_string()).into_owned(),
+                t!(
+                    "error.common.network",
+                    url = URL,
+                    err = humanize_reqwest_err(&e)
+                )
+                .into_owned(),
             )
         })?;
 

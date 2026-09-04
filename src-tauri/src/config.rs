@@ -1328,6 +1328,24 @@ fn read_keys() -> Result<KeysMap, String> {
         Ok(m) => return Ok(m),
         Err(e) => e,
     };
+    // D5-01 (2026-09-04 audit): 损坏文件的指纹去重。poller 对每个启用 provider
+    // 每 interval 调一次 load_credential_for_id → read_keys，此前"每次失败都
+    // copy 备份 + ERROR 日志"会让 .bak.<ts> 以 14 provider × 每 60s 的速度
+    // 无限堆积（同秒互相覆盖、跨秒各自成文件，≈ 2 万文件/天）。记下上次备份
+    // 版本的 (mtime, len)：文件没变就只返回 Err，不再重复 copy / 刷 ERROR。
+    let fingerprint = std::fs::metadata(&path)
+        .ok()
+        .and_then(|m| m.modified().ok().map(|mtime| (mtime, m.len())));
+    if let Some(fp) = &fingerprint {
+        if let Ok(guard) = LAST_BACKED_UP_KEYS
+            .get_or_init(|| std::sync::Mutex::new(None))
+            .lock()
+        {
+            if *guard == Some(*fp) {
+                return Err(t!("commands.keys_corrupt_repeat").into_owned());
+            }
+        }
+    }
     // 损坏文件先备份到 .bak.<ts> 再返回 Err，保留 forensic 恢复副本。
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1351,6 +1369,14 @@ fn read_keys() -> Result<KeysMap, String> {
             "keys.json 损坏, 已备份并拒绝读取, 避免后续 save 用空 map 覆盖"
         );
     }
+    if let Some(fp) = fingerprint {
+        if let Ok(mut guard) = LAST_BACKED_UP_KEYS
+            .get_or_init(|| std::sync::Mutex::new(None))
+            .lock()
+        {
+            *guard = Some(fp);
+        }
+    }
     Err(match err {
         KeysPayloadError::Empty => {
             t!("commands.empty_keys", backup = backup.display().to_string()).into_owned()
@@ -1362,6 +1388,11 @@ fn read_keys() -> Result<KeysMap, String> {
         .into_owned(),
     })
 }
+
+/// D5-01: 上次已备份的 keys.json 损坏版本指纹 (mtime, len)。
+static LAST_BACKED_UP_KEYS: std::sync::OnceLock<
+    std::sync::Mutex<Option<(std::time::SystemTime, u64)>>,
+> = std::sync::OnceLock::new();
 
 // v0.2 (2026-06-22) 删除 7 个 enum-based helper:
 // load_api_key_for / save_api_key_for / delete_api_key_for /

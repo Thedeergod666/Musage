@@ -768,6 +768,23 @@ pub async fn save_config(
             cfg.locale
         ));
     }
+    // D5-03 (2026-09-04 audit): zenmux_base_url 的 https 前缀 + authority-userinfo
+    // 校验此前只在单字段 setter set_zenmux_base_url 有，save_config 全量路径
+    // 可绕过落盘（手搓 IPC / 未来前端全量保存路径）。fetch 侧有同款拦截兜底
+    // 不会实际泄钥，但 C-01 纵深防御应在写入侧闭合。
+    if let Some(u) = cfg.zenmux_base_url.as_deref() {
+        let trimmed = u.trim();
+        if !trimmed.is_empty() {
+            if !trimmed.starts_with("https://") {
+                return Err(t!("error.common.url_scheme_invalid", url = trimmed).into_owned());
+            }
+            if crate::providers::url_authority_has_userinfo(trimmed) {
+                return Err(
+                    t!("error.common.url_authority_has_userinfo", url = trimmed).into_owned()
+                );
+            }
+        }
+    }
     // L2 fix (2026-07-30 audit): 上限 1 天,挡住 webhook 入口塞 86400 * 365
     // 把轮询当 background daemon 跑的死循环。前端 settings panel 默认 60s。
     if cfg.refresh_interval_secs < 10 {

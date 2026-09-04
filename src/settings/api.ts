@@ -221,6 +221,19 @@ export interface UpdateInfo {
 }
 
 /**
+ * 检查结果三态（D5-02）：
+ * - `available` —— 有新版本，`info` 携带详情
+ * - `up_to_date` —— 探测完成、无新版本
+ * - `unknown` —— 探测还没完成（启动 5s 窗口 / 后台 fetch 失败）。
+ *   此前这个状态和 up_to_date 混在同一个 `null` 里，断网用户会被
+ *   误渲染成「已是最新」。
+ */
+export interface UpdateCheckResult {
+  status: "available" | "up_to_date" | "unknown";
+  info?: UpdateInfo;
+}
+
+/**
  * 检查 GitHub releases 是否有新版本。
  *
  * - `force=false`：读后端缓存同步返回；缓存为空时**后端**自动 spawn 后台
@@ -231,8 +244,8 @@ export interface UpdateInfo {
  * 设计：单一 command 让前端不用做"先读缓存再触发 fetch"的两步串联，
  * 后端的 force=false 已经 cover "立刻拿缓存 + 后台更新" 的语义。
  */
-export async function checkForUpdate(force: boolean): Promise<UpdateInfo | null> {
-  return invoke<UpdateInfo | null>("check_for_update", { force });
+export async function checkForUpdate(force: boolean): Promise<UpdateCheckResult> {
+  return invoke<UpdateCheckResult>("check_for_update", { force });
 }
 
 // ── PR 1b: 用户额外 source 实例 (内置副本 + New API 中转站) ──────────

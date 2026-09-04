@@ -13,7 +13,7 @@
 // pre-release 不算（GitHub /releases/latest 端点天然只返 stable）。
 
 import { el, flash } from "./utils";
-import { checkForUpdate, getAppVersion, type UpdateInfo } from "./api";
+import { checkForUpdate, getAppVersion, type UpdateCheckResult } from "./api";
 import { dumpMissingKeys, t } from "../i18n";
 
 export async function renderAboutSection(container: HTMLElement) {
@@ -34,17 +34,41 @@ export async function renderAboutSection(container: HTMLElement) {
     type: "button",
   }, t("settings.about.upgrade_check_update_btn"));
 
-  // 集中渲染结果：把 fetch 完的 Option<UpdateInfo> 转成 UI 状态。
+  // D5-02: unknown 状态的有限重查。后台 fetch 完成不回推前端，启动 5s 探测
+  // 窗口内打开 about 会拿到 unknown —— 每 3s 重查一次，最多 3 次，让后台
+  // 结果有机会落地；耗尽后显示「检查失败」而不是无限转圈。
+  let unknownRetries = 0;
+  const UNKNOWN_RETRY_MAX = 3;
+  let unknownTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // 集中渲染结果：把 fetch 完的三态结果转成 UI 状态。
   // error 走 flash（user-initiated 路径的强反馈），静默路径不 flash。
-  function renderResult(info: UpdateInfo | null, opts: { flashOnError: boolean }): void {
-    if (info) {
-      renderUpdateBanner(bannerSlot, info);
+  function renderResult(result: UpdateCheckResult, opts: { flashOnError: boolean }): void {
+    if (unknownTimer !== null) {
+      clearTimeout(unknownTimer);
+      unknownTimer = null;
+    }
+    if (result.status === "available" && result.info) {
+      renderUpdateBanner(bannerSlot, result.info);
       checkStatus.textContent = t("settings.about.upgrade_new_version_available", {
-        version: info.latest_version,
+        version: result.info.latest_version,
       });
-    } else {
+    } else if (result.status === "up_to_date") {
       clearUpdateBanner(bannerSlot);
       checkStatus.textContent = t("settings.about.upgrade_up_to_date");
+    } else {
+      // unknown：探测没完成。显示「检查中」并择机重查 —— 绝不显示「已是最新」。
+      clearUpdateBanner(bannerSlot);
+      checkStatus.textContent = t("settings.about.upgrade_checking");
+      if (unknownRetries < UNKNOWN_RETRY_MAX) {
+        unknownRetries += 1;
+        unknownTimer = setTimeout(() => {
+          unknownTimer = null;
+          void runCheck(false, { disableBtn: false, flashOnError: false });
+        }, 3000);
+      } else {
+        checkStatus.textContent = t("settings.about.upgrade_check_failed", { err: "timeout" });
+      }
     }
     void opts; // 标记参数使用, 防止 strict-mode unused 警告
   }
@@ -159,7 +183,7 @@ export async function renderAboutSection(container: HTMLElement) {
 }
 
 /** 在 bannerSlot 里渲染"有新版本"的横幅 + 跳 GitHub releases 的链接。 */
-function renderUpdateBanner(slot: HTMLElement, info: UpdateInfo) {
+function renderUpdateBanner(slot: HTMLElement, info: { latest_version: string; html_url: string }) {
   // replaceChildren 而不是 innerHTML = "" 避免残留子节点导致多次渲染时 DOM 累积
   slot.replaceChildren(
     el("div", { class: "update-banner" },

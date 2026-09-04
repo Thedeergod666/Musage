@@ -45,10 +45,19 @@ const GITHUB_REPO: &str = "Thedeergod666/Musage";
 /// 只在设置页打开 + 手动按钮时碰，量级差几个数量级。参考 `tray.rs` /
 /// `poller.rs` / `logstore.rs` 的 `OnceLock` 模式放模块私有 static。
 ///
-/// 写：do_check 完成。读：check_for_update command。
-static UPDATE_CACHE: OnceLock<Arc<RwLock<Option<UpdateInfo>>>> = OnceLock::new();
+/// 外层 `Option` = 探测是否**完成过**（None = 启动探测还没跑完 / 从未成功）；
+/// 内层 `Option<UpdateInfo>` = 完成后的结论（None = 已是最新 / repo 无 release）。
+/// D5-02 (2026-09-04 audit)：此前单一 `Option<UpdateInfo>` 让「没查过」和
+/// 「查过、没新版」不可区分，force=false 路径把"未知"渲染成「已是最新」，
+/// 断网 / 被限流用户获得错误的版本安全感知。
+static UPDATE_CACHE: OnceLock<Arc<RwLock<Option<CacheEntry>>>> = OnceLock::new();
 
-fn cache() -> &'static Arc<RwLock<Option<UpdateInfo>>> {
+#[derive(Debug, Clone, Default)]
+struct CacheEntry {
+    info: Option<UpdateInfo>,
+}
+
+fn cache() -> &'static Arc<RwLock<Option<CacheEntry>>> {
     UPDATE_CACHE.get_or_init(|| Arc::new(RwLock::new(None)))
 }
 
@@ -59,6 +68,18 @@ pub struct UpdateInfo {
     pub latest_version: String,
     /// GitHub release page URL，前端 `<a target="_blank">` 用
     pub html_url: String,
+}
+
+/// 检查结果三态（D5-02）。`status`：
+/// - `"available"` —— 有新版本，`info` 携带详情
+/// - `"up_to_date"` —— 探测完成、无新版本
+/// - `"unknown"` —— 探测还没完成（启动 5s 窗口 / 后台 fetch 失败），前端
+///   显示「检查中」并择机重查，**不得**显示「已是最新」
+#[derive(Serialize, Debug, Clone)]
+pub struct UpdateCheckResult {
+    pub status: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub info: Option<UpdateInfo>,
 }
 
 /// GitHub `/releases/latest` 响应里我们关心的字段。serde 容忍未知字段。
@@ -79,22 +100,50 @@ struct GithubRelease {
 /// fetch"的两步串联，后端的 force=false 已经 cover 了"立刻拿缓存 + 后台
 /// 更新"的语义。参考 `refresh_now` 单命令模式（[`crate::commands::refresh_now`]）。
 #[tauri::command]
-pub async fn check_for_update(force: bool) -> Result<Option<UpdateInfo>, String> {
+pub async fn check_for_update(force: bool) -> Result<UpdateCheckResult, String> {
     if force {
-        do_check().await
+        // 手动「检查更新」：await fetch。Err 直接透传 → 前端「检查失败」。
+        match do_check().await? {
+            Some(info) => Ok(UpdateCheckResult {
+                status: "available",
+                info: Some(info),
+            }),
+            None => Ok(UpdateCheckResult {
+                status: "up_to_date",
+                info: None,
+            }),
+        }
     } else {
         // 读缓存同步返回
         let cached = cache().read().await.clone();
-        // 若缓存为空（启动 5s 内 + 启动探测还没跑完），spawn 后台 fetch
-        // —— 不能阻塞 settings 打开的瞬间。Fire-and-forget。
-        if cached.is_none() {
-            tokio::spawn(async move {
-                if let Err(e) = do_check().await {
-                    tracing::debug!(error = %e, "check_for_update(force=false) 后台 fetch 失败");
-                }
-            });
+        match cached {
+            // 探测完成过 → 结论可信
+            Some(entry) => match entry.info {
+                Some(info) => Ok(UpdateCheckResult {
+                    status: "available",
+                    info: Some(info),
+                }),
+                None => Ok(UpdateCheckResult {
+                    status: "up_to_date",
+                    info: None,
+                }),
+            },
+            // 缓存为空（启动 5s 内 + 启动探测还没跑完，或探测失败）→ 三态
+            // "unknown"，spawn 后台 fetch 更新缓存 —— 不能阻塞 settings 打开
+            // 的瞬间。Fire-and-forget。前端对 unknown 显示「检查中」+ 择机重查，
+            // 不再（D5-02）误渲染成「已是最新」。
+            None => {
+                tokio::spawn(async move {
+                    if let Err(e) = do_check().await {
+                        tracing::debug!(error = %e, "check_for_update(force=false) 后台 fetch 失败");
+                    }
+                });
+                Ok(UpdateCheckResult {
+                    status: "unknown",
+                    info: None,
+                })
+            }
         }
-        Ok(cached)
     }
 }
 
@@ -141,9 +190,9 @@ async fn do_check() -> Result<Option<UpdateInfo>, String> {
 
     let status = resp.status();
     if status.as_u16() == HTTP_NOT_FOUND {
-        // repo 一个 release 都没打 → 视为"没有新版本"，写 None 进缓存
+        // repo 一个 release 都没打 → 视为"没有新版本"，写结论进缓存
         let mut g = cache().write().await;
-        *g = None;
+        *g = Some(CacheEntry { info: None });
         return Ok(None);
     }
     if !status.is_success() {
@@ -183,6 +232,6 @@ async fn do_check() -> Result<Option<UpdateInfo>, String> {
     };
 
     let mut g = cache().write().await;
-    *g = info.clone();
+    *g = Some(CacheEntry { info: info.clone() });
     Ok(info)
 }

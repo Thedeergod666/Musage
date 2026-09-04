@@ -2217,19 +2217,6 @@ pub async fn update_source_state(src: &Box<dyn QuotaSource>, cfg: &AppConfig) {
     src.set_state(cfg_json).await;
 }
 
-/// 把 provider 抛出的中文错误串映射成 [`ErrorKind`]。
-///
-/// P1 错误分类重构：删了。
-/// 旧实现对中文字符串做子串匹配（鉴权失败 / 网络错误 / ...），i18n 一动
-/// （Rust 错误消息改 tr!() 走 en.json）就全破。
-/// 现在 refresh_inner closure 直接返回 [`FetchError`]（带 kind），
-/// 这里不再需要兜底分类。详见 `refresh_inner` L774 注释。
-#[allow(dead_code)]
-fn _classify_error_message_removed(_msg: &str) -> ErrorKind {
-    // 保留一个占位 stub 防止别处误引用（编译期 dead_code 警告，不影响产物）。
-    ErrorKind::Other
-}
-
 // ── 日志：错误事件下沉到 LogStore ────────────────────────────────────
 //
 // 设计要点（commit 3d5ee5d）：
@@ -2384,6 +2371,11 @@ pub async fn set_low_power_mode(
     {
         let mut cfg = state.config.write().await;
         if cfg.low_power_mode == enabled {
+            // D4-02 (2026-09-04 audit): 幂等早返回也要 force re-apply blur——
+            // OS 侧 / 第三方工具改过 DWM backdrop 后，用户重点一次同值切换
+            // 是唯一的手动重同步入口，跳过会让 Acrylic 与 cfg 状态脱钩直到重启。
+            drop(cfg);
+            apply_floating_window_blur(&app, !enabled);
             return Ok(());
         }
         cfg.low_power_mode = enabled;

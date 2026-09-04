@@ -96,7 +96,6 @@ pub struct LogEntry {
 /// 防 caller 漏掉调用 redact。
 pub fn redact_message(s: &str) -> std::borrow::Cow<'_, str> {
     use regex::Regex;
-    use std::borrow::Cow;
     use std::sync::OnceLock;
 
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -149,10 +148,10 @@ pub fn redact_message(s: &str) -> std::borrow::Cow<'_, str> {
         ))
         .expect("redact regex compile failed")
     });
-    if !re.is_match(s) {
-        return Cow::Borrowed(s);
-    }
-    Cow::Owned(re.replace_all(s, "<redacted>").into_owned())
+    // D4-05: 直接返回 replace_all 的 Cow —— 无命中时 regex 返 Borrowed
+    // （零分配），命中才 Owned。此前的 is_match 预扫描 + into_owned 组合
+    // 对每条日志跑两遍 regex 引擎，命中路径还多一次冗余分配。
+    re.replace_all(s, "<redacted>")
 }
 
 /// 进程内全局单例。`Arc<Mutex<VecDeque>>` 是 M1 fix 的核心 —— 让

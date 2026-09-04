@@ -373,7 +373,11 @@ pub fn run() {
                 // 首启引导：走和 open_settings_window 同一个 builder，避免
                 // 两处配置漂移（窗口大小 / decorations / background_color 等
                 // 必须一致，否则两个入口的设置窗看上去会不一样）。
-                let _ = commands::build_settings_window(app.handle());
+                // D4-03 (2026-09-04 audit): 失败落 error 日志，不再静默吞——
+                // 首启用户设置窗弹不出来时至少有诊断入口。
+                if let Err(e) = commands::build_settings_window(app.handle()) {
+                    tracing::error!(error = %e, "首启引导 build_settings_window 失败");
+                }
             }
 
             Ok(())

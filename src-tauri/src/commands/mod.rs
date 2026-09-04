@@ -1287,19 +1287,38 @@ pub(crate) fn build_settings_window(app: &AppHandle) -> tauri::Result<tauri::Web
 /// 任务栏条目对应错误的窗口）。
 pub(crate) fn build_floating_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
     let transparent = tauri::webview::Color(0, 0, 0, 0);
-    tauri::WebviewWindowBuilder::new(app, "floating", tauri::WebviewUrl::App("index.html".into()))
-        .title("Musage")
-        .inner_size(300.0, 100.0)
-        .min_inner_size(180.0, 100.0)
-        .max_inner_size(420.0, 2400.0)
-        .resizable(true)
-        .decorations(false)
-        .transparent(true)
-        .skip_taskbar(true)
-        .shadow(false)
-        .visible(true)
-        .background_color(transparent)
-        .build()
+    let win = tauri::WebviewWindowBuilder::new(
+        app,
+        "floating",
+        tauri::WebviewUrl::App("index.html".into()),
+    )
+    .title("Musage")
+    .inner_size(300.0, 100.0)
+    .min_inner_size(180.0, 100.0)
+    .max_inner_size(420.0, 2400.0)
+    .resizable(true)
+    .decorations(false)
+    .transparent(true)
+    .skip_taskbar(true)
+    .shadow(false)
+    .visible(true)
+    .background_color(transparent)
+    .build()?;
+
+    // fix (2026-09-04 Win hover-raise 修复): 显式清掉 tao 缓存的 ALWAYS_ON_BOTTOM
+    // WindowFlag。该标志会让 tao 的 WM_WINDOWPOSCHANGING handler 把**后续所有**
+    // SetWindowPos 的 hwndInsertAfter 强制改写为 HWND_BOTTOM（tao event_loop.rs
+    // "if window_flags.contains(ALWAYS_ON_BOTTOM) { window_pos.hwndInsertAfter =
+    // HWND_BOTTOM }"）—— 表现是 SetWindowPos(HWND_TOPMOST) 返回 TRUE 但 z-order
+    // 纹丝不动，PinBottom 的 hover-raise 和托盘"强制置顶"全部静默失效（实测
+    // Win11 26200 + tao 0.35.3）。PinBottom 只需要窗口在底部，不需要这个
+    // 持续纠偏标志；置底由 set_window_pin_bottom 的显式 SetWindowPos 负责。
+    // set_always_on_bottom(false) 走 tao flags diff，能把已入缓存的 bit 清掉。
+    #[cfg(target_os = "windows")]
+    if let Err(e) = win.set_always_on_bottom(false) {
+        tracing::warn!(error = %e, "floating set_always_on_bottom(false) 失败,忽略");
+    }
+    Ok(win)
 }
 
 #[tauri::command]
@@ -1583,6 +1602,31 @@ pub fn apply_floating_window_blur(app: &AppHandle, enabled: bool) {
                 "Win 浮窗 set_effects({}) 失败,继续运行 (Win7/8 不支持 Acrylic)",
                 if enabled { "Acrylic" } else { "clear" }
             );
+        }
+        // fix (2026-09-04 Win 浮窗模糊修复): DWMWA_SYSTEMBACKDROP_TYPE 的官方前置
+        // 条件是先用 DwmExtendFrameIntoClientArea 把帧扩展进客户区，否则 DWM
+        // **静默不绘制** backdrop（属性已设、无错误码、画面无模糊）。tao 透明窗
+        // 只调 DwmEnableBlurBehindWindow 空 region trick，从不 ExtendFrame ——
+        // 实测 Win11 26200：window-vibrancy 设完 backdrop=3 (DWMSBT_TRANSIENTWINDOW)
+        // 后画面无模糊，补 ExtendFrame(MARGINS{-1}) 后才出 Acrylic。disabled
+        // (省电) 分支跟随 clear：DWMSBT_DISABLE 由上面 set_effects(None) 内部
+        // 处理，ExtendFrame 本身无视觉副作用（帧区早已全透明），保持扩展无害。
+        if let Ok(hwnd) = win.hwnd() {
+            use windows_sys::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
+            // windows-sys 0.59: MARGINS 定义在 UI::Controls，Dwm 模块只引用不重导出
+            use windows_sys::Win32::UI::Controls::MARGINS;
+            let margins = MARGINS {
+                cxLeftWidth: -1,
+                cxRightWidth: -1,
+                cyTopHeight: -1,
+                cyBottomHeight: -1,
+            };
+            // SAFETY: hwnd 来自当前进程自己的浮窗，DwmExtendFrameIntoClientArea
+            // 线程安全（DWM 属性调用，无 UI 线程亲和要求）。
+            let hr = unsafe { DwmExtendFrameIntoClientArea(hwnd.0, &margins) };
+            if hr < 0 {
+                tracing::warn!(hr, "DwmExtendFrameIntoClientArea 失败,Acrylic 可能不显示");
+            }
         }
     }
 }

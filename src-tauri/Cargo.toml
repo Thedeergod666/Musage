@@ -101,6 +101,14 @@ windows-sys = { version = "0.59", features = [
   # Win32_System_Registry 用于 RegGetValueW 读 SystemUsesLightTheme —— 2026-09-04
   # audit D6-03: 浅色任务栏上白字托盘图标不可见，menu_bar_is_light 此前 Win stub 恒 false。
   "Win32_System_Registry",
+  # Win32_UI_Controls 是 DwmExtendFrameIntoClientArea 的 MARGINS 所在模块
+  # （windows-sys 0.59 里 Graphics::Dwm 不重导出它）。
+  "Win32_UI_Controls",
+  # Win32_Graphics_Dwm 用于 DwmExtendFrameIntoClientArea —— 2026-09-04 浮窗模糊修复：
+  # DWMWA_SYSTEMBACKDROP_TYPE（window-vibrancy 0.6 的 Win11 Acrylic 路径）官方前置
+  # 条件是帧扩展进客户区；tao 透明窗只调 DwmEnableBlurBehindWindow 空 region trick，
+  # 从不 ExtendFrame，backdrop 属性设上后 DWM 也不绘制（实测 Win11 26200）。
+  "Win32_Graphics_Dwm",
 ] }
 
 [features]

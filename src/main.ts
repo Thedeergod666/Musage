@@ -1548,22 +1548,39 @@ async function init() {
   // 拖动：左键按住任意非按钮区域 → start_dragging
   // **2026-06-20 audit**：之前不检查 e.button，右键 / 中键也触发拖动 →
   // 跟系统右键菜单（特别是 macOS 上的 NSWindow 右键）冲突。显式仅响应左键。
+  //
+  // **2026-09-04 fix（Win 双击进设置失效）**：双击检测从 native `dblclick`
+  // 事件改为 mousedown 上自己做。根因：Win 端 `startDragging()` 走 tao 的
+  // `ReleaseCapture + SendMessageW(WM_NCLBUTTONDOWN, HTCAPTION)`，进入系统
+  // 拖拽 modal loop —— 第一连击的 mouseup 被系统吃掉，Chromium 凑不齐
+  // down+up+down+up 序列，`dblclick` 永远不触发（macOS 的
+  // performWindowDragWithEvent 不吃事件，所以当初 mac 上测不出来）。
+  // 手工判定（<500ms + <8px）跨平台一致，第二连击不再发起拖拽。
+  let lastMouseDownAt = 0;
+  let lastMouseDownX = 0;
+  let lastMouseDownY = 0;
   app.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
     if (target.closest("button, input, select, a")) return;
     e.preventDefault();
+    const now = performance.now();
+    const dx = e.clientX - lastMouseDownX;
+    const dy = e.clientY - lastMouseDownY;
+    const isDoubleClick =
+      now - lastMouseDownAt < 500 && dx * dx + dy * dy < 64;
+    lastMouseDownAt = now;
+    lastMouseDownX = e.clientX;
+    lastMouseDownY = e.clientY;
+    if (isDoubleClick) {
+      // 双击 → 打开设置面板；本次按下不发起拖拽（拖拽 loop 会吞掉
+      // 后续 IPC 的时序，且双击的语义就是"不动窗口"）。
+      invoke("open_settings_window").catch((err) => console.error(err));
+      return;
+    }
     // w.startDragging 返 Promise，不 await（同步阻止默认行为已足够），
     // 但加 catch 防止 IPC 拒绝变成 unhandled rejection。
     w.startDragging().catch((err) => console.debug("[floating] startDragging 失败", err));
-  }, { signal: domAbort.signal });
-  // 双击 → 打开设置面板（2026-07-17 改：原绑定是"立即刷新"，刷新走托盘菜单）。
-  // 跟上面拖动的 mousedown 一样跳过按钮 / 输入框，避免双击"重试"等按钮时
-  // 既触发按钮动作又弹设置窗。
-  app.addEventListener("dblclick", (e) => {
-    const target = e.target as HTMLElement;
-    if (target.closest("button, input, select, a")) return;
-    invoke("open_settings_window").catch((err) => console.error(err));
   }, { signal: domAbort.signal });
 
   // 订阅后端推送

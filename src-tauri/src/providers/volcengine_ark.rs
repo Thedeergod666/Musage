@@ -130,6 +130,12 @@ impl QuotaSource for VolcengineArkSource {
         AuthKind::ApiKeyWithSecret
     }
 
+    fn needs_state_update(&self) -> bool {
+        // 火山 Coding Plan 无 region / mode / overrides 概念（L-24 同款，
+        // 2026-09-04 audit D2-01：此前漏在本批外，每次 fetch 白序列化整个 AppConfig）
+        false
+    }
+
     fn set_state<'a>(
         &'a self,
         _cfg: serde_json::Value,
@@ -371,14 +377,20 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
     // 真实 Code/Message 被"缺 Result 字段"的通用 Parse 错误吞掉, 用户
     // 看不到权限/参数错误原因。先查这里。
     if let Some(err) = raw.get("ResponseMetadata").and_then(|m| m.get("Error")) {
-        let code = err.get("Code").and_then(|v| v.as_str()).unwrap_or("");
+        // D2-02: 真实 Code 透传进模板 code 槽位（此前硬编码 0、code 挪进 msg 拼接，
+        // 渲染成 "code 0: InvalidParameter" 自相矛盾）。
+        let code = err
+            .get("Code")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("unknown");
         let msg = err.get("Message").and_then(|v| v.as_str()).unwrap_or("");
         return Err(FetchError::server(
             t!(
                 "error.common.business_code",
                 provider = "Volcengine Ark",
-                code = 0,
-                msg = format!("{code}: {msg}")
+                code = code,
+                msg = msg
             )
             .into_owned(),
         ));
@@ -408,8 +420,8 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
                 t!(
                     "error.common.business_code",
                     provider = "Volcengine Ark",
-                    code = 0,
-                    msg = format!("{code}: {msg}")
+                    code = code,
+                    msg = msg
                 )
                 .into_owned(),
             ));

@@ -347,8 +347,9 @@ pub(crate) fn is_html_error_page(body: &str) -> bool {
 ///
 /// 与上方 HTTP 401 判定对称:code ∈ 40100..40199 一律归 AuthFailed,让前端的
 /// `err-btn-relogin` 按钮亮起来。`FetchError::auth()` 的 message 沿用
-/// `error.xiaomi.cookie_invalid_hint`(与 401 路径文案对齐),UI 看到的就是
-/// "凭据无效, 请重新登录"。
+/// `error.xiaomi.cookie_invalid_hint`（cookie 路径）或
+/// `error.xiaomi.api_key_unauthorized_hint`（bearer 路径，D2-03），UI 看到的就是
+/// "凭据无效, 请重新登录/改填 Cookie"。
 pub(crate) fn classify_xiaomi_business_code(code: i64) -> XiaomiBusinessCode {
     if (40100..40200).contains(&code) {
         XiaomiBusinessCode::Auth
@@ -459,8 +460,12 @@ impl Xiaomimimo {
             if code != 0 {
                 let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
                 if classify_xiaomi_business_code(code) == XiaomiBusinessCode::Auth {
+                    // D2-03: bearer 路径业务 401xx 的 remediation 文案必须对齐
+                    // 同路径 HTTP 401 分支的 api_key_unauthorized_hint（引导改填
+                    // Cookie 或两者都填）。此前误用 cookie_invalid_hint，让只配了
+                    // API key 的用户被引导去"复制新 Cookie"，与自身配置错位。
                     return Err(FetchError::auth(
-                        t!("error.xiaomi.cookie_invalid_hint").into_owned(),
+                        t!("error.xiaomi.api_key_unauthorized_hint").into_owned(),
                     ));
                 }
                 return Err(FetchError::server(

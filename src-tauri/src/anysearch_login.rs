@@ -365,9 +365,13 @@ pub async fn open_anysearch_login_window(app: AppHandle) -> Result<(), String> {
         .center()
         .skip_taskbar(true);
     let b = match app.get_webview_window("settings") {
-        Some(p) => b
-            .parent(&p)
-            .map_err(|e| format!("anysearch login parent: {e}"))?,
+        Some(p) => b.parent(&p).map_err(|e| {
+            // D7-06 (2026-09-04 audit): parent() 消费 builder，Err 后无法降级为无 parent ——
+            // 只能把原始错误细节（{e:#} 含 anyhow 链）落 warn 日志并带进IPC 错误，
+            // 此前 format!("{e}") 丢 details 导致难定位。
+            tracing::warn!(error = ?e, "anysearch login parent 设置失败");
+            format!("anysearch login parent: {e:#}")
+        })?,
         None => b,
     };
     let window = b
@@ -395,15 +399,19 @@ pub async fn open_anysearch_login_window(app: AppHandle) -> Result<(), String> {
             PollOutcome::Saved(len) => {
                 DONE.store(true, Ordering::SeqCst);
                 tracing::info!(len, "anysearch JWT 提取 + 保存成功");
-                // 立即拉一次（让浮窗立刻看到数据）
-                if let Err(e) = crate::commands::refresh_single_inner(
-                    &app2,
-                    "anysearch",
-                    crate::poller_backoff::RefreshSource::Manual,
-                )
-                .await
+                // 立即拉一次（让浮窗立刻看到数据）。D7-02: base 禁用时改刷副本。
+                if let Some(target) =
+                    crate::commands::resolve_login_refresh_target(&app2.state(), "anysearch").await
                 {
-                    tracing::warn!(error = %e, "登录后立即拉取失败（不阻塞成功事件）");
+                    if let Err(e) = crate::commands::refresh_single_inner(
+                        &app2,
+                        &target,
+                        crate::poller_backoff::RefreshSource::Manual,
+                    )
+                    .await
+                    {
+                        tracing::warn!(error = %e, "登录后立即拉取失败（不阻塞成功事件）");
+                    }
                 }
                 let _ = window_clone.close();
                 let _ = app2.emit("musage://anysearch-login-success", len);

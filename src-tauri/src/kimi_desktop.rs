@@ -126,11 +126,36 @@ fn read_token_from_db(path: &std::path::Path) -> rusqlite::Result<Option<String>
     }
 }
 
+/// D7-05 (2026-09-04 audit): SQLite URI path 段 percent-encoding。
+/// 未编码的 `#` 会被 URI parser 当 fragment 起点（吞掉后续全部字符）、
+/// `%` 被当已编码序列吞 3 字符、`?` 当 query 分隔；中文 / 空格路径行为
+/// 不定 —— Windows 用户目录含中文极常见（`C:/Users/张三/...`）。保留
+/// `/`（路径分隔）与 `:`（Win 盘符）；非 ASCII 按 UTF-8 逐字节编码。
+fn percent_encode_uri_path(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for &b in s.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' | b':' => {
+                out.push(b as char);
+            }
+            _ => {
+                const HEX: &[u8; 16] = b"0123456789ABCDEF";
+                out.push('%');
+                out.push(HEX[(b >> 4) as usize] as char);
+                out.push(HEX[(b & 0x0F) as usize] as char);
+            }
+        }
+    }
+    out
+}
+
 fn read_token_once(path: &std::path::Path, immutable: bool) -> rusqlite::Result<Option<String>> {
     let conn = if immutable {
         // P3 audit fix (2026-08-13): 之前 `file:{path}?immutable=1` 在 Windows
         // 上是非法 SQLite URI (C:\Users\... -> 需要 file:///C:/Users/...)。
         // 规范化: 反斜杠转正斜杠, 绝对路径补 file:/// 前缀 (Unix 也兼容)。
+        // D7-05: 规范化后再 percent-encode，防 `#`/`%`/`?`/中文/空格路径
+        // 在 SQLite URI parser 下被截断或误解析。
         // immutable=1 兜底跳过 WAL replay/锁, 主路径 busy_timeout 优先;
         // 这里只在主路径失败时跑, stale/torn 风险可接受 (provider 侧 401
         // 兜底会引导重登)。
@@ -142,7 +167,7 @@ fn read_token_once(path: &std::path::Path, immutable: bool) -> rusqlite::Result<
             "file:///"
         };
         rusqlite::Connection::open_with_flags(
-            format!("{}{}?immutable=1", prefix, fwd),
+            format!("{}{}?immutable=1", prefix, percent_encode_uri_path(&fwd)),
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_URI,
         )?
     } else {
@@ -255,5 +280,20 @@ mod tests {
     fn cookies_db_path_points_inside_config_dir() {
         let p = cookies_db_path().expect("config dir should exist on dev machine");
         assert!(p.ends_with("kimi-desktop/Cookies") || p.ends_with(r"kimi-desktop\Cookies"));
+    }
+
+    /// D7-05: URI path 段编码——保留 unreserved + `/` + `:`，`#`/`%`/`?`/
+    /// 空格/中文按 RFC 3986 逐字节 percent-encode。
+    #[test]
+    fn percent_encode_uri_path_encodes_specials_keeps_separators() {
+        assert_eq!(
+            percent_encode_uri_path("C:/Users/张三/App Data/Cookies"),
+            "C:/Users/%E5%BC%A0%E4%B8%89/App%20Data/Cookies"
+        );
+        assert_eq!(
+            percent_encode_uri_path("/home/u/a#b?c%d"),
+            "/home/u/a%23b%3Fc%25d"
+        );
+        assert_eq!(percent_encode_uri_path("/plain/path"), "/plain/path");
     }
 }

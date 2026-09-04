@@ -241,9 +241,13 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
         .center()
         .skip_taskbar(true);
     let b = match app.get_webview_window("settings") {
-        Some(p) => b
-            .parent(&p)
-            .map_err(|e| format!("xiaomi login parent: {e}"))?,
+        Some(p) => b.parent(&p).map_err(|e| {
+            // D7-06 (2026-09-04 audit): parent() 消费 builder，Err 后无法降级为无 parent ——
+            // 只能把原始错误细节（{e:#} 含 anyhow 链）落 warn 日志并带进IPC 错误，
+            // 此前 format!("{e}") 丢 details 导致难定位。
+            tracing::warn!(error = ?e, "xiaomi login parent 设置失败");
+            format!("xiaomi login parent: {e:#}")
+        })?,
         None => b,
     };
     b
@@ -337,11 +341,22 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
                     Ok(saved_len) => {
                         DONE.store(true, Ordering::SeqCst);
                         tracing::info!(saved_len, "xiaomi cookie 提取 + 保存成功");
-                        // 立即拉一次（让浮窗立刻看到数据）
-                        if let Err(e) =
-                            crate::commands::refresh_single_inner(&app2, "xiaomimimo", crate::poller_backoff::RefreshSource::Manual).await
+                        // 立即拉一次（让浮窗立刻看到数据）。D7-02: base 禁用时改刷副本。
+                        if let Some(target) = crate::commands::resolve_login_refresh_target(
+                            &app2.state(),
+                            "xiaomimimo",
+                        )
+                        .await
                         {
-                            tracing::warn!(error = %e, "登录后立即拉取失败（不阻塞成功事件）");
+                            if let Err(e) = crate::commands::refresh_single_inner(
+                                &app2,
+                                &target,
+                                crate::poller_backoff::RefreshSource::Manual,
+                            )
+                            .await
+                            {
+                                tracing::warn!(error = %e, "登录后立即拉取失败（不阻塞成功事件）");
+                            }
                         }
                         // 关 webview
                         let _ = window_clone.close();
@@ -351,7 +366,15 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
                     Err(e) => {
                         // 只有 DONE 为 false 时才报错（避免关闭后的残留任务触发误报）
                         if !DONE.load(Ordering::SeqCst) {
-                            emit_failed(&app2, e);
+                            // D7-07 (2026-09-04 audit): 窗口已不存在（url() 读失败
+                            // 的常见根因 = 用户主动关窗）→ 静默退出不弹红条，
+                            // 对齐 stepfun/kimi/anysearch 的 Cancelled 语义；
+                            // 窗口还在的错误（cookie 解析 / 写盘失败）照常报。
+                            if window_clone.url().is_err() {
+                                tracing::debug!("xiaomi 登录窗口已被用户关闭，静默取消");
+                            } else {
+                                emit_failed(&app2, e);
+                            }
                         }
                     }
                 }

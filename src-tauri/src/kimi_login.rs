@@ -149,9 +149,13 @@ pub async fn open_kimi_login_window(app: AppHandle) -> Result<(), String> {
         .center()
         .skip_taskbar(true);
     let b = match app.get_webview_window("settings") {
-        Some(p) => b
-            .parent(&p)
-            .map_err(|e| format!("kimi login parent: {e}"))?,
+        Some(p) => b.parent(&p).map_err(|e| {
+            // D7-06 (2026-09-04 audit): parent() 消费 builder，Err 后无法降级为无 parent ——
+            // 只能把原始错误细节（{e:#} 含 anyhow 链）落 warn 日志并带进IPC 错误，
+            // 此前 format!("{e}") 丢 details 导致难定位。
+            tracing::warn!(error = ?e, "kimi login parent 设置失败");
+            format!("kimi login parent: {e:#}")
+        })?,
         None => b,
     };
     let window = b
@@ -173,15 +177,21 @@ pub async fn open_kimi_login_window(app: AppHandle) -> Result<(), String> {
                 DONE.store(true, Ordering::SeqCst);
                 tracing::info!(len, "kimi-auth token 提取 + 保存成功");
                 // 立即拉一次（让浮窗立刻多出「总套餐」行；未配 API key 时
-                // refresh 报 unconfigured 仅警告，不阻塞成功事件）
-                if let Err(e) = crate::commands::refresh_single_inner(
-                    &app2,
-                    "kimi",
-                    crate::poller_backoff::RefreshSource::Manual,
-                )
-                .await
+                // refresh 报 unconfigured 仅警告，不阻塞成功事件）。
+                // D7-02: base 被禁用而副本启用时改刷第一个启用副本，
+                // 否则 enabled 守卫会静默跳过、浮窗要等 poller 下一轮。
+                if let Some(target) =
+                    crate::commands::resolve_login_refresh_target(&app2.state(), "kimi").await
                 {
-                    tracing::warn!(error = %e, "kimi 登录后立即拉取失败（不阻塞成功事件）");
+                    if let Err(e) = crate::commands::refresh_single_inner(
+                        &app2,
+                        &target,
+                        crate::poller_backoff::RefreshSource::Manual,
+                    )
+                    .await
+                    {
+                        tracing::warn!(error = %e, "kimi 登录后立即拉取失败（不阻塞成功事件）");
+                    }
                 }
                 let _ = window_clone.close();
                 let _ = app2.emit("musage://kimi-login-success", len);

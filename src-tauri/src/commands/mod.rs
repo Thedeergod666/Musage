@@ -2062,6 +2062,39 @@ pub async fn refresh_single(app: AppHandle, id: String) -> Result<(), String> {
     refresh_single_inner(&app, &id, crate::poller_backoff::RefreshSource::Manual).await
 }
 
+/// D7-02 (2026-09-04 audit): 登录完成后「立即拉取」的目标解析。
+/// base 被禁用而副本启用时，`is_enabled_unique(base, base)` 返 false，
+/// 直接传 base 会被 refresh_single_inner 顶部的 enabled 守卫静默跳过——
+/// 浮窗要等 poller 下一轮才有数据，用户感知「登录成功但没生效」。
+/// 返回第一个可刷新目标：base 启用 → base；否则按 instance_index 升序
+/// 找第一个启用副本（`"<base>#N"`）；全禁用 → None（跳过，不打扰）。
+pub async fn resolve_login_refresh_target(
+    state: &State<'_, AppState>,
+    base: &str,
+) -> Option<String> {
+    let cfg = state.config.read().await;
+    if cfg.is_enabled_unique(base, base) {
+        return Some(base.to_string());
+    }
+    let mut indexes: Vec<u32> = state
+        .extra_instances
+        .read()
+        .await
+        .iter()
+        .filter(|e| e.provider_id == base)
+        .map(|e| e.instance_index)
+        .collect();
+    indexes.sort_unstable();
+    indexes.dedup();
+    for idx in indexes {
+        let unique = format!("{base}#{idx}");
+        if cfg.is_enabled_unique(&unique, base) {
+            return Some(unique);
+        }
+    }
+    None
+}
+
 /// H5 fix (2026-07-30 audit): `caller` 区分失败行为 (见 poller_backoff::RefreshSource)。
 /// - 全量 refresh / Poller 入口 → Poller(失败退避)
 /// - 用户点「立即刷新」、设置面板「单源刷新」、登录完成后刷新 → Manual(失败 no-op)

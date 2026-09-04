@@ -1432,6 +1432,7 @@ pub async fn set_floating_pin_mode(
 ) -> Result<(), String> {
     let parsed = parse_pin_mode(&mode)?;
     apply_pin_mode_to_window(&app, parsed);
+    let low_power;
     {
         let mut cfg = state.config.write().await;
         if cfg.floating_pin_mode != parsed {
@@ -1443,7 +1444,14 @@ pub async fn set_floating_pin_mode(
                 tracing::warn!(error = %e, "config save 失败 (内存状态已更新, 下次成功 save 会覆盖)");
             }
         }
+        low_power = cfg.low_power_mode;
     }
+    // D6-02 (2026-09-04 audit): pin mode 切换后重同步 OS 层 Acrylic 与
+    // low_power_mode —— 此前只有启动 (lib.rs setup) 和 set_low_power_mode
+    // 两条路径调 apply_floating_window_blur，运行时切 pin mode 会让 Win 上
+    // blur 效果与 cfg 状态脱钩（低功耗 escape hatch 视觉失效）直到重启。
+    // macOS 端该函数是 no-op，无害。
+    apply_floating_window_blur(&app, !low_power);
     let _ = app.emit("musage://pin-mode-changed", &parsed);
     Ok(())
 }
@@ -2491,6 +2499,15 @@ pub async fn set_tray_source(
     app: AppHandle,
     source: Option<String>,
 ) -> Result<(), String> {
+    // D6-05/D6-10 (2026-09-04 audit): 入口校验 source 必须能解析成真实来源
+    // （内置 provider id 或 extra_instances 里的 custom_<uuid>）。此前任意
+    // 字符串都能落盘：pick_tray_rows 匹配不上 → 托盘永远 fallback logo，
+    // 且菜单 label 把原文当显示名拼出怪字符。None = 默认 minimax，放行。
+    if let Some(s) = &source {
+        if crate::providers::find_source(&state, s).await.is_none() {
+            return Err(t!("error.common.unknown_source_id", id = s).into_owned());
+        }
+    }
     {
         let mut cfg = state.config.write().await;
         if cfg.tray_source == source {

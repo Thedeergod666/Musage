@@ -288,6 +288,11 @@ pub fn set_window_pin_bottom<R: Runtime>(app: &AppHandle<R>) {
         if let Some(win) = app2.get_webview_window("floating") {
             if let Ok(hwnd) = win.hwnd() {
                 unsafe { apply_z_order(hwnd.0, ZOrder::Bottom) };
+                // D6-01 (2026-09-04 audit): z-order 切换后 emit backdrop-refresh
+                // （styles.css L3 防御），对齐 macOS set_window_level 的行为。
+                // 此前 Win 只剩 L2 4s 心跳兜底，玻璃 backdrop 在每次切换后
+                // 可能显示陈旧采样。
+                let _ = app2.emit("musage://backdrop-refresh", ());
             }
         }
     });
@@ -307,9 +312,15 @@ pub fn set_window_pin_top<R: Runtime>(app: &AppHandle<R>) {
         if let Some(win) = app2.get_webview_window("floating") {
             if let Ok(hwnd) = win.hwnd() {
                 unsafe { apply_z_order(hwnd.0, ZOrder::TopMost) };
+                // D6-01: 对齐 macOS，见 set_window_pin_bottom 注释
+                let _ = app2.emit("musage://backdrop-refresh", ());
             }
         }
     });
+    // D6-09 (2026-09-04 audit): 复位 hover emitter 内部状态机（raised /
+    // last_inside），否则 PinBottom→PinTop 后鼠标仍在浮窗上方时 emitter
+    // 会按旧 raised 状态每 1s 冗余 re-assert 一次 TopMost。
+    HOVER_STATE_RESET.store(true, Ordering::SeqCst);
 }
 
 /// Normal 模式：z-order 切到 `NotTopMost`（清 topmost 标志、保留 z-order），
@@ -321,15 +332,53 @@ pub fn set_window_normal<R: Runtime>(app: &AppHandle<R>) {
         if let Some(win) = app2.get_webview_window("floating") {
             if let Ok(hwnd) = win.hwnd() {
                 unsafe { apply_z_order(hwnd.0, ZOrder::NotTopMost) };
+                // D6-01: 对齐 macOS，见 set_window_pin_bottom 注释
+                let _ = app2.emit("musage://backdrop-refresh", ());
             }
         }
     });
+    // D6-09: 同 set_window_pin_top
+    HOVER_STATE_RESET.store(true, Ordering::SeqCst);
 }
 
 /// hover 切 z-order 的"前端兜底信号"：Win 上 tracker 已自行处理，此处 no-op。
 /// 保留是为了让 commands.rs 在跨平台调用时不必 `#[cfg]`。
 pub fn set_window_hover_raise<R: Runtime>(_app: &AppHandle<R>, _hovering: bool) {
     // no-op —— tracker 自己处理
+}
+
+/// D6-03 (2026-09-04 audit): Win 实现 —— 读注册表
+/// `HKCU\...\Themes\Personalize\SystemUsesLightTheme`（1 = 系统浅色模式，
+/// 任务栏随之变浅色）。此前 platform/mod.rs 的 stub 恒 false，浅色任务栏上
+/// 白字托盘图标几乎不可见。任何读取失败（老系统无此键 / 权限）保守返
+/// false（深色 → 白字，Win 默认深色任务栏）。
+pub fn menu_bar_is_light() -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
+
+    fn wide(s: &str) -> Vec<u16> {
+        std::os::windows::ffi::OsStr::new(s)
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect()
+    }
+
+    let subkey = wide("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
+    let value_name = wide("SystemUsesLightTheme");
+    let mut data: u32 = 0;
+    let mut len: u32 = std::mem::size_of::<u32>() as u32;
+    let status = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            subkey.as_ptr(),
+            value_name.as_ptr(),
+            RRF_RT_REG_DWORD,
+            std::ptr::null_mut(),
+            (&mut data as *mut u32).cast(),
+            &mut len,
+        )
+    };
+    status == 0 && data == 1
 }
 
 // ── Fullscreen watcher：Win 暂未实现 ──
@@ -475,6 +524,12 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
                         if let Ok(hwnd) = win.hwnd() {
                             unsafe { apply_z_order(hwnd.0, z) };
                         }
+                    }
+                    // D6-01 (2026-09-04 audit): 每次采纳的 z-order 切换后 force
+                    // reflow（styles.css L3）。PinBottom 下 hover 进出是最高频
+                    // 的切换来源，缺这条会让玻璃 backdrop 频繁显示陈旧采样。
+                    if let Err(e) = app.emit("musage://backdrop-refresh", ()) {
+                        tracing::trace!(error = %e, "emit backdrop-refresh 失败");
                     }
                     raised = inside;
                 }

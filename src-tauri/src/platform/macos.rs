@@ -26,7 +26,7 @@
 //! - `LEVEL_FLOATING = 3` ：就是 `kCGFloatingWindowLevel`，相当于 Tauri 的
 //!   `set_always_on_top(true)`。PinTop 模式用它，hover 临时置顶也用它。
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::thread;
 use std::time::Duration;
@@ -61,6 +61,11 @@ static LEVEL_SWITCHING_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// 已是 true，`inside == last_inside` 命中 continue → hover-raise 的采纳 edge
 /// 永不触发，浮窗永久卡底部。复位后同 tick 重新走 enter 评估（阈值 1 tick）。
 static HOVER_STATE_RESET: AtomicBool = AtomicBool::new(false);
+/// D6-04: main thread dispatch 连续失败计数（hover emitter 20Hz）。
+/// 跨过 MAIN_DISPATCH_WARN_EVERY 的整数倍时 warn 一次，成功复位。
+static MAIN_DISPATCH_CONSECUTIVE_FAILS: AtomicU64 = AtomicU64::new(0);
+/// 1000 tick ≈ 20Hz × 50s —— 持续失败超 50s 才升级为 warn。
+const MAIN_DISPATCH_WARN_EVERY: u64 = 1000;
 
 // ── 公开 API ──
 
@@ -372,10 +377,23 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
     if let Err(e) = dispatch_result {
         // 主线程无法调度 (临时忙 / 退出中) —— 立即把 slot 填 false 让
         // cvar notify_all 提前返 poll 路径,避免调用方空等 50ms。
-        tracing::trace!(
-            error = %e,
-            "is_floating_topmost_at: dispatch to main thread 失败，立即返 false"
-        );
+        // D6-04 (2026-09-04 audit): 纯 trace 让「main thread 长期阻塞
+        // (modal 面板) → hover 永久失灵」的场景完全无声。加连续失败计数，
+        // 跨过阈值（20Hz × 50s = 1000 tick）时 warn 一次——不刷屏，但
+        // 诊断有入口；dispatch 成功即复位，下次事故还能再告警。
+        let fails = MAIN_DISPATCH_CONSECUTIVE_FAILS.fetch_add(1, Ordering::Relaxed);
+        if fails > 0 && fails.is_multiple_of(MAIN_DISPATCH_WARN_EVERY) {
+            tracing::warn!(
+                error = %e,
+                consecutive_fails = fails + 1,
+                "is_floating_topmost_at: dispatch to main thread 持续失败，hover/玻璃效果可能长期失灵"
+            );
+        } else {
+            tracing::trace!(
+                error = %e,
+                "is_floating_topmost_at: dispatch to main thread 失败，立即返 false"
+            );
+        }
         {
             let mut g = slot.slot.lock().unwrap_or_else(|e| e.into_inner());
             if g.is_none() {
@@ -383,6 +401,8 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
             }
         }
         slot.cvar.notify_all();
+    } else {
+        MAIN_DISPATCH_CONSECUTIVE_FAILS.store(0, Ordering::Relaxed);
     }
 
     // 50ms 超时兜底：main thread 卡住时 hover 轮询不至于一起卡住

@@ -1381,6 +1381,36 @@ fn truncate(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
 
+    /// D6-08 守卫 (2026-09-04 audit): tray_source_label 的 10 个内置 id 的
+    /// provider_name.* key 必须在 locale 里真实存在。rust-i18n key 缺失时
+    /// t! 静默回显 key 名（菜单里出现 "✓ provider_name.minimax"），编译期
+    /// 不报错 —— 用本测试当护栏：新增 provider 挂进 match 却漏加 locale
+    /// key 时在此挂掉。
+    #[test]
+    fn tray_source_label_resolves_all_builtin_keys() {
+        const BUILTIN_IDS: [&str; 10] = [
+            "minimax",
+            "kimi",
+            "volcengine_ark",
+            "zhipu",
+            "claude_official",
+            "deepseek",
+            "openrouter",
+            "siliconflow",
+            "zenmux",
+            "tokendance",
+        ];
+        for id in BUILTIN_IDS {
+            let label = tray_source_label(id);
+            assert!(
+                !label.starts_with("provider_name."),
+                "tray_source_label({id}) 回显了 i18n key（locale 缺 provider_name.{id}）: {label}"
+            );
+        }
+        // 未知 id 走原文兜底
+        assert_eq!(tray_source_label("custom_abcd1234"), "custom_abcd1234");
+    }
+
     #[test]
     fn sanitize_percent_fences_nan_infinity_and_overflow() {
         // M5 fix (2026-07-30 audit): NaN / -Infinity / +Infinity / 越界值

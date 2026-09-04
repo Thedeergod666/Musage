@@ -30,15 +30,17 @@ pub use self::macos::*;
 #[cfg(target_os = "windows")]
 pub use self::windows::*;
 
-/// menu_bar_is_light 跨平台 shim。macOS 实现由上方 `pub use self::macos::*`
-/// 重导出（真 NSApp effectiveAppearance 判断）；非 macOS（Win/Linux）tray
-/// 永远渲染在深色任务栏上 -> 固定 false（保持白字）。
+/// menu_bar_is_light 跨平台 shim。macOS / Windows 实现由上方 `pub use
+/// self::{macos,windows}::*` 重导出（NSApp effectiveAppearance / 注册表
+/// SystemUsesLightTheme）；Linux stub 固定 false（深色任务栏 → 白字）。
 ///
 /// **上层必须调 `crate::platform::menu_bar_is_light()`，不要直连
 /// `crate::platform::macos::menu_bar_is_light()`** -- `macos` 模块在
 /// 非 macOS 平台不存在（`pub mod macos` 被 `#[cfg(target_os="macos")]` 门控），
 /// 直连会让 Linux/Windows 编译期 E0433（2026-08-05 CI 修复）。
-#[cfg(not(target_os = "macos"))]
+/// D6-03 (2026-09-04 audit)：Win 换真实现（注册表读 SystemUsesLightTheme），
+/// stub 只剩 Linux。
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[inline]
 pub fn menu_bar_is_light() -> bool {
     false

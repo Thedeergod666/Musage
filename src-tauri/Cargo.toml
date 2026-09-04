@@ -98,6 +98,9 @@ windows-sys = { version = "0.59", features = [
   # 审查 H2 fix: 保证 GetCursorPos / GetWindowRect 在多 DPI 屏之间用同一虚拟坐标系,
   # 避免 100% DPI 屏拖到 175% DPI 屏时 hover 检测挂掉。
   "Win32_UI_HiDpi",
+  # Win32_System_Registry 用于 RegGetValueW 读 SystemUsesLightTheme —— 2026-09-04
+  # audit D6-03: 浅色任务栏上白字托盘图标不可见，menu_bar_is_light 此前 Win stub 恒 false。
+  "Win32_System_Registry",
 ] }
 
 [features]

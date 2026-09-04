@@ -73,7 +73,9 @@ let PROVIDER_META = {} as Record<string, { name: string; logo: string; accent: s
 /// 没有 logo 文件时，用首字母 + accent 色生成 data: URL SVG。
 /// 渲染成本几乎为 0（base64 inline），但保证浮窗一定有头像可显示。
 function fallbackLogo(name: string, accent: string): string {
-  const ch = name.trim().charAt(0).toUpperCase() || "?";
+  // D8-20: Array.from 按 codepoint 切——emoji / 组合字符是 surrogate pair，
+  // charAt(0) 只取高位代理，渲染成 tofu。
+  const ch = Array.from(name.trim())[0]?.toUpperCase() || "?";
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56">
     <rect width="56" height="56" rx="12" fill="${accent}"/>
     <text x="28" y="38" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="30" font-weight="700" fill="#fff">${escapeXml(ch)}</text>
@@ -904,7 +906,11 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
     // 例 "xiaomimimo#2") 不能用 full id 匹配 provider kind 决定 re-login
     // 按钮。re-login 走 provider base(window label 走 base id),用 baseId
     // 决策,unique_id 仍作 data-attr 区分具体副本的快照。
-    const baseId = p.provider;
+    // D8-01 (2026-09-04 audit): 此前写 `p.provider`——该字段对所有副本恒
+    // 等 base id,今天恰好正确但与注释意图脱节（对照 rowsForRender 的
+    // `id.replace(/#\d+$/, "")` 写法），换 unique_id 派生让意图落地，
+    // 防未来"仅副本失败需重登"类 provider 踩雷。
+    const baseId = id.replace(/#\d+$/, "");
     // 按 error_kind 分发按钮 (2026-06-17 commit):
     // - unconfigured_key / auth_failed: 打开设置面板
     // - auth_failed + xiaomimimo:        🔑 重新登录 (走 xiaomi_login window)
@@ -1708,6 +1714,11 @@ async function init() {
   //           contentH 跌到 50 时窗口被钳到 100，见 applyFitResize）。
   // 不变量：fit 期间我们 set_size 到 targetH → 立刻更新 lastFitHeight = targetH，
   //         Resized emit 回来时 lastFitHeight === payload → 忽略 ✓。
+  // D8-06 (2026-09-04 audit): listener 挂上**之前**，Rust geom_persister 在
+  // setup 早期已把窗口恢复到上次尺寸 —— 此刻 window.innerHeight 就是恢复值，
+  // 直接取作手动高度下限。若不这么做，启动早期恢复事件丢失，用户没拖过时
+  // userLastManualH 停在 0，重启后第一轮错误渲染会把窗口钳到最小高度。
+  userLastManualH = window.innerHeight;
   trackUnlisten(listen<number>("musage://floating-resized", (e) => {
     const newH = e.payload;
     if (newH === lastFitWindowH) return; // 我们自己 fit 的回声

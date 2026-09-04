@@ -135,42 +135,57 @@ function lookupInDict(dict: Record<string, any>, key: string): any {
 /**
  * 切语言。持久化到后端 config（让下次启动沿用），触发所有 onLocaleChange 监听。
  * 调用方通常在 UI 切换 radio 时调一次。
+ *
+ * D8-19 (2026-09-04 audit): 重入守卫 —— listener 回调若再调 setLocale（直接
+ * 或经异步链），`current` 会被并发路径改写，先返回的路径回滚/通知 listeners
+ * 时用错 locale。约定 listener 内不得调 setLocale；守卫是兜底。
  */
+let _setLocaleInFlight = false;
 export const setLocale = async (l: Locale): Promise<void> => {
+  if (_setLocaleInFlight) {
+    if (dev) console.debug("[i18n] setLocale 重入被忽略", l);
+    return;
+  }
   if (!SUPPORTED.includes(l)) {
     console.warn(`[i18n] unsupported locale: ${l}`);
     return;
   }
-  await loadLocale(l);
-  // F4 fix: 先翻前端再调后端 —— current 必须先更新,否则后端 set_app_locale
-  // 广播 locale-changed 回来时,各窗口 listener 判 newLocale !== getLocale()
-  // 会再重入一次 setLocale 形成多余 IPC 循环。
-  const prev = current;
-  current = l;
-  document.documentElement.lang = l;
-  // 通知后端 + 同步到 config.json
+  _setLocaleInFlight = true;
   try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("set_app_locale", { locale: l });
-  } catch (e) {
-    // 后端没切成 → 回滚前端 + 必须通知 listeners 重渲染 (B-M2 fix
-    // 2026-07-30 audit)。失败前 `current = l` 已经触发后续 t() 用新 locale
-    // → 各 listener 内 applyDataI18n / renderProvidersSection 同步读 current
-    // → DOM textContent 已经是新 locale 翻译;不通知的话 listener 不会重跑,
-    // current 又是旧 locale → UI 出现两种 locale 字符串混杂 (zh-CN 表头 +
-    // en 按钮之类)。
-    current = prev;
-    document.documentElement.lang = prev;
-    if (dev) console.debug("[i18n] set_app_locale invoke failed, rolled back", e);
+    await loadLocale(l);
+    // F4 fix: 先翻前端再调后端 —— current 必须先更新,否则后端 set_app_locale
+    // 广播 locale-changed 回来时,各窗口 listener 判 newLocale !== getLocale()
+    // 会再重入一次 setLocale 形成多余 IPC 循环。
+    const prev = current;
+    current = l;
+    document.documentElement.lang = l;
+    // 通知后端 + 同步到 config.json
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("set_app_locale", { locale: l });
+    } catch (e) {
+      // 后端没切成 → 回滚前端 + 必须通知 listeners 重渲染 (B-M2 fix
+      // 2026-07-30 audit)。失败前 `current = l` 已经触发后续 t() 用新 locale
+      // → 各 listener 内 applyDataI18n / renderProvidersSection 同步读 current
+      // → DOM textContent 已经是新 locale 翻译;不通知的话 listener 不会重跑,
+      // current 又是旧 locale → UI 出现两种 locale 字符串混杂 (zh-CN 表头 +
+      // en 按钮之类)。
+      current = prev;
+      document.documentElement.lang = prev;
+      if (dev) console.debug("[i18n] set_app_locale invoke failed, rolled back", e);
+      listeners.forEach((fn) => {
+        try { fn(prev); } catch (err) { console.error("[i18n] listener error", err); }
+      });
+      return;
+    }
+    // 通知前端 listeners
     listeners.forEach((fn) => {
-      try { fn(prev); } catch (err) { console.error("[i18n] listener error", err); }
+      try { fn(l); } catch (e) { console.error("[i18n] listener error", e); }
     });
-    return;
+  } finally {
+    // 任何路径（含回滚早退 / loadLocale 抛错）都必须复位重入守卫
+    _setLocaleInFlight = false;
   }
-  // 通知前端 listeners
-  listeners.forEach((fn) => {
-    try { fn(l); } catch (e) { console.error("[i18n] listener error", e); }
-  });
 };
 
 /**

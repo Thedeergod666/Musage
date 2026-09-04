@@ -144,10 +144,16 @@ export async function maybeShowRegionBanner(cfg: AppConfig, app: HTMLElement) {
     Array.isArray(cfg.provider_order) &&
     cfg.provider_order.length === 0;
   if (isFirstLaunchCnDefault && !isZh && lang) {
-    // fire-and-forget: 自动 setRegion('global');失败也无所谓,banner 继续
-    setRegion("global").then(() =>
-      flash(t("settings.region.auto_applied"), false),
-    ).catch(() => {});
+    // D8-10 (2026-09-04 audit): 等自动 setRegion 完成 → caller 用新 cfg 重渲，
+    // 否则 renderRegionSection 与 fire-and-forget 的 setRegion 并发读同一
+    // cfg.user_region="cn"，导致 UI 选中的 region 与后端不一致。
+    try {
+      await setRegion("global");
+      flash(t("settings.region.auto_applied"), false);
+      return;
+    } catch {
+      // 失败也无所谓，banner 继续展示让用户手动选
+    }
   }
 
   const banner = el("div", { class: "region-banner" },

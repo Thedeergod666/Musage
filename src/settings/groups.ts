@@ -72,9 +72,19 @@ export function buildGroupDefinitions(): Record<GroupKey, GroupDef> {
 let _groupDefinitions: Record<GroupKey, GroupDef> = {} as Record<GroupKey, GroupDef>;
 
 // locale 切换时重建（settings panel 调用方需要监听这个然后重渲整组列表）
-onLocaleChange(() => {
-  _groupDefinitions = buildGroupDefinitions();
-});
+// D8-08 (2026-09-04 audit): 跟 logos.ts 的 _listenerBound flag 对齐 ——
+// Vite HMR / dev 重载会让 module 重新 import，模块顶层 listener 注册累积，
+// buildGroupDefinitions 被调 N 次。模块顶层建一次，下面 ensureGroupsReady
+// 兜底首次调用。
+let _groupListenerBound = false;
+function ensureGroupListenerBound() {
+  if (_groupListenerBound) return;
+  _groupListenerBound = true;
+  onLocaleChange(() => {
+    _groupDefinitions = buildGroupDefinitions();
+  });
+}
+ensureGroupListenerBound();
 
 const GROUP_ORDER: GroupKey[] = [
   "token_plan",

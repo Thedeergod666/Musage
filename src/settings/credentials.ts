@@ -672,13 +672,17 @@ export async function loadCredentialStatus(id: string) {
     // v0.2.5 火山: 第二个徽章(api-secret-status)独立读 secret_key 槽
     const skStatus = document.getElementById(`api-secret-status-${id}${suffix}`);
     if (skStatus) {
-      let hasSk = false;
+      // D8-07 (2026-09-04 audit): 探测失败保持上一次显示 —— 瞬态 IPC 错误
+      // 把已保存的 SK 翻成"未配置"会让主/副徽章自相矛盾（AK 显示已保存、
+      // SK 显示未配置），用户误以为配置丢了。
+      let hasSk: boolean | null = null;
       try {
         const sk = await getSourceCredential(id, "secret_key");
         hasSk = !!sk && sk.length > 0;
       } catch {
-        hasSk = false;
+        hasSk = null;
       }
+      if (hasSk === null) continue;
       skStatus.textContent = hasSk
         ? t("credentials.cookie_status_saved")
         : t("credentials.cookie_status_unset");
@@ -1260,8 +1264,11 @@ const BATCH_PREFIX_RULES: Array<{
   // minimax/zenmux/openrouter/kimi/siliconflow 都用 sk- 开头,
   // 静默归 minimax 会导致 Kimi/ZenMux/SiliconFlow 用户 key 误存
   // → 强制走 "provider=sk-xxx" 显式标注 (parseBatchLine providerHint 路径)
-  // tp- → Xiaomi (cookie 路径虽然用 tp-,但 frontend 也允许 api_key 别名)
-  { prefix: "tp-", id: "xiaomimimo", field: "cookie" },
+  // D8-02 fix (2026-09-04 audit): 删 "tp-" → xiaomimimo cookie 规则。
+  // 小米 dashboard cookie 和 api_key 都是 tp- 前缀，前缀本身有歧义，
+  // 自动归类会把 api_key 误写进 cookie 槽（fetch 401 且 UI 显示"已保存"）。
+  // 批量粘贴小米凭据必须走显式标注 "xiaomimimo=tp-..."（映射 cookie 槽）；
+  // api_key 走设置面板单源输入框。
   // zhipu 用 "id.secret" 格式 (数字ID.字母数字 secret)
   // claude_official 用 "sessionKey=..." 格式
 ];
@@ -1315,12 +1322,15 @@ const KNOWN_PROVIDER_IDS = new Set([
 
 /// 批量粘贴入口:粘贴多行 → split → 逐行识别 → 批量 setSourceCredential。
 ///
-/// 返 `{recognized, unrecognized}` 计数给调用方 flash。
+/// 返 `{recognized, unrecognized, errors, affectedIds}` 给调用方 flash +
+/// 刷新凭据状态徽章（D8-05: 成功保存的 id 列表，调用方据此重查徽章，
+/// 否则部分失败时 UI 停在旧状态，用户误以为"都没存上"而重复粘贴）。
 export async function batchPasteKeys(
   text: string,
-): Promise<{ recognized: number; unrecognized: number; errors: string[] }> {
+): Promise<{ recognized: number; unrecognized: number; errors: string[]; affectedIds: string[] }> {
   const errors: string[] = [];
   const counts = { recognized: 0, unrecognized: 0 };
+  const affectedIds = new Set<string>();
   const lines = text.split(/\r?\n/);
   for (const line of lines) {
     const matches = parseBatchLine(line);
@@ -1333,10 +1343,11 @@ export async function batchPasteKeys(
       try {
         await setSourceCredential(m.id, m.value, m.field);
         counts.recognized++;
+        affectedIds.add(m.id);
       } catch (e) {
         errors.push(`${m.id}: ${String(e)}`);
       }
     }
   }
-  return { ...counts, errors };
+  return { ...counts, errors, affectedIds: [...affectedIds] };
 }

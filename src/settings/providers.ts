@@ -531,6 +531,9 @@ function renderBatchPasteSection(): HTMLElement {
     const text = textarea.value;
     if (!text.trim()) return;
     const result = await batchPasteKeys(text);
+    // D8-05 (2026-09-04 audit): 已成功保存的 id 重查凭据徽章 —— 否则部分
+    // 失败时（flash 红条但徽章不刷新）用户误以为"都没存上"而重复粘贴。
+    await Promise.all(result.affectedIds.map((id) => loadCredentialStatus(id)));
     if (result.errors.length > 0) {
       flash(t("credentials.batch_paste_errors", {
         n: result.errors.length,

@@ -8,6 +8,7 @@ import {
   applyPinMode,
 } from "./config";
 import {
+  getConfig,
   setLowPowerMode,
   setAutoHideInFullscreen,
   resetFloatingWindow,
@@ -46,7 +47,25 @@ export function renderFloatingSection(container: HTMLElement, cfg: AppConfig) {
     }) as HTMLInputElement;
     if (currentMode === opt.value) radio.checked = true;
     radio.addEventListener("change", () => {
-      if (radio.checked) void applyPinMode(opt.value);
+      if (!radio.checked) return;
+      void applyPinMode(opt.value).then(async (ok) => {
+        if (ok) return;
+        // D8-03 (2026-09-04 audit): IPC 失败时 radio 已被浏览器翻到新值，
+        // 后端仍是旧值 —— 重读 cfg 回滚，防 UI/后端状态分裂。
+        try {
+          const cur = await getConfig();
+          const valid: FloatingPinMode = VALID_PIN_MODES.has(cur.floating_pin_mode as FloatingPinMode)
+            ? (cur.floating_pin_mode as FloatingPinMode)
+            : "pin_top";
+          pinMode
+            .querySelectorAll<HTMLInputElement>('input[name="pin-mode"]')
+            .forEach((r) => {
+              r.checked = r.value === valid;
+            });
+        } catch {
+          radio.checked = false;
+        }
+      });
     });
     pinMode.appendChild(
       el("label", { class: "pin-opt" },
@@ -163,7 +182,16 @@ export function renderFloatingSection(container: HTMLElement, cfg: AppConfig) {
 /// 失败回退到旧值 + flash 报错。
 function renderDisplayThresholdsFields(cfg: AppConfig) {
   // ── 颜色档位阈值（3 个 number input） ──
-  const [t0Init, t1Init, t2Init] = cfg.color_thresholds ?? [50, 70, 88];
+  // D8-16 (2026-09-04 audit): init 也跑 M33 顺序校验 —— 手编 config.json 的
+  // 非递增阈值（后端只在 save_config 时拦）会把 input 初始化成非法值，之后
+  // 用户任何微调都被"顺序无效"拦下且无从理解。非法则回落默认 + warn。
+  const rawThresholds = cfg.color_thresholds ?? [50, 70, 88];
+  const thresholdsValid =
+    rawThresholds[0] < rawThresholds[1] && rawThresholds[1] < rawThresholds[2];
+  if (!thresholdsValid) {
+    console.warn("[floating] cfg.color_thresholds 非递增，回落默认 [50, 70, 88]", rawThresholds);
+  }
+  const [t0Init, t1Init, t2Init] = thresholdsValid ? rawThresholds : [50, 70, 88];
   // M19 fix: 之前是 const [t0, t1, t2] = ...，applyAll 失败时回填旧值但旧值永远是
   // 初始 cfg 拷贝。改成 mutable 数组，成功后更新它，失败回填用"最近一次成功值"。
   const currentThresholds: [number, number, number] = [t0Init, t1Init, t2Init];
@@ -201,9 +229,14 @@ function renderDisplayThresholdsFields(cfg: AppConfig) {
   let currentWallet: number | null = cfg.wallet_alert_threshold ?? null;
   const colorPickers: Record<typeof colorKeys[number], HTMLInputElement> = {} as any;
   for (const key of colorKeys) {
+    // D8-09 (2026-09-04 audit): 只回填 <input type=color> 能 round-trip 的
+    // #RRGGBB。手编 config 塞进非法值（"blue" / "rgb(...)"）或后端合法但
+    // picker 不认的 3 位 hex 时，浏览器会把 input 静默 fallback 成
+    // #000000 —— 下次 applyAll 就把存量色永久覆盖成黑。非法值回退默认色。
+    const stored = overrides[key] ?? "";
     colorPickers[key] = el("input", {
       type: "color", id: `color-${key}`,
-      value: overrides[key] ?? DEFAULT_PALETTE[key],
+      value: /^#[0-9a-fA-F]{6}$/.test(stored) ? stored : DEFAULT_PALETTE[key],
     }) as HTMLInputElement;
     colorPickers[key].addEventListener("change", () => void applyAll());
   }
@@ -223,7 +256,31 @@ function renderDisplayThresholdsFields(cfg: AppConfig) {
   // ── 共享"立即应用"动作 ──
   // 一次性从所有 input 读 → 调 setDisplayThresholds。
   // 失败时 flash 报错 + 回填旧值（不阻塞其他 input 的后续修改）。
+  //
+  // D8-04 (2026-09-04 audit): inflight 串行化 —— 3 个阈值 + wallet + 4 个
+  // colorPicker 共用本函数且无防抖，连改会并发 fire 多个 IPC，读到的都是
+  // 最新 input 值、后到请求覆盖先到，currentOverrides 也在每个成功回调里
+  // 被中间值污染（失败回填用错"最近成功值"）。in-flight 期间的新触发合并
+  // 成一次 trailing 调用。
+  let applying = false;
+  let pendingAgain = false;
   const applyAll = async () => {
+    if (applying) {
+      pendingAgain = true;
+      return;
+    }
+    applying = true;
+    try {
+      await applyAllInner();
+    } finally {
+      applying = false;
+      if (pendingAgain) {
+        pendingAgain = false;
+        void applyAll();
+      }
+    }
+  };
+  const applyAllInner = async () => {
     const v0 = parseInt(t0Input.value, 10);
     const v1 = parseInt(t1Input.value, 10);
     const v2 = parseInt(t2Input.value, 10);

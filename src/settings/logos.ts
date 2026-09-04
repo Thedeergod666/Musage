@@ -38,7 +38,9 @@ export interface ProviderMeta {
 /// 不解析（base64 内联后浏览器只看字符串），所以 settings 这边把
 /// var(--id-*) 解析成具体 hex 值传进去。
 function fallbackLogo(name: string, accent: string): string {
-  const ch = name.trim().charAt(0).toUpperCase() || "?";
+  // D8-20: Array.from 按 codepoint 切（同 main.ts）—— emoji 首字符是
+  // surrogate pair，charAt(0) 只取高位代理渲染成 tofu。
+  const ch = Array.from(name.trim())[0]?.toUpperCase() || "?";
   const safeAccent = accent.startsWith("var(") ? "#888" : accent;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56">
     <rect width="56" height="56" rx="12" fill="${safeAccent}"/>

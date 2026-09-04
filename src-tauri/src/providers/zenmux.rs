@@ -444,7 +444,17 @@ fn parse_subscription(
             .get("message")
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown error");
-        return Err(FetchError::server(format!("ZenMux API error: {msg}")));
+        // D3-03: 与 PAYG 分支对齐走 i18n 模板，此前裸英文 format! 绕过
+        // locale（zh-CN 用户在 subscription 模式看到英文错误）。
+        return Err(FetchError::server(
+            t!(
+                "error.common.business_code",
+                provider = "ZenMux",
+                code = 0,
+                msg = msg
+            )
+            .into_owned(),
+        ));
     }
 
     let data = raw.get("data").ok_or_else(|| {

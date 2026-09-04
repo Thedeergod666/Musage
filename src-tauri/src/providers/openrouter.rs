@@ -454,14 +454,34 @@ fn parse_key(
         });
     }
 
+    // D3-02 (2026-09-04 audit): 付费 key 未设 per-key limit 时 limit /
+    // limit_remaining 双 null（OpenRouter 语义 = 无上限，付费用户常见默认）。
+    // H8 只修了 free_tier 半边，非 free_tier 的 unlimited 走到这仍报
+    // "缺 limit_remaining" Parse 错。改渲染 used-only 行（仿 anysearch
+    // unlimited 分支），无上限不显示进度条。
     if rows.is_empty() {
-        return Err(FetchError::parse(
-            t!(
-                "error.common.missing_field_generic",
-                field = "limit_remaining"
-            )
-            .into_owned(),
-        ));
+        if remaining.is_none() && limit.is_none() {
+            let used = num_f64(data, "usage").unwrap_or(0.0);
+            rows.push(QuotaRow {
+                label: t!("row.balance").to_string(),
+                utilization: None,
+                remaining: None,
+                used: Some(used),
+                total: None,
+                resets_at: None,
+                unit: Some("USD".to_string()),
+                extra: None,
+                kind: None,
+            });
+        } else {
+            return Err(FetchError::parse(
+                t!(
+                    "error.common.missing_field_generic",
+                    field = "limit_remaining"
+                )
+                .into_owned(),
+            ));
+        }
     }
 
     Ok(ProviderSnapshot {
@@ -572,6 +592,41 @@ mod tests {
     #[test]
     fn parse_key_missing_data() {
         let raw = json!({ "error": "bad key" });
+        let err = parse_key(&raw, "openrouter", "OpenRouter").unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Parse);
+    }
+
+    /// D3-02 回归：付费 key 未设 per-key limit（limit/limit_remaining 双 null、
+    /// is_free_tier=false）= 无上限，渲染 used-only 行而非报 Parse 错。
+    #[test]
+    fn parse_key_paid_unlimited_no_error() {
+        let raw = json!({
+            "data": {
+                "label": "prod",
+                "limit": null,
+                "limit_remaining": null,
+                "is_free_tier": false,
+                "usage": 5.5
+            }
+        });
+        let snap = parse_key(&raw, "openrouter", "OpenRouter").unwrap();
+        assert_eq!(snap.rows.len(), 1);
+        assert_eq!(snap.rows[0].used, Some(5.5));
+        assert_eq!(snap.rows[0].total, None, "unlimited → total=None");
+        assert!(snap.rows[0].utilization.is_none(), "unlimited → 无进度条");
+    }
+
+    /// D3-02 反向：limit 已设但 remaining 缺失仍应报 Parse（非 unlimited 语义）。
+    #[test]
+    fn parse_key_limit_set_remaining_missing_still_parses_error() {
+        let raw = json!({
+            "data": {
+                "label": "prod",
+                "limit": 20.0,
+                "limit_remaining": null,
+                "is_free_tier": false
+            }
+        });
         let err = parse_key(&raw, "openrouter", "OpenRouter").unwrap_err();
         assert_eq!(err.kind, ErrorKind::Parse);
     }

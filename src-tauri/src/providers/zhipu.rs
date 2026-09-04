@@ -307,21 +307,39 @@ async fn do_fetch(
 
     let raw = json_body_limited(resp).await?;
 
-    // 业务级 success 检查
-    if raw.get("success").and_then(|v| v.as_bool()) == Some(false) {
+    if let Some(err) = check_business_failure(&raw) {
+        return Err(err);
+    }
+
+    parse(&raw, region, source_id, display_name)
+}
+
+/// 业务级失败检查（D3-01：code 字段优先读，success 布尔兜底）。
+/// 新版积分套餐（2026-07-30 起）顶层带 code/msg（成功=200）；失败响应可能
+/// 只回 `{"code": <非200>, "msg": ...}` 而缺 success 字段——此前只查 success
+/// 布尔会漏检降级成 Parse 错（"缺 data 字段"），误导用户以为是 schema 问题；
+/// 且 success:false 路径 code 硬编码 0，真实错误码被丢。
+/// 老 Token 套餐 schema 无顶层 code，get 返 None 自然跳过该分支。
+fn check_business_failure(raw: &Value) -> Option<FetchError> {
+    let biz_code = raw.get("code").and_then(|v| {
+        v.as_i64()
+            .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+    });
+    if biz_code.is_some_and(|c| c != 0 && c != 200)
+        || raw.get("success").and_then(|v| v.as_bool()) == Some(false)
+    {
         let msg = raw.get("msg").and_then(|v| v.as_str()).unwrap_or("");
-        return Err(FetchError::server(
+        return Some(FetchError::server(
             t!(
                 "error.common.business_code",
                 provider = "智谱 GLM",
-                code = 0,
+                code = biz_code.unwrap_or(0),
                 msg = msg
             )
             .into_owned(),
         ));
     }
-
-    parse(&raw, region, source_id, display_name)
+    None
 }
 
 /// 解析智谱 quota 响应 → QuotaRow 列表。
@@ -786,6 +804,43 @@ mod tests {
                 || err.kind == FetchError::parse("test").kind,
             "err.kind 应该 ServerError 或 Parse, 实际: {:?}",
             err.kind
+        );
+    }
+
+    /// D3-01 回归：新版积分套餐失败响应只带 code/msg、缺 success 字段时
+    /// 必须在业务级分支拦截（此前漏检降级成 Parse "缺 data 字段"），
+    /// 且真实 code 透传（此前硬编码 0）。
+    #[test]
+    fn business_failure_code_only_payload_is_caught() {
+        // code-only 失败（无 success 字段）
+        let raw = json!({ "code": 40101, "msg": "account expired" });
+        let err = check_business_failure(&raw).expect("code-only failure must be caught");
+        assert_eq!(err.kind, FetchError::server("test").kind);
+        assert!(
+            err.message.contains("40101"),
+            "real code must surface: {}",
+            err.message
+        );
+
+        // 字符串形式 code（schema 演进容忍）
+        let raw = json!({ "code": "1002", "msg": "quota exhausted" });
+        assert!(check_business_failure(&raw).is_some());
+
+        // 成功形态：code=200 + success=true → 不拦
+        let raw = json!({ "code": 200, "msg": "ok", "success": true });
+        assert!(check_business_failure(&raw).is_none());
+
+        // 老 Token 套餐：无顶层 code，success=true → 不拦
+        let raw = json!({ "success": true });
+        assert!(check_business_failure(&raw).is_none());
+
+        // success:false 显式失败仍拦（兼容老路径），code 缺失时回退 0
+        let raw = json!({ "success": false, "msg": "key banned" });
+        let err = check_business_failure(&raw).expect("success=false must be caught");
+        assert!(
+            err.message.contains('0'),
+            "code fallback 0: {}",
+            err.message
         );
     }
 

@@ -226,8 +226,8 @@ async fn do_fetch(
     display_name: &str,
 ) -> Result<ProviderSnapshot, FetchError> {
     // L10 fix: path 必须以 / 开头，否则 base_url+path 拼出的 URL 会串 host。
-    // 例: base_url="https://api.legit.com" + path="@evil.com/foo" →
-    // https://api.legit.com@evil.com/foo (host 变成 evil.com，api key 走 reqwest
+    // 例: base_url="https://api.legit.invalid" + path="@evil.com/foo" →
+    // https://api.legit.invalid@evil.com/foo (host 变成 evil.com，api key 走 reqwest
     // 不在 URL 里所以不直接泄露，但请求被重定向到 attacker 域)。
     // spec parse 时已经校验 path.starts_with('/')，这里再防御一次（防篡改 config）。
     if !spec.path.starts_with('/') {
@@ -237,8 +237,8 @@ async fn do_fetch(
     }
     let url = format!("{}{}", spec.base_url.trim_end_matches('/'), spec.path);
     // H3 fix (2026-08-03 audit SECURITY) + 2026-08-17 audit C-01: 拒绝 URL authority
-    // 含 `@`（userinfo bypass）。base_url = "https://api.legit.com@evil.com" + path
-    // = "/foo" → reqwest 把 `api.legit.com` 当 userinfo、`evil.com` 当 host，
+    // 含 `@`（userinfo bypass）。base_url = "https://api.legit.invalid@evil.com" + path
+    // = "/foo" → reqwest 把 `api.legit.invalid` 当 userinfo、`evil.com` 当 host，
     // SSRF 检查看到公网 host 放行 → Bearer API key 泄漏给攻击者。共享 helper
     // super::url_authority_has_userinfo（与 zenmux.rs 统一），只检 authority 段，
     // path 里的合法 `@` 保留。
@@ -744,13 +744,13 @@ mod tests {
     }
 
     /// H3 fix (2026-08-03 audit SECURITY): URL with "@" in authority must be
-    /// rejected (reqwest would parse `api.legit.com` as userinfo and connect
+    /// rejected (reqwest would parse `api.legit.invalid` as userinfo and connect
     /// to the real host `evil.com`, leaking Bearer key). Authority is the
     /// part between "https://" and the first "/".
     #[test]
     fn h3_rejects_at_in_authority() {
         let mut spec = make_spec(ExtractSpec::NewApi { divide: None });
-        spec.base_url = "https://api.legit.com@evil.com".to_string();
+        spec.base_url = "https://api.legit.invalid@evil.com".to_string();
         spec.path = "/foo".to_string();
         let rt = tokio::runtime::Runtime::new().unwrap();
         let err = rt
@@ -769,7 +769,7 @@ mod tests {
     #[test]
     fn h3_allows_legitimate_url_without_at() {
         let mut spec = make_spec(ExtractSpec::NewApi { divide: None });
-        spec.base_url = "https://api.legit.com".to_string();
+        spec.base_url = "https://api.legit.invalid".to_string();
         spec.path = "/foo".to_string();
         let rt = tokio::runtime::Runtime::new().unwrap();
         // do_fetch 走到 client.get() 后会试图连真地址,timeout / connection refused
@@ -789,12 +789,12 @@ mod tests {
     }
 
     /// H3 fix: "@" in **path** (after first "/") is legitimate and must NOT
-    /// be rejected. e.g. `base_url="https://api.legit.com" + path="/v1/@me"`
+    /// be rejected. e.g. `base_url="https://api.legit.invalid" + path="/v1/@me"`
     /// 常见 REST API 路径段。
     #[test]
     fn h3_allows_at_in_path() {
         let mut spec = make_spec(ExtractSpec::NewApi { divide: None });
-        spec.base_url = "https://api.legit.com".to_string();
+        spec.base_url = "https://api.legit.invalid".to_string();
         spec.path = "/v1/@me/foo".to_string();
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt.block_on(do_fetch("test-key", &spec, "custom_test1234", "Test"));

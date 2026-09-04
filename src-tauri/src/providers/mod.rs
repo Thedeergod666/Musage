@@ -291,14 +291,17 @@ pub fn url_is_ssrf_blocked(url: &reqwest::Url) -> bool {
 /// 请求带着 `Authorization: Bearer <key>` 直接送达 evil.com。custom.rs 早有 H3 同款
 /// 拦截（2026-08-03 audit），zenmux 漏了，抽成共享 helper 统一调用。
 ///
-/// 只检 **authority**（`https://` 后到第一个 `/` 之间），path 里的合法 `@` 保留。
+/// 只检 **authority**（`https://` 后到第一个 `/`、`?` 或 `#` 之间），path/query
+/// 里的合法 `@` 保留。query 端点必须算 authority 终点：base_url 形如
+/// `https://api.example.com?email=user@me`（无路径）时，若只认 `/`，整个 query
+/// 会被误吞进 authority，`@` 假阳性触发拦截（2026-09-04 audit D1-01）。
 pub fn url_authority_has_userinfo(url: &str) -> bool {
     let rest = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"));
     match rest {
         Some(r) => {
-            let authority_end = r.find('/').unwrap_or(r.len());
+            let authority_end = r.find(['/', '?', '#']).unwrap_or(r.len());
             r[..authority_end].contains('@')
         }
         None => false,
@@ -1118,6 +1121,35 @@ pub async fn text_body_limited(resp: reqwest::Response) -> Result<String, FetchE
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// D1-01 回归：authority 终点是 `/`、`?`、`#` 三者最早者。
+    /// query/fragment 里的 `@` 是合法数据，不得误判成 userinfo。
+    #[test]
+    fn url_authority_has_userinfo_scans_authority_only() {
+        // authority 含 @ → 拦
+        assert!(url_authority_has_userinfo(
+            "https://api.legit.com@evil.com/v1"
+        ));
+        assert!(url_authority_has_userinfo("https://u@evil.com"));
+        assert!(url_authority_has_userinfo("http://u@127.0.0.1:8080/x"));
+        // path 里的 @ → 放行
+        assert!(!url_authority_has_userinfo(
+            "https://api.example.com/v1/@me"
+        ));
+        // query 里的 @ → 放行（D1-01 假阳性修复）
+        assert!(!url_authority_has_userinfo(
+            "https://api.example.com?email=user@me"
+        ));
+        assert!(!url_authority_has_userinfo(
+            "https://api.example.com/v1?next=a@b"
+        ));
+        // fragment 里的 @ → 放行
+        assert!(!url_authority_has_userinfo(
+            "https://api.example.com#frag@x"
+        ));
+        // 非 http(s) scheme 不归本 helper 管
+        assert!(!url_authority_has_userinfo("ftp://u@evil.com"));
+    }
 
     fn success_snapshot(rows: Vec<QuotaRow>) -> ProviderSnapshot {
         ProviderSnapshot {

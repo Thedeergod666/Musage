@@ -162,15 +162,18 @@ impl QuotaSource for ZenmuxSource {
                 *g = Some(mode);
             }
 
-            // base_url 同上：只走顶层（前端实际写入的位置）
+            // base_url 同上：只走顶层（前端实际写入的位置）。
+            //
+            // H-2 fix (2026-09-05 audit)：原来只在 Some 时写入、从不清空 ——
+            // 用户在设置里清空自定义 base_url（config 已正确落 None）后，
+            // 内存里的旧值残留，API key 持续发往用户已删除的端点直到重启。
+            // 改为无条件覆盖（None 也写入清空），与 mode 的覆盖语义对齐。
             let url = cfg
                 .get("zenmux_base_url")
                 .and_then(|v| v.as_str())
                 .filter(|s| !s.is_empty());
-            if let Some(url) = url {
-                if let Ok(mut g) = self.base_url.write() {
-                    *g = Some(url.to_string());
-                }
+            if let Ok(mut g) = self.base_url.write() {
+                *g = url.map(str::to_string);
             }
         })
     }
@@ -533,12 +536,23 @@ fn parse_subscription_window(q: &Value, label: &str) -> Option<QuotaRow> {
     // 但原代码 * 100.0 当 ratio 处理。API 返 72(已是百分比)时输出 7200%。
     // 启发式:值 > 1.0 视为已是百分比(0-100),否则视为 ratio(0-1) 乘 100。
     // 最后 clamp 到 [0, 100] 防止越界。
-    let utilization = if usage_pct_raw > 1.0 {
-        usage_pct_raw
-    } else {
-        usage_pct_raw * 100.0
+    //
+    // L-3 fix (2026-09-05 audit)：有 used_flows/max_flows 时**优先用交叉
+    // 计算值** —— `used/max` 与启发式互相印证：schema 从 ratio 漂移成
+    // 百分制后，`1.0`（=1%）落进 `<= 1.0` 分支会被渲染成 100%，语义完全
+    // 颠倒；交叉计算对两种语义都正确。used/max 不可用时退回启发式。
+    let cross_checked = match (used, max) {
+        (Some(u), Some(m)) if m > 0.0 => Some((u / m * 100.0).clamp(0.0, 100.0)),
+        _ => None,
     };
-    let utilization = utilization.clamp(0.0, 100.0);
+    let utilization = cross_checked.unwrap_or_else(|| {
+        if usage_pct_raw > 1.0 {
+            usage_pct_raw
+        } else {
+            usage_pct_raw * 100.0
+        }
+        .clamp(0.0, 100.0)
+    });
 
     Some(QuotaRow {
         label: label.to_string(),

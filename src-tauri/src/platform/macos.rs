@@ -381,11 +381,13 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
         // (modal 面板) → hover 永久失灵」的场景完全无声。加连续失败计数，
         // 跨过阈值（20Hz × 50s = 1000 tick）时 warn 一次——不刷屏，但
         // 诊断有入口；dispatch 成功即复位，下次事故还能再告警。
-        let fails = MAIN_DISPATCH_CONSECUTIVE_FAILS.fetch_add(1, Ordering::Relaxed);
-        if fails > 0 && fails.is_multiple_of(MAIN_DISPATCH_WARN_EVERY) {
+        // L7 fix (2026-09-05 audit)：fetch_add 返回自增**前**值 —— 原判断
+        // 首次 warn 实际发生在第 1001 次连续失败。加 1 后对齐注释语义。
+        let fails = MAIN_DISPATCH_CONSECUTIVE_FAILS.fetch_add(1, Ordering::Relaxed) + 1;
+        if fails.is_multiple_of(MAIN_DISPATCH_WARN_EVERY) {
             tracing::warn!(
                 error = %e,
-                consecutive_fails = fails + 1,
+                consecutive_fails = fails,
                 "is_floating_topmost_at: dispatch to main thread 持续失败，hover/玻璃效果可能长期失灵"
             );
         } else {
@@ -505,7 +507,17 @@ pub fn start_fullscreen_watcher<R: Runtime>(app: AppHandle<R>) {
                 last_fs = is_fs;
 
                 if is_fs {
-                    // 进入全屏 —— 隐藏浮窗（若我们尚未藏）
+                    // 进入全屏 —— 隐藏浮窗（若我们尚未藏）。
+                    // M14 fix (2026-09-05 audit)：只在浮窗**当前可见**时才认领
+                    // 所有权 —— 原实现用户先用托盘隐藏的浮窗也被 swap(true)
+                    // 认领，全屏退出时被 show 复活，违背用户意愿。
+                    let visible = app
+                        .get_webview_window("floating")
+                        .map(|w| w.is_visible().unwrap_or(false))
+                        .unwrap_or(false);
+                    if !visible {
+                        continue;
+                    }
                     if !WINDOW_HIDDEN_BY_FULLSCREEN.swap(true, Ordering::SeqCst) {
                         tracing::debug!("检测到全屏 → 隐藏浮窗");
                         hide_floating(&app);
@@ -621,17 +633,73 @@ fn show_floating<R: Runtime>(app: &AppHandle<R>) {
 /// 跟 NSAppearanceNameAqua (light) 比对判断。effectiveAppearance 跟随
 /// 系统外观 (系统设置 → 外观 → 浅色/深色/自动),也跟随 NSApp override。
 ///
-/// 必须 main thread (NSApp 需要 MainThreadMarker)。返回 false (保持
-/// 白字) 作为 fallback —— 深色菜单栏是 macOS 默认,绝大多数情况
-/// 正确,浅色菜单栏的 case 由 caller 重新调一次拿到 true 修复。
+/// H-6 fix (2026-09-05 audit)：原实现只认 MainThreadMarker，但全部调用点
+/// （publish_snapshot / refresh_now / set_tray_* / locale-changed 监听）
+/// 都在 tokio worker / 事件回调线程 —— MainThreadMarker 恒 None，该功能
+/// 自引入以来从未真正生效过。改为与 [`is_menubar_hidden`] 同款
+/// run_on_main_thread + Condvar 单槽位派发；已在主线程时走 fast path。
+/// 派发失败 / 超时保守返 false（保持白字，深色菜单栏是常见默认）。
 #[cfg(target_os = "macos")]
-pub fn menu_bar_is_light() -> bool {
+pub fn menu_bar_is_light<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
     use objc2::MainThreadMarker;
+
+    // fast path：已在主线程（如 locale-changed 监听器走 run_on_main_thread
+    // 的场景、托盘菜单回调），直接读，不再派发一轮。
+    if let Some(mtm) = MainThreadMarker::new() {
+        return native_menu_bar_is_light(mtm);
+    }
+
+    use std::sync::{Arc, Condvar, Mutex};
+
+    struct OneSlot {
+        slot: Mutex<Option<bool>>,
+        cvar: Condvar,
+    }
+    static SLOT: OnceLock<Arc<OneSlot>> = OnceLock::new();
+    let slot = SLOT.get_or_init(|| {
+        Arc::new(OneSlot {
+            slot: Mutex::new(None),
+            cvar: Condvar::new(),
+        })
+    });
+
+    let slot2 = slot.clone();
+    let dispatch_result = app.run_on_main_thread(move || {
+        let v = match MainThreadMarker::new() {
+            Some(mtm) => native_menu_bar_is_light(mtm),
+            None => {
+                tracing::warn!("MainThreadMarker 不可用，menu_bar_is_light 派发闭包跳过");
+                false
+            }
+        };
+        let mut g = slot2.slot.lock().unwrap_or_else(|e| e.into_inner());
+        *g = Some(v);
+        slot2.cvar.notify_all();
+    });
+    if dispatch_result.is_err() {
+        return false;
+    }
+
+    let started = std::time::Instant::now();
+    loop {
+        let mut g = slot.slot.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(v) = g.take() {
+            return v;
+        }
+        let elapsed = started.elapsed();
+        if elapsed >= Duration::from_millis(200) {
+            return false;
+        }
+        let remaining = Duration::from_millis(200) - elapsed;
+        let _ = slot.cvar.wait_timeout(g, remaining);
+    }
+}
+
+/// 主线程上真正读取 NSApp effectiveAppearance 的部分。
+#[cfg(target_os = "macos")]
+fn native_menu_bar_is_light(mtm: objc2::MainThreadMarker) -> bool {
     use objc2_app_kit::NSApplication;
 
-    let Some(mtm) = MainThreadMarker::new() else {
-        return false; // 不在 main thread,保守返 false (保持白字,深色背景常见)
-    };
     let app = NSApplication::sharedApplication(mtm);
     let appearance = app.effectiveAppearance();
     let name = appearance.name();
@@ -659,19 +727,12 @@ pub fn menu_bar_is_light() -> bool {
 mod tests {
     use super::*;
 
-    #[cfg(not(target_os = "macos"))]
-    #[test]
-    fn menu_bar_is_light_stub_returns_false_on_non_macos() {
-        // 非 macOS 平台 stub 必须返 false (保持白字,深色背景常见)
-        // Win/Linux tray 永远在深色任务栏上,白字是对的
-        assert!(!menu_bar_is_light());
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    #[ignore = "需要真机 macOS 测试,本机无 NSApp 环境"]
-    fn menu_bar_is_light_returns_bool() {
-        // 真 macOS 上必须返 bool (不 panic)。具体 true/false 取决于系统设置。
-        let _ = menu_bar_is_light();
+    // H-6 fix (2026-09-05 audit)：menu_bar_is_light 改为收 &AppHandle（主线程
+    // 派发），单测环境拿不到 AppHandle / 主线程，原占位测试删除 —— 该函数的
+    // 真机验证走手动 QA（托盘图标颜色随系统外观切换）。
+    #[allow(unused)]
+    fn _menu_bar_is_light_signature_probe() {
+        // 编译期签名护栏：确认函数存在且泛型签名未漂移（不实际调用）。
+        let _: fn(&tauri::AppHandle<tauri::Wry>) -> bool = menu_bar_is_light::<tauri::Wry>;
     }
 }

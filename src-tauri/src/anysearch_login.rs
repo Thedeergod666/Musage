@@ -171,7 +171,24 @@ const READY_COOKIE_NAME: &str = "MUSAGE_READY";
 /// 无空白 / 控制字符。挡掉 interval 还没拿到 token 时的空串、init script
 /// 抓脏字符、以及任何明显不是真实 JWT 的极短串。长度下限是**合理性门槛**，
 /// 不是 JWT 规范强制的最小值（实测 AnySearch JWT ≈ 572 字符）。
+///
+/// L-3 fix (2026-09-05 audit)：对 combined token（`<access>...<refresh>`）
+/// 按哨兵 split 后**逐半段**校验 —— 原来 4096 上限作用于整串，任一侧
+/// token 膨胀到两段合计超限就整体永假 → 登录静默等满 14 分钟超时无任何
+/// 明确错误（stepfun 为同类膨胀已把上限放宽到 12KB）。
 fn is_jwt_like(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+    let halves: Vec<&str> = s.split("...").collect();
+    match halves.as_slice() {
+        [single] => is_jwt_like_single(single),
+        [access, refresh] => is_jwt_like_single(access) && is_jwt_like_single(refresh),
+        _ => false,
+    }
+}
+
+fn is_jwt_like_single(s: &str) -> bool {
     !s.is_empty()
         && s.starts_with("eyJ")
         && s.len() >= 20
@@ -229,26 +246,31 @@ fn init_script() -> String {
                 try { return location.hostname === ALLOW_HOST; } catch (_) { return false; }
             }
             // ── 锁 cookie / storage 读取到受信 host（挡第三方 tracker 偷 JWT）──
+            //
+            // H-7 fix (2026-09-05 audit)：prototype override **只在受信 host 上
+            // 安装**。原实现无条件安装、调用时才门控 —— 非 ALLOW_HOST 的
+            // SSO/OAuth 中间页 getItem 恒 null、cookie 写被静默丢弃，登录流程
+            // 直接坏掉（stepfun_login.rs 已用删除 init script 修复同款问题）。
+            // 受信域之外保持原生行为：JWT 本来就只存在于 ALLOW_HOST 的
+            // same-origin storage，跨域 tracker 同源策略下读不到，无需 override。
             try {
-                // D3-001 fix (2026-07-30 audit): 锁 Document.prototype.cookie
-                // 而非 document.cookie (instance). 之前 instance-level override
-                // 可被 'Object.getOwnPropertyDescriptor(Document.prototype, "cookie")
-                // .get.call(document)' 绕过 → 同源 XSS 能直接读 MUSAGE_TOKEN
-                // (非 HttpOnly). 锁 prototype + configurable: false 防 redef.
-                var _origCookie = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
-                Object.defineProperty(Document.prototype, "cookie", {
-                    get: function () { return isAllowed() ? _origCookie.get.call(this) : ""; },
-                    set: function (v) { if (isAllowed()) _origCookie.set.call(this, v); },
-                    configurable: false
-                });
+                if (isAllowed()) {
+                    // D3-001 fix (2026-07-30 audit): 锁 Document.prototype.cookie
+                    // 而非 document.cookie (instance). 之前 instance-level override
+                    // 可被 'Object.getOwnPropertyDescriptor(Document.prototype, "cookie")
+                    // .get.call(document)' 绕过 → 同源 XSS 能直接读 MUSAGE_TOKEN
+                    // (非 HttpOnly). 锁 prototype + configurable: false 防 redef.
+                    var _origCookie = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
+                    Object.defineProperty(Document.prototype, "cookie", {
+                        get: function () { return _origCookie.get.call(this); },
+                        set: function (v) { _origCookie.set.call(this, v); },
+                        configurable: false
+                    });
+                }
             } catch (_) {}
-            try {
-                var _origGet = Object.getOwnPropertyDescriptor(Storage.prototype, "getItem");
-                Object.defineProperty(Storage.prototype, "getItem", {
-                    value: function (k) { return isAllowed() ? _origGet.value.call(this, k) : null; },
-                    configurable: true
-                });
-            } catch (_) {}
+            // Storage.getItem override 在 H-7 后已无安全收益（token 只在
+            // ALLOW_HOST 的 same-origin storage 里，其它域读不到），不再安装，
+            // 让 SSO/OAuth 页面的 storage 保持原生行为。
             // ── 重新登录：清掉上一次残留的登录态（关键 fix）──
             // webview profile 持久化 localStorage —— 上一次（可能已过期）的 JWT
             // 还在 LS_KEY 里。不清的话下面的 interval 会立刻把它写进中转
@@ -259,10 +281,29 @@ fn init_script() -> String {
             //   3) 置 MUSAGE_READY 标记 —— Rust 见到 READY 才开始接受 token，
             //      保证不会抓到清理之前残留在 cookie store 里的旧 MUSAGE_TOKEN
             // 只在受信 host 上清（isAllowed 守卫），不碰第三方数据。
+            //
+            // M-19 fix (2026-09-05 audit)：**只在当前没有已建立的登录态时清理**。
+            // init script 在每个 document_start 都执行 —— 登录中途的整页导航
+            // （OAuth 回跳等）会把刚写入的 auth state 抹掉，登录永远等不到
+            // token、14 分钟超时。有 token 时跳过清理（过期 token 由 Rust 端
+            // is_fresh_access 门拒绝，不会误存）。
             try {
                 if (isAllowed()) {
-                    localStorage.removeItem(LS_KEY);
-                    document.cookie = COOKIE_NAME + "=; path=/; max-age=0";
+                    var _musageHasAuth = false;
+                    try {
+                        var _raw = localStorage.getItem(LS_KEY);
+                        if (_raw) {
+                            var _st = JSON.parse(_raw);
+                            var _s = (_st && _st.state) || {};
+                            _musageHasAuth = !!(_s && _s.accessToken);
+                        }
+                    } catch (_) {}
+                    if (!_musageHasAuth) {
+                        localStorage.removeItem(LS_KEY);
+                        document.cookie = COOKIE_NAME + "=; path=/; max-age=0";
+                    }
+                    // READY 每次（重新）置位：标记"清理已完成"，Rust 只接受
+                    // 本会话内新写入的 token。
                     document.cookie = READY_NAME + "=1; path=/; max-age=900; SameSite=Lax; Secure";
                 }
             } catch (_) {}
@@ -553,7 +594,18 @@ async fn poll_token_from_cookie(
                     return PollOutcome::Cancelled;
                 }
                 return match save_token(raw) {
-                    Ok(len) => PollOutcome::Saved(len),
+                    Ok(len) => {
+                        // H-8 fix (2026-09-05 audit)：base 禁用 + 副本启用时，
+                        // D7-02 的刷新目标是副本槽 —— 把同一 token 镜像过去，
+                        // 否则登录成功后浮窗报「未配置凭据」。
+                        crate::commands::mirror_login_credential_to_refresh_target(
+                            window,
+                            "anysearch",
+                            raw,
+                        )
+                        .await;
+                        PollOutcome::Saved(len)
+                    }
                     Err(e) => PollOutcome::Failed(e),
                 };
             }

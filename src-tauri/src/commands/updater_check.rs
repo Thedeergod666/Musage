@@ -55,7 +55,14 @@ static UPDATE_CACHE: OnceLock<Arc<RwLock<Option<CacheEntry>>>> = OnceLock::new()
 #[derive(Debug, Clone, Default)]
 struct CacheEntry {
     info: Option<UpdateInfo>,
+    /// L-config-3 fix (2026-09-05 audit)：缓存写入时间 —— 有 TTL（6h）后
+    /// 长跑会话里发布的新版本才能出现在 banner（原来 up_to_date 永不刷新，
+    /// 只有手点「检查更新」才更新）。
+    at: i64,
 }
+
+/// 缓存 TTL：6 小时。长跑会话（数天不重启）每隔 6h 会重新探测一次。
+const CACHE_TTL_MS: i64 = 6 * 60 * 60 * 1000;
 
 fn cache() -> &'static Arc<RwLock<Option<CacheEntry>>> {
     UPDATE_CACHE.get_or_init(|| Arc::new(RwLock::new(None)))
@@ -115,9 +122,19 @@ pub async fn check_for_update(force: bool) -> Result<UpdateCheckResult, String> 
         }
     } else {
         // 读缓存同步返回
-        let cached = cache().read().await.clone();
+        //
+        // L-config-3 fix：带 TTL —— 过期条目视同 None（触发后台重新探测）。
+        let cached = {
+            let c = cache().read().await.clone();
+            match c {
+                Some(entry) if chrono::Utc::now().timestamp_millis() - entry.at < CACHE_TTL_MS => {
+                    Some(entry)
+                }
+                _ => None,
+            }
+        };
         match cached {
-            // 探测完成过 → 结论可信
+            // 探测完成过（且未过期）→ 结论可信
             Some(entry) => match entry.info {
                 Some(info) => Ok(UpdateCheckResult {
                     status: "available",
@@ -128,16 +145,22 @@ pub async fn check_for_update(force: bool) -> Result<UpdateCheckResult, String> 
                     info: None,
                 }),
             },
-            // 缓存为空（启动 5s 内 + 启动探测还没跑完，或探测失败）→ 三态
-            // "unknown"，spawn 后台 fetch 更新缓存 —— 不能阻塞 settings 打开
-            // 的瞬间。Fire-and-forget。前端对 unknown 显示「检查中」+ 择机重查，
-            // 不再（D5-02）误渲染成「已是最新」。
+            // 缓存为空 / 已过期（启动 5s 内 + 启动探测还没跑完，或探测失败）
+            // → 三态 "unknown"，spawn 后台 fetch 更新缓存 —— 不能阻塞 settings
+            // 打开的瞬间。Fire-and-forget。前端对 unknown 显示「检查中」+ 择机
+            // 重查，不再（D5-02）误渲染成「已是最新」。
+            //
+            // L-config-3 fix：in-flight 去重 —— 原来前端 unknown 重试（3s × 3）
+            // 每次都 spawn 新 fetch，离线时对 60 req/h 的 GitHub API 无谓消耗。
             None => {
-                tokio::spawn(async move {
-                    if let Err(e) = do_check().await {
-                        tracing::debug!(error = %e, "check_for_update(force=false) 后台 fetch 失败");
-                    }
-                });
+                if !CHECK_IN_FLIGHT.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    tokio::spawn(async move {
+                        if let Err(e) = do_check().await {
+                            tracing::debug!(error = %e, "check_for_update(force=false) 后台 fetch 失败");
+                        }
+                        CHECK_IN_FLIGHT.store(false, std::sync::atomic::Ordering::SeqCst);
+                    });
+                }
                 Ok(UpdateCheckResult {
                     status: "unknown",
                     info: None,
@@ -146,6 +169,10 @@ pub async fn check_for_update(force: bool) -> Result<UpdateCheckResult, String> 
         }
     }
 }
+
+/// L-config-3：后台探测 in-flight 标记（与 force=true 路径互不阻塞 ——
+/// 手动检查要拿到新鲜结果，不受此标记影响）。
+static CHECK_IN_FLIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// 启动后 spawn 一次探测，结果写 [`UPDATE_CACHE`]。监听 [`crate::poller::SHUTDOWN`]
 /// 在用户 5s 窗口内 quit_app 时立即退出 —— 否则会发出一次浪费的 GitHub
@@ -192,7 +219,10 @@ async fn do_check() -> Result<Option<UpdateInfo>, String> {
     if status.as_u16() == HTTP_NOT_FOUND {
         // repo 一个 release 都没打 → 视为"没有新版本"，写结论进缓存
         let mut g = cache().write().await;
-        *g = Some(CacheEntry { info: None });
+        *g = Some(CacheEntry {
+            info: None,
+            at: chrono::Utc::now().timestamp_millis(),
+        });
         return Ok(None);
     }
     if !status.is_success() {
@@ -232,6 +262,9 @@ async fn do_check() -> Result<Option<UpdateInfo>, String> {
     };
 
     let mut g = cache().write().await;
-    *g = Some(CacheEntry { info: info.clone() });
+    *g = Some(CacheEntry {
+        info: info.clone(),
+        at: chrono::Utc::now().timestamp_millis(),
+    });
     Ok(info)
 }

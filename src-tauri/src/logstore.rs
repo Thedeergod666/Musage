@@ -143,7 +143,11 @@ pub fn redact_message(s: &str) -> std::borrow::Cow<'_, str> {
             r"|secret_key=[^\s;,]+",
             r"|refresh_token=[^\s;,]+",
             r"|\bxai-[A-Za-z0-9_\-]{8,}",
-            r"|(?:Cookie|Set-Cookie):[^\n]+",
+            // L-poller-4 fix (2026-09-05 audit)：(?i:…) 只对 header 名大小写
+            // 不敏感 —— HTTP/2 报文头规范即全小写（set-cookie:），原先命中
+            // 不到。补 authorization: 整值遮蔽。
+            r"|(?i:Set-Cookie|Cookie):[^\n]+",
+            r"|(?i:authorization)\s*:\s*[^\s;,]+",
             r")",
         ))
         .expect("redact regex compile failed")
@@ -226,9 +230,22 @@ impl LogStore {
     pub fn push(&self, entry: LogEntry) {
         let mut g = self.inner.lock().unwrap_or_else(lock_recover);
         g.push_back(entry.clone());
-        let needs_truncate = g.len() > MAX_ENTRIES;
-        if needs_truncate {
+        // M7 fix (2026-09-05 audit)：needs_truncate 不再按"单次 push 后
+        // len > MAX"判定 —— ring 达到 cap 后每条都成立，磁盘文件随之变成
+        // "每条日志 append 1 行 + 全文件重写 200 行 + 双 fsync"。改为按
+        // **自上次 truncate 起累计被 pop 的条数**（≥ MAX/2 批量触发），
+        // 摊薄重写频率 ~100 倍，与设计意图"~1/200 频率"对齐。
+        static TRUNCATE_PENDING: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        const TRUNCATE_THRESHOLD: u64 = 100; // MAX_ENTRIES(200) / 2
+        let mut needs_truncate = false;
+        if g.len() > MAX_ENTRIES {
             g.pop_front();
+            let n = TRUNCATE_PENDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            if n >= TRUNCATE_THRESHOLD {
+                TRUNCATE_PENDING.store(0, std::sync::atomic::Ordering::Relaxed);
+                needs_truncate = true;
+            }
         }
         // P2 audit fix (2026-08-13): 之前 drop 锁后才 send job —— enqueue
         // 顺序与 ring 变更顺序不一致: push(A) 先拿锁改 ring, clear() 后拿锁

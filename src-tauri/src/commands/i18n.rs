@@ -31,12 +31,15 @@ pub async fn set_app_locale(
     if !matches!(locale.as_str(), "zh-CN" | "en") {
         return Err(format!("unsupported locale: {locale}（仅支持 zh-CN / en）"));
     }
-    rust_i18n::set_locale(&locale);
+    // L-i18n-1 fix (2026-09-05 audit)：先持久化成功再切运行时 —— 原来
+    // set_locale 在 save 之前，save 失败时运行时已是新语言而 cfg.locale /
+    // 磁盘还是旧值，托盘文案与设置面板选中项分叉直到下次成功切换。
     {
         let mut cfg = state.config.write().await;
         cfg.locale = locale.clone();
         cfg.save()?;
     }
+    rust_i18n::set_locale(&locale);
     // 广播给前端（让 src/i18n/index.ts 重新 render）+ 给自己（tray rebuild listener）
     // M3 fix: emit 失败 log warn，避免静默丢事件（前端保持旧语言直到下次 reload）
     if let Err(e) = app.emit("musage://locale-changed", &locale) {

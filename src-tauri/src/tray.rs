@@ -683,7 +683,10 @@ fn make_placeholder_icon() -> Image<'static> {
         // H5 fix: 注释(line 197-201)明确说 Win 64x64 是为了高 DPI 防糊，
         // 但之前直接用 PNG 原生尺寸(32x32)。Win11 200% DPI 下 GDI
         // COLORONCOLOR 拉伸 → 模糊。不足 ICON_SIZE 时 Lanczos 上采样。
-        if w < ICON_SIZE || h < ICON_SIZE {
+        // L-tray-6 fix (2026-09-05 audit)：**超过** ICON_SIZE 时也缩回 ——
+        // PNG(64×64) 大于 macOS ICON_SIZE(32) 时不缩，logo 模式 64px、
+        // bars/percent 模式 32px，切换样式时托盘视觉重量跳变。
+        if w != ICON_SIZE || h != ICON_SIZE {
             rgba = image::imageops::resize(
                 &rgba,
                 ICON_SIZE,
@@ -748,9 +751,14 @@ fn render_icon(
 /// 指定 source 不存在或失败时返回 None。
 ///
 /// v0.2.1 commit 5:多 instance 时遍历所有 minimax instance,选 5h utilization
-/// 最高的(快耗尽的副本最该被高亮);并列时取 instance_index 小的优先。
+/// 最高的(快耗尽的副本最该被高亮);并列时取 instance_index 小的优先
+/// (L-tray-2 fix: min_by(Reverse) 保证平局落首个,原 max_by 取最后)。
 /// 失败/无数据时 fallback 到任意一份成功的。进度条小图标只画 1 份,
 /// tooltip 列出所有 instance 拼 #N 后缀(由 tooltip() 统一处理)。
+///
+/// L-tray-8 fix (2026-09-05 audit)：非默认 source 解析失败时打一条 warn
+/// —— 原来静默返 None，用户删了 tray_source 对应的副本后托盘永久退化
+/// logo 且无任何日志可查。
 fn pick_tray_rows(snap: &QuotaSnapshot, source_id: &str) -> Option<(TrayCell, TrayCell)> {
     // H1 fix (2026-07-03 audit): 之前精确匹配 "minimax",extra instance 的 source_id
     // 是 "minimax#2" 被过滤掉,托盘图标不显示副本数据。改为按 base id 匹配
@@ -767,17 +775,24 @@ fn pick_tray_rows(snap: &QuotaSnapshot, source_id: &str) -> Option<(TrayCell, Tr
         })
         .collect();
     if candidates.is_empty() {
+        if source_id != "minimax" {
+            tracing::warn!(source = %source_id, "tray_source 无匹配的成功快照（可能已删除/禁用），托盘退化 logo");
+        }
         return None;
     }
-    // 选 5h 利用率最高(快耗尽)；余额系（无 5h）所有候选都 0 -> 取第一个
+    // 选 5h 利用率最高(快耗尽)；余额系（无 5h）所有候选都 0 -> 取第一个。
+    // L-tray-2 fix (2026-09-05 audit)：`Iterator::max_by` 平局返回**最后一个**
+    // 最大元素 —— 注释说"并列取第一个"，实际多副本余额系（five_hour_util
+    // 全 0 恒并列）显示的是列表中最后一份的余额。改用 min_by(Reverse)
+    // 让平局稳定落在**首个**候选（instance 顺序 = providers 列表顺序）。
     let best = candidates
         .iter()
-        .max_by(|a, b| {
-            five_hour_util(a)
-                .partial_cmp(&five_hour_util(b))
+        .copied()
+        .min_by(|a, b| {
+            five_hour_util(b)
+                .partial_cmp(&five_hour_util(a))
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
-        .copied()
         .unwrap_or(candidates[0]);
     // 阶段 2：优先百分比系（有 FiveHour/Weekly row），否则余额系（取 remaining）
     let five = best.rows.iter().find(|r| r.kind == Some(RowKind::FiveHour));
@@ -791,6 +806,12 @@ fn pick_tray_rows(snap: &QuotaSnapshot, source_id: &str) -> Option<(TrayCell, Tr
             .and_then(|r| r.utilization)
             .map(TrayCell::Percent)
             .unwrap_or(TrayCell::Empty);
+        // L-tray-6 fix (2026-09-05 audit)：两条 utilization 都缺失（schema
+        // 漂移可造出）时 (Empty, Empty) 会画全透明图标 → 托盘"消失"。
+        // 退回 None 让 caller 走 logo fallback（与 candidates 空一致）。
+        if matches!(top, TrayCell::Empty) && matches!(bot, TrayCell::Empty) {
+            return None;
+        }
         Some((top, bot))
     } else {
         // 余额系：取第一个有 remaining 的 row
@@ -835,13 +856,18 @@ fn format_balance_tray(v: f64, unit: &str) -> String {
     let num = if !v.is_finite() {
         "?".to_string()
     } else {
+        // L-tray-1 fix (2026-09-05 audit)：分支口径统一用 rounded 值 r ——
+        // 原来 `r >= 100_000` 与 `v >= 1000.0` 混用两种口径，v=999.9 →
+        // r=1000 显示 "¥1000"（4 字符无 k）而 v=1000.4 显示 "¥1.0k"。
         let r = v.round() as i64;
-        if r >= 100_000 {
-            format!("{}k", r / 1000)
-        } else if v >= 1000.0 {
-            format!("{:.1}k", v / 1000.0)
+        let abs = r.unsigned_abs();
+        let sign = if r < 0 { "-" } else { "" };
+        if abs >= 100_000 {
+            format!("{sign}{}k", abs / 1000)
+        } else if abs >= 1000 {
+            format!("{sign}{:.1}k", abs as f64 / 1000.0)
         } else {
-            format!("{}", r)
+            format!("{sign}{abs}")
         }
     };
     format!("{symbol}{num}")
@@ -871,11 +897,17 @@ fn parse_hex_color(s: &str) -> Option<Rgba<u8>> {
 
 /// 计算托盘图标前景色：用户配了固定色（tray_icon_color）就用它，否则按菜单栏
 /// 明暗自动黑/白（macOS 浅色 -> 黑，其它 -> 白）。
-pub(crate) fn tray_fill_color(cfg_color: Option<&str>) -> Rgba<u8> {
+///
+/// H-6 fix (2026-09-05 audit)：透传 `&AppHandle` —— macOS 的
+/// menu_bar_is_light 需要它派发主线程（原实现跨线程恒 false）。
+pub(crate) fn tray_fill_color<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    cfg_color: Option<&str>,
+) -> Rgba<u8> {
     if let Some(c) = cfg_color.and_then(parse_hex_color) {
         return c;
     }
-    if crate::platform::menu_bar_is_light() {
+    if crate::platform::menu_bar_is_light(app) {
         Rgba([0u8, 0, 0, 255])
     } else {
         Rgba([255u8, 255, 255, 255])

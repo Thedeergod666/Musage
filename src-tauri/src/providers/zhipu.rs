@@ -122,10 +122,6 @@ impl ZhipuRegion {
     /// 短显示名（用于 source_display_name），区分国区/国际。
     // M8 fix: 之前硬编码中文 "智谱 GLM" / "Z.ai" 破坏 en locale 的 i18n 链路。
     // 改走 t!()，让 Rust → frontend 的 display_name 走正常 i18n 路径。
-    //
-    // 当前 WIP 没有调用方(enum variant 直接在 `id()`/`display_name()` 里
-    // 拼 i18n key);保留以便 v0.3 公开 API 暴露给前端。
-    #[allow(dead_code)]
     fn display_label(&self) -> String {
         match self {
             ZhipuRegion::Cn => t!("provider_name.zhipu_cn").into_owned(),
@@ -188,12 +184,21 @@ impl QuotaSource for ZhipuSource {
         }
     }
     fn display_name(&self) -> Cow<'_, str> {
+        // L-6 fix (2026-09-05 audit)：按当前 region 选 label —— 原来无条件用
+        // 国区 `zhipu_cn`，切到国际版（api.z.ai）后浮窗/设置面板仍显示国区名。
+        let label = self
+            .region
+            .read()
+            .ok()
+            .and_then(|g| *g)
+            .map(|r| r.display_label())
+            .unwrap_or_else(|| t!("provider_name.zhipu_cn").into_owned());
         if self.instance_index <= 1 {
-            Cow::Owned(t!("provider_name.zhipu_cn").into_owned())
+            Cow::Owned(label)
         } else {
             Cow::Owned(format!(
                 "{}{}",
-                t!("provider_name.zhipu_cn").as_ref(),
+                label,
                 t!("provider.suffix.dup", n = self.instance_index),
             ))
         }
@@ -325,15 +330,31 @@ fn check_business_failure(raw: &Value) -> Option<FetchError> {
         v.as_i64()
             .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
     });
-    if biz_code.is_some_and(|c| c != 0 && c != 200)
-        || raw.get("success").and_then(|v| v.as_bool()) == Some(false)
-    {
+    let success_failed = raw.get("success").and_then(|v| v.as_bool()) == Some(false);
+    if biz_code.is_some_and(|c| c != 0 && c != 200) || success_failed {
         let msg = raw.get("msg").and_then(|v| v.as_str()).unwrap_or("");
+        let code = biz_code.unwrap_or(0);
+        // M-6 fix (2026-09-05 audit)：业务码 40100..40200（鉴权类，如
+        // `{"code":40101,"msg":"account expired"}`）归 AuthFailed —— 对齐
+        // xiaomi.rs 的 classify_xiaomi_business_code 修复。此前一刀切
+        // ServerError：前端没有「重新登录」引导（needs_settings 为 false）、
+        // backoff 也不停手（ServerError 退避后继续打已知失效的 key）。
+        if (40100..40200).contains(&code) {
+            return Some(FetchError::auth(
+                t!(
+                    "error.common.business_code",
+                    provider = "智谱 GLM",
+                    code = code,
+                    msg = msg
+                )
+                .into_owned(),
+            ));
+        }
         return Some(FetchError::server(
             t!(
                 "error.common.business_code",
                 provider = "智谱 GLM",
-                code = biz_code.unwrap_or(0),
+                code = code,
                 msg = msg
             )
             .into_owned(),

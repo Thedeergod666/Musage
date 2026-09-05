@@ -25,6 +25,7 @@ pub mod i18n;
 // 详细见 [crate::commands::updater_check]。
 pub mod updater_check;
 
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -155,7 +156,11 @@ pub async fn set_provider_enabled(
     // 如果用户关掉了某个 provider，立刻清掉它在 in-memory snapshot 里
     // 的条目（不然浮窗下次刷新前还会显示旧数据）。
     if !enabled {
+        // L-poller-2 fix (2026-09-05 audit)：禁用时清退避状态 —— 原来禁用
+        // 期间 backoff entry 残留（all_sources 不过滤 enabled），重新启用后
+        // 首轮按旧退避间隔（可达 30min cap）排程。
         let state_arc = app.state::<AppState>();
+        state_arc.backoff.write().await.reset(&id);
         let mut snap = state_arc.snapshot.write().await;
         // H2 fix (2026-08-03 audit): 用 snapshot_key 统一身份键 (P3 同款规则)
         // —— source_id 匹配置信 base id,副本 (minimax#2) 关闭时不会真被移除。
@@ -340,11 +345,13 @@ pub async fn set_schema_overrides(
     // 直接灌 100k entry / 单 tier 100k candidates → O(n) 校验 + 序列化 +
     // 写盘 DoS。与 save_config 同款上限 + 单 tier candidates 上限。
     if overrides.len() > SCHEMA_OVERRIDES_MAX {
-        return Err(format!(
-            "commands.schema_overrides_too_many: count={} max={}",
-            overrides.len(),
-            SCHEMA_OVERRIDES_MAX
-        ));
+        // L-i18n fix (2026-09-05 audit)：4 条 format! 错误串换 t!() 走 i18n。
+        return Err(t!(
+            "commands.overrides_too_many",
+            count = overrides.len(),
+            max = SCHEMA_OVERRIDES_MAX
+        )
+        .into_owned());
     }
     // 1. 校验（避免 N+1 个 3-tuple 静默通过，最后 parse 时才报错 —— 早 fail 早定位）
     for (id, prov) in &overrides {
@@ -628,7 +635,9 @@ pub async fn get_snapshot(state: State<'_, AppState>) -> Result<QuotaSnapshot, S
         // 关闭后浮窗不再显示,跟 set_provider_enabled 的 disable/retain 口径一致。
         // 2026-08-17 audit H-02: 副本默认态无独立 entry → fallback 到 base id
         // (p.provider)，否则禁用 base 后副本卡片仍残留。
-        cfg.is_enabled_unique(snapshot_key(p), &p.provider)
+        // H-3 fix (2026-09-05 audit)：base 不再取 p.provider（错误态快照曾是
+        // unique_id，导致 fallback 失效），统一从 snapshot_key 现剥。
+        cfg.is_enabled_unique(snapshot_key(p), base_id_of(snapshot_key(p)))
     });
     // 按用户配置的 provider_order 排序（空 = 用 builtin_sources() 顺序）
     apply_provider_order(&mut filtered, &cfg);
@@ -695,7 +704,7 @@ pub async fn refresh_now(
     let _ = app.emit("musage://snapshot", &final_snap);
     let tray_style = cfg.tray_icon_style;
     let tray_source = cfg.tray_source.as_deref().unwrap_or("minimax").to_string();
-    let tray_color = crate::tray::tray_fill_color(cfg.tray_icon_color.as_deref());
+    let tray_color = crate::tray::tray_fill_color(&app, cfg.tray_icon_color.as_deref());
     if let Err(e) = crate::tray::update_tray_from_snapshot(
         &app,
         &final_snap,
@@ -731,8 +740,28 @@ const COUNT_CANDIDATES_MAX: usize = 64;
 pub async fn save_config(
     state: State<'_, AppState>,
     app: AppHandle,
-    cfg: AppConfig,
+    mut cfg: AppConfig,
 ) -> Result<(), String> {
+    // M10 fix (2026-09-05 audit)：save_config 是导入配置等全量保存的唯一
+    // 通道，此前绕过 set_provider_order / set_tray_source /
+    // set_schema_overrides 三处写入侧校验。这里补齐（宽容策略与各自
+    // setter 一致：order 清洗、tray_source 拒绝未知/带 # 的 id）。
+    {
+        let known: std::collections::HashSet<String> = all_sources(&state)
+            .await
+            .iter()
+            .map(|s| s.unique_id())
+            .collect();
+        cfg.provider_order = sanitize_provider_order(cfg.provider_order, &known);
+        if let Some(src) = cfg.tray_source.as_deref() {
+            if src.contains('#') || !known.contains(src) {
+                cfg.tray_source = None;
+            }
+        }
+        if cfg.schema_overrides.len() > SCHEMA_OVERRIDES_MAX {
+            cfg.schema_overrides.clear();
+        }
+    }
     if cfg.providers.len() > PROVIDERS_MAP_MAX {
         return Err(t!(
             "commands.providers_too_many",
@@ -745,18 +774,20 @@ pub async fn save_config(
     // provider_order Vec / schema_overrides BTreeMap 数量。攻击者灌
     // 100k 空 entry → serde_json 序列化 + 写盘都慢, 无意义。
     if cfg.provider_order.len() > ORDER_LIST_MAX {
-        return Err(format!(
-            "commands.provider_order_too_many: count={} max={}",
-            cfg.provider_order.len(),
-            ORDER_LIST_MAX
-        ));
+        return Err(t!(
+            "commands.order_too_many",
+            count = cfg.provider_order.len(),
+            max = ORDER_LIST_MAX
+        )
+        .into_owned());
     }
     if cfg.schema_overrides.len() > SCHEMA_OVERRIDES_MAX {
-        return Err(format!(
-            "commands.schema_overrides_too_many: count={} max={}",
-            cfg.schema_overrides.len(),
-            SCHEMA_OVERRIDES_MAX
-        ));
+        return Err(t!(
+            "commands.overrides_too_many",
+            count = cfg.schema_overrides.len(),
+            max = SCHEMA_OVERRIDES_MAX
+        )
+        .into_owned());
     }
     // P2 audit fix (2026-08-13): set_app_locale 白名单 (zh-CN / en) 在
     // save_config 全量路径被绕过 —— 非法 locale 落盘后, 下次启动
@@ -824,9 +855,14 @@ pub async fn save_config(
     ] {
         if let Some(v) = val {
             if !(COORD_MIN <= v && v <= COORD_MAX) {
-                return Err(format!(
-                    "commands.coord_out_of_range: {name}={v} 不在 [{COORD_MIN}, {COORD_MAX}] 范围,                      极端值会让 position_is_visible 永久 false 导致浮窗不可见"
-                ));
+                return Err(t!(
+                    "commands.coord_out_of_range",
+                    name = name,
+                    v = v,
+                    min = COORD_MIN,
+                    max = COORD_MAX
+                )
+                .into_owned());
             }
         }
     }
@@ -836,9 +872,14 @@ pub async fn save_config(
     ] {
         if let Some(v) = val {
             if !(DIM_MIN <= v && v <= DIM_MAX) {
-                return Err(format!(
-                    "commands.dim_out_of_range: {name}={v} 不在 [{DIM_MIN}, {DIM_MAX}] 范围,                      极端值会让浮窗渲染异常"
-                ));
+                return Err(t!(
+                    "commands.dim_out_of_range",
+                    name = name,
+                    v = v,
+                    min = DIM_MIN,
+                    max = DIM_MAX
+                )
+                .into_owned());
             }
         }
     }
@@ -873,16 +914,16 @@ pub async fn save_config(
     // 原顺序 cfg.save() → autostart → emit → *guard = cfg，进程若在 save 与 guard 写之间
     // crash，盘上是新值、内存是旧值，下次启动加载新值，但 run-time 一致性已坏。
     // 现在 in-memory 永远是真相之源，磁盘 + 平台副作用最后再 commit。
+    //
+    // H-4 fix (2026-09-05 audit)：save 移到 write 锁内。原来 "锁内 *guard 替换 →
+    // drop 锁 → cfg.save()" 的窗口里，geom debouncer 可以 flush 更新的坐标落盘，
+    // 随后这份**旧快照**（cfg 是 handler 入参 clone）再落盘就把坐标回滚掉。
+    // 锁内保存（与各 setter 一致）保证最后拿到写锁者最后落盘。
     {
         let mut guard = state.config.write().await;
         *guard = cfg.clone();
+        cfg.save()?;
     }
-
-    // M2 fix: 先 save disk，再做 OS 副作用。
-    // 之前 autostart toggle 在 save 之前执行，cfg.save() 失败时 OS autostart
-    // 已经切换但 disk 没更新 → 下次启动读到旧值，OS 状态与 disk 不一致。
-    // 改为先 save 成功再做副作用（与 set_auto_hide_in_fullscreen:1286-1301 风格一致）。
-    cfg.save()?;
 
     // 同步 autostart
     let mgr = app.autolaunch();
@@ -1338,15 +1379,45 @@ pub async fn open_settings_window(app: AppHandle, section: Option<String>) -> Re
     } else {
         build_settings_window(&app)
             .map_err(|e| t!("commands.create_settings", err = e.to_string()).into_owned())?;
+        // M13 fix (2026-09-05 audit)：冷启动窗口时事件必然早于前端 listen
+        // 注册（资产加载 + JS 执行远超 150ms）——把 section 暂存，前端
+        // ready 后调 take_pending_settings_section 拉取（拉取即清除）。
+        if let Some(s) = section.clone() {
+            pending_settings_section()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .replace(s);
+        }
     }
-    // v0.2.1 commit 8: 跳 section。settings.ts init() 监听这个事件,
-    // 找到对应 .nav-item 调 .click()。
+    // 已存在窗口路径：事件订阅者在线，直接 emit（保持原有行为）。
     if let Some(s) = section.as_deref() {
-        // 短暂 sleep 等 settings webview 起来(首次创建窗口时)
-        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-        let _ = app.emit("musage://settings-navigate", s);
+        if app.get_webview_window("settings").is_some()
+            && pending_settings_section()
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .is_none()
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            let _ = app.emit("musage://settings-navigate", s);
+        }
     }
     Ok(())
+}
+
+/// M13：暂存的"冷启动设置窗跳转目标"。take 命令取走即清。
+fn pending_settings_section() -> &'static std::sync::Mutex<Option<String>> {
+    static PENDING: OnceLock<std::sync::Mutex<Option<String>>> = OnceLock::new();
+    PENDING.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// 前端 settings.ts 在 listen 注册完成后调用 —— 有暂存 section 就返回并
+/// 清除（冷启动深链跳 tab），否则 None。
+#[tauri::command]
+pub fn take_pending_settings_section() -> Option<String> {
+    pending_settings_section()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
 }
 
 #[tauri::command]
@@ -1862,8 +1933,9 @@ pub async fn refresh_inner(
     // 挂起 (deepseek/stepfun 曾实测挂 30s+) 会把 refresh_now / poller tick
     // 整体阻塞到挂起时长, UI 一直转圈。与 dump CLI (lib.rs) 的 30s 超时对齐。
     const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
-    for (id, default_interval_secs, task) in tasks {
-        match tokio::time::timeout(FETCH_TIMEOUT, task).await {
+    for (id, default_interval_secs, mut task) in tasks {
+        // M9 fix：timeout 等待 `&mut task`，超时分支保有 handle 可 abort。
+        match tokio::time::timeout(FETCH_TIMEOUT, &mut task).await {
             Ok(Ok(Ok(s))) => recs.push(Rec {
                 id,
                 snap: s,
@@ -1910,6 +1982,13 @@ pub async fn refresh_inner(
             }
             Err(_elapsed) => {
                 // P2 audit fix: 超时 provider 记错误卡, 不阻塞其余结果
+                //
+                // M9 fix (2026-09-05 audit)：超时显式 abort —— timeout 胜出后
+                // 原实现 drop JoinHandle = **detach**，fetch 继续跑到自然结束
+                // 且不受 SHUTDOWN drain 管；tick 结束后 poller 还可对同
+                // provider 再 spawn（双请求并发）。abort 让 30s 上限真正
+                // 作用于 fetch 时长本身。
+                task.abort();
                 let msg = t!(
                     "error.common.fetch_timeout",
                     provider = id.as_str(),
@@ -1965,7 +2044,9 @@ pub async fn refresh_inner(
         let id = snapshot_key(p);
         // 2026-08-17 audit H-02: 副本默认态 fallback 到 base id(p.provider)，
         // 否则禁用 base 后副本卡片仍 emit 给浮窗。
-        cfg_read.is_enabled_unique(id, &p.provider)
+        // H-3 fix (2026-09-05 audit)：base 改为从 snapshot_key 现剥，不再信
+        // p.provider（错误态快照曾是 unique_id）。
+        cfg_read.is_enabled_unique(id, base_id_of(id))
     });
     apply_provider_order(&mut snap, &cfg_read);
     // 把全局余额告警阈值带到 snapshot —— health_label 据此翻红/翻黄
@@ -2086,7 +2167,7 @@ async fn publish_snapshot(
         (
             cfg.tray_icon_style,
             cfg.tray_source.as_deref().unwrap_or("minimax").to_string(),
-            crate::tray::tray_fill_color(cfg.tray_icon_color.as_deref()),
+            crate::tray::tray_fill_color(&app, cfg.tray_icon_color.as_deref()),
         )
     };
     if let Err(e) =
@@ -2139,6 +2220,42 @@ pub async fn resolve_login_refresh_target(
     None
 }
 
+/// H-8 fix (2026-09-05 audit)：登录 token **镜像写入**刷新目标槽。
+///
+/// 三个登录模块的提取 token 永远写 base 凭据槽（`"anysearch"` /
+/// `"stepfun"` / `"xiaomimimo"`），而 D7-02 的「登录后立即拉取」目标在
+/// base 禁用 + 副本启用时是 `"<base>#N"` —— 副本 refresh 读自己的槽读不到
+/// 刚登录的 token，浮窗弹「未配置凭据」。base 本体已由各模块自己写入；
+/// 这里只负责把同一 token **补写**到解析出的副本槽（best-effort，失败仅
+/// warn —— base 槽是主写入，不因镜像失败回滚）。
+pub async fn mirror_login_credential_to_refresh_target(
+    window: &tauri::WebviewWindow,
+    base: &str,
+    cookie_value: &str,
+) {
+    let cred = crate::providers::Credentials {
+        api_key: None,
+        cookie: Some(cookie_value.to_string()),
+        secret_key: None,
+    };
+    let app = window.app_handle();
+    let state = app.state::<AppState>();
+    let Some(target) = resolve_login_refresh_target(&state, base).await else {
+        return;
+    };
+    if target == base {
+        return;
+    }
+    if let Err(e) = crate::config::save_credential_for_id(&target, &cred) {
+        tracing::warn!(
+            error = %e,
+            target = %target,
+            base,
+            "H-8: 登录 token 镜像写入副本槽失败（base 槽已写入）"
+        );
+    }
+}
+
 /// H5 fix (2026-07-30 audit): `caller` 区分失败行为 (见 poller_backoff::RefreshSource)。
 /// - 全量 refresh / Poller 入口 → Poller(失败退避)
 /// - 用户点「立即刷新」、设置面板「单源刷新」、登录完成后刷新 → Manual(失败 no-op)
@@ -2160,6 +2277,11 @@ pub async fn refresh_single_inner(
     let src = find_source(&state, id)
         .await
         .ok_or_else(|| t!("error.common.unknown_source_id", id = id).into_owned())?;
+    // L-poller-1 (2026-09-05 audit) 备忘：add/enable 后 Manual 单刷与 poller
+    // 立即 fire 可能并发双拉。不能简单复用 poller 的 in-flight 标记跳过 ——
+    // "保存 key → Manual 刷新" 若撞上 poller 在飞的**旧凭据**拉取被跳过，
+    // 新 key 要等下一轮 interval 才生效，UX 回归。维持现状（一次重复请求、
+    // Manual 失败不记 backoff，无重复计数），根治待 per-source fetch 队列。
     // 手动 "立即刷新" 始终拉取 —— 即便是 STUB (用户显式点击,让 fetch 返
     // "未支持" 错就清楚表达 STUB 状态;poller 才按 default_enabled 自动跳过)。
     let creds = config::load_credential_for_id(id)?;
@@ -2233,7 +2355,16 @@ pub async fn refresh_single_inner(
         backoff.record(&backoff_key, &provider_snap, default_interval_secs, caller);
     }
     // 填 next_fetch_at(同 refresh_inner 的 fill_next_fetch_at,逻辑共享)
-    fill_next_fetch_at(app, id, default_interval_secs, &mut provider_snap).await;
+    // L-poller-3 fix (2026-09-05 audit)：键口径对齐 —— record 用
+    // src.unique_id()，fill 原来用 IPC 入参 id，二者在 find_source 的
+    // base+unique 双匹配下可能不一致；统一传 backoff_key。
+    fill_next_fetch_at(
+        app,
+        &src.unique_id(),
+        default_interval_secs,
+        &mut provider_snap,
+    )
+    .await;
 
     // 替换 in-memory snapshot 里对应那条。
     // P3 fix (2026-07-28 审查): 匹配规则统一为 snapshot_key(unique_id
@@ -2266,7 +2397,8 @@ pub async fn refresh_single_inner(
         // P3 fix (2026-07-28 审查): 统一 snapshot_key 规则(unique_id 优先;
         // 之前 source_id 优先,跟合并链的口径相反)。
         // 2026-08-17 audit H-02: 副本默认态 fallback 到 base id(p.provider)。
-        cfg2_snapshot.is_enabled_unique(snapshot_key(p), &p.provider)
+        // H-3 fix (2026-09-05 audit)：base 从 snapshot_key 现剥（同上两处）。
+        cfg2_snapshot.is_enabled_unique(snapshot_key(p), base_id_of(snapshot_key(p)))
     });
     apply_provider_order(&mut snap, &cfg2_snapshot);
     // 同步全局余额告警阈值(per-provider 调度只更一个 provider,不能丢顶层字段)
@@ -2559,7 +2691,7 @@ pub async fn set_tray_icon_color(
         (
             cfg.tray_icon_style,
             cfg.tray_source.as_deref().unwrap_or("minimax").to_string(),
-            crate::tray::tray_fill_color(cfg.tray_icon_color.as_deref()),
+            crate::tray::tray_fill_color(&app, cfg.tray_icon_color.as_deref()),
         )
     };
     if let Err(e) =
@@ -2580,7 +2712,14 @@ pub async fn set_tray_source(
     // （内置 provider id 或 extra_instances 里的 custom_<uuid>）。此前任意
     // 字符串都能落盘：pick_tray_rows 匹配不上 → 托盘永远 fallback logo，
     // 且菜单 label 把原文当显示名拼出怪字符。None = 默认 minimax，放行。
+    //
+    // M11 fix (2026-09-05 audit)：find_source 接受副本 unique_id（"minimax#2"），
+    // 但 pick_tray_rows 按 source_id 的 base 前缀匹配 —— 副本 id 永远匹配
+    // 不上，托盘照样退化 logo（正是 D6-05 要堵的症状）。拒绝带 '#' 的 id。
     if let Some(s) = &source {
+        if s.contains('#') {
+            return Err(t!("error.common.unknown_source_id", id = s).into_owned());
+        }
         if crate::providers::find_source(&state, s).await.is_none() {
             return Err(t!("error.common.unknown_source_id", id = s).into_owned());
         }
@@ -2601,7 +2740,7 @@ pub async fn set_tray_source(
         (
             cfg.tray_icon_style,
             cfg.tray_source.as_deref().unwrap_or("minimax").to_string(),
-            crate::tray::tray_fill_color(cfg.tray_icon_color.as_deref()),
+            crate::tray::tray_fill_color(&app, cfg.tray_icon_color.as_deref()),
         )
     };
     if let Err(e) =
@@ -2633,7 +2772,7 @@ pub async fn set_tray_icon_style(
         let cfg = state2.config.read().await;
         (
             cfg.tray_source.as_deref().unwrap_or("minimax").to_string(),
-            crate::tray::tray_fill_color(cfg.tray_icon_color.as_deref()),
+            crate::tray::tray_fill_color(&app, cfg.tray_icon_color.as_deref()),
         )
     };
     if let Err(e) =

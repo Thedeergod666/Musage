@@ -385,7 +385,17 @@ async fn poll_token_from_cookie(
                     return PollOutcome::Cancelled;
                 }
                 return match save_token(&combined) {
-                    Ok(len) => PollOutcome::Saved(len),
+                    Ok(len) => {
+                        // H-8 fix (2026-09-05 audit)：见 anysearch 同款 —— 把
+                        // 同一 cookie_slot 镜像写入解析出的副本槽。
+                        crate::commands::mirror_login_credential_to_refresh_target(
+                            window,
+                            "stepfun",
+                            &format!("Oasis-Token={combined}"),
+                        )
+                        .await;
+                        PollOutcome::Saved(len)
+                    }
                     Err(e) => PollOutcome::Failed(e),
                 };
             }
@@ -439,7 +449,11 @@ fn is_fresh_token(value: &str) -> bool {
     if let Some(combined) = value.split("...").nth(1) {
         // refresh 解不出 exp (非 JWT / 格式变化) → 放行, 跟 access 同款 fallback
         if let Some(secs_ago) = access_token_exp_seconds_ago(combined) {
-            if secs_ago >= 0 {
+            // M-21 fix (2026-09-05 audit)：refresh 半段补同款 60s skew ——
+            // D7-04 只对齐了 access 半段，refresh 寿命最后 60s 的 token 被
+            // 接受存盘后 30min 内 refresh 过期 → 401 → 强制重登（正是
+            // D3-007 要消灭的场景）。
+            if secs_ago + 60 >= 0 {
                 return false;
             }
         }

@@ -54,6 +54,7 @@
       "business_code": "%{provider} API error (code %{code}): %{msg}",
       "missing_field": "%{provider} response missing %{field}",
       "rate_limited": "%{provider} rate limited, please try again later",
+      "key_invalid_chars": "API key contains invalid control characters (e.g. line breaks from copy-paste); please re-enter the key",
       "rate_limited_with_retry": "%{provider} rate limited, retry in about %{retry_secs} seconds",
       "url_scheme_invalid": "URL must start with https:// (rejects http://, file://, javascript:, etc). Current value: %{url}",
       "ssrf_blocked": "URL host '%{host}' is blocked (loopback / link-local / cloud metadata endpoint not allowed to prevent credential leakage via shared config)",
@@ -150,6 +151,10 @@
     "threshold_invalid": "Color thresholds must satisfy 0 < t0 < t1 < t2 < 100 (actual %{t0} / %{t1} / %{t2})",
     "wallet_threshold_negative": "Wallet alert threshold must be >= 0 (actual %{n})",
     "providers_too_many": "Too many providers (%{count} > max %{max})",
+    "order_too_many": "Too many provider_order entries (%{count} > max %{max})",
+    "overrides_too_many": "Too many schema_overrides entries (%{count} > max %{max})",
+    "coord_out_of_range": "%{name}=%{v} out of range [%{min}, %{max}] — extreme values make position_is_visible permanently false (invisible floating window)",
+    "dim_out_of_range": "%{name}=%{v} out of range [%{min}, %{max}] — extreme values break floating window rendering",
     "color_key_unknown": "Unknown color tier key: %{other} (only ok / cyan / warn / alert supported)",
     "color_value_invalid": "%{k} color value must be #RGB / #RRGGBB format (actual %{v})",
     "create_settings": "create settings: %{err}",
@@ -173,6 +178,7 @@
       "custom_spec_required": "When provider_id == 'custom', the custom field is required",
       "unknown_provider": "Unknown provider_id: %{id}",
       "save_key_failed": "Failed to save credential: %{err}",
+      "ref_changed_concurrent": "Instance %{id} was concurrently modified (renamed or deleted); please retry",
       "limit_reached": "Extra instance limit reached (50)",
       "not_found": "Extra instance '%{id}' does not exist",
       "custom_only_for_custom_provider": "custom field can only be modified on provider_id == 'custom' instances"
@@ -234,7 +240,8 @@
     "cookies_for_url_failed": "webview.cookies_for_url failed: %{err}",
     "cookies_not_found": "No Xiaomi dashboard cookies found (%{count} total, expected %{expected}: %{wanted}). Actually available: %{available}",
     "cookies_incomplete": "Extracted cookies incomplete (api-platform_serviceToken=%{has_service_token}, userId=%{has_user_id}). Both must be present to call the dashboard API — not saved, original cookie kept. Please log in again.",
-    "save_keys_failed": "Failed to write keys.json: %{err}"
+    "save_keys_failed": "Failed to write keys.json: %{err}",
+    "cancelled": "Login flow superseded by a newer login attempt; write abandoned"
   },
   "anysearch_login": {
     "parse_login_url": "parse LOGIN_URL: %{err}",

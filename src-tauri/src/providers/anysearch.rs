@@ -252,6 +252,24 @@ async fn refresh_token(refresh: &str, unique_id: &str) -> Result<String, FetchEr
             .clone();
         Arc::clone(&lock).lock_owned().await
     };
+    // M-5 fix (2026-09-05 audit)：锁内重读 keys.json（移植 stepfun.rs P2
+    // 修复）。AnySearch 的 refresh token 是**单次轮换**（旧 token 复用返
+    // 40114 revoked，见模块头注释）—— 并发 caller（poller tick + 手动刷新）
+    // 各自用进锁前的旧 refresh POST，第二个必然 40114 误报"重新登录"。
+    // 锁内重读：若槽里的 combined 已被别的 caller 换新，直接复用，跳过 POST。
+    if let Some(latest) = crate::config::load_credential_for_id(unique_id)
+        .ok()
+        .flatten()
+        .and_then(|c| c.cookie)
+        .map(|s| s.trim().to_string())
+        .filter(|t| !t.is_empty() && t != refresh)
+    {
+        tracing::info!(
+            unique_id,
+            "anysearch refresh: 锁内重读发现 token 已更新, 复用, 跳过 POST"
+        );
+        return Ok(latest);
+    }
     let client = shared_client();
     let resp = client
         .post(REFRESH_URL)
@@ -383,8 +401,19 @@ async fn do_fetch(
                     // 新 refresh 同步给下面的 401 兜底路径用
                     refresh = new_refresh.map(str::to_string);
                 }
-                // 主动 refresh 失败（refresh 也废了）→ 直接返 auth 错误引导重登
-                Err(e) => return Err(e),
+                // M-4 fix (2026-09-05 audit)：主动续期失败**不再无条件放弃**
+                // （移植 stepfun.rs P2 修复）。should_refresh 含 access 还有
+                // ≤120s（SKEW_SECS）寿命的情况 —— refresh 端点瞬时 5xx /
+                // 网络抖动时直接 Err 会浪费仍有效的 access。只有明确
+                // AuthFailed（refresh 已作废）才放弃；其余 warn 后继续用当前
+                // access 拉，真正过期由下方 401 兜底路径接管。
+                Err(e) if e.kind == super::ErrorKind::AuthFailed => return Err(e),
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e.message,
+                        "anysearch 主动续期失败（非鉴权错误），继续用当前 access"
+                    );
+                }
             }
         }
     }
@@ -469,7 +498,10 @@ async fn do_fetch_once(
     let raw = json_body_limited(resp).await?;
 
     // 业务级 code（0 = 成功）
-    if let Some(code) = raw.get("code").and_then(|v| v.as_i64()) {
+    // L-2 fix (2026-09-05 audit)：改用 json_i64（数字/字符串都吃）—— 该 API
+    // 有把数字字段序列化成字符串的习惯（refresh 路径同文件已防御），字符串
+    // code 之前会绕过拦截降级成 Parse 错误。
+    if let Some(code) = raw.get("code").and_then(json_i64) {
         if code != 0 {
             let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
             return Err(FetchError::server(

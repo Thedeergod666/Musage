@@ -390,13 +390,17 @@ async fn fetch_rate_limit(token: &str) -> Result<Value, FetchError> {
     // （2026-07-28 教训：只报 "code -1" 不带 body 等于盲猜）。
     // D5 fix (2026-07-28 审查): 走 text_body_limited —— 8 MiB 上限,
     // 挡恶意/异常中转站撑爆 reqwest 内部 buffer。
-    let body = text_body_limited(resp).await.map_err(|e| {
-        // parse 错误保留诊断上下文
-        FetchError::parse(t!("error.common.parse_json", err = e.message).into_owned())
-    })?;
+    //
+    // L-1 fix (2026-09-05 audit)：**先按 status 分类，body 读取失败让位**。
+    // 原来 text_body_limited 失败（>8MiB / 读体中断）直接归 Parse 并 `?` 返回，
+    // 401 响应被超大 body 打包时绕过 do_fetch 的「401 兜底 refresh 重试」。
+    // 现在 body 先尝试读（成功则用于诊断），status 分支全部先行，只有
+    // status 成功才要求 body 可读。
+    let body_result = text_body_limited(resp).await;
+    let body_preview = body_result.as_deref().unwrap_or("");
 
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
-        tracing::warn!(status = %status, body = %truncate_body(&body, 500),
+        tracing::warn!(status = %status, body = %truncate_body(body_preview, 500),
             "[diag] stepfun rate-limit 401/403 raw response");
         return Err(FetchError::auth(
             t!("error.stepfun.token_invalid_hint").into_owned(),
@@ -414,11 +418,16 @@ async fn fetch_rate_limit(token: &str) -> Result<Value, FetchError> {
                 "error.common.http_error",
                 provider = "StepFun",
                 status = status.as_u16(),
-                body = truncate_body(&body, 200)
+                body = truncate_body(body_preview, 200)
             )
             .into_owned(),
         ));
     }
+
+    let body = body_result.map_err(|e| {
+        // parse 错误保留诊断上下文（仅在 status 成功时才走到这里）
+        FetchError::parse(t!("error.common.parse_json", err = e.message).into_owned())
+    })?;
 
     let raw: Value = serde_json::from_str(&body).map_err(|e| {
         tracing::warn!(body = %truncate_body(&body, 500),

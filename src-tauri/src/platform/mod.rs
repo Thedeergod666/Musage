@@ -37,12 +37,13 @@ pub use self::windows::*;
 /// **上层必须调 `crate::platform::menu_bar_is_light()`，不要直连
 /// `crate::platform::macos::menu_bar_is_light()`** -- `macos` 模块在
 /// 非 macOS 平台不存在（`pub mod macos` 被 `#[cfg(target_os="macos")]` 门控），
-/// 直连会让 Linux/Windows 编译期 E0433（2026-08-05 CI 修复）。
-/// D6-03 (2026-09-04 audit)：Win 换真实现（注册表读 SystemUsesLightTheme），
-/// stub 只剩 Linux。
+/// 直连会让 Linux/Windows 编译期 E0433（2026-08-05 CI 修复）。D6-03
+/// (2026-09-04 audit)：Win 换真实现（注册表读 SystemUsesLightTheme），
+/// stub 只剩 Linux。H-6 fix (2026-09-05 audit)：签名统一收 `&AppHandle`
+/// （macOS 需要它派发主线程），Win/Linux 忽略。
 #[cfg(not(any(target_os = "macos", target_os = "windows")))]
 #[inline]
-pub fn menu_bar_is_light() -> bool {
+pub fn menu_bar_is_light<R: tauri::Runtime>(_app: &tauri::AppHandle<R>) -> bool {
     false
 }
 

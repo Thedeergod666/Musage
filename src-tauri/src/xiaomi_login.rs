@@ -259,6 +259,13 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
         //   - sessionStorage / localStorage: 同样限制。
         // 配合 capabilities/default.json 把 webview create 权限 only 给
         // xiaomi-login 窗口（已拆 capabilities/xiaomi-login.json）。
+        //
+        // H-7 fix (2026-09-05 audit)：prototype override **只在受信 host 上
+        // 安装**。原实现无条件安装、调用时才门控 —— account.xiaomi.com SSO
+        // 等中间页的 cookie/storage 被锁死（getter 空串 / getItem null /
+        // setter 丢弃），登录流程直接坏掉。受信域之外保持原生行为：xiaomi
+        // session cookie 是 HttpOnly（JS 本来读不到），override 的防护价值
+        // 仅在受信域内的 hardening。
         .initialization_script(
             r#"
             (function () {
@@ -266,20 +273,16 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
                 function isAllowed() {
                     try { return location.hostname === ALLOW_HOST; } catch (_) { return false; }
                 }
+                if (!isAllowed()) { return; }
                 // D3-001 fix (2026-07-30 audit): 同 anysearch_login.rs, 锁 prototype
                 // 而非 instance. xiaomi 抓的 cookie 是 HttpOnly, 实际威胁面小,
                 // 但对齐 hardening 一致性, 防止未来 cookie 路径变化。
-                const _origCookie = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
-                Object.defineProperty(Document.prototype, "cookie", {
-                    get() { return isAllowed() ? _origCookie.get.call(this) : ""; },
-                    set(v) { if (isAllowed()) _origCookie.set.call(this, v); },
-                    configurable: false
-                });
                 try {
-                    const _origLs = Object.getOwnPropertyDescriptor(Storage.prototype, "getItem");
-                    Object.defineProperty(Storage.prototype, "getItem", {
-                        value: function (k) { return isAllowed() ? _origLs.value.call(this, k) : null; },
-                        configurable: true
+                    const _origCookie = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
+                    Object.defineProperty(Document.prototype, "cookie", {
+                        get() { return _origCookie.get.call(this); },
+                        set(v) { _origCookie.set.call(this, v); },
+                        configurable: false
                     });
                 } catch (_) {}
             })();
@@ -435,12 +438,18 @@ async fn extract_with_retry(
         };
 
         if !is_dashboard_url(&current_url) {
-            tracing::debug!(%current_url, attempt_num, "URL 不在 dashboard，跳过");
+            // L1 fix (2026-09-05 audit)：URL 带 query（ticket/code/userId），
+            // 走 redact，不裸打完整 URL（与同文件 290 行 P3 修复一致）。
+            tracing::debug!(
+                url = %redact_url_for_log(&current_url),
+                attempt_num,
+                "URL 不在 dashboard，跳过"
+            );
             continue;
         }
 
         // 尝试提取
-        match extract_and_save(window).await {
+        match extract_and_save(window, my_gen).await {
             Ok(saved_len) => {
                 tracing::info!(saved_len, attempt_num, "cookie 提取成功");
                 return Ok(saved_len);
@@ -458,7 +467,9 @@ async fn extract_with_retry(
 /// 从 webview 提取 cookie → 过滤白名单 → 拼字符串 → 写 keys.json。
 ///
 /// 返回写入的字节数（便于前端展示"已保存 N 字节"）。
-async fn extract_and_save(window: &tauri::WebviewWindow) -> Result<usize, String> {
+///
+/// M-20 fix (2026-09-05 audit)：携带 `my_gen` 用于写盘前最终 gen 复查。
+async fn extract_and_save(window: &tauri::WebviewWindow, my_gen: u64) -> Result<usize, String> {
     let url: Url = (LOGIN_URL.parse::<Url>())
         .map_err(|e| t!("xiaomi_login.parse_url", err = e.to_string()).into_owned())?;
 
@@ -521,7 +532,9 @@ async fn extract_and_save(window: &tauri::WebviewWindow) -> Result<usize, String
     if !has_user_id {
         if let Ok(current_url) = window.url() {
             if let Some(uid) = extract_user_id_from_url(&current_url) {
-                tracing::info!(userId = %uid, "从 URL 参数补充 userId 到 cookie");
+                // L2 fix (2026-09-05 audit)：userId 是账号标识，不再明文进日志
+                //（只记长度），与 redact 策略一致。
+                tracing::debug!(user_id_len = uid.len(), "从 URL 参数补充 userId 到 cookie");
                 cookie_parts.push(format!("userId={uid}"));
             }
         }
@@ -531,10 +544,24 @@ async fn extract_and_save(window: &tauri::WebviewWindow) -> Result<usize, String
     // - api-platform_serviceToken：真正的认证 token
     // - userId：dashboard API 路由参数
     // 任何一个缺失就 return Err，不覆盖原有的有效 cookie（避免用户被锁在"看似登录了但 API 401"的状态）。
-    let has_service_token = cookie_parts
+    //
+    // L4 fix (2026-09-05 audit)：presence 检查之外再查 **value 非空** ——
+    // `api-platform_serviceToken=`（空值）也能通过 starts_with，空值拼串覆盖
+    // 有效旧凭据后浮窗 401。
+    let service_token_value = cookie_parts
         .iter()
-        .any(|p| p.starts_with("api-platform_serviceToken="));
-    let has_user_id = cookie_parts.iter().any(|p| p.starts_with("userId="));
+        .find(|p| p.starts_with("api-platform_serviceToken="))
+        .and_then(|p| p.split_once('='))
+        .map(|(_, v)| v)
+        .unwrap_or("");
+    let has_service_token = !service_token_value.is_empty();
+    let user_id_value = cookie_parts
+        .iter()
+        .find(|p| p.starts_with("userId="))
+        .and_then(|p| p.split_once('='))
+        .map(|(_, v)| v)
+        .unwrap_or("");
+    let has_user_id = !user_id_value.is_empty();
     if !(has_service_token && has_user_id) {
         tracing::error!(
             has_service_token,
@@ -557,8 +584,20 @@ async fn extract_and_save(window: &tauri::WebviewWindow) -> Result<usize, String
         cookie: Some(cookie_str.clone()),
         secret_key: None,
     };
+    // M-20 fix (2026-09-05 audit)：写盘前做最终 gen 复查（anysearch/stepfun
+    // 已有同款）—— cookies_for_url / 文件 IO 期间用户重新点登录 gen bump，
+    // 旧流程的写盘会覆盖新流程刚存的 token。
+    if !is_current_gen(my_gen) {
+        tracing::debug!("extract_and_save: gen 已被新流程取代，放弃写盘");
+        return Err(t!("xiaomi_login.cancelled").into_owned());
+    }
     config::save_credential_for_id("xiaomimimo", &cred)
         .map_err(|e| t!("xiaomi_login.save_keys_failed", err = e.to_string()).into_owned())?;
+
+    // H-8 fix (2026-09-05 audit)：base 禁用 + 副本启用时把同一 cookie 镜像
+    // 写入解析出的副本槽（见 commands::mirror_login_credential_to_refresh_target）。
+    crate::commands::mirror_login_credential_to_refresh_target(window, "xiaomimimo", &cookie_str)
+        .await;
 
     Ok(cookie_str.len())
 }

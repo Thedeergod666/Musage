@@ -394,8 +394,11 @@ fn build_window_row(
         return None;
     }
     // remaining 缺失时：先看显式 used，能反推就反推；否则视为已用满（0 剩余）。
+    // L-5 fix (2026-09-05 audit)：显式 remaining 路径补 `.max(0.0)` —— 负值
+    // （schema 漂移 / 超用态）原样透传到 QuotaRow.remaining，浮窗显示负余额。
     let explicit_used = parse_f64(obj.get("used"));
     let remaining = parse_f64(obj.get("remaining"))
+        .map(|r| r.max(0.0))
         .unwrap_or_else(|| explicit_used.map(|u| (limit - u).max(0.0)).unwrap_or(0.0));
     let used = explicit_used.unwrap_or_else(|| (limit - remaining).max(0.0));
     // clamp：防御 used > limit 的异常上限态渲染出 >100% 的 bar

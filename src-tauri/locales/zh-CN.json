@@ -54,6 +54,7 @@
       "business_code": "%{provider} API error (code %{code}): %{msg}",
       "missing_field": "%{provider} 响应缺少 %{field}",
       "rate_limited": "%{provider} 请求过于频繁，请稍后再试",
+      "key_invalid_chars": "API key 含非法控制字符（如复制粘贴带进的换行），请重新填入",
       "rate_limited_with_retry": "%{provider} 请求过于频繁，约 %{retry_secs} 秒后可重试",
       "url_scheme_invalid": "URL 必须以 https:// 开头（拒绝明文 / file:// / javascript: 等）。当前值：%{url}",
       "ssrf_blocked": "URL 主机 '%{host}' 被拦截（不允许 loopback / link-local / 云元数据端点，防止通过分享的配置泄露凭据）",
@@ -150,6 +151,10 @@
     "threshold_invalid": "色阈值必须满足 0 < t0 < t1 < t2 < 100（实际 %{t0} / %{t1} / %{t2}）",
     "wallet_threshold_negative": "钱包告警阈值必须 ≥ 0（实际 %{n}）",
     "providers_too_many": "Provider 数量过多（%{count} > 上限 %{max}）",
+    "order_too_many": "provider_order 条目过多（%{count} > 上限 %{max}）",
+    "overrides_too_many": "schema_overrides 条目过多（%{count} > 上限 %{max}）",
+    "coord_out_of_range": "%{name}=%{v} 超出范围 [%{min}, %{max}] —— 极端值会让 position_is_visible 永久 false 导致浮窗不可见",
+    "dim_out_of_range": "%{name}=%{v} 超出范围 [%{min}, %{max}] —— 极端值会让浮窗渲染异常",
     "color_key_unknown": "未知的色档 key: %{other}（仅支持 ok / cyan / warn / alert）",
     "color_value_invalid": "%{k} 的颜色值必须是 #RGB / #RRGGBB 形式（实际 %{v}）",
     "create_settings": "create settings: %{err}",
@@ -173,6 +178,7 @@
       "custom_spec_required": "provider_id == 'custom' 时必须填 custom 字段",
       "unknown_provider": "未知的 provider_id: %{id}",
       "save_key_failed": "保存 key 失败: %{err}",
+      "ref_changed_concurrent": "实例 %{id} 已被并发操作改名或删除，请重试",
       "limit_reached": "已达 extra instance 上限 (50)",
       "not_found": "extra instance '%{id}' 不存在",
       "custom_only_for_custom_provider": "custom 字段只能在 provider_id == 'custom' 的 instance 上修改"
@@ -234,7 +240,8 @@
     "cookies_for_url_failed": "webview.cookies_for_url 失败: %{err}",
     "cookies_not_found": "没找到 Xiaomi dashboard cookies（共 %{count} 个 cookie，白名单期望 %{expected} 个：%{wanted}）。实际可用：%{available}",
     "cookies_incomplete": "提取的 cookie 不完整（api-platform_serviceToken=%{has_service_token}, userId=%{has_user_id}）。两者都必须存在才能调用 dashboard API —— 未写入，原有 cookie 保留。请重新登录。",
-    "save_keys_failed": "写 keys.json 失败: %{err}"
+    "save_keys_failed": "写 keys.json 失败: %{err}",
+    "cancelled": "登录流程已被新的一次登录取代，放弃写入"
   },
   "anysearch_login": {
     "parse_login_url": "parse LOGIN_URL: %{err}",

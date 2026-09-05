@@ -230,6 +230,11 @@ pub fn start(app: AppHandle) {
                 _ = tokio::time::sleep(Duration::from_secs(1)) => {}
                 _ = SHUTDOWN.notified() => {}
             }
+            // M8 fix (2026-09-05 audit)：每次 loop body 开始前再查一次 flag ——
+            // quit 的 notify 可能落在上一轮 body 的 await 点（config.read /
+            // backoff.write 等，此时 notified() 未注册，通知丢失），最长要等
+            // 1s 下一轮 sleep 才醒；quit_app 只等 500ms 就 exit(0)，drain 会被
+            // 强杀。body 前置检查把最坏延迟从 1s 降到 0。
             if SHUTDOWN_REQUESTED.load(std::sync::atomic::Ordering::SeqCst) {
                 tracing::info!("poller 主循环收到 SHUTDOWN,开始 drain");
                 // 把全部在飞 task abort + join。std::sync::MutexGuard

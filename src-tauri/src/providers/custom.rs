@@ -43,8 +43,8 @@ use serde_json::Value;
 
 use super::parse::{num_f64, read_path};
 use super::{
-    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, AuthKind,
-    Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
+    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, validate_bearer_key,
+    AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
 };
 use crate::t;
 
@@ -231,7 +231,7 @@ async fn do_fetch(
     // 不在 URL 里所以不直接泄露，但请求被重定向到 attacker 域)。
     // spec parse 时已经校验 path.starts_with('/')，这里再防御一次（防篡改 config）。
     if !spec.path.starts_with('/') {
-        return Err(FetchError::auth(
+        return Err(FetchError::config_error(
             t!("error.custom.path_must_start_with_slash").into_owned(),
         ));
     }
@@ -243,7 +243,9 @@ async fn do_fetch(
     // super::url_authority_has_userinfo（与 zenmux.rs 统一），只检 authority 段，
     // path 里的合法 `@` 保留。
     if super::url_authority_has_userinfo(&url) {
-        return Err(FetchError::auth(
+        // L-5 fix (2026-09-05 audit)：URL 配置类/SSRF 拦截错误归 Other，不再
+        // 伪装 AuthFailed（误导重登引导 + backoff 不退避）。下同三处。
+        return Err(FetchError::config_error(
             t!("error.common.url_authority_has_userinfo", url = url).into_owned(),
         ));
     }
@@ -251,7 +253,7 @@ async fn do_fetch(
     // 拒绝 http:// (泄露 API key 走明文) / file:// / javascript: / 其他 scheme。
     // 即使 saved config 也每次都校验（防御篡改）。
     if !url.starts_with("https://") {
-        return Err(FetchError::auth(
+        return Err(FetchError::config_error(
             t!("error.common.url_scheme_invalid", url = url).into_owned(),
         ));
     }
@@ -272,7 +274,7 @@ async fn do_fetch(
         });
     if blocked {
         let host = super::extract_host(&url).unwrap_or_else(|| url.clone());
-        return Err(FetchError::auth(
+        return Err(FetchError::config_error(
             t!("error.common.ssrf_blocked", host = host.as_str()).into_owned(),
         ));
     }
@@ -288,6 +290,8 @@ async fn do_fetch(
             ));
         }
     };
+    // L-6 fix (2026-09-05 audit)：key 内控制字符 send 前拒绝（同 minimax/deepseek/tavily）。
+    validate_bearer_key(api_key)?;
     req = req
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Accept", "application/json");

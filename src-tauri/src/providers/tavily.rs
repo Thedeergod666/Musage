@@ -44,8 +44,8 @@ use chrono::{NaiveDate, NaiveTime};
 use serde_json::Value;
 
 use super::{
-    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, AuthKind,
-    Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
+    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, validate_bearer_key,
+    AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
 };
 
 use crate::t;
@@ -147,6 +147,9 @@ async fn do_fetch(
 
     let client = shared_client();
 
+    // L-6 fix (2026-09-05 audit): key 内含控制字符时 send() 报 invalid header
+    // 被兜底归成误导性 Network 错误；send 前显式拒绝并归类配置错误。
+    validate_bearer_key(api_key)?;
     let resp = client
         .get(URL)
         .header("Authorization", format!("Bearer {api_key}"))

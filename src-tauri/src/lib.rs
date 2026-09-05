@@ -199,8 +199,10 @@ pub fn run() {
                         let style = cfg.tray_icon_style;
                         let tray_source =
                             cfg.tray_source.as_deref().unwrap_or("minimax").to_string();
-                        let tray_color =
-                            crate::tray::tray_fill_color(cfg.tray_icon_color.as_deref());
+                        let tray_color = crate::tray::tray_fill_color(
+                            &app_for_locale,
+                            cfg.tray_icon_color.as_deref(),
+                        );
                         let _ = crate::tray::update_tray_from_snapshot(
                             &app_for_locale,
                             &snap,
@@ -393,6 +395,7 @@ pub fn run() {
             commands::delete_source_credential,
             commands::get_source_credential,
             commands::open_settings_window,
+            commands::take_pending_settings_section,
             commands::hide_floating_window,
             commands::show_floating_window,
             commands::hide_settings_window,
@@ -476,13 +479,24 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    #[allow(clippy::type_complexity)]
-    let latest: Arc<Mutex<Option<(i32, i32, i32, i32)>>> = Arc::new(Mutex::new(None));
+    /// H-5 fix (2026-09-05 audit)：位置与尺寸分开跟踪。
+    /// 原来 `(i32,i32,i32,i32)` 单元组在 Resized 分支用 `(0,0,…)` 占位播种
+    /// 位置 —— tao 纯 resize 只发 Resized 不发 Moved（SWP_NOMOVE），首次
+    /// auto-fit 就会把 `(0,0,w,h)` 落盘清掉用户拖好的位置。改成 Option 后
+    /// 没有对应事件就绝不动那个维度。
+    #[derive(Default)]
+    struct GeomLatest {
+        pos: Option<(i32, i32)>,
+        size: Option<(i32, i32)>,
+    }
+    let latest: Arc<Mutex<GeomLatest>> = Arc::new(Mutex::new(GeomLatest::default()));
     let latest_for_cb = latest.clone();
-    // 前端要按"逻辑像素"比对 fit 目标,所以在 on_window_event 之前 cache
-    // scale_factor (WebviewWindow::scale_factor 借 &self,不能在已 borrow 的
-    // 闭包里再调)。事件回调里读这个 cache,不重算。
-    let scale = win.scale_factor().unwrap_or(1.0);
+    // L4 fix (2026-09-05 audit)：scale_factor 不再一次性缓存 —— 窗口拖到
+    // 不同缩放比的副屏后旧 scale 会把逻辑像素算错，前端回声判定被误导。
+    // 改为监听 ScaleFactorChanged 更新（回调跑在主线程事件循环里，不能
+    // 反向调 win.scale_factor() 等待主线程）。
+    let scale: Arc<Mutex<f64>> = Arc::new(Mutex::new(win.scale_factor().unwrap_or(1.0)));
+    let scale_for_cb = scale.clone();
     // 通知前端用的 AppHandle 也 clone 出来 —— on_window_event 闭包 move 走
     // 一次,async 落盘 task 还要用 app,两者都要所有权。
     let app_for_emit = app.clone();
@@ -516,8 +530,12 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
                 tracing::warn!("geom_persister latest_for_cb poisoned (Moved), recovering");
                 e.into_inner()
             });
-            let cur = g.unwrap_or((pos.x, pos.y, 0, 0));
-            *g = Some((pos.x, pos.y, cur.2, cur.3));
+            g.pos = Some((pos.x, pos.y));
+        }
+        tauri::WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+            if let Ok(mut s) = scale_for_cb.lock() {
+                *s = *scale_factor;
+            }
         }
         tauri::WindowEvent::Resized(size) => {
             // 通知前端"用户刚拖动过窗口" —— 前端在 800ms 内冻结 auto-fit
@@ -526,15 +544,20 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
             // 传**逻辑像素**（除 scale_factor）—— 与前端 `window.innerHeight`
             // 和我们 set_size 用的 LogicalSize 同维度,回声比对方便。
             if size.height > 0 {
-                let logical_h = (size.height as f64 / scale).round() as i32;
+                let scale_now = scale_for_cb
+                    .lock()
+                    .map(|s| *s)
+                    .unwrap_or_else(|e| *e.into_inner());
+                let logical_h = (size.height as f64 / scale_now).round() as i32;
                 let _ = app_for_emit.emit("musage://floating-resized", logical_h);
             }
             let mut g = latest_for_cb.lock().unwrap_or_else(|e| {
                 tracing::warn!("geom_persister latest_for_cb poisoned (Resized), recovering");
                 e.into_inner()
             });
-            let cur = g.unwrap_or((0, 0, size.width as i32, size.height as i32));
-            *g = Some((cur.0, cur.1, size.width as i32, size.height as i32));
+            // H-5 fix：Resized 只更新尺寸维度，不碰位置（pos 无事件时保持
+            // None，flush 时不会写 x/y）。
+            g.size = Some((size.width as i32, size.height as i32));
         }
         _ => {}
     });
@@ -548,48 +571,33 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
     // 一个 signal), 主循环里 select 选 sleep 或 notified,退出前最后一次
     // tick 把 latest 落盘 (quit_app 已 sleep 150ms 让出 task, 这里再 flush
     // 一次保险)。
+    //
+    // M17 fix (2026-09-05 audit)：notify_waiters 只唤醒调用时刻已注册的
+    // waiter —— 通知落在 flush 处理段（含 await 点）内会永久丢失，而
+    // quit_app 只等 500ms。循环尾补 SHUTDOWN_REQUESTED AtomicBool 检查
+    // （与 poller 主循环同款兜底）。
+    //
+    // H-4 fix (2026-09-05 audit)：save 改回 config.write() 锁内执行。原来
+    // "锁内 clone → drop 锁 → spawn_blocking 落盘"的窗口里，并发 setter
+    // 可以改完并落盘更新快照，随后这份过期快照再落盘就把新设置回滚掉。
+    // 锁内保存（与各 setter 的既有做法一致）让"最后拿到写锁者最后落盘"。
     tauri::async_runtime::spawn(async move {
-        loop {
-            tokio::select! {
-                _ = tokio::time::sleep(Duration::from_millis(500)) => {}
-                _ = crate::poller::SHUTDOWN.notified() => {
-                    tracing::info!("geom_persister 收到 SHUTDOWN,最后 flush 一次后退出");
-                    // 最后一次 flush, 把 latest 落盘
-                    let pending = {
-                        let mut g = latest.lock().unwrap_or_else(|e| {
-                            tracing::warn!("geom_persister latest poisoned (shutdown), recovering");
-                            e.into_inner()
-                        });
-                        g.take()
-                    };
-                    if let Some((x, y, w, h)) = pending {
-                        let state = app.state::<AppState>();
-                        let mut cfg = state.config.write().await;
-                        let mut dirty = false;
-                        if cfg.floating_x != Some(x) { cfg.floating_x = Some(x); dirty = true; }
-                        if cfg.floating_y != Some(y) { cfg.floating_y = Some(y); dirty = true; }
-                        if w > 0 && cfg.floating_w != Some(w) { cfg.floating_w = Some(w); dirty = true; }
-                        if h > 0 && cfg.floating_h != Some(h) { cfg.floating_h = Some(h); dirty = true; }
-                        if dirty {
-                            if let Err(e) = cfg.save() {
-                                tracing::warn!(error = %e, "保存浮窗几何失败 (shutdown flush)");
-                            }
-                        }
-                    }
-                    break;
-                }
-            }
+        // 返回 true = 需要继续循环
+        async fn flush_once(app: &tauri::AppHandle, latest: &Arc<Mutex<GeomLatest>>) -> GeomLatest {
             let pending = {
                 let mut g = latest.lock().unwrap_or_else(|e| {
-                    tracing::warn!("geom_persister latest poisoned (tick), recovering");
+                    tracing::warn!("geom_persister latest poisoned (flush), recovering");
                     e.into_inner()
                 });
-                g.take()
+                std::mem::take(&mut *g)
             };
-            if let Some((x, y, w, h)) = pending {
-                let state = app.state::<AppState>();
-                let mut cfg = state.config.write().await;
-                let mut dirty = false;
+            if pending.pos.is_none() && pending.size.is_none() {
+                return pending;
+            }
+            let state = app.state::<AppState>();
+            let mut cfg = state.config.write().await;
+            let mut dirty = false;
+            if let Some((x, y)) = pending.pos {
                 if cfg.floating_x != Some(x) {
                     cfg.floating_x = Some(x);
                     dirty = true;
@@ -598,6 +606,8 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
                     cfg.floating_y = Some(y);
                     dirty = true;
                 }
+            }
+            if let Some((w, h)) = pending.size {
                 if w > 0 && cfg.floating_w != Some(w) {
                     cfg.floating_w = Some(w);
                     dirty = true;
@@ -606,23 +616,30 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
                     cfg.floating_h = Some(h);
                     dirty = true;
                 }
-                // P3 audit fix (2026-08-13): 之前 cfg.save() 在 async 任务里
-                // 阻塞 tokio worker (tmp 写 + fsync + rename 慢盘可达数百 ms)。
-                // 克隆 cfg 在锁内, drop guard 后 spawn_blocking 落盘 --
-                // tokio worker 不阻塞, 后续 IPC 命令延迟不被 debouncer 拖慢。
-                if dirty {
-                    let cfg_clone = cfg.clone();
-                    drop(cfg);
-                    match tokio::task::spawn_blocking(move || cfg_clone.save()).await {
-                        Ok(Ok(())) => {}
-                        Ok(Err(e)) => {
-                            tracing::warn!(error = %e, "保存浮窗几何失败 (debounced)");
-                        }
-                        Err(e) => {
-                            tracing::warn!(error = %e, "保存浮窗几何 task join 失败 (debounced)");
-                        }
-                    }
+            }
+            if dirty {
+                // H-4: 锁内阻塞保存，见函数头注释
+                if let Err(e) = cfg.save() {
+                    tracing::warn!(error = %e, "保存浮窗几何失败 (debounced)");
                 }
+            }
+            pending
+        }
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(500)) => {}
+                _ = crate::poller::SHUTDOWN.notified() => {
+                    tracing::info!("geom_persister 收到 SHUTDOWN,最后 flush 一次后退出");
+                    flush_once(&app, &latest).await;
+                    break;
+                }
+            }
+            flush_once(&app, &latest).await;
+            // M17: notify 丢失兜底 —— quit_app 已置位 SHUTDOWN_REQUESTED 时
+            // 立即 flush 并退出，不再等下一个 500ms tick（quit 只等 500ms）。
+            if crate::poller::SHUTDOWN_REQUESTED.load(std::sync::atomic::Ordering::SeqCst) {
+                flush_once(&app, &latest).await;
+                break;
             }
         }
     });

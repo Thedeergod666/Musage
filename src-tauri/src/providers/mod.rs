@@ -202,6 +202,36 @@ pub fn extract_host(url: &str) -> Option<String> {
     Some(host.to_lowercase())
 }
 
+/// 剥掉副本 unique_id 的 "#N" 后缀（"deepseek#2" → "deepseek"，无后缀原样返回）。
+///
+/// H-1 fix (2026-09-05 audit)：ProviderSnapshot.source_id 对副本存的是
+/// unique_id，任何"按 base provider 语义"的匹配（health_label 等）都必须
+/// 先过这里，否则副本行为与 base 不一致。
+pub fn base_id_of_unique_id(unique: &str) -> &str {
+    unique.split('#').next().unwrap_or(unique)
+}
+
+/// M3 fix (2026-09-05 audit)：解析结果 IP 层的 SSRF 判定，语义与
+/// [`url_is_ssrf_blocked`] 完全一致（loopback / link-local / unspecified，
+/// 含 IPv4-mapped IPv6）。private LAN 放行 —— 用户可能有合法的自建中转站。
+pub fn is_ssrf_blocked_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => v4.is_loopback() || v4.is_link_local() || v4.is_unspecified(),
+        std::net::IpAddr::V6(v6) => {
+            if v6.is_loopback() || v6.is_unspecified() {
+                return true;
+            }
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                if mapped.is_loopback() || mapped.is_link_local() || mapped.is_unspecified() {
+                    return true;
+                }
+            }
+            // IPv6 link-local fe80::/10
+            v6.segments()[0] & 0xffc0 == 0xfe80
+        }
+    }
+}
+
 /// 拦截 loopback (127.x / localhost / ::1) 和 link-local (169.254.x / fe80::)。
 /// 不拦 private LAN (192.168.x / 10.x / 172.16-31.x) —— 用户可能有合法的自建中转站。
 pub fn is_ssrf_blocked(host: &str) -> bool {
@@ -295,6 +325,20 @@ pub fn url_is_ssrf_blocked(url: &reqwest::Url) -> bool {
 /// 里的合法 `@` 保留。query 端点必须算 authority 终点：base_url 形如
 /// `https://api.example.com?email=user@me`（无路径）时，若只认 `/`，整个 query
 /// 会被误吞进 authority，`@` 假阳性触发拦截（2026-09-04 audit D1-01）。
+/// L-6 fix (2026-09-05 audit)：Bearer key 控制字符校验。key **内部**含
+/// 换行等控制字符时 reqwest 在 `send()` 时报 invalid header，经
+/// `humanize_reqwest_err` 兜底被归成误导性的 Network 错误。各 provider
+/// 在拼 `Authorization` 头前调用，send 前拒绝并归类为配置错误。
+/// 各 fetch 入口已有的首尾 `.trim()` 不覆盖 key 中段的控制字符。
+pub fn validate_bearer_key(key: &str) -> Result<(), FetchError> {
+    if key.chars().any(|c| c.is_control()) {
+        return Err(FetchError::config_error(
+            crate::t!("error.common.key_invalid_chars").into_owned(),
+        ));
+    }
+    Ok(())
+}
+
 pub fn url_authority_has_userinfo(url: &str) -> bool {
     let rest = url
         .strip_prefix("https://")
@@ -335,6 +379,18 @@ impl FetchError {
     }
     pub fn parse(message: impl Into<String>) -> Self {
         Self::new(ErrorKind::Parse, message)
+    }
+    /// L-1 fix (2026-09-05 audit)：429 便捷构造器（此前各 provider 手写
+    /// `FetchError::new(ErrorKind::RateLimited, ..)`）。
+    pub fn rate(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::RateLimited, message)
+    }
+    /// L-5 fix (2026-09-05 audit)：URL 配置类 / SSRF 拦截错误的归类 ——
+    /// 此前一律 `auth()`（ErrorKind::AuthFailed）：前端渲染"重新登录"误导，
+    /// backoff 对 AuthFailed 不退避 → 配置错误每轮全间隔重试。改归
+    /// `ErrorKind::Other`（无重登引导，正常退避）。
+    pub fn config_error(message: impl Into<String>) -> Self {
+        Self::new(ErrorKind::Other, message)
     }
     #[allow(dead_code)] // 预留 v2 helper（v2 schema 推断路径要按 ErrorKind::SchemaUnknown 分类时启用）
     pub fn schema_unknown(message: impl Into<String>) -> Self {
@@ -535,7 +591,15 @@ impl ProviderSnapshot {
         Self {
             // 兼容字段：v0.2 前序列化的是 enum 变体名 ("minimax" 等),
             // 现在直接写 source id (同样 "minimax" 等, 对前端行为零变化)。
-            provider: id.to_string(),
+            //
+            // H-3 fix (2026-09-05 audit)：成功快照的 `provider` 全部硬编码
+            // base id（如 minimax.rs 的 `provider: "minimax"`），而这里原来
+            // 写的是调用方传入的 unique_id（"minimax#2"）—— 消费端
+            // `is_enabled_unique(snapshot_key, &p.provider)` 两参数同值时
+            // base fallback 失效，禁用 base 后副本错误卡永不过滤/复活。
+            // 对齐成功快照语义：provider 恒为 base id，unique 语义全在
+            // `unique_id` / `source_id` 字段。
+            provider: crate::providers::base_id_of_unique_id(id).to_string(),
             success: false,
             rows: vec![],
             error: Some(error),
@@ -620,7 +684,11 @@ impl ProviderSnapshot {
         // 其它 source 走 utilization 分支 (包括 minimax / xiaomimimo /
         // tavily / zenmux / kimi / zhipu / stepfun / siliconflow / claude_official /
         // 用户自定义 New API 中转站 — 全部视为 "有 utilization 数据")。
-        match self.source_id.as_deref() {
+        //
+        // fix (2026-09-05 audit H-1): source_id 对副本是 unique_id（"deepseek#2"，
+        // deepseek.rs:252 显式写入），按 base id 精确匹配会让副本永远落 `_`
+        // 分支 → is_healthy=false 被忽略、托盘恒绿。匹配前剥掉 "#N" 后缀。
+        match self.source_id.as_deref().map(base_id_of_unique_id) {
             Some("deepseek") => {
                 if self.is_healthy {
                     "ok"
@@ -1004,12 +1072,55 @@ pub fn instantiate_builtin_with_index(
 /// 等真有需求再切回 per-source。
 static SHARED_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
+/// M3 fix (2026-09-05 audit)：DNS 解析层 SSRF 防护。
+///
+/// 之前的两层防护（字符串前缀 `is_ssrf_blocked` + URL 字面 `url_is_ssrf_blocked`，
+/// 加 redirect 每跳复查）都只看 URL **字面**，从不解析 DNS —— `localtest.me`
+/// 这类公网域名（A 记录 → 127.0.0.1）或攻击者自控的解析到 169.254.169.254 的
+/// 域名可完整绕过，`Authorization: Bearer <key}` 跟着落内网。
+///
+/// 自定义 resolver 在 connect 前对解析结果逐 IP 复跑 [`is_ssrf_blocked_ip`]：
+/// 过滤掉被拦截 IP；若全部被拦截则直接连接失败（归 Network 错误）。
+/// 语义与 URL 字面层一致 —— private LAN（192.168/10/172.16-31）放行，
+/// 自建中转站不受影响。
+struct SsrfFilteringResolver;
+
+impl reqwest::dns::Resolve for SsrfFilteringResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let host = name.as_str().to_string();
+        Box::pin(async move {
+            type ResolveErr = Box<dyn std::error::Error + Send + Sync>;
+            let addrs = {
+                let host = host.clone();
+                tokio::task::spawn_blocking(move || {
+                    use std::net::ToSocketAddrs;
+                    (host.as_str(), 0).to_socket_addrs()
+                })
+                .await
+                .map_err(|e| ResolveErr::from(std::io::Error::other(e.to_string())))?
+                .map_err(ResolveErr::from)?
+            };
+            let filtered: Vec<_> = addrs.filter(|a| !is_ssrf_blocked_ip(a.ip())).collect();
+            if filtered.is_empty() {
+                return Err(ResolveErr::from(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!("ssrf: all resolved addresses for {host} are blocked"),
+                )));
+            }
+            Ok(Box::new(filtered.into_iter()) as reqwest::dns::Addrs)
+        })
+    }
+}
+
 pub fn shared_client() -> &'static reqwest::Client {
     SHARED_CLIENT.get_or_init(|| {
         reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
             .connect_timeout(std::time::Duration::from_secs(5))
             .user_agent(concat!("Musage/", env!("CARGO_PKG_VERSION")))
+            // M3 fix (2026-09-05 audit): DNS 解析层 SSRF 防护，见
+            // [`SsrfFilteringResolver`]。与下方 redirect 每跳检查互补。
+            .dns_resolver(std::sync::Arc::new(SsrfFilteringResolver))
             // M9 fix: 长跑 tray app idle TCP 永久堆积。每个 host 最多 2 idle conn，
             // 30s 没流量就关。
             .pool_max_idle_per_host(2)

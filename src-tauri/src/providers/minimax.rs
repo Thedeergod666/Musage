@@ -36,8 +36,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
 use super::{
-    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, AuthKind,
-    Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
+    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, validate_bearer_key,
+    AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
 };
 
 use crate::config::ProviderOverrides;
@@ -253,6 +253,9 @@ impl Minimax {
 
         let client = shared_client();
 
+        // L-6 fix (2026-09-05 audit): key 内含控制字符时 send() 报 invalid header
+        // 被兜底归成误导性 Network 错误；send 前显式拒绝并归类配置错误。
+        validate_bearer_key(api_key)?;
         let resp = client
             .get(region.api_url())
             .header("Authorization", format!("Bearer {api_key}"))
@@ -578,9 +581,12 @@ pub fn parse_tier_percent(
         }
     }
     // 3. reset：智能识别（duration-seconds vs epoch-ms）
+    //    L-2 fix (2026-09-05 audit)：percent 路径复用 count 路径的
+    //    字符串/浮点容错 —— schema 漂移把 end_time 变 "14523"/14523.5 时
+    //    resets_at 不再整体丢失。
     let resets_at = item
         .get(k_reset)
-        .and_then(|v| v.as_i64())
+        .and_then(reset_field_i64)
         .map(smart_reset_to_ms);
     Some(TierInternal {
         utilization,
@@ -612,12 +618,7 @@ pub fn parse_tier_count(
                 let resets_at = triple
                     .end
                     .as_deref()
-                    .and_then(|k| {
-                        item.get(k).and_then(|v| {
-                            v.as_i64()
-                                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-                        })
-                    })
+                    .and_then(|k| item.get(k).and_then(reset_field_i64))
                     .map(smart_reset_to_ms);
                 return Some(TierInternal {
                     utilization,
@@ -636,10 +637,7 @@ pub fn parse_tier_count(
                 let utilization = (((t - r) / t) * 100.0).clamp(0.0, 100.0);
                 let resets_at = item
                     .get(*k_reset)
-                    .and_then(|v| {
-                        v.as_i64()
-                            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-                    })
+                    .and_then(reset_field_i64)
                     .map(smart_reset_to_ms);
                 return Some(TierInternal {
                     utilization,
@@ -649,6 +647,15 @@ pub fn parse_tier_count(
         }
     }
     None
+}
+
+/// L-2 fix (2026-09-05 audit)：reset 字段统一提取 —— i64 优先，字符串/浮点
+/// 兜底（percent 路径与 count 路径共用；schema 漂移把 end_time 变成
+/// `"14523"` 或 `14523.5` 时 resets_at 不再整体丢失）。
+fn reset_field_i64(v: &serde_json::Value) -> Option<i64> {
+    v.as_i64()
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+        .or_else(|| v.as_f64().map(|f| f as i64))
 }
 
 /// 把 reset 字段智能转成 epoch ms。
@@ -683,8 +690,14 @@ fn smart_reset_to_ms(raw: i64) -> i64 {
         // D-011: 负 duration 视作已过期 (clamp 到 0)
         chrono::Utc::now().timestamp_millis()
     } else {
-        // 当作 duration-seconds，加到当前时间
-        chrono::Utc::now().timestamp_millis() + raw * 1000
+        // 当作 duration-seconds，加到当前时间。
+        // M-1 fix (2026-09-05 audit)：`raw * 1000` 对落在 [4.1e9+1, i64::MAX]
+        // 的超大 raw（schema 漂移 / overrides 指错字段）溢出 i64 —— release
+        // 无 overflow-checks 静默回绕成错乱值，debug panic。saturating + 上限
+        // clamp 到 EPOCH_MS_MAX。
+        let ms = chrono::Utc::now().timestamp_millis();
+        ms.saturating_add(raw.saturating_mul(1000))
+            .min(EPOCH_MS_MAX)
     }
 }
 

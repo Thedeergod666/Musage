@@ -264,11 +264,14 @@ fn parse(
 
     // API raw units → 元。1 元 = 1_000_000 raw（2026-08-17 用户实测确认）。
     // 防御：RAW_PER_YUAN = 0 时 fall back 1.0 避免除零（理论上常量已固定 1e6）。
+    // L-5 fix (2026-09-05 audit)：负余额 clamp 到 0（schema 漂移/异常态时
+    // 不再透传负数到浮窗/托盘渲染成 "¥-3"）。
     let balance_yuan = if RAW_PER_YUAN > 0.0 {
         balance_raw / RAW_PER_YUAN
     } else {
         balance_raw
-    };
+    }
+    .max(0.0);
 
     let rows = vec![QuotaRow {
         label: t!("row.balance").to_string(),

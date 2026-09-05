@@ -409,12 +409,30 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
 
     // 业务级失败检查
     // P3 audit fix (2026-08-13): Code 兼容数字形式 (0/1), 不只 as_str。
-    if let Some(code) = result.get("Code").and_then(|v| {
-        v.as_str()
-            .map(|s| s.to_string())
-            .or_else(|| v.as_i64().map(|n| n.to_string()))
-    }) {
-        if code != "Success" {
+    //
+    // L-4 fix (2026-09-05 audit)：数字 0 是约定俗成的成功码 —— 原实现把
+    // 数字 Code 字符串化后与 "Success" 比较，`0` → `"0" != "Success"` 把
+    // 成功响应打成业务错误（修复前 as_str() 返 None 反而静默放行）。
+    // 判定改为：字符串 Code 必须 == "Success"；数字 Code 必须 == 0；
+    // 其余视为业务失败。
+    {
+        let code_val = result.get("Code");
+        let is_success = match code_val.map(|v| {
+            v.as_str()
+                .map(|s| s.to_string())
+                .or_else(|| v.as_i64().map(|n| n.to_string()))
+        }) {
+            Some(Some(code)) => code == "Success" || code == "0",
+            _ => true, // 无 Code 字段 = 成功（保持原语义）
+        };
+        if !is_success {
+            let code = code_val
+                .and_then(|v| {
+                    v.as_str()
+                        .map(|s| s.to_string())
+                        .or_else(|| v.as_i64().map(|n| n.to_string()))
+                })
+                .unwrap_or_default();
             let msg = result.get("Message").and_then(|v| v.as_str()).unwrap_or("");
             return Err(FetchError::server(
                 t!(

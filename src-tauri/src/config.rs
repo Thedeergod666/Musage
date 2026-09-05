@@ -843,7 +843,12 @@ impl AppConfig {
                 app_schema = CURRENT_SCHEMA_VERSION,
                 "config schema_version 高于本 build, 拒绝 save 以保留未来字段 (降级场景); 升级后即可正常保存"
             );
-            return Ok(());
+            // M12 fix (2026-09-05 audit)：改返 Err —— 原来静默 Ok，导入新版
+            // 配置后本会话所有保存都伪装成功，重启后全部丢失且无提示。
+            return Err(format!(
+                "config schema_version {} is newer than supported {}; refusing to save (downgraded build)",
+                self.schema_version, CURRENT_SCHEMA_VERSION
+            ));
         }
         // save_lock 串行化并发 save：geom debouncer (500ms tick) + 用户改设置同时触发
         // 时，read-modify-write race 会让 last writer 覆盖另一方的内容。Mutex<()> 极小。
@@ -948,16 +953,19 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
             "en" => Region::En,
             _ => Region::Cn,
         };
-        cfg.providers.insert(
-            "minimax".to_string(),
-            ProviderConfig {
+        // L-config-2 fix (2026-09-05 audit)：只覆盖 region 字段，不再整条
+        // 替换 providers.minimax —— 原实现在"损坏文件同时带顶层 region 和
+        // 现代 providers"时把已解析的 minimax 条目（含 region: En）倒退覆盖。
+        cfg.providers
+            .entry("minimax".to_string())
+            .and_modify(|p| p.region = Some(region))
+            .or_insert(ProviderConfig {
                 enabled: true,
                 region: Some(region),
                 xiaomi_region: None,
                 refresh_interval_secs: None,
                 xiaomi_display_mode: None,
-            },
-        );
+            });
     }
     if let Some(s) = obj.get("locale").and_then(|x| x.as_str()) {
         recognized_any = true;

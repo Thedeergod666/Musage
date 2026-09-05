@@ -94,7 +94,7 @@
 //! exit 阈值 3 tick 把这类抖动全部吞掉；离开方向的 100ms 额外延迟
 //! 人眼不可感知。
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread;
 use std::time::Duration;
@@ -102,9 +102,6 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 use windows_sys::Win32::Foundation::{GetLastError, SetLastError};
 use windows_sys::Win32::Foundation::{HWND as WIN_HWND, POINT, RECT};
-use windows_sys::Win32::UI::HiDpi::{
-    SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
-};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetAncestor, GetCursorPos, GetWindowLongW, GetWindowRect, SetWindowLongW, SetWindowPos,
     WindowFromPoint, GA_ROOT, GWL_EXSTYLE, HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOPMOST,
@@ -116,19 +113,24 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 /// 缩放下都返回同一虚拟坐标系,hover 检测不会再因跨 DPI 屏而"鼠标永久在窗
 /// 外"。失败 (老 OS / manifest 冲突) 时静默 —— 非致命,行为退回到系统默
 /// 认 DPI awareness。
-fn ensure_per_monitor_v2_dpi() {
-    unsafe {
-        let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    }
-}
+///
+/// L5 fix (2026-09-05 audit)：删除。`SetProcessDpiAwarenessContext` 在进程
+/// DPI awareness 已设定后调用恒失败（E_ACCESSDENIED）—— 本函数在 setup 里
+/// 跑，tao 事件循环早已在 `EventLoop::new` 里设过 PMv2，此调用是死代码。
+/// PMv2 实际由 tao 保证。
 
 /// Hover tracker thread 是否已启动（idempotent 防重入）。
 static TRACKER_RUNNING: AtomicBool = AtomicBool::new(false);
-
 /// 鼠标 hover 时是否同步切 z-order：仅 PinBottom 模式置 true。
 /// 这个开关只影响 z-order 切换；hover 事件 emit 不受影响（**永远 emit**），
 /// 因为前端 iOS 26 玻璃 hover 效果需要它，不分 pin mode。
 static LEVEL_SWITCHING_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// M15 fix (2026-09-05 audit)：模式代际计数。set_window_pin_* 每次先
+/// fetch_add；emitter 在采纳切换、即将 apply_z_order 前复查代际 —— 原先
+/// "PinBottom→PinTop 切换瞬间，emitter 在途的 exit 采纳（Bottom）落在主线程
+/// TopMost dispatch 之后"的竞态会让浮窗卡在 HWND_BOTTOM 且无自愈路径。
+static Z_ORDER_GENERATION: AtomicU64 = AtomicU64::new(0);
 
 /// fix (2026-07-28 审查): 请求 hover emitter 复位内部状态（last_inside /
 /// 防抖计数器 / raised / steady_ticks）。`set_window_pin_bottom` 切模式时置位，
@@ -261,7 +263,9 @@ unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
     }
 
     // 路 A：z-order API + flush 路 B 的 cache
-    SetWindowPos(
+    // M18 fix (2026-09-05 audit)：检查返回值 —— 失败（hwnd 失效 / UIPI 拒绝）
+    // 时 style bit 已被路 B 改而 z-order 未动，产生不一致中间态且零诊断。
+    let sp_ok = SetWindowPos(
         hwnd,
         insert_after,
         0,
@@ -270,6 +274,10 @@ unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
         0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
     );
+    if sp_ok == 0 {
+        let err = GetLastError();
+        tracing::warn!(?z, error = err, "apply_z_order: SetWindowPos 失败");
+    }
 }
 
 // ── 公开 API ──
@@ -282,6 +290,7 @@ unsafe fn apply_z_order(hwnd: *mut core::ffi::c_void, z: ZOrder) {
 /// 轮询可能读到"还在切"的中间态；新顺序保证 observer 看到的 store 永远先于或
 /// 与 z-order 切换同时生效。
 pub fn set_window_pin_bottom<R: Runtime>(app: &AppHandle<R>) {
+    Z_ORDER_GENERATION.fetch_add(1, Ordering::SeqCst); // M15: 使在途采纳失效
     LEVEL_SWITCHING_ACTIVE.store(true, Ordering::SeqCst);
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
@@ -306,6 +315,7 @@ pub fn set_window_pin_bottom<R: Runtime>(app: &AppHandle<R>) {
 
 /// PinTop 模式：z-order 切到 `TopMost`，关闭 hover 切换（窗口已经始终置顶）。
 pub fn set_window_pin_top<R: Runtime>(app: &AppHandle<R>) {
+    Z_ORDER_GENERATION.fetch_add(1, Ordering::SeqCst); // M15
     LEVEL_SWITCHING_ACTIVE.store(false, Ordering::SeqCst);
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
@@ -326,6 +336,7 @@ pub fn set_window_pin_top<R: Runtime>(app: &AppHandle<R>) {
 /// Normal 模式：z-order 切到 `NotTopMost`（清 topmost 标志、保留 z-order），
 /// 关闭 hover 切换。
 pub fn set_window_normal<R: Runtime>(app: &AppHandle<R>) {
+    Z_ORDER_GENERATION.fetch_add(1, Ordering::SeqCst); // M15
     LEVEL_SWITCHING_ACTIVE.store(false, Ordering::SeqCst);
     let app2 = app.clone();
     let _ = app.run_on_main_thread(move || {
@@ -352,7 +363,11 @@ pub fn set_window_hover_raise<R: Runtime>(_app: &AppHandle<R>, _hovering: bool) 
 /// 任务栏随之变浅色）。此前 platform/mod.rs 的 stub 恒 false，浅色任务栏上
 /// 白字托盘图标几乎不可见。任何读取失败（老系统无此键 / 权限）保守返
 /// false（深色 → 白字，Win 默认深色任务栏）。
-pub fn menu_bar_is_light() -> bool {
+///
+/// H-6 fix (2026-09-05 audit)：签名对齐 macOS（收 `&AppHandle`）—— macOS
+/// 侧需要 app 做 run_on_main_thread 派发，Win 的注册表读实现跨线程安全，
+/// app 参数忽略不用。保留参数让 `tray_fill_color` 等调用点跨平台无 cfg。
+pub fn menu_bar_is_light<R: Runtime>(_app: &AppHandle<R>) -> bool {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 
@@ -397,7 +412,8 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
         return;
     }
     // H2 fix: 启动期一次性声明 Per-Monitor V2 DPI awareness。
-    ensure_per_monitor_v2_dpi();
+    // L5 fix: ensure_per_monitor_v2_dpi 已删 —— tao EventLoop::new 已设 PMv2，
+    // 此处再调 SetProcessDpiAwarenessContext 恒 E_ACCESSDENIED（死代码）。
     let builder = thread::Builder::new()
         .name("musage-hover-emitter".into())
         .spawn(move || {
@@ -441,6 +457,8 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
                 let Some(hit) = hit_test_floating(&app) else {
                     continue;
                 };
+                // M15：本 tick 起点代际 —— 采纳切换前复查（见下）
+                let gen_at_tick_start = Z_ORDER_GENERATION.load(Ordering::SeqCst);
                 // Covered 算 inside 候选（dwell 够了就采纳）；一旦已采纳
                 // （窗口已抬起成 topmost），Covered 只可能是"被另一个
                 // topmost 窗口压住"，不算离开 —— 不会因此误 drop。
@@ -514,6 +532,12 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
 
                 // (2) PinBottom 模式：edge-trigger 切 z-order
                 if LEVEL_SWITCHING_ACTIVE.load(Ordering::SeqCst) {
+                    // M15 fix：模式在本次 tick 评估期间被切换 → 丢弃本次采纳
+                    //（不 apply、不动 raised），下一 tick 按新模式重评自愈。
+                    if gen_at_tick_start != Z_ORDER_GENERATION.load(Ordering::SeqCst) {
+                        tracing::debug!("hover 采纳期间 pin mode 已切换，丢弃本次 z-order 切换");
+                        continue;
+                    }
                     let z = if inside {
                         ZOrder::TopMost
                     } else {
@@ -581,6 +605,13 @@ enum HitTest {
 /// 实际生产中 (0,0) 几乎不可能(任务栏/开始菜单抢占),但严格说应区分。
 fn hit_test_floating<R: Runtime>(app: &AppHandle<R>) -> Option<HitTest> {
     let win = app.get_webview_window("floating")?;
+    // M16 fix (2026-09-05 audit)：隐藏窗口跳过本 tick —— GetWindowRect 对
+    // 隐藏窗口仍返回上次矩形，WindowFromPoint 跳过隐藏窗口 → 恒判 Covered，
+    // 250ms dwell 后把**隐藏**的浮窗抬到 TOPMOST 并 emit hover=true，用户
+    // 从托盘再显示时窗口以置顶姿态"凭空弹出"。
+    if !win.is_visible().unwrap_or(false) {
+        return None;
+    }
     let hwnd_t = win.hwnd().ok()?;
     if hwnd_t.0.is_null() {
         return None;

@@ -444,6 +444,12 @@ impl Xiaomimimo {
                 t!("error.common.forbidden", provider = "Xiaomi MiMo").into_owned(),
             ));
         }
+        // L-1 fix (2026-09-05 audit)：补 429 → RateLimited 分支（bearer 路径）。
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(FetchError::rate(
+                t!("error.common.rate_limited", provider = "Xiaomi MiMo").into_owned(),
+            ));
+        }
         if !status.is_success() {
             let body = text_body_limited(resp).await.unwrap_or_default();
             return Err(FetchError::server(
@@ -601,6 +607,12 @@ impl Xiaomimimo {
         if status == reqwest::StatusCode::FORBIDDEN {
             return Err(FetchError::auth(
                 t!("error.common.forbidden", provider = "Xiaomi MiMo").into_owned(),
+            ));
+        }
+        // L-1 fix (2026-09-05 audit)：cookie 路径同款 429 → RateLimited 分支。
+        if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(FetchError::rate(
+                t!("error.common.rate_limited", provider = "Xiaomi MiMo").into_owned(),
             ));
         }
         if !status.is_success() {
@@ -857,14 +869,20 @@ fn parse(
     }
 }
 
-/// 在 JSON 树里找 `items[]` 中 `name == <target>` 的那一项，返回 `percent * 100`
+/// 在 JSON 树里找 `items[]` 中 `name == <target>` 的那一项，返回 `percent * 100`。
+///
+/// M-2 fix (2026-09-05 audit)：走共享 [`super::parse::num_f64`]（自动获得
+/// 字符串数字支持 + NaN/Inf 过滤，对齐 minimax.rs 的同款注释约定）并把
+/// 结果 clamp 到 `[0.0, 100.0]` —— 原来 `as_f64()` 直读：字符串 percent
+/// 静默丢行（可能被误报 SchemaUnknown 引导用户改 schema_overrides）；
+/// 负值/超界原样透传成 -50% / inf。
 fn get_item_percent(root: &serde_json::Value, items_path: &str, name: &str) -> Option<f64> {
     let items = root.pointer(items_path).and_then(|v| v.as_array())?;
     items
         .iter()
         .find(|i| i.get("name").and_then(|n| n.as_str()) == Some(name))
-        .and_then(|i| i.get("percent").and_then(|p| p.as_f64()))
-        .map(|p| p * 100.0)
+        .and_then(|i| i.get("percent").and_then(super::parse::num_f64))
+        .map(|p| (p * 100.0).clamp(0.0, 100.0))
 }
 
 /// 按"用户自定义名（按数组顺序）→ 内置默认名"依次查找 `items[].percent`。

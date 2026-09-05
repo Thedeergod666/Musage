@@ -360,7 +360,22 @@ pub async fn update_extra_instance(
         (updated, final_ref)
     };
 
-    // 第二步：锁外保存 key（save_credential_for_id 有独立 save_lock）
+    // 第二步：保存 key（save_credential_for_id 有独立 save_lock）
+    //
+    // L-config-5 fix (2026-09-05 audit)：写 key 前复查 api_key_ref 仍存在 ——
+    // step 1 锁释放到本步之间，并发的 delete_extra_instance + compact 可能把
+    // `minimax#3` 重命名成 `#2`，把 key 写进旧槽 `#3` 会变成无人引用的孤儿槽
+    // 且本次更新被静默吞掉。ref 不在 extras 里时报错让用户重试。
+    {
+        let extras_now = state.extra_instances.read().await;
+        if !extras_now.iter().any(|e| e.api_key_ref == api_key_ref) {
+            return Err(t!(
+                "commands.extra.ref_changed_concurrent",
+                id = api_key_ref.as_str()
+            )
+            .into_owned());
+        }
+    }
     let api_key_val = req
         .api_key
         .as_deref()

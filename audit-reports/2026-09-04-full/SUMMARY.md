@@ -1,5 +1,7 @@
 # 2026-09-04 全量代码审查报告（8 域并行）
 
+> **修复状态（2026-09-05）**：103 条已全量修复（commit `4f54ee7` Rust 侧 + `e608a9f` 前端侧）。少数例外：L-poller-1（add/enable 后 Manual 与 poller 双拉）经复核选择维持现状（in-flight 去重会让"保存 key → Manual 刷新"被在飞旧凭据拉取吞掉，UX 回归更大），已在代码留备忘。
+
 > 审查基线：commit `d801adc`（含当日 Win 三 bug 修复：hover-raise / Acrylic ExtendFrame / 双击进设置）。
 > 项目规模：约 2.1 万行 Rust + 8400 行 TypeScript，14 内置 provider + custom，3 个登录模块。
 > 方法：8 个独立审查 agent 并行，每域聚焦真实 bug（逻辑错误 / 边界条件 / 并发竞态 / 资源泄漏 / 错误处理 / 安全），要求 file:line + 代码证据 + 触发条件，排除风格与纯推测。

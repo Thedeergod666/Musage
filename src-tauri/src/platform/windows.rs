@@ -425,9 +425,8 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
             // 阈值按当前观察到的具体态分档）。
             let mut pending_ticks: u8 = 0;
             let mut pending_value = false;
-            // raised：当前 TopMost 是我们抬的（用于稳定 hover 期间的低频
-            // safety re-assert）。edge-trigger 之后不再每 tick 抬。
-            let mut raised = false;
+            // （raised 意图缓存已删，2026-09-05 hover 卡死根治：steady re-assert
+            // 改为 `inside && ACTIVE` 无条件幂等校验，不再依赖任何意图状态。）
             let mut steady_ticks: u8 = 0;
             loop {
                 thread::sleep(Duration::from_millis(50));
@@ -450,7 +449,6 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
                     last_inside = false;
                     pending_ticks = 0;
                     pending_value = false;
-                    raised = false;
                     steady_ticks = 0;
                 }
 
@@ -475,7 +473,16 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
                     // 稳定 hover 中：每 20 tick（1s）safety re-assert TopMost。
                     // WS_EX_TOPMOST 是 sticky 的，这只是兜底"万一被顶掉"；
                     // 20Hz 反复 SetWindowPos 是无效 churn（见模块 doc）。
-                    if inside && raised && LEVEL_SWITCHING_ACTIVE.load(Ordering::SeqCst) {
+                    //
+                    // fix (2026-09-05 hover 卡死根治)：**去掉 `raised` 前置条件**。
+                    // raised 是 emitter 对现实的意图缓存，任何一路异步时序
+                    // （启动竞态 / 模式切换 / 外部 z-order 操作）都可能让它
+                    // 与实际脱同步成 raised=false；一旦脱同步，本分支被短路，
+                    // hover-raise 永久失效（实测用户会话：光标在窗内 1.5s+
+                    // 仍不抬升）。re-assert 是幂等的 SetWindowPos，直接以
+                    // `inside && ACTIVE` 为条件 —— 只要光标悬在 PinBottom
+                    // 浮窗上，每 1s 无条件校验一次，卡死态在结构上不可能。
+                    if inside && LEVEL_SWITCHING_ACTIVE.load(Ordering::SeqCst) {
                         steady_ticks = steady_ticks.saturating_add(1);
                         if steady_ticks >= 20 {
                             steady_ticks = 0;
@@ -520,6 +527,21 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
                 }
 
                 // 阈值达成 —— 采纳新状态，emit + 切 z-order
+                //
+                // fix (2026-09-05 hover 卡死根治)：模式代际检查**前置到任何
+                // 状态更新之前**。原实现先写 last_inside 再检查代际 —— 被
+                // 跳过的采纳会留下 "last_inside 已推进、raised 未动、z-order
+                // 未应用" 的半更新态；若此后光标持续在窗内（无新 edge），
+                // raised=false 短路 steady re-assert → 永不抬升。前置检查后，
+                // 被跳过的采纳不消耗 edge，下一 tick 重新累计并正常采纳。
+                if LEVEL_SWITCHING_ACTIVE.load(Ordering::SeqCst)
+                    && gen_at_tick_start != Z_ORDER_GENERATION.load(Ordering::SeqCst)
+                {
+                    tracing::debug!("hover 采纳期间 pin mode 已切换，丢弃本次 tick，下 tick 重评");
+                    pending_ticks = 0;
+                    continue;
+                }
+
                 last_inside = inside;
                 pending_ticks = 0;
                 steady_ticks = 0;
@@ -532,12 +554,6 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
 
                 // (2) PinBottom 模式：edge-trigger 切 z-order
                 if LEVEL_SWITCHING_ACTIVE.load(Ordering::SeqCst) {
-                    // M15 fix：模式在本次 tick 评估期间被切换 → 丢弃本次采纳
-                    //（不 apply、不动 raised），下一 tick 按新模式重评自愈。
-                    if gen_at_tick_start != Z_ORDER_GENERATION.load(Ordering::SeqCst) {
-                        tracing::debug!("hover 采纳期间 pin mode 已切换，丢弃本次 z-order 切换");
-                        continue;
-                    }
                     let z = if inside {
                         ZOrder::TopMost
                     } else {
@@ -555,7 +571,6 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
                     if let Err(e) = app.emit("musage://backdrop-refresh", ()) {
                         tracing::trace!(error = %e, "emit backdrop-refresh 失败");
                     }
-                    raised = inside;
                 }
             }
         });

@@ -1653,54 +1653,26 @@ pub fn apply_pin_mode_to_window(app: &AppHandle, mode: FloatingPinMode) {
 /// 在 macOS 上本身有效(已在 `.card` 上 `blur(28px) saturate(180%)`)。
 /// 后续要统一 OS 层效果再加 `apply_vibrancy`,会改 macOS 视觉,
 /// 单独一个 PR 评估。
+/// Win 浮窗 frosted glass 切换 —— **2026-09-05 起为 no-op（用户决策）**。
+///
+/// 历史：2026-08-25 引入 OS 层 Acrylic（window-vibrancy `set_effects` →
+/// DWMWA_SYSTEMBACKDROP_TYPE），2026-09-04 补 DwmExtendFrameIntoClientArea
+/// 前置让模糊真正渲染。实测暴露问题：**OS 层效果作用于整个窗口矩形**——
+/// 卡片之间的间隙、padding、未覆盖区域全部被灰色磨砂填满，"不 hover 时
+/// 不是透明的"，与"逐卡片玻璃"的设计（macOS 上 CSS backdrop-filter 只
+/// 模糊 .card 背后）视觉完全不同。用户反馈难看，决策先去掉。
+///
+/// 为什么不能只对卡片区域生效：DWM backdrop 是 per-window 的合成器效果，
+/// 无法按 WebView 内容的区域裁剪；CSS `backdrop-filter` 在 WebView2 透明窗
+/// 上采样不到 surface 之下的 OS 像素（tauri#15512, closed as not planned），
+/// 所以 Win 端目前**没有**逐卡片模糊的可行实现。
+///
+/// 后续候选方案（都未实施）：整窗样式改为自带半透明深色底（纯 CSS、
+/// 无 OS 效果）；或等待 WebView2 支持后恢复。函数保留签名，调用方
+/// （启动恢复 / set_low_power_mode / set_floating_pin_mode 重同步）
+/// 不动，未来切换实现时零调用方改动。
 #[allow(unused_variables)]
-pub fn apply_floating_window_blur(app: &AppHandle, enabled: bool) {
-    #[cfg(target_os = "windows")]
-    {
-        let Some(win) = app.get_webview_window("floating") else {
-            return;
-        };
-        let result = if enabled {
-            use tauri::window::{Effect, EffectsBuilder};
-            win.set_effects(EffectsBuilder::new().effect(Effect::Acrylic).build())
-        } else {
-            // clear: set_effects(None) 走 std blanket From<T> for Option<T>
-            win.set_effects(None)
-        };
-        if let Err(e) = result {
-            tracing::warn!(
-                error = %e,
-                "Win 浮窗 set_effects({}) 失败,继续运行 (Win7/8 不支持 Acrylic)",
-                if enabled { "Acrylic" } else { "clear" }
-            );
-        }
-        // fix (2026-09-04 Win 浮窗模糊修复): DWMWA_SYSTEMBACKDROP_TYPE 的官方前置
-        // 条件是先用 DwmExtendFrameIntoClientArea 把帧扩展进客户区，否则 DWM
-        // **静默不绘制** backdrop（属性已设、无错误码、画面无模糊）。tao 透明窗
-        // 只调 DwmEnableBlurBehindWindow 空 region trick，从不 ExtendFrame ——
-        // 实测 Win11 26200：window-vibrancy 设完 backdrop=3 (DWMSBT_TRANSIENTWINDOW)
-        // 后画面无模糊，补 ExtendFrame(MARGINS{-1}) 后才出 Acrylic。disabled
-        // (省电) 分支跟随 clear：DWMSBT_DISABLE 由上面 set_effects(None) 内部
-        // 处理，ExtendFrame 本身无视觉副作用（帧区早已全透明），保持扩展无害。
-        if let Ok(hwnd) = win.hwnd() {
-            use windows_sys::Win32::Graphics::Dwm::DwmExtendFrameIntoClientArea;
-            // windows-sys 0.59: MARGINS 定义在 UI::Controls，Dwm 模块只引用不重导出
-            use windows_sys::Win32::UI::Controls::MARGINS;
-            let margins = MARGINS {
-                cxLeftWidth: -1,
-                cxRightWidth: -1,
-                cyTopHeight: -1,
-                cyBottomHeight: -1,
-            };
-            // SAFETY: hwnd 来自当前进程自己的浮窗，DwmExtendFrameIntoClientArea
-            // 线程安全（DWM 属性调用，无 UI 线程亲和要求）。
-            let hr = unsafe { DwmExtendFrameIntoClientArea(hwnd.0, &margins) };
-            if hr < 0 {
-                tracing::warn!(hr, "DwmExtendFrameIntoClientArea 失败,Acrylic 可能不显示");
-            }
-        }
-    }
-}
+pub fn apply_floating_window_blur(app: &AppHandle, enabled: bool) {}
 
 /// P2 区域向导：用户选定区域后 apply 该区域的默认 provider 顺序 + 默认
 /// endpoint（MiniMax/Zhipu CN/EN），并把 user_region 标为 Custom

@@ -412,8 +412,11 @@ body[data-hover] #app .card.zenmux-payg .pct {
 /* ── OpenRouter：余额 hover 不变蓝 ──
  * DeepSeek 的余额走 .pct.balance → --c-data-info（蓝），hover 翻蓝。
  * OpenRouter 要求 hover 仍白（跟 ZenMux 一致）。
+ * M28 fix (2026-09-05 audit)：data-provider 存的是 unique_id（副本带 #N），
+ * 精确匹配副本永远不命中 → 按 data-base-provider（JS 同步写入的 base id）
+ * 匹配，本体与副本行为一致。
  */
-body[data-hover] #app .card[data-provider="openrouter"] .pct {
+body[data-hover] #app .card[data-base-provider="openrouter"] .pct {
   color: var(--text-bright) !important;
 }
 
@@ -424,11 +427,12 @@ body[data-hover] #app .card[data-provider="openrouter"] .pct {
  * 注：base 也覆盖（不只 hover）—— 否则 base 蓝 + hover 白会"颜色翻转"
  * 也算变色,违背用户诉求"保持白色就行"。代价:wallet_alert_threshold
  * 低额翻红的逻辑对 tokendance 不生效（被 !important 盖住），接受。
+ * M28 fix：同上，改 data-base-provider 覆盖副本。
  */
-.card[data-provider="tokendance"] .pct {
+.card[data-base-provider="tokendance"] .pct {
   color: var(--text-bright) !important;
 }
-body[data-hover] #app .card[data-provider="tokendance"] .pct {
+body[data-hover] #app .card[data-base-provider="tokendance"] .pct {
   color: var(--text-bright) !important;
 }
 

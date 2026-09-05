@@ -84,6 +84,12 @@ export async function renderRegionSection(container: HTMLElement) {
 
   // ── Apply 按钮：一次 apply 两个设置（前端语言 + 后端区域）──
   const applyBtn = el("button", { class: "primary" }, t("settings.region.apply"));
+  // H-11 fix (2026-09-05 audit)：已应用值改为可变状态，apply 成功后同步
+  // —— 原来闭包捕获渲染时的 currentRegion/currentLocale 恒不更新，用户
+  // cn → global（成功）→ 再切回 cn 时 `selRegion === currentRegion` 短路
+  // 跳过 setRegion，flash"已应用"但后端仍是 global，请求全走国际端点。
+  let appliedRegion = currentRegion;
+  let appliedLocale = currentLocale;
   applyBtn.addEventListener("click", async () => {
     const selLang = (document.querySelector<HTMLInputElement>(
       "input[name=\"ui-language\"]:checked",
@@ -95,9 +101,11 @@ export async function renderRegionSection(container: HTMLElement) {
     try {
       // 并发触发：语言（前端）和区域（后端）独立，互不阻塞
       const tasks: Promise<unknown>[] = [];
-      if (selLang !== currentLocale) tasks.push(setLocale(selLang));
-      if (selRegion !== currentRegion) tasks.push(setRegion(selRegion));
+      if (selLang !== appliedLocale) tasks.push(setLocale(selLang));
+      if (selRegion !== appliedRegion) tasks.push(setRegion(selRegion));
       await Promise.all(tasks);
+      appliedRegion = selRegion;
+      appliedLocale = selLang;
       flash(t("settings.region.applied"));
     } catch (e) {
       flash(t("settings.region.apply_failed", { err: String(e) }), true);

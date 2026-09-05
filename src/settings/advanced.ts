@@ -12,6 +12,14 @@ import type { AppConfig, FieldTriple, ProviderOverrides } from "./types";
 import { apiKeyPlaceholder, cookieHelpNode, cookieLabelText, cookiePlaceholder, loadCredentialStatus } from "./credentials";
 import { t } from "../i18n";
 
+/// H-12 fix：保留已有 tier 上除 count_candidates 外的其它字段（如 `end`），
+/// 避免 merge 覆盖时静默丢弃。
+function tierExtras(existing?: ProviderOverrides["five_hour"]): Record<string, unknown> {
+  if (!existing || typeof existing !== "object") return {};
+  const { count_candidates: _dropped, ...rest } = existing as unknown as Record<string, unknown>;
+  return rest;
+}
+
 export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
   const ov = cfg.schema_overrides ?? {};
   const mm = ov.minimax ?? {
@@ -68,9 +76,32 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
       flash(t("settings.config.schema_parse_failed", { err: String(e) }), true);
       return;
     }
+    // H-12 fix (2026-09-05 audit)：**读改写合并**而非整体替换 —— 原实现
+    // 只构造 minimax/xiaomimimo 两个 key 直接整体覆盖 schema_overrides，
+    // 导入配置带来的其它 provider 条目（以及 minimax.monthly 等未在
+    // textarea 编辑的 tier）每次 flush 都被静默清空。浅合并保留其余 key，
+    // 只覆盖三个 textarea 对应的 tier。
+    let existing: Record<string, ProviderOverrides> = {};
+    try {
+      const { getConfig } = await import("./api");
+      const cfg = await getConfig();
+      existing = (cfg.schema_overrides ?? {}) as Record<string, ProviderOverrides>;
+    } catch {
+      // 读失败退回整体替换（原行为），不阻塞保存
+    }
+    const mmExisting = existing.minimax ?? {};
+    const xmExisting = (existing as Record<string, ProviderOverrides>).xiaomimimo ?? {};
     const overrides: Record<string, ProviderOverrides> = {
-      minimax: { five_hour: { count_candidates: fiveHour }, weekly: { count_candidates: weekly } },
-      xiaomimimo: { five_hour: { count_candidates: [] }, weekly: { count_candidates: [] }, monthly: { count_candidates: monthly } },
+      ...existing,
+      minimax: {
+        ...mmExisting,
+        five_hour: { count_candidates: fiveHour, ...tierExtras(mmExisting.five_hour) },
+        weekly: { count_candidates: weekly, ...tierExtras(mmExisting.weekly) },
+      },
+      xiaomimimo: {
+        ...xmExisting,
+        monthly: { count_candidates: monthly, ...tierExtras(xmExisting.monthly) },
+      },
     };
     try {
       await setSchemaOverrides(overrides);
@@ -82,6 +113,13 @@ export function renderAdvancedSection(container: HTMLElement, cfg: AppConfig) {
   for (const ta of [ta5h, taWeek, taXmMonth]) {
     ta.addEventListener("input", flush);
   }
+  // L-1 fix (2026-09-05 audit)：关窗 / 切后台时尽力 flush 最后一次编辑
+  //（300ms debounce 窗口内关设置窗会丢最后一次输入）。
+  const flushOnExit = () => { flush.flushNow(); };
+  window.addEventListener("beforeunload", flushOnExit);
+  window.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flushOnExit();
+  });
 
   // ── Schema Overrides ──
   container.appendChild(
@@ -367,8 +405,8 @@ async function doImportConfig(file: File) {
       }), true);
       return;
     }
-    const { saveConfig } = await import("./api");
-    await saveConfig(obj.config);
+    const { saveConfigSerialized } = await import("./api");
+    await saveConfigSerialized(obj.config);
     // 注意: extra_instances 单独存 extra_instances.json,不走 saveConfig
     // (PR 1b 设计),import 只覆盖 config 部分。extra_instances 手动添加。
     flash(t("settings.advanced.io_imported", { n: 1 }));

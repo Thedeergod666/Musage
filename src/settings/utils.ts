@@ -171,15 +171,29 @@ export function formatDisplayName(base: string, instanceIndex: number): string {
 export function debounce<T extends (...args: never[]) => unknown>(
   fn: T,
   delay: number,
-): (...args: Parameters<T>) => void {
+): ((...args: Parameters<T>) => void) & { flushNow: () => void } {
   let timer: ReturnType<typeof setTimeout> | null = null;
-  return (...args: Parameters<T>) => {
+  let lastArgs: Parameters<T> | null = null;
+  const wrapped = (...args: Parameters<T>) => {
+    lastArgs = args;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
       timer = null;
-      void fn(...args);
+      const a = lastArgs;
+      lastArgs = null;
+      if (a) void fn(...a);
     }, delay);
   };
+  // L-1 fix (2026-09-05 audit)：flushNow —— 立即执行挂起的尾随调用
+  //（advanced.ts 关窗 / 切后台时兜底 flush 最后一次编辑）。
+  (wrapped as unknown as { flushNow: () => void }).flushNow = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    const a = lastArgs;
+    lastArgs = null;
+    if (a) void fn(...a);
+  };
+  return wrapped as ((...args: Parameters<T>) => void) & { flushNow: () => void };
 }
 
 export function escapeHtml(s: string): string {

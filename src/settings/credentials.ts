@@ -74,98 +74,17 @@ async function loadIdKeyStatus(id: string) {
   }
 }
 
+// L-7 fix (2026-09-05 audit)：删除 legacy tavily/zenmux 专属凭据函数
+//（saveTavilyKey / deleteTavilyKey / copyTavilyKey / saveZenmuxKey /
+// deleteZenmuxKey / copyZenmuxKey / loadTavilyKeyStatus / loadZenmuxKeyStatus）
+// —— 现网统一走 renderCredentialBlock 的 saveCredentialAction /
+// deleteCredentialAction / copyCredentialAction 路径（按钮事件委托），
+// 这些按 provider id 写死的函数自 PR 3 重构后无任何调用方（grep 验证），
+// 留着易被误改（给它加逻辑不生效）。loadIdKeyStatus 保留（被
+// loadCredentialStatus 复用）。
+
 export async function loadTavilyKeyStatus() {
   await loadIdKeyStatus("tavily");
-}
-
-export async function saveTavilyKey() {
-  const input = document.getElementById(
-    "api-key-tavily",
-  ) as HTMLInputElement | null;
-  if (!input) return;
-  const key = input.value.trim();
-  if (!key) {
-    flash(t("credentials.flash_paste_tavily"), true);
-    return;
-  }
-  try {
-    await setSourceCredential("tavily", key);
-    input.value = "";
-    await loadTavilyKeyStatus();
-    flash(t("credentials.flash_saved_key", { name: t("provider.tavily.name") }));
-    const { refreshNow } = await import("./api");
-    await refreshNow();
-  } catch (e) {
-    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
-  }
-}
-
-export async function deleteTavilyKey() {
-  if (!(await confirmInApp(t("credentials.confirm_delete_key_tavily")))) return;
-  await deleteSourceCredential("tavily");
-  await loadTavilyKeyStatus();
-  flash(t("credentials.flash_deleted_tavily"));
-}
-
-export async function copyTavilyKey() {
-  try {
-    const key = await getSourceCredential("tavily");
-    if (!key) {
-      flash(t("credentials.flash_unset_tavily"), true);
-      return;
-    }
-    await navigator.clipboard.writeText(key);
-    flash(t("credentials.flash_copy_ok_tavily"));
-  } catch (e) {
-    flash(t("credentials.flash_copy_failed", { err: String(e) }), true);
-  }
-}
-
-export async function loadZenmuxKeyStatus() {
-  await loadIdKeyStatus("zenmux");
-}
-
-export async function saveZenmuxKey() {
-  const input = document.getElementById(
-    "api-key-zenmux",
-  ) as HTMLInputElement | null;
-  if (!input) return;
-  const key = input.value.trim();
-  if (!key) {
-    flash(t("credentials.flash_paste_zenmux"), true);
-    return;
-  }
-  try {
-    await setSourceCredential("zenmux", key);
-    input.value = "";
-    await loadZenmuxKeyStatus();
-    flash(t("credentials.flash_saved_key", { name: t("provider.zenmux.name") }));
-    const { refreshNow } = await import("./api");
-    await refreshNow();
-  } catch (e) {
-    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
-  }
-}
-
-export async function deleteZenmuxKey() {
-  if (!(await confirmInApp(t("credentials.confirm_delete_key_zenmux")))) return;
-  await deleteSourceCredential("zenmux");
-  await loadZenmuxKeyStatus();
-  flash(t("credentials.flash_deleted_zenmux"));
-}
-
-export async function copyZenmuxKey() {
-  try {
-    const key = await getSourceCredential("zenmux");
-    if (!key) {
-      flash(t("credentials.flash_unset_zenmux"), true);
-      return;
-    }
-    await navigator.clipboard.writeText(key);
-    flash(t("credentials.flash_copy_ok_zenmux"));
-  } catch (e) {
-    flash(t("credentials.flash_copy_failed", { err: String(e) }), true);
-  }
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -754,8 +673,12 @@ export async function saveCredentialAction(id: string, action: "key" | "cookie",
   try {
     // 多鉴权 source 必传 field hint，否则两个输入都落 api_key。
     // 单鉴权 source（auth_kind=api_key / cookie）忽略 field 走默认也安全。
-    await setSourceCredential(id, value, action === "key" ? "api_key" : "cookie");
+    //
+    // L-4 fix (2026-09-05 audit)：发起 IPC 前先取值并清空输入框 —— 保存慢
+    // （refreshNow 排队）时用户键入的新字符会被 `input.value = ""` 静默抹掉。
+    // 失败路径把原值回填。
     input.value = "";
+    await setSourceCredential(id, value, action === "key" ? "api_key" : "cookie");
     // H4 fix: 高级 tab 的 status 元素 id 拼了 `-adv` 后缀，主面板没有；
     // 这里必须两个后缀都更新，否则高级 tab 保存后状态元素停留在 "未保存"。
     // (与 line 508-515 的 loadCredentialStatus 同样的双后缀循环)
@@ -770,6 +693,8 @@ export async function saveCredentialAction(id: string, action: "key" | "cookie",
     flash(t("credentials.flash_saved_generic", { name: await credentialProviderName(id) }));
     await refreshNow();
   } catch (e) {
+    // L-4 fix：失败回填用户原输入（IPC 发起前已提前清空）
+    input.value = value;
     flash(t("credentials.flash_save_failed", { err: String(e) }), true);
   }
 }
@@ -799,10 +724,11 @@ async function saveVolcengineTwoFields(id: string, advInputId?: string) {
   try {
     // 顺序无所谓：set_source_credential 是单字段写入，save_credential_for_id
     // 用 if-let 链保留未触碰字段（v0.2.5 fix）。
-    await setSourceCredential(id, ak, "api_key");
-    await setSourceCredential(id, sk, "secret_key");
+    // L-4 fix (2026-09-05 audit)：同上 —— IPC 发起前清空，失败回填。
     akInput.value = "";
     skInput.value = "";
+    await setSourceCredential(id, ak, "api_key");
+    await setSourceCredential(id, sk, "secret_key");
     // 双 status 徽章:主面板 + 高级 tab 都要刷
     for (const suffix of ["", "-adv"]) {
       const akStatus = document.getElementById(`api-key-status-${id}${suffix}`);
@@ -819,6 +745,9 @@ async function saveVolcengineTwoFields(id: string, advInputId?: string) {
     flash(t("credentials.flash_saved_generic", { name: await credentialProviderName(id) }));
     await refreshNow();
   } catch (e) {
+    // L-4 fix：失败回填用户原输入（前面已提前清空）
+    akInput.value = ak;
+    skInput.value = sk;
     flash(t("credentials.flash_save_failed", { err: String(e) }), true);
   }
 }

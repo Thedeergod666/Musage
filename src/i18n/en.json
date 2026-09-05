@@ -93,7 +93,8 @@
     "err_retry_in_minutes": "Next auto-retry in ~{mins}m",
     "err_btn_copy": "📋 Copy error",
     "err_btn_logs": "📋 Logs",
-    "err_btn_copied": "Error copied to clipboard"
+    "err_btn_copied": "Error copied to clipboard",
+    "copy_failed": "Copy failed"
   },
   "settings": {
     "init_failed": "Init failed: {err}",
@@ -535,6 +536,7 @@
     "zenmux_base_url_label": "Custom API URL (optional)",
     "zenmux_base_url_placeholder": "Default https://zenmux.ai/api/v1/management/payg/balance",
     "zenmux_base_url_help": "Default uses mode-selected endpoint (PAYG → /payg/balance, subscription → /subscription/detail). Only change for self-hosting / custom path; empty for default.",
+    "zenmux_base_url_invalid": "URL must start with https://",
     "zenmux_mode_label": "View mode",
     "zenmux_mode_payg": "Wallet balance (PAYG, default)",
     "zenmux_mode_subscription": "Subscription usage (5h / 7d)",

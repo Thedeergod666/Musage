@@ -141,9 +141,12 @@ function lookupInDict(dict: Record<string, any>, key: string): any {
  * 时用错 locale。约定 listener 内不得调 setLocale；守卫是兜底。
  */
 let _setLocaleInFlight = false;
+// L-i18n-5 fix：重入期间被丢弃的最近目标 locale，finally 里收敛。
+let _pendingLocale: Locale | null = null;
 export const setLocale = async (l: Locale): Promise<void> => {
   if (_setLocaleInFlight) {
-    if (dev) console.debug("[i18n] setLocale 重入被忽略", l);
+    _pendingLocale = l;
+    if (dev) console.debug("[i18n] setLocale 重入，挂起到本轮结束后收敛", l);
     return;
   }
   if (!SUPPORTED.includes(l)) {
@@ -183,8 +186,18 @@ export const setLocale = async (l: Locale): Promise<void> => {
       try { fn(l); } catch (e) { console.error("[i18n] listener error", e); }
     });
   } finally {
-    // 任何路径（含回滚早退 / loadLocale 抛错）都必须复位重入守卫
+    // 任何路径（含回滚早退 / loadLocale 抛错）都必须复位重入守卫。
+    // L-i18n-5 fix (2026-09-05 audit)：in-flight 窗口内若有被守卫丢弃的
+    // 请求，且其目标 locale 与当前不同（两窗口快速反向切换），重跑一轮
+    // setLocale 收敛到最新目标 —— 原来直接丢弃，部分窗口 UI 停在旧 locale。
+    const pending = _pendingLocale;
     _setLocaleInFlight = false;
+    if (pending != null && pending !== current) {
+      _pendingLocale = null;
+      void setLocale(pending);
+    } else {
+      _pendingLocale = null;
+    }
   }
 };
 

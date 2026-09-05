@@ -58,10 +58,13 @@ function renderRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
   );
   select.value = current;
   // C3 fix: 即时生效 —— change → set_minimax_region（后端落盘 + emit + refresh）
+  // M33 fix (2026-09-05 audit): IPC 失败回滚到改前值。
   select.addEventListener("change", () => {
+    const previous = select.value;
     const v = select.value as "cn" | "en";
     if (v !== "cn" && v !== "en") return;
     void setMinimaxRegion(v).catch((e) => {
+      select.value = previous;
       flash(t("settings.app.switch_failed", { err: String(e) }), true);
     });
   });
@@ -82,10 +85,13 @@ function renderXiaomiRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElemen
   select.appendChild(el("option", { value: "sgp" }, t("extras.xiaomi_region_sgp")));
   select.appendChild(el("option", { value: "ams" }, t("extras.xiaomi_region_ams")));
   select.value = current;
+  // M33 fix (2026-09-05 audit): IPC 失败回滚到改前值。
   select.addEventListener("change", () => {
+    const previous = select.value;
     const v = select.value as "cn" | "sgp" | "ams";
     if (v !== "cn" && v !== "sgp" && v !== "ams") return;
     void setXiaomiRegion(v).catch((e) => {
+      select.value = previous;
       flash(t("settings.app.switch_failed", { err: String(e) }), true);
     });
   });
@@ -107,8 +113,11 @@ function renderConciseModeCheckbox(_meta: SourceMeta, cfg: AppConfig): HTMLEleme
     "data-id": "tavily-concise-mode",
   }) as HTMLInputElement;
   cb.checked = checked;
+  // M33 fix (2026-09-05 audit): IPC 失败回滚。
   cb.addEventListener("change", () => {
+    const previous = cb.checked;
     void setTavilyConciseMode(cb.checked).catch((e) => {
+      cb.checked = previous;
       flash(t("settings.app.switch_failed", { err: String(e) }), true);
     });
   });
@@ -151,8 +160,19 @@ function renderBaseUrlInput(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
   }) as HTMLInputElement;
   input.value = value;
   // C3 fix: input 失焦后落盘 + refresh（避免每个按键就 IPC）
+  // M33 fix (2026-09-05 audit): IPC 失败回滚到改前值。
   input.addEventListener("change", () => {
-    void setZenmuxBaseUrl(input.value.trim()).catch((e) => {
+    const previous = input.value;
+    const v = input.value.trim();
+    // L-3 fix (2026-09-05 audit)：前端先做同款 https:// 前缀校验 —— 后端只收
+    // https://，`http://` 直送 IPC 只能收到晦涩后端报错。
+    if (v && !v.startsWith("https://")) {
+      input.value = previous;
+      flash(t("extras.zenmux_base_url_invalid"), true);
+      return;
+    }
+    void setZenmuxBaseUrl(v).catch((e) => {
+      input.value = previous;
       flash(t("settings.app.switch_failed", { err: String(e) }), true);
     });
   });
@@ -177,10 +197,13 @@ function renderZenmuxMode(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
   select.appendChild(el("option", { value: "payg" }, t("extras.zenmux_mode_payg")));
   select.appendChild(el("option", { value: "subscription" }, t("extras.zenmux_mode_subscription")));
   select.value = currentMode;
+  // M33 fix (2026-09-05 audit): IPC 失败回滚到改前值。
   select.addEventListener("change", () => {
+    const previous = select.value;
     const v = select.value as "payg" | "subscription";
     if (v !== "payg" && v !== "subscription") return;
     void setZenmuxMode(v).catch((e) => {
+      select.value = previous;
       flash(t("settings.app.switch_failed", { err: String(e) }), true);
     });
   });
@@ -191,8 +214,11 @@ function renderZenmuxMode(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
     "data-id": "zenmux-payg-concise",
   }) as HTMLInputElement;
   cb.checked = cfg.zenmux_payg_concise_mode ?? true;
+  // M33 fix (2026-09-05 audit): IPC 失败回滚。
   cb.addEventListener("change", () => {
+    const previous = cb.checked;
     void setZenmuxPaygConcise(cb.checked).catch((e) => {
+      cb.checked = previous;
       flash(t("settings.app.switch_failed", { err: String(e) }), true);
     });
   });
@@ -251,10 +277,13 @@ function renderZhipuRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElement
   select.appendChild(el("option", { value: "cn" }, t("extras.zhipu_region_cn")));
   select.appendChild(el("option", { value: "en" }, t("extras.zhipu_region_en")));
   select.value = current;
+  // M33 fix (2026-09-05 audit): IPC 失败回滚到改前值。
   select.addEventListener("change", () => {
+    const previous = select.value;
     const v = select.value as "cn" | "en";
     if (v !== "cn" && v !== "en") return;
     void setZhipuRegion(v).catch((e) => {
+      select.value = previous;
       flash(t("settings.app.switch_failed", { err: String(e) }), true);
     });
   });

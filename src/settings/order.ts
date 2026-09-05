@@ -387,27 +387,29 @@ function onDragMouseUp(e: MouseEvent) {
     // suppressRebuild：防止 main.ts 的 config-changed 监听器用后端旧
     // config 覆盖我们的乐观更新（bug #3 的卡片拖拽侧）。
     suppressRebuild();
+    // M29 fix (2026-09-05 audit)：先捕获 id —— onDragMouseUp 末尾会把
+    // dragSrcId 置 null，而本 IIFE 在 setProviderEnabled 处挂起后控制权
+    // 返回，catch/flash 再读 dragSrcId 已是 null → 回滚失效 + flash "null"。
+    const id = dragSrcId;
     void (async () => {
       try {
-        await setProviderEnabled(dragSrcId!, willBeEnabled);
+        await setProviderEnabled(id, willBeEnabled);
         await setProviderOrder(currentProviderOrder);
         flash(
           willBeEnabled
-            ? t("settings.order.flash_moved_to_floating", { id: dragSrcId! })
-            : t("settings.order.flash_hidden", { id: dragSrcId! }),
+            ? t("settings.order.flash_moved_to_floating", { id })
+            : t("settings.order.flash_hidden", { id }),
         );
       } catch (e) {
         // IPC 失败 → 回滚 orderCfg + DOM（bug #4）
-        if (orderCfg?.providers?.[dragSrcId!]) {
-          orderCfg.providers[dragSrcId!] = {
-            ...orderCfg.providers[dragSrcId!],
+        if (orderCfg?.providers?.[id]) {
+          orderCfg.providers[id] = {
+            ...orderCfg.providers[id],
             enabled: wasEnabled,
           };
         }
-        if (dragSrcId) {
-          const cb = document.getElementById(`enabled-${dragSrcId}`) as HTMLInputElement | null;
-          if (cb) cb.checked = wasEnabled;
-        }
+        const cb = document.getElementById(`enabled-${id}`) as HTMLInputElement | null;
+        if (cb) cb.checked = wasEnabled;
         if (listRef) buildOrderItems(listRef);
         refreshPosLabels();
         flash(t("settings.order.flash_move_failed", { err: String(e) }), true);

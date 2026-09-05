@@ -37,6 +37,19 @@ export async function saveConfig(cfg: AppConfig): Promise<void> {
   await invoke("save_config", { cfg });
 }
 
+// M30 fix (2026-09-05 audit)：saveConfig 是"getConfig 快照整体替换"语义，
+// 两个面板并发 读→改→写 时后写者会把前者的修改回滚（改 interval 的同时
+// 拖浮窗 → floating_x 被旧快照写回）。这里加**进程内保存队列**串行化所有
+// 全量保存：后发起的保存基于最新一次保存完成后的快照，消除面板间覆盖。
+// （根治是后端补单字段 command，见审查报告 M30 建议一。）
+let saveChain: Promise<unknown> = Promise.resolve();
+
+export function saveConfigSerialized(cfg: AppConfig): Promise<void> {
+  const task = saveChain.then(() => saveConfig(cfg));
+  saveChain = task.catch(() => {});
+  return task;
+}
+
 // ── 凭据（id-based，新 API，registry-driven）─────────────────────
 
 export async function listSources(): Promise<SourceMeta[]> {
@@ -280,11 +293,9 @@ export interface UpdateExtraInstanceRequest {
   api_cookie?: string;
   custom?: Omit<CustomSourceSpec, "id" | "created_at">;
 }
-export async function updateExtraInstance(
-  req: UpdateExtraInstanceRequest,
-): Promise<ExtraInstance> {
-  return invoke<ExtraInstance>("update_extra_instance", { req });
-}
+// L-7 fix (2026-09-05 audit)：updateExtraInstance 无调用方（现网表单走
+// add + delete 两段式），删除避免误用。UpdateExtraInstanceRequest 类型
+// 保留（后端 IPC 契约的镜像声明）。
 
 /** PR 1b：删除一个 extra instance（按 id） */
 export async function deleteExtraInstance(id: string): Promise<void> {

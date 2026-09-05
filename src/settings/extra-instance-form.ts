@@ -39,11 +39,26 @@ const ACCENT_PALETTE = [
   "#d97706",
 ];
 
+/** M35 fix (2026-09-05 audit)：防重入 —— openAddExtraInstanceModal 是 async
+ * （内部先 await listPickerProviders），IPC 往返期间按钮可再点，两个 modal
+ * 叠放后重复 DOM id（#ei-provider 等）让查询串台。 */
+let addModalOpening = false;
+
 /** 「+ 添加新来源」按钮绑的事件入口
  *
  * @param preselectProviderId  可选 —— 复制按钮调用时传入，让 picker 默认选中当前 provider
  */
 export async function openAddExtraInstanceModal(preselectProviderId?: string): Promise<void> {
+  if (addModalOpening) return;
+  addModalOpening = true;
+  try {
+    await openAddExtraInstanceModalInner(preselectProviderId);
+  } finally {
+    addModalOpening = false;
+  }
+}
+
+async function openAddExtraInstanceModalInner(preselectProviderId?: string): Promise<void> {
   // 1. 拉 provider picker 数据
   let providers: PickerProvider[];
   try {
@@ -352,7 +367,15 @@ function renderCustomFields(host: HTMLElement): void {
 }
 
 function renderCustomPresetFields(preset: string): void {
-  const host = document.getElementById("cs-dynamic-fields");
+  // M35 fix (2026-09-05 audit)：不再走 document 级 getElementById —— 双
+  // modal 堆叠时命中第一个 modal 的 host，第二个 modal 切 preset 字段
+  // 渲染进第一个。改走 document.activeElement 所在 dialog 的 scoped 查找
+  // （事件源所在 <dialog>），兜底全文档第一个。
+  const openDialogs = Array.from(document.querySelectorAll<HTMLDialogElement>("dialog[open]"));
+  const activeDialog = openDialogs.length > 0 ? openDialogs[openDialogs.length - 1] : null;
+  const host =
+    (activeDialog?.querySelector<HTMLElement>("#cs-dynamic-fields") ??
+      document.getElementById("cs-dynamic-fields"));
   if (!host) return;
   host.innerHTML = "";
 
@@ -486,6 +509,14 @@ async function submitBuiltin(body: HTMLElement, providerId: string): Promise<boo
     flash(t("extra.err.api_key_required"), true);
     return false;
   }
+  // L-6 fix (2026-09-05 audit)：api_key_with_secret（火山）分支要求 AK+SK
+  // 都必填 —— #ei-secret-key 只在该 auth_kind 渲染。此前 SK 选填，AK-only
+  // 实例落盘后正式拉取必然签名失败（主面板同场景是两者必填）。
+  const secretRequired = body.querySelector("#ei-secret-key") != null;
+  if (secretRequired && !(hasApiKey && hasSecret)) {
+    flash(t("extra.err.api_key_required"), true);
+    return false;
+  }
 
   // 测试连接
   try {
@@ -516,7 +547,20 @@ async function submitBuiltin(body: HTMLElement, providerId: string): Promise<boo
     // AccessKey 落 api_key 槽, SecretAccessKey 走独立 secret_key 槽 (2-step:
     // add_extra_instance req 不带 secret_key, 用 set_source_credential 补)。
     if (hasSecret) {
-      await setSourceCredential(inst.api_key_ref, secretKeyVal, "secret_key");
+      try {
+        await setSourceCredential(inst.api_key_ref, secretKeyVal, "secret_key");
+      } catch (e) {
+        // M34 fix (2026-09-05 audit)：第二步失败**回滚第一步**（删除刚建的
+        // 实例）—— 原实现实例已落盘、SK 未写入，用户点"保存"重试会再建一个
+        // 副本（volcengine_ark#3），产生重复实例。
+        try {
+          const { deleteExtraInstance } = await import("./api");
+          await deleteExtraInstance(inst.id);
+        } catch (delErr) {
+          console.error("rollback addExtraInstance failed", delErr);
+        }
+        throw e;
+      }
     }
     flash(t("extra.added", { id: inst.api_key_ref }));
     await rebuildProvidersSection();

@@ -93,7 +93,8 @@
     "err_retry_in_minutes": "下次自动重试约 {mins} 分钟后",
     "err_btn_copy": "📋 复制错误",
     "err_btn_logs": "📋 日志",
-    "err_btn_copied": "错误已复制到剪贴板"
+    "err_btn_copied": "错误已复制到剪贴板",
+    "copy_failed": "复制失败"
   },
   "settings": {
     "init_failed": "初始化失败: {err}",
@@ -535,6 +536,7 @@
     "zenmux_base_url_label": "自定义 API URL（可选）",
     "zenmux_base_url_placeholder": "默认 https://zenmux.ai/api/v1/management/payg/balance",
     "zenmux_base_url_help": "默认走 mode 选的端点（PAYG → /payg/balance，订阅 → /subscription/detail）。自部署 / 改了路径才需要改；留空用默认。",
+    "zenmux_base_url_invalid": "URL 必须以 https:// 开头",
     "zenmux_mode_label": "查看模式",
     "zenmux_mode_payg": "钱包余额（PAYG，默认）",
     "zenmux_mode_subscription": "订阅用量（5h / 7d）",

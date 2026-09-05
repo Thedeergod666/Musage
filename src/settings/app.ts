@@ -7,7 +7,7 @@
 // - 「测试连接」按钮（拉一次所有 source + 摘要）
 
 import { el, flash } from "./utils";
-import { setTrayIconStyle, setTraySource, setTrayIconColor, getConfig, saveConfig } from "./api";
+import { setTrayIconStyle, setTraySource, setTrayIconColor, getConfig, saveConfigSerialized } from "./api";
 import { testConn } from "./test";
 import { t } from "../i18n";
 import type { AppConfig } from "./types";
@@ -38,7 +38,7 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
     try {
       const latest = await getConfig();
       latest.refresh_interval_secs = secs;
-      await saveConfig(latest);
+      await saveConfigSerialized(latest);
       cfg.refresh_interval_secs = secs;
       flash(t("settings.app.refresh_interval_saved", { secs: String(secs) }));
     } catch (e) {
@@ -60,7 +60,7 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
     try {
       const latest = await getConfig();
       latest.autostart = target;
-      await saveConfig(latest);
+      await saveConfigSerialized(latest);
       cfg.autostart = target;
       flash(target ? t("settings.app.autostart_enabled") : t("settings.app.autostart_disabled"));
     } catch (e) {
@@ -71,7 +71,10 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
   });
 
   // ── 托盘图标样式 (3 选 1) ──
-  const currentStyle = cfg.tray_icon_style ?? "percent";
+  // M32 fix (2026-09-05 audit)：currentStyle 改可变量，成功后同步 —— 原来
+  // 是渲染时快照，第一次切换成功、第二次失败会回滚到**初始**值而不是最近
+  // 成功值（floating.ts 的 M19 模式，此处漏了）。
+  let currentStyle = cfg.tray_icon_style ?? "percent";
   const trayOptions: Array<{ value: "percent" | "bars" | "logo"; title: string; desc: string }> = [
     { value: "percent", title: t("settings.app.tray_options.percent.title"), desc: t("settings.app.tray_options.percent.desc") },
     { value: "bars", title: t("settings.app.tray_options.bars.title"), desc: t("settings.app.tray_options.bars.desc") },
@@ -88,10 +91,13 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
     radio.addEventListener("change", () => {
       if (!radio.checked) return;
       void setTrayIconStyle(opt.value)
-        .then(() => flash(t("settings.app.tray_style_changed", { name: opt.title })))
+        .then(() => {
+          currentStyle = opt.value; // M32 fix：只在成功后更新最近成功值
+          flash(t("settings.app.tray_style_changed", { name: opt.title }));
+        })
         .catch((e) => {
           flash(t("settings.app.tray_style_failed", { err: String(e) }), true);
-          // 回滚所有 radio 到 cfg 的旧值
+          // 回滚所有 radio 到最近成功值
           const oldRadio = document.querySelector<HTMLInputElement>(
             `input[name="tray-style"][value="${currentStyle}"]`,
           );
@@ -123,7 +129,8 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
     { value: "zenmux", label: t("settings.app.tray_source.options.zenmux") },
     { value: "tokendance", label: t("settings.app.tray_source.options.tokendance") },
   ];
-  const currentSource = cfg.tray_source ?? "minimax";
+  // M32 fix (2026-09-05 audit)：同 tray-style，最近成功值可变 + 成功后更新。
+  let currentSource = cfg.tray_source ?? "minimax";
   const traySourceSelect = el("select", { id: "tray-source" }) as HTMLSelectElement;
   for (const opt of traySourceOptions) {
     const o = el("option", { value: opt.value }, opt.label) as HTMLOptionElement;
@@ -133,13 +140,14 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
   traySourceSelect.addEventListener("change", () => {
     const v = traySourceSelect.value;
     void setTraySource(v)
-      .then(() =>
+      .then(() => {
+        currentSource = v; // M32 fix
         flash(
           t("settings.app.tray_source_changed", {
             name: traySourceOptions.find((o) => o.value === v)?.label ?? v,
           }),
-        ),
-      )
+        );
+      })
       .catch((e) => {
         flash(t("settings.app.tray_source_failed", { err: String(e) }), true);
         traySourceSelect.value = currentSource;

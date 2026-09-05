@@ -26,6 +26,10 @@ import claudeLogo from "./assets/claude-logo.svg?url";
 import anysearchLogo from "./assets/anysearch-logo.svg?url";
 import volcengineArkLogo from "./assets/volcengine-ark-logo.svg?url";
 import tokendanceLogo from "./assets/tokendance-logo.svg?url";
+// M22 fix (2026-09-05 audit)：styles.css 的空态引导块依赖 tokens.css 的
+// --sp-*/--fg-* 变量，但 tokens.css 此前只被 settings.ts 导入 —— 浮窗首启
+// 空态 gap/padding/color 全部失效。必须在 styles.css 之前加载。
+import "./tokens.css";
 import "./styles.css";
 
 /// 静态映射：provider id → 官网 logo + 显示名 + accent 色
@@ -76,11 +80,21 @@ function fallbackLogo(name: string, accent: string): string {
   // D8-20: Array.from 按 codepoint 切——emoji / 组合字符是 surrogate pair，
   // charAt(0) 只取高位代理，渲染成 tofu。
   const ch = Array.from(name.trim())[0]?.toUpperCase() || "?";
+  // L-7 fix (2026-09-05 audit)：accent 转义 + 白名单校验 —— accent 来自
+  // custom source 后端透传（用户可控），含 `"` 可闭合 SVG 属性注入标记。
+  // <img> 加载的 SVG 不执行脚本，实际面是渲染破坏，但属于 XSS 纵深链，
+  // 补齐为非 hex 色值回退 #888 + escapeXml。
+  const safeAccent = escapeXml(sanitizeAccent(accent));
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 56 56">
-    <rect width="56" height="56" rx="12" fill="${accent}"/>
+    <rect width="56" height="56" rx="12" fill="${safeAccent}"/>
     <text x="28" y="38" text-anchor="middle" font-family="-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif" font-size="30" font-weight="700" fill="#fff">${escapeXml(ch)}</text>
   </svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+}
+
+/// L-7 fix：accent 白名单 —— 3/4/6/8 位 hex，非法回退 #888。
+function sanitizeAccent(accent: string): string {
+  return /^#[0-9a-fA-F]{3,8}$/.test(accent) ? accent : "#888";
 }
 
 function escapeXml(s: string): string {
@@ -498,10 +512,18 @@ function rowsForRender(p: ProviderSnapshot): QuotaRow[] {
     // ZenMux PAYG 简洁模式：只保留余额行，隐藏「充值 / 奖励」细分。
     // 检测：PAYG 模式第一行 remaining 字段非空且 utilization 为空；
     // subscription 模式第一行 utilization 非空（不受此 toggle 影响）。
-    const main = p.rows.find((r) => r.remaining != null && r.utilization == null);
+    // L-9 fix (2026-09-05 audit)：与 updateCard 的 PAYG 判定共用同一个
+    // helper —— 原来这里用 `rows.find`、那边只看 `rows[0]`，余额行不在
+    // 首位时两处口径分叉，卡片漏加 `.zenmux-payg` 类。
+    const main = pickZenmuxPaygRow(p);
     return main ? [main] : p.rows;
   }
   return p.rows;
+}
+
+/// L-9 fix (2026-09-05 audit)：ZenMux PAYG 余额行的唯一判定入口。
+function pickZenmuxPaygRow(p: ProviderSnapshot): QuotaRow | undefined {
+  return p.rows.find((r) => r.remaining != null && r.utilization == null);
 }
 
 /// 自适应高度：把 #app 的实际内容高度发给 Rust，让浮窗 resize 上去。
@@ -544,8 +566,10 @@ let userResizedAt = 0;
 const USER_RESIZE_PROTECT_MS = 800;
 let lastFitContentH = -1;
 let lastFitWindowH = -1;     // 我们刚刚 set_size 出去的目标窗口高（已按 Rust 端 [100,2400] 钳位，回声比对用）
+let lastFitAt = 0;           // H-10 fix：最后一次 fit 发起时间，回声判定的时间窗
 let observerInstalled = false;
 let observerBusy = false;
+let startupFloorApplied = false; // M27 fix：启动下限只用于第一次 fit
 
 /// 缩窗防抖：provider 出错时 err-card 塌成矮 err-msg（无 lastGood 兜底），
 /// 内容高度骤降；但下一个 snapshot（恢复 / 重试）内容又涨回来。直接缩窗会
@@ -603,7 +627,15 @@ async function applyFitResize(target: number): Promise<void> {
   // 窗口高度作为下限。这覆盖了"重启后 geom_persister 把窗口恢复到非
   // 默认尺寸但 listener 还没触发过"的场景 —— 不写这一步，userLastManualH
   // 一直为 0，重启后第一次错误事件仍会把窗口钳到 100。
-  if (userLastManualH === 0) userLastManualH = window.innerHeight;
+  //
+  // M27 fix (2026-09-05 audit)：启动下限改为**一次性**（startupFloorApplied）
+  // —— 原来把恢复高度永久写进 userLastManualH，跨会话内容变矮后（比如删了
+  // 3 个 provider）每次 fit 都被旧高度托底，底部永久留白。首次 fit 落地后
+  // 即释放；之后只有**真实用户拖动**（resized 监听）才会再设下限。
+  if (!startupFloorApplied) {
+    startupFloorApplied = true;
+    if (userLastManualH === 0) target = Math.max(target, window.innerHeight);
+  }
   if (Math.abs(window.innerHeight - target) <= 1) return;
   // 尊重用户手动拖动的高度：缩窗不能比用户拖过的还矮。
   // 拖到 130 → provider 出错 contentH=50 → target=50 → 提到 130，
@@ -611,6 +643,7 @@ async function applyFitResize(target: number): Promise<void> {
   // Grow 不受此约束（Math.max 不影响更大的值）。
   target = Math.max(target, userLastManualH);
   lastFitWindowH = clampWindowH(target);
+  lastFitAt = Date.now();
   try {
     await invoke("resize_floating_window", { height: target });
   } catch (e) {
@@ -619,6 +652,18 @@ async function applyFitResize(target: number): Promise<void> {
 }
 
 async function commitPendingShrink(): Promise<void> {
+  // M25 fix (2026-09-05 audit)：observer tick 进行中（await rAF / await
+  // applyFitResize）时顺延本防抖回调 —— 原实现无互斥，两条 resize IPC
+  // 并发在飞且到达顺序不定，先到的回声被误判为用户拖动，冻结 auto-fit
+  // 并把 userLastManualH 写成错误值。
+  if (observerBusy) {
+    if (pendingShrinkTimer !== null) clearTimeout(pendingShrinkTimer);
+    pendingShrinkTimer = window.setTimeout(() => {
+      pendingShrinkTimer = null;
+      void commitPendingShrink();
+    }, 100);
+    return;
+  }
   // 防抖到期：重新测一次，落地**当前**实测高度。
   // 不沿用挂起时的 pendingShrinkTarget —— 防抖期内 content 可能已回升
   // （err-card 恢复成真数据卡），直接缩到旧目标会过矮。重测拿当下值，
@@ -741,8 +786,24 @@ function measureContentHeight(appEl: HTMLElement): number {
     return pos !== "fixed" && pos !== "absolute";
   });
   if (children.length === 0) return padTop + padBottom;
+  // M24 fix (2026-09-05 audit)：跳过 `margin-top: auto` 的尾部弹性元素
+  // （.foot footer hint）—— #app 是 height:100% flex column，auto margin
+  // 把它推到窗口底，被当成 lastEl 时"首顶→末底"跨度恒等于窗口高，
+  // fit 命中稳态分支 → 删内容后浮窗永不缩窗。
+  let lastEl = children[children.length - 1];
+  for (let i = children.length - 1; i > 0; i--) {
+    const mt = getComputedStyle(children[i]).marginTop;
+    if (mt !== "auto") {
+      lastEl = children[i];
+      break;
+    }
+    // 末元素是 auto-margin → 继续向前找（全部 auto 的极端情况退回首个）
+    if (i - 1 === 0) {
+      lastEl = children[0];
+      break;
+    }
+  }
   const firstEl = children[0];
-  const lastEl = children[children.length - 1];
   // offsetTop/offsetHeight 是布局坐标，与 scroll/transform/合成层无关（见上方
   // 函数注释）。getBoundingClientRect() 在滚动合成层下漂移 -> fit 反馈环 -> 浮窗缩一行。
   const firstTop = firstEl.offsetTop;
@@ -832,6 +893,11 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
   // 副本的 unique_id 带 #N 后缀（"deepseek#2"），PROVIDER_META 只按
   // base id（"deepseek"）索引。剥离 #N 后缀再查 logo/name/accent。
   const baseId = id.replace(/#\d+$/, "");
+  // M28 fix (2026-09-05 audit)：给卡片同步写 base provider，styles.css 里
+  // `[data-provider="tokendance"]` 等按 base 匹配的规则改用
+  // `[data-base-provider=…]` —— data-provider 是 unique_id，副本（#N）
+  // 永远不命中，副本余额行 hover 翻蓝与本体不一致。
+  card.dataset.baseProvider = baseId;
   // 智谱 GLM 用 source_display_name 二次路由：CN="智谱 GLM" / EN="Z.ai"
   // 让两张 logo（紫色渐变 vs z.ai 官方）按区域切换。
   // 智谱 GLM 两个区域共用 source_id "zhipu"；只有 EN 区（Z.ai）
@@ -847,12 +913,14 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
   const meta = builtinMeta ?? {
     name: p.display_name ?? p.source_display_name ?? id,
     logo: "",
-    accent: p.accent ?? "#888",
+    accent: sanitizeAccent(p.accent ?? "#888"),
   };
   const logoSrc = meta.logo || fallbackLogo(meta.name, meta.accent);
   const logo = title.querySelector<HTMLImageElement>(".card-logo")!;
   const name = title.querySelector<HTMLElement>(".card-name")!;
-  if (logo.src !== logoSrc) logo.src = logoSrc;
+  // L-6 fix (2026-09-05 audit)：比较 getAttribute("src")（字面值）而非
+  // .src（IDL 属性返回绝对 URL）—— 原比较恒 true，每次 render 重设 src。
+  if (logo.getAttribute("src") !== logoSrc) logo.src = logoSrc;
   logo.alt = meta.name;
   name.textContent = meta.name;
 
@@ -872,7 +940,11 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
   // subscription 模式第 1 行有 utilization → 不加 class，保留 MiniMax-style。
   // P2 audit fix: 副本 (zenmux#2) 用 baseId 匹配 (同 rowsForRender)。
   if (baseId === "zenmux" && p.success) {
-    const isPayg = p.rows[0]?.remaining != null && p.rows[0]?.utilization == null;
+    // L-9 fix (2026-09-05 audit)：用统一的 pickZenmuxPaygRow 判定（见
+    // rowsForRender 同一 helper），不再只看 rows[0]。
+    const paygRow = pickZenmuxPaygRow(p);
+    const isPayg =
+      paygRow != null && p.rows[0] === paygRow;
     card.classList.toggle("zenmux-payg", isPayg);
   } else {
     card.classList.remove("zenmux-payg");
@@ -890,9 +962,11 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
     // 否则 contentFingerprint 算出来的"可见结构"就跟实际 DOM 脱节。
     if (isTransientError(kind) && good) {
       card.classList.remove("err-card");
-      card.classList.forEach((c) => {
-        if (c.startsWith("err-") && c !== "err-card") card.classList.remove(c);
-      });
+      // L-1 fix (2026-09-05 audit)：先快照再删 —— DOMTokenList 迭代是活的，
+      // 边遍历边删会跳过下一个，err-<kind> 残留累积。
+      [...card.classList]
+        .filter((c) => c.startsWith("err-") && c !== "err-card")
+        .forEach((c) => card.classList.remove(c));
       const headLabel = card.querySelector<HTMLElement>(".err-label");
       if (headLabel) headLabel.remove();
       card.dataset.stale = "1";
@@ -980,9 +1054,10 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
 
   // 成功卡片：rowsBox 走 diff
   card.classList.remove("err-card");
-  card.classList.forEach((c) => {
-    if (c.startsWith("err-") && c !== "err-card") card.classList.remove(c);
-  });
+  // L-1 fix (2026-09-05 audit)：同上 —— 快照后删，避免活集合跳过。
+  [...card.classList]
+    .filter((c) => c.startsWith("err-") && c !== "err-card")
+    .forEach((c) => card.classList.remove(c));
   // 清掉 err-label（H8 修复后，err-label 在 .card-head-status 里，querySelector 仍能找）
   const headLabel = card.querySelector<HTMLElement>(".err-label");
   if (headLabel) headLabel.remove();
@@ -1000,7 +1075,12 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
   const existing = new Map<string, HTMLElement>();
   rowsBox.querySelectorAll<HTMLElement>(".row[data-row-key]").forEach((el) => {
     const k = el.dataset.rowKey;
-    if (k) existing.set(k, el);
+    // H1 fix (2026-09-05 audit)：key 冲突时**保留首个**、后来者留给 orphan
+    // 清理。原来 `set` 无条件覆盖 —— 数据里出现两行 (kind,label) 完全相同
+    // 时（custom 双余额行 / 同名额度包），map 里只剩一个 el；两行数据一行
+    // 复用它、另一行新建，被覆盖的那个 DOM 既不在 map（orphan pass 删不
+    // 掉）也不再被认领 → 每轮 render 净增一个 stale 行，浮窗无限变高。
+    if (k && !existing.has(k)) existing.set(k, el);
   });
 
   // 按用户偏好过滤行（Tavily 简洁模式等）—— 跟下面 diff 逻辑透明衔接
@@ -1193,6 +1273,16 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
       const codePct = clampPct(r.extra?.kimi_code_used_ratio ?? 0);
       const kimiPct = clampPct(Math.min(r.utilization, 100) - codePct);
       note.textContent = `Kimi ${Math.round(kimiPct)}% · Code ${Math.round(codePct)}%`;
+    } else if (r.extra?.kimi_code_used_ratio != null) {
+      // L-2 fix (2026-09-05 audit)：骨架按首帧定型 —— 首帧 extra 为空的
+      // utilization 行没有 .split-note 节点，后续快照带 kimi_code_used_ratio
+      // 时 `if (note)` 守卫直接吞掉，拆分小字永远不出现。缺节点时动态补建。
+      const noteEl = document.createElement("div");
+      noteEl.className = "split-note";
+      bar.insertAdjacentElement("afterend", noteEl);
+      const codePct = clampPct(r.extra?.kimi_code_used_ratio ?? 0);
+      const kimiPct = clampPct(Math.min(r.utilization, 100) - codePct);
+      noteEl.textContent = `Kimi ${Math.round(kimiPct)}% · Code ${Math.round(codePct)}%`;
     }
     if (r.resets_at) {
       rowEl.dataset.resetsAt = String(r.resets_at);
@@ -1443,9 +1533,15 @@ async function onAppActionClick(e: MouseEvent): Promise<void> {
       if (errorText) {
         await navigator.clipboard.writeText(errorText);
         showMiniFlash(t("floating.err_btn_copied"));
+      } else {
+        // L-10 fix (2026-09-05 audit)：找不到 provider（error 为空）时给
+        // 反馈，不再静默无响应。
+        showMiniFlash(t("floating.copy_failed"));
       }
     } catch (err) {
+      // L-10 fix：剪贴板 API 拒绝（失焦/权限）时也反馈，不只 console.error。
       console.error("copy error failed:", err);
+      showMiniFlash(t("floating.copy_failed"));
     }
   } else if (target.classList.contains("err-btn-logs")) {
     invoke("open_settings_window", { section: "logs" }).catch((err) =>
@@ -1556,25 +1652,32 @@ async function init() {
   // down+up+down+up 序列，`dblclick` 永远不触发（macOS 的
   // performWindowDragWithEvent 不吃事件，所以当初 mac 上测不出来）。
   // 手工判定（<500ms + <8px）跨平台一致，第二连击不再发起拖拽。
-  let lastMouseDownAt = 0;
+  let lastMouseDownAt = -1; // L-8 fix：-1 表示无历史，避免启动 500ms 内误判双击
   let lastMouseDownX = 0;
   let lastMouseDownY = 0;
   app.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
     const target = e.target as HTMLElement;
     if (target.closest("button, input, select, a")) return;
+    // L-4 fix (2026-09-05 audit)：点在 #app 滚动条区域（offsetX 超过内容宽）
+    // 时不 preventDefault 也不拖窗 —— preventDefault 会取消滚动条拖拽。
+    if (target === app && e.offsetX > app.clientWidth) return;
     e.preventDefault();
     const now = performance.now();
     const dx = e.clientX - lastMouseDownX;
     const dy = e.clientY - lastMouseDownY;
     const isDoubleClick =
-      now - lastMouseDownAt < 500 && dx * dx + dy * dy < 64;
+      lastMouseDownAt > 0 &&
+      now - lastMouseDownAt < 500 &&
+      dx * dx + dy * dy < 64;
     lastMouseDownAt = now;
     lastMouseDownX = e.clientX;
     lastMouseDownY = e.clientY;
     if (isDoubleClick) {
       // 双击 → 打开设置面板；本次按下不发起拖拽（拖拽 loop 会吞掉
       // 后续 IPC 的时序，且双击的语义就是"不动窗口"）。
+      // L-3 fix：重置计时，三连击不会连续触发两次 IPC。
+      lastMouseDownAt = -1;
       invoke("open_settings_window").catch((err) => console.error(err));
       return;
     }
@@ -1625,6 +1728,10 @@ async function init() {
   // 保留 `hoverEnterTimer` 变量名 + cleanup 路径（虽然恒为 null）以便
   // 日后需要再加 debounce 时不用重写整段。
   const setHoverAttr = (on: boolean) => {
+    // M26 fix (2026-09-05 audit)：去重缓存统一在这里维护 —— 失焦/隐藏路径
+    // 直接清 attr 时也要重置 lastHoverPayload，否则 Rust 端 inside 保持 true
+    // 不重发、同值 emit 又被去重吞掉，hover 玻璃效果锁死到鼠标移出再移入。
+    lastHoverPayload = on;
     if (on) document.body.dataset.hover = "1";
     else delete document.body.dataset.hover;
     // hover 切到 true 时 .card 的 box-shadow 从 0 升到 `0 10px 30px`，
@@ -1738,7 +1845,11 @@ async function init() {
   userLastManualH = window.innerHeight;
   trackUnlisten(listen<number>("musage://floating-resized", (e) => {
     const newH = e.payload;
-    if (newH === lastFitWindowH) return; // 我们自己 fit 的回声
+    // H-10 fix (2026-09-05 audit)：回声判定加时间窗 —— 纯值比较在用户把窗口
+    // 拖到恰好等于 lastFitWindowH 时把**真实拖动**当回声吞掉，userLastManualH
+    // 不更新，残留旧 floor 让后续 auto-shrink 反向"越缩越涨"。fit 落地后的
+    // 短窗（700ms，覆盖 IPC + 事件往返）内同值才视为回声。
+    if (newH === lastFitWindowH && Date.now() - lastFitAt < 700) return;
     userResizedAt = Date.now();
     userLastManualH = newH;
   }), "musage://floating-resized");
@@ -1797,6 +1908,11 @@ async function init() {
       showFooterHint: cfg.show_footer_hint ?? false,
     };
     applyColorOverrides();
+    // M23 fix (2026-09-05 audit)：初始 render 跑在 get_config **之前**（用
+    // 默认 renderPrefs），读到非默认配置后不重渲的话，tavily_concise_mode /
+    // show_footer_hint / 阈值色等要等下一次 snapshot 事件才生效 —— 而
+    // get_snapshot 命中缓存时没有后续 emit，错误样式可持续整个轮询周期。
+    if (lastRenderedSnap) render(lastRenderedSnap);
   } catch (e) {
     console.error("读 config 失败", e);
   }

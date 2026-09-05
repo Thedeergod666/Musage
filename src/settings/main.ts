@@ -6,6 +6,7 @@
 // 3. 异步：拉每个 source 的 key 状态 + 日志
 
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { setupTabs } from "./utils";
 import { listSources, getConfig } from "./api";
 import { renderProvidersSection, loadAllCredentialStatus } from "./providers";
@@ -137,6 +138,15 @@ function setupNav() {
   listen<string>("musage://settings-navigate", (e) => {
     navigateToSection(e.payload);
   }).catch((err) => console.error("settings-navigate listen failed:", err));
+
+  // M13 fix (2026-09-05 audit)：冷启动深链 —— 窗口首次创建时后端的
+  // settings-navigate 事件早于本 listen 注册而丢失。后端已把 section 暂存，
+  // 这里在订阅就绪后主动拉取（take 即清除）。
+  invoke<string | null>("take_pending_settings_section")
+    .then((pending) => {
+      if (pending) navigateToSection(pending);
+    })
+    .catch((err) => console.error("take_pending_settings_section failed:", err));
 }
 
 setupNav();

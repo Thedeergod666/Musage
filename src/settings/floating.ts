@@ -281,22 +281,26 @@ function renderDisplayThresholdsFields(cfg: AppConfig) {
     }
   };
   const applyAllInner = async () => {
-    const v0 = parseInt(t0Input.value, 10);
-    const v1 = parseInt(t1Input.value, 10);
-    const v2 = parseInt(t2Input.value, 10);
-    if (![v0, v1, v2].every(Number.isFinite)) {
+    // M36 fix (2026-09-05 audit)：对齐后端校验 —— 后端 `[u8; 3]` +
+    // `0 < t0 < t1 < t2 < 100`、`wallet >= 0`。此前前端只查顺序：t0=0 /
+    // t2=150 落到后端才被拒（晦涩 template）；t0=-5 / wallet=-5 在 serde
+    // 反序列化阶段炸出原始错误串。
+    const v0 = Number(t0Input.value);
+    const v1 = Number(t1Input.value);
+    const v2 = Number(t2Input.value);
+    if (![v0, v1, v2].every(Number.isInteger)) {
       flash(t("settings.floating.threshold_must_be_number"), true);
       return;
     }
     // M33 fix (2026-07-03 audit): 之前只校验是数字, 用户设 t0=80 t1=50 t2=88
     // (黄起点 > 红起点) 也能通过前端校验, 要等 IPC 往返后端拒绝才知道错。
     // 加客户端即时校验 t0 < t1 < t2, 错误立刻 flash 拦下。
-    if (!(v0 < v1 && v1 < v2)) {
+    if (!(v0 > 0 && v2 < 100 && v0 < v1 && v1 < v2)) {
       flash(t("settings.floating.threshold_order_invalid"), true);
       return;
     }
     const wallet = walletCb.checked ? parseFloat(walletInput.value) : null;
-    if (walletCb.checked && !Number.isFinite(wallet)) {
+    if (walletCb.checked && (!Number.isFinite(wallet) || (wallet ?? 0) < 0)) {
       flash(t("settings.floating.wallet_must_be_number"), true);
       return;
     }

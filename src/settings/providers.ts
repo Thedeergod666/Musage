@@ -21,7 +21,7 @@ import {
   setProviderEnabled,
   listExtraInstances,
   deleteExtraInstance,
-  saveConfig,
+  saveConfigSerialized,
 } from "./api";
 import { el, escapeHtml, setCurrentKnownIds, flash, currentProviderOrder, formatDisplayName } from "./utils";
 import { getProviderExtras } from "./source-extras";
@@ -71,7 +71,15 @@ export async function renderProvidersSection(container: HTMLElement) {
   // 跟后端 display_name() 行为严格对齐（后者也用 t!("provider_name.xxx")）。
   const builtinExtrasAsMeta: SourceMeta[] = builtinExtras.map((e) => ({
     id: e.api_key_ref, // "minimax#2"
-    display_name: formatDisplayName(t(`provider.${e.provider_id}.name`), e.instance_index),
+    // L-8 fix (2026-09-05 audit)：i18n 缺 key 时回退 provider_id —— t() 找
+    // 不到 key 会原样回显 `provider.x.name`，与 credentials.ts 的
+    // credentialProviderName 兜底行为对齐。
+    display_name: formatDisplayName(
+      t(`provider.${e.provider_id}.name`) === `provider.${e.provider_id}.name`
+        ? e.provider_id
+        : t(`provider.${e.provider_id}.name`),
+      e.instance_index,
+    ),
     auth_kind: "api_key" as const, // 默认，副本通常不需要 cookie
     enabled: cfg.providers?.[e.api_key_ref]?.enabled ?? true,
     is_stub: false,
@@ -227,6 +235,9 @@ export function createProviderPanel(meta: SourceMeta, cfg: AppConfig): HTMLEleme
     const target = enabledCheckbox.checked;
     withSuppress(() => setProviderEnabled(meta.id, target))
       .catch((e) => {
+        // M31 fix (2026-09-05 audit)：IPC 失败回滚 checkbox（D8-03 同款 ——
+        // 此前只 flash 不回滚，UI 显示已勾选但后端仍 disabled）。
+        enabledCheckbox.checked = !target;
         flash(t("settings.providers.flash_toggle_failed", { err: String(e) }), true);
       });
   });
@@ -304,20 +315,27 @@ function renderIntervalOverride(id: string, cfg: AppConfig): HTMLElement {
     const raw = input.value.trim();
     let secs: number | null = null;
     if (raw) {
-      const n = parseInt(raw, 10);
-      if (!Number.isFinite(n) || n < 10 || n > 86400) {
+      // L-2 fix (2026-09-05 audit)：Number + Number.isInteger —— parseInt
+      // 会把 "10.7" 截成 10 落盘而输入框仍显示 10.7（显示/落盘漂移）。
+      const n = Number(raw);
+      if (!Number.isFinite(n) || !Number.isInteger(n) || n < 10 || n > 86400) {
         flash(t("settings.providers.invalid_interval", { val: raw }), true);
         return;
       }
       secs = n;
     }
+    const previous = input.value;
     try {
       const latest = await getConfig();
       if (!latest.providers) latest.providers = {};
       if (!latest.providers[id]) latest.providers[id] = { enabled: true };
       latest.providers[id].refresh_interval_secs = secs;
-      await saveConfig(latest);
+      await saveConfigSerialized(latest);
+      // L-2 fix：保存成功后输入框归一化为落盘值
+      input.value = secs != null ? String(secs) : "";
     } catch (e) {
+      // L-2 fix：IPC 失败回滚输入框（对齐 app.ts 同场景行为）
+      input.value = previous;
       flash(t("credentials.flash_save_failed", { err: String(e) }), true);
     }
   });

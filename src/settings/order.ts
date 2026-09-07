@@ -611,6 +611,17 @@ function onDividerMouseUp(_e: MouseEvent) {
           : t("settings.order.flash_cards_removed", { count: Math.abs(delta) }),
       );
     } catch (e) {
+      // H-Frontend fix (2026-09-07 audit): IPC 失败时回滚所有勾选状态,
+      // 否则 checkbox.checked 留在乐观值、后端留旧值, 直到 force resync
+      // (finally) 之前 UI 与后端分裂。逐 id 显式还原。
+      for (const id of toEnable) {
+        const cb = document.getElementById(`enabled-${id}`) as HTMLInputElement | null;
+        if (cb) cb.checked = false;
+      }
+      for (const id of toDisable) {
+        const cb = document.getElementById(`enabled-${id}`) as HTMLInputElement | null;
+        if (cb) cb.checked = true;
+      }
       flash(t("settings.order.flash_move_failed", { err: String(e) }), true);
     } finally {
       unsuppressRebuild();
@@ -907,6 +918,14 @@ async function commitOrder(finalIdx: number, id: string) {
     await setProviderOrder(currentProviderOrder);
     flash(t("settings.order.flash_moved_to_pos", { id, pos: finalIdx + 1 }));
   } catch (e) {
+    // H-Frontend fix (2026-09-07 audit): IPC 失败时回滚 currentProviderOrder
+    // (splice 已乐观改过), 重 build + emit flash。后端是 source of truth,
+    // 不能让本地乐观状态成为"看起来成功"的 UI。
+    const cfg = await import("./api").then((m) => m.getConfig());
+    orderCfg = cfg;
+    setCurrentProviderOrder((cfg.provider_order ?? []).slice());
+    if (listRef) buildOrderItems(listRef);
+    refreshPosLabels();
     flash(t("settings.order.flash_order_failed", { err: String(e) }), true);
   }
 }

@@ -617,18 +617,36 @@ pub async fn delete_extra_instance(
     // migrations_done 仅当 compact 发生(target_ref 被复用)时非空,与上面
     // !target_ref_now_used 分支互斥。
     if !migrations_done.is_empty() {
-        // H-03: 清 snapshot 中旧身份幽灵条目。new_ref 条目保留(其卡片由后续
-        // fetch 刷新,见上方 583-584 注释的既有设计意图)。
+        // H-03 (老 bug) + H-Commands fix (2026-09-07 audit): 老实现只
+        // retain(old_ref) 从 snapshot 删除旧 source_id 条目, 没把 source_id
+        // rename 到 new_ref。结果: compact 后 cfg.providers 已经在 new_ref
+        // 槽位, 但 snapshot 的 provider[].source_id 还指着旧 ref, 直到下次
+        // poller tick (60s+) 才刷新 → 用户在浮窗看副本消失。
+        //
+        // 修法: 在 snapshot 内按 source_id 旧→新 rename, 替换 cfg.providers.insert
+        // 后的实时状态。snapshot.providers[].source_id 是 stable 标识, 直接
+        // mutate 即可 (UI 已经在用 new_ref key 浮窗卡片)。
         {
             let mut snap = state.snapshot.write().await;
-            let old_refs: Vec<&str> = migrations_done.iter().map(|(o, _, _)| o.as_str()).collect();
-            let before = snap.providers.len();
-            snap.providers
-                .retain(|p| !old_refs.contains(&crate::commands::snapshot_key(p)));
-            if snap.providers.len() != before {
+            let mut renamed = 0usize;
+            for p in snap.providers.iter_mut() {
+                let sk = crate::commands::snapshot_key(p);
+                for (old_ref, new_ref, _) in &migrations_done {
+                    if sk == *old_ref {
+                        p.source_id = Some(new_ref.clone());
+                        renamed += 1;
+                        break;
+                    }
+                }
+            }
+            if renamed > 0 {
                 let s = snap.clone();
                 drop(snap);
                 let _ = app.emit("musage://snapshot", &s);
+                tracing::info!(
+                    renamed,
+                    "delete_extra_instance 紧凑迁移后 snapshot source_id 已 rename, 浮窗立即跟新"
+                );
             }
         }
         // M-06: 迁移 cfg.providers。两阶段(先全部 remove old_ref,再写 new_ref)

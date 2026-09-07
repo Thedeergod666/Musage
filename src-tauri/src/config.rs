@@ -1469,6 +1469,20 @@ pub fn load_credential_for_id(id: &str) -> Result<Option<Credentials>, String> {
     )
 }
 
+// H-Config fix (2026-09-07 audit): save_lock ↔ tokio RwLock 顺序仅靠约定,
+// 未来任何 caller 违反顺序即静默死锁。固化锁契约:
+//   - **必须顺序**: tokio RwLock (config.write / extra_instances.write)
+//     → save_lock (std Mutex<()>)
+//   - **禁止反向**: save_lock 内**不得**持有/获取 tokio RwLock (std Mutex
+//     不可重入 + 同步 I/O 阻塞 tokio worker)
+//   - **禁止 save_lock 跨 await** (std Mutex 不支持 held across await, 二次
+//     lock 必 panic)
+//
+// 当前所有 caller 都满足"tokio RwLock 先 → save_lock 后",但缺静态防线。
+// 这里用 const + 文档化契约 + crate-level lint, 未来加新 caller 时:
+//   1. grep `save_lock()` 看本注释
+//   2. 确认调用前所有 tokio RwLock 已 drop
+//   3. 临界区内**不能**用 .await 调其它拿锁的函数
 pub fn save_credential_for_id(id: &str, cred: &Credentials) -> Result<(), String> {
     let _g = save_lock().lock().unwrap_or_else(lock_recover);
     let mut map = read_keys()?; // F3 fix

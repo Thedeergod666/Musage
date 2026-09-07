@@ -159,6 +159,7 @@
     "config_mkdir": "mkdir: %{err}",
     "config_serialize": "serialize: %{err}",
     "config_write": "write config: %{err}",
+    "config_schema_too_new": "config.json 的 schema_version %{file} 高于本 build 支持的 %{app}，已拒绝保存以保留未来字段。请升级应用。",
     "config_dir_not_found": "无法定位配置目录",
     "read_keys": "read keys: %{err}",
     "parse_keys": "parse keys.json: %{err}",

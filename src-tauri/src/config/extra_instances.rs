@@ -149,8 +149,12 @@ pub fn load() -> Result<Vec<ExtraInstance>, String> {
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let s =
+    // C1 fix (2026-09-07 audit): 剥 UTF-8 BOM。Windows Notepad / 部分 IDE /
+    // Excel 默认以 BOM 保存,serde_json 严格拒收 → 用户所有 extra instance
+    // (minimax#2 / volcengine_ark#3 / custom_xxx) 静默丢失,只剩 .bak 兜底。
+    let raw =
         std::fs::read_to_string(&path).map_err(|e| format!("read extra_instances.json: {e}"))?;
+    let s = crate::config::strip_bom_owned(raw);
     if s.trim().is_empty() {
         return Ok(Vec::new());
     }
@@ -334,7 +338,10 @@ fn load_custom_sources_for_migration() -> Result<Vec<crate::providers::CustomSou
     if !path.exists() {
         return Ok(Vec::new());
     }
-    let s = std::fs::read_to_string(&path).map_err(|e| format!("read custom_sources.json: {e}"))?;
+    // C1 fix (2026-09-07 audit): custom_sources.json 同款 BOM 防御。
+    let raw =
+        std::fs::read_to_string(&path).map_err(|e| format!("read custom_sources.json: {e}"))?;
+    let s = crate::config::strip_bom_owned(raw);
     if s.trim().is_empty() {
         return Ok(Vec::new());
     }

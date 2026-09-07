@@ -528,8 +528,11 @@ impl AppConfig {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let s = match std::fs::read_to_string(&path) {
-            Ok(s) => s,
+        // C1 fix (2026-09-07 audit): 剥 UTF-8 BOM。Windows Notepad / 部分 IDE /
+        // Excel 默认以 BOM 保存,serde_json 严格拒收 → 落 best_effort → Self::default()
+        // → 下次 save 全量覆盖原文件。用户全部配置仅留 .bak,无任何提示。
+        let s: String = match std::fs::read_to_string(&path) {
+            Ok(s) => strip_bom_owned(s),
             Err(e) => {
                 tracing::error!(error = %e, path = %path.display(), "config.json 读失败，回退默认");
                 // 备份原文件后再返 default —— 防止下次 save() 用默认值覆盖
@@ -837,13 +840,23 @@ impl AppConfig {
         // 会把整个文件重写成"当前 schema 视角"——未来字段永久丢失, 再升级也
         // 找不回。降级场景下拒绝覆盖, 保留磁盘上的新版文件; 内存里的本会话
         // 编辑会失效, 但那是降级的固有代价, 远好于静默数据丢失。
+        // C3 fix (2026-09-07 audit): 之前返 `Ok(())` —— caller (save_config) 当"保存
+        // 成功"继续做 mgr.enable()/disable() (autostart) + set_auto_hide_in_fullscreen
+        // + emit → 磁盘保留旧 config,但 OS 状态从新 in-memory 派生 → 永久分歧。
+        // 现在返 Err 让 caller `?` 短路回 UI,用户能看到真实错误(磁盘未更新 +
+        // OS 状态未切),而不是静默欺骗。
         if self.schema_version > CURRENT_SCHEMA_VERSION {
             tracing::warn!(
                 file_schema = self.schema_version,
                 app_schema = CURRENT_SCHEMA_VERSION,
-                "config schema_version 高于本 build, 拒绝 save 以保留未来字段 (降级场景); 升级后即可正常保存"
+                "config schema_version 高于本 build, 拒绝 save 以保留未来字段"
             );
-            return Ok(());
+            return Err(t!(
+                "commands.config_schema_too_new",
+                file = self.schema_version,
+                app = CURRENT_SCHEMA_VERSION
+            )
+            .into_owned());
         }
         // save_lock 串行化并发 save：geom debouncer (500ms tick) + 用户改设置同时触发
         // 时，read-modify-write race 会让 last writer 覆盖另一方的内容。Mutex<()> 极小。
@@ -1124,6 +1137,11 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
 ///
 /// 历史回归 (2026-07-28): C1 fix 之前扫 `config_dir()` 根目录 → 我们写的
 /// `.tmp` 在 `com.musage.app/` 子目录下永远清不到。已修。
+///
+/// C2 fix (2026-09-07 audit): 但 `*.json.tmp` 后缀仍过宽 —— 用户可能自己在
+/// 该目录下放 `download.json.tmp` (合法下载中转) / `notes.jsonl.tmp`(草稿),
+/// 会被启动时静默删除。改用**精确 basename 白名单**,只清我们自己写过的
+/// 4 个固定文件名,与下方 OUR_TMP_BASENAMES 一致。
 pub fn cleanup_orphan_tmp_files() {
     let Ok(dir) = config_dir() else { return };
     let dir = dir.join("com.musage.app");
@@ -1135,21 +1153,32 @@ pub fn cleanup_orphan_tmp_files() {
         let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
             continue;
         };
-        // 只清我们自己写的 `<name>.json.tmp` / `<name>.jsonl.tmp` 模式
-        if OUR_TMP_SUFFIXES.iter().any(|suf| name.ends_with(suf)) {
+        // 只清我们写过的固定 basename (C2 fix: 防用户 .json.tmp 被误删)
+        if OUR_TMP_BASENAMES.contains(&name) {
             tracing::info!(path = %path.display(), "清理孤儿 .tmp");
             let _ = std::fs::remove_file(&path);
         }
     }
 }
 
-/// 我们自己创建的 .tmp 文件后缀列表。`cleanup_orphan_tmp_files` 只清匹配
-/// 这些后缀的文件,不动用户可能放在 `~/.config/com.musage.app/` 下的
-/// 其他 `.tmp` (notes.tmp / download.tmp 等)。
+/// 我们自己创建的 .tmp 文件 basename 列表(精确匹配)。
+/// `cleanup_orphan_tmp_files` 只清匹配这些名字的文件,不动用户可能放在
+/// `~/.config/com.musage.app/` 下的其他 `.tmp` (download.json.tmp / notes.tmp
+/// / scratchpad.tmp 等)。
 ///
-/// 跟 config.rs:754 / config.rs:990 (keys.json.tmp) 和
-/// logstore.rs:344 (app_log.jsonl.tmp) 的实际写入保持一致。
-const OUR_TMP_SUFFIXES: &[&str] = &[".json.tmp", ".jsonl.tmp"];
+/// 跟以下实际写入路径保持一致:
+///   - config.rs:863        → config.json.tmp
+///   - config.rs:1268       → keys.json.tmp
+///   - config/extra_instances.rs:202 → extra_instances.json.tmp
+///   - logstore.rs:394      → app_log.jsonl.tmp
+///
+/// 未来加新文件类型时,在本数组追加对应 basename。
+const OUR_TMP_BASENAMES: &[&str] = &[
+    "config.json.tmp",
+    "keys.json.tmp",
+    "extra_instances.json.tmp",
+    "app_log.jsonl.tmp",
+];
 
 // PR 1a：用户额外添加的 source 实例（内置 provider 副本 + New API 中转站）。
 // v0.2.1 commit 2: 老的 `pub mod custom_sources` wrapper 文件已删,迁移逻辑
@@ -1309,6 +1338,20 @@ fn parse_keys_payload(s: &str) -> Result<KeysMap, KeysPayloadError> {
 enum KeysPayloadError {
     Empty,
     Parse(String),
+}
+
+/// C1 fix (2026-09-07 audit): Windows Notepad / 部分 IDE / Excel 保存 JSON 时
+/// 会带 UTF-8 BOM 前缀 (EF BB BF),`serde_json::from_str` 严格拒收 →
+/// best_effort_from_value 路径失败 → `Self::default()` → 下次 save 全量
+/// 覆盖 config.json (用户配置仅留 .bak)。keys.json 与 extra_instances.json
+/// 同根问题,在 read 入口统一剥 BOM 后再交给 serde_json。所有产线读路径
+/// (config / keys / extra_instances / custom_sources / logstore) 必须经过
+/// 本 helper。
+pub(crate) fn strip_bom_owned(mut s: String) -> String {
+    if s.starts_with('\u{FEFF}') {
+        s.drain(..3);
+    }
+    s
 }
 
 fn read_keys() -> Result<KeysMap, String> {
@@ -1702,10 +1745,12 @@ mod tests {
 mod cleanup_orphan_tmp_files_tests {
     use super::*;
 
-    /// 用临时目录模拟 `com.musage.app/` 子目录,验证只清 OUR_TMP_SUFFIXES
-    /// 匹配的文件,不动用户的其他 `.tmp`。
+    /// C2 fix (2026-09-07 audit): 用临时目录模拟 `com.musage.app/` 子目录,
+    /// 验证只清 OUR_TMP_BASENAMES (精确 basename 白名单) 内的固定文件名,
+    /// 不动用户的 `.tmp` / `.json.tmp` / `.jsonl.tmp` —— 即使后缀匹配我们
+    /// 自己的清理模式也不能误删。
     #[test]
-    fn cleanup_only_removes_our_tmp_patterns() {
+    fn cleanup_only_removes_our_exact_basenames() {
         let tmp_root = std::env::temp_dir().join(format!(
             "musage_cleanup_test_{}",
             std::time::SystemTime::now()
@@ -1715,12 +1760,15 @@ mod cleanup_orphan_tmp_files_tests {
         ));
         std::fs::create_dir_all(&tmp_root).unwrap();
 
-        // 我们创建的文件类型 (应被清)
+        // 我们创建的文件 (应被清)
         std::fs::write(tmp_root.join("config.json.tmp"), b"old").unwrap();
         std::fs::write(tmp_root.join("keys.json.tmp"), b"old").unwrap();
+        std::fs::write(tmp_root.join("extra_instances.json.tmp"), b"old").unwrap();
         std::fs::write(tmp_root.join("app_log.jsonl.tmp"), b"old").unwrap();
 
-        // 用户的 .tmp 文件 (不应被清)
+        // 用户的 .tmp 文件 (不应被清 —— C2 fix 重点)
+        std::fs::write(tmp_root.join("download.json.tmp"), b"user").unwrap();
+        std::fs::write(tmp_root.join("notes.jsonl.tmp"), b"user").unwrap();
         std::fs::write(tmp_root.join("notes.tmp"), b"user").unwrap();
         std::fs::write(tmp_root.join("download.tmp"), b"user").unwrap();
         std::fs::write(tmp_root.join("scratchpad.tmp"), b"user").unwrap();
@@ -1729,31 +1777,53 @@ mod cleanup_orphan_tmp_files_tests {
         std::fs::write(tmp_root.join("config.json"), b"{}").unwrap();
         std::fs::write(tmp_root.join("keys.json"), b"{}").unwrap();
 
-        // Monkey-patch config_dir via env vars (XDG_CONFIG_HOME / APPDATA) is
-        // 复杂,这里直接验证 OUR_TMP_SUFFIXES 列表包含该清的后缀、不含
-        // 不该清的。即清理逻辑只走 ends_with 检查。
-        assert!(OUR_TMP_SUFFIXES.contains(&".json.tmp"));
-        assert!(OUR_TMP_SUFFIXES.contains(&".jsonl.tmp"));
-        assert!(
-            !OUR_TMP_SUFFIXES.iter().any(|s| s == &".tmp"),
-            "不能再匹配裸 .tmp,必须带扩展名前缀防误删用户文件"
+        // OUR_TMP_BASENAMES 必须正好等于 4 个我们写的固定名,无前缀/后缀通配。
+        assert_eq!(
+            OUR_TMP_BASENAMES.len(),
+            4,
+            "仅这 4 个 basename 是我们写的 .tmp"
         );
-
-        // 实际 cleanup_orphan_tmp_files() 调 dirs::config_dir() → 测试隔离难。
-        // 这里只验证 OUR_TMP_SUFFIXES 的字符串 ends_with 行为,代表清理逻辑。
-        let our_files = ["config.json.tmp", "keys.json.tmp", "app_log.jsonl.tmp"];
-        for f in &our_files {
+        for f in [
+            "config.json.tmp",
+            "keys.json.tmp",
+            "extra_instances.json.tmp",
+            "app_log.jsonl.tmp",
+        ] {
             assert!(
-                OUR_TMP_SUFFIXES.iter().any(|suf| f.ends_with(suf)),
-                "{f} 应被识别为我们的 .tmp"
+                OUR_TMP_BASENAMES.contains(&f),
+                "{f} 应在 OUR_TMP_BASENAMES 内"
             );
         }
-        let user_files = ["notes.tmp", "download.tmp", "scratchpad.tmp"];
-        for f in &user_files {
+
+        // 用户文件即使后缀撞 .json.tmp / .jsonl.tmp 也不在白名单内 —— C2 核心断言。
+        for f in ["download.json.tmp", "notes.jsonl.tmp", "download.jsonl.tmp"] {
             assert!(
-                !OUR_TMP_SUFFIXES.iter().any(|suf| f.ends_with(suf)),
-                "{f} 不应被识别 (用户文件)"
+                !OUR_TMP_BASENAMES.contains(&f),
+                "{f} 不应在白名单内 (用户文件,后缀撞库是巧合)"
             );
+        }
+
+        // 验证 cleanup_orphan_tmp_files() 的内部过滤逻辑(精确等值而非 ends_with):
+        // monkey-patch config_dir 复杂,这里直接用同样的精确等值核对。
+        let our_files = [
+            "config.json.tmp",
+            "keys.json.tmp",
+            "extra_instances.json.tmp",
+            "app_log.jsonl.tmp",
+        ];
+        for f in &our_files {
+            assert!(OUR_TMP_BASENAMES.contains(f), "{f} 应被识别为我们的 .tmp");
+        }
+        let user_files = [
+            "download.json.tmp",
+            "notes.jsonl.tmp",
+            "download.jsonl.tmp",
+            "notes.tmp",
+            "download.tmp",
+            "scratchpad.tmp",
+        ];
+        for f in &user_files {
+            assert!(!OUR_TMP_BASENAMES.contains(f), "{f} 不应被识别 (用户文件)");
         }
 
         // 清理临时目录

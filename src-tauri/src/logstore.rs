@@ -176,7 +176,17 @@ impl LogStore {
         if let Ok(path) = log_path() {
             if let Ok(file) = File::open(&path) {
                 let reader = BufReader::new(file);
+                // C1 fix (2026-09-07 audit): JSONL 首行可能被 Notepad 加 BOM
+                // (EF BB BF),首次 serde_json::from_str 会失败 → 老日志第一条
+                // 永久丢失。剥首行 BOM 后再走常规 line-by-line。
+                let mut first_line = true;
                 for line in reader.lines().map_while(Result::ok) {
+                    let line = if first_line {
+                        first_line = false;
+                        crate::config::strip_bom_owned(line)
+                    } else {
+                        line
+                    };
                     if line.trim().is_empty() {
                         continue;
                     }
@@ -348,11 +358,23 @@ fn append_entry(entry: &LogEntry) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    // C4 fix (2026-09-07 audit): 2026-07-28 已加 append_entry 后 set_permissions
+    // 0600,但**初始创建**瞬间仍是 OpenOptions 默认 0644 (world-readable) ——
+    // 同机其他用户首启瞬间可读 app_log.jsonl 内容 (含请求 URL / provider
+    // 名)。改用 OpenOptionsExt::mode(0o600) 在创建时直接 0600,零窗口。
+    // 同款模式已用于 write_tmp_secure (config.rs:1245-1258)。
+    #[cfg(unix)]
+    let mut f = {
+        use std::os::unix::fs::OpenOptionsExt;
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(&path)?
+    };
+    #[cfg(not(unix))]
     let mut f = OpenOptions::new().create(true).append(true).open(&path)?;
-    // C4 fix (2026-07-28 审查): app_log.jsonl 的 message 字段可能带 API
-    // key / cookie 的错误串,跟 keys.json 同级别敏感。OpenOptions 默认 0644
-    // 会暴露给同机其他用户 —— 跟 write_keys_atomic / extra_instances::save
-    // 对齐,显式 0600(每次 append 都设一遍,顺带覆盖历史遗留的 0644 文件)。
+    // 双层防御:对历史遗留 0644 文件继续 set_permissions 修一次 (C4-prev fix)。
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -382,7 +404,28 @@ fn append_entry(entry: &LogEntry) -> std::io::Result<()> {
 fn truncate_file_from_ring(ring: &[LogEntry]) -> Result<(), String> {
     let path = log_path()?;
     let tmp = path.with_extension("jsonl.tmp");
+    // C4 fix (2026-09-07 audit): append_entry 同款。File::create 默认 0644,
+    //    通过 OpenOptionsExt::mode(0o600) 在创建瞬间直接 0600,无 world-readable
+    //    窗口。Unix only,Windows 走默认 ACL。
+    #[cfg(unix)]
+    let mut f = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)
+            .map_err(|e| format!("logstore truncate tmp: {e}"))?
+    };
+    #[cfg(not(unix))]
     let mut f = std::fs::File::create(&tmp).map_err(|e| format!("logstore truncate tmp: {e}"))?;
+    // 双层防御 (历史 0644 修一次)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+    }
     let write_result = (|| -> Result<(), String> {
         for entry in ring {
             if let Ok(s) = serde_json::to_string(entry) {

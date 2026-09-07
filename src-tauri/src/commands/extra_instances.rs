@@ -843,7 +843,22 @@ pub async fn test_extra_instance(
             .custom
             .ok_or_else(|| t!("commands.extra.custom_spec_required").into_owned())?;
         let temp = CustomSource::new(spec);
-        temp.fetch(&creds).await.map_err(|e| e.message)
+        match temp.fetch(&creds).await {
+            Ok(snap) => Ok(snap),
+            Err(e) => {
+                // H-ErrorHandling fix (2026-09-07 audit): 之前直接 `e.message`
+                // 透传,跳过统一错误日志管道。test_extra_instance 是 debug-only
+                // IPC, 没 AppHandle 参数,不能调 log_provider_error (它需要
+                // AppHandle)。改 tracing::error 直接落 app_log.jsonl。
+                tracing::error!(
+                    provider = %req.provider_id,
+                    kind = ?e.kind,
+                    "test_extra_instance 失败: {}",
+                    e.message
+                );
+                Err(e.message)
+            }
+        }
     } else {
         let src = instantiate_builtin_with_index(&req.provider_id, 1).ok_or_else(|| {
             t!(
@@ -854,7 +869,19 @@ pub async fn test_extra_instance(
         })?;
         // M22 fix (2026-07-03 audit): 之前这里有死代码 load_credential_for_id
         // 然后 let _ 丢弃结果,没有任何校验动作。已删除。
-        src.fetch(&creds).await.map_err(|e| e.message)
+        match src.fetch(&creds).await {
+            Ok(snap) => Ok(snap),
+            Err(e) => {
+                // H-ErrorHandling fix (2026-09-07 audit): 同 custom 分支。
+                tracing::error!(
+                    provider = %req.provider_id,
+                    kind = ?e.kind,
+                    "test_extra_instance 失败: {}",
+                    e.message
+                );
+                Err(e.message)
+            }
+        }
     }
 }
 

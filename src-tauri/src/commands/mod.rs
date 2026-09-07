@@ -901,6 +901,12 @@ pub async fn save_config(
     // 真可能失败的 platform call，再改成 Result<(), String> 传播
     crate::platform::set_auto_hide_in_fullscreen(&app, cfg.auto_hide_in_fullscreen);
 
+    // H-lib fix (2026-09-07 audit): save_config 改 low_power_mode 时同步 OS 层
+    // Acrylic —— CSS 关不掉 compositor, 必须走 apply_floating_window_blur。
+    // 与 set_low_power_mode (2403) / set_floating_pin_mode (1441) 路径对齐,
+    // 否则 save_config 路径下 Win 用户切省电模式视觉失效,重启 app 才自愈。
+    apply_floating_window_blur(&app, !cfg.low_power_mode);
+
     // 广播省电模式给浮窗，让前端 toggle body[data-low-power]
     // 失败 log warn 但不阻断（emit 失败不应让 user 重试整个 save_config）
     if let Err(e) = app.emit("musage://low-power-mode-changed", cfg.low_power_mode) {

@@ -182,34 +182,45 @@ pub fn run() {
             app.listen("musage://locale-changed", move |event| {
                 if let Ok(locale) = serde_json::from_str::<String>(event.payload()) {
                     rust_i18n::set_locale(&locale);
-                    // 重建 tray menu（label 走 tr!()，新 locale 立刻生效）
-                    if let Err(e) = crate::tray::rebuild_tray(&app_for_locale) {
-                        tracing::warn!(error = %e, "rebuild_tray 失败");
-                    }
-                    // 2026-08-05 审查交叉验证修复: rebuild_tray 只重建 menu, 不刷
-                    // tooltip -- tooltip 文本走 t!(), locale 切换后不刷新会显示旧
-                    // locale 文本直到下个 poller tick (≤60s). 这里用当前 snapshot
-                    // 触发一次 tray Update (icon + tooltip), 让 tooltip 立刻跟新 locale.
-                    // blocking_read 跟同文件 config 监听器 (L161) 同款, 事件回调在
-                    // tauri 专用线程跑, 不在 tokio runtime 里, 安全.
-                    {
-                        let state = app_for_locale.state::<crate::AppState>();
-                        let snap = state.snapshot.blocking_read().clone();
-                        let cfg = state.config.blocking_read();
+                    // H-lib fix (2026-09-07 audit): 老注释 "事件回调在 tauri 专用
+                    // 线程跑" 是错的 —— Tauri 2 listen 回调跑在调用 emit 的线程上:
+                    //   - JS 路径 → main thread, blocking_read 阻塞主线程 → 浮窗/
+                    //     托盘 click 全部排队,UI 瞬时冻结
+                    //   - backend set_app_locale → tokio worker,blocking_read 同步
+                    //     阻塞该 worker,其他并发 IPC 命令 (set_floating_pin_mode /
+                    //     save_config) 短暂排队等读锁,read-prefer-write 锁顺序耦合
+                    //     有放大死锁风险
+                    // 修法: 把所有 read() 移到 tauri::async_runtime::spawn 的 async
+                    // block, 走 async read, 不阻塞调用线程。注释同步纠正。
+                    let app_clone = app_for_locale.clone();
+                    tauri::async_runtime::spawn(async move {
+                        // 重建 tray menu (label 走 tr!(), 新 locale 立刻生效)
+                        if let Err(e) = crate::tray::rebuild_tray(&app_clone) {
+                            tracing::warn!(error = %e, "rebuild_tray 失败");
+                        }
+                        // rebuild_tray 只重建 menu, 不刷 tooltip -- tooltip 文本走
+                        // t!(), locale 切换后不刷新会显示旧 locale 文本直到下个
+                        // poller tick (≤60s). 用当前 snapshot 触发一次 tray Update
+                        // (icon + tooltip), 让 tooltip 立刻跟新 locale.
+                        let state = app_clone.state::<crate::AppState>();
+                        let snap = state.snapshot.read().await.clone();
+                        let cfg = state.config.read().await;
                         let style = cfg.tray_icon_style;
                         let tray_source =
                             cfg.tray_source.as_deref().unwrap_or("minimax").to_string();
                         let tray_color =
                             crate::tray::tray_fill_color(cfg.tray_icon_color.as_deref());
+                        drop(cfg);
                         let _ = crate::tray::update_tray_from_snapshot(
-                            &app_for_locale,
+                            &app_clone,
                             &snap,
                             style,
                             &tray_source,
                             tray_color,
                         );
-                    }
-                    // 同步 settings 窗口 title
+                    });
+                    // 同步 settings / 登录窗口 / 浮窗 title (这些是 set_title,
+                    // main thread 调用, 不需要 async 重构)
                     if let Some(w) = app_for_locale.get_webview_window("settings") {
                         let title = t!("window.settings").to_string();
                         let _ = w.set_title(&title);
@@ -219,7 +230,7 @@ pub fn run() {
                         let _ = w.set_title(&title);
                     }
                     // fix (2026-07-28 审查 L10): 登录窗口 title 同步补齐
-                    // anysearch / stepfun（旧版只同步 xiaomi-login）
+                    // anysearch / stepfun (旧版只同步 xiaomi-login)
                     if let Some(w) = app_for_locale.get_webview_window("anysearch-login") {
                         let title = t!("window.anysearch_login").to_string();
                         let _ = w.set_title(&title);
@@ -550,34 +561,24 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
     // 一次保险)。
     tauri::async_runtime::spawn(async move {
         loop {
+            // H-lib fix (2026-09-07 audit): 仿 poller 主循环加 SHUTDOWN_REQUESTED
+            // 兜底 —— select! 之后 check AtomicBool,如果 quit_app 在 tick body
+            // 执行期间触发 (没有 notified() 注册),notify_waiters 信号丢失,
+            // 下一个 loop 回到 select! 时已经触发的 notify 永远拿不到。worst
+            // case 拖到 X 后 100ms 内 quit → X 没落盘 → 下次启动窗口位置丢。
+            // 加 AtomicBool 兜底: tick body 末尾 / SHUTDOWN branch 之前都查一次。
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_millis(500)) => {}
                 _ = crate::poller::SHUTDOWN.notified() => {
                     tracing::info!("geom_persister 收到 SHUTDOWN,最后 flush 一次后退出");
-                    // 最后一次 flush, 把 latest 落盘
-                    let pending = {
-                        let mut g = latest.lock().unwrap_or_else(|e| {
-                            tracing::warn!("geom_persister latest poisoned (shutdown), recovering");
-                            e.into_inner()
-                        });
-                        g.take()
-                    };
-                    if let Some((x, y, w, h)) = pending {
-                        let state = app.state::<AppState>();
-                        let mut cfg = state.config.write().await;
-                        let mut dirty = false;
-                        if cfg.floating_x != Some(x) { cfg.floating_x = Some(x); dirty = true; }
-                        if cfg.floating_y != Some(y) { cfg.floating_y = Some(y); dirty = true; }
-                        if w > 0 && cfg.floating_w != Some(w) { cfg.floating_w = Some(w); dirty = true; }
-                        if h > 0 && cfg.floating_h != Some(h) { cfg.floating_h = Some(h); dirty = true; }
-                        if dirty {
-                            if let Err(e) = cfg.save() {
-                                tracing::warn!(error = %e, "保存浮窗几何失败 (shutdown flush)");
-                            }
-                        }
-                    }
+                    flush_latest_geom(&latest, &app).await;
                     break;
                 }
+            }
+            if crate::poller::SHUTDOWN_REQUESTED.load(std::sync::atomic::Ordering::SeqCst) {
+                tracing::info!("geom_persister 兜底检测到 SHUTDOWN_REQUESTED,最后 flush 一次后退出");
+                flush_latest_geom(&latest, &app).await;
+                break;
             }
             let pending = {
                 let mut g = latest.lock().unwrap_or_else(|e| {
@@ -626,6 +627,55 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
             }
         }
     });
+}
+
+/// 抽取出来的 flush helper: 把 latest 里的 pending 几何落盘。H-lib fix 复用
+/// (SHUTDOWN branch + SHUTDOWN_REQUESTED 兜底分支都用)。
+async fn flush_latest_geom(
+    latest: &std::sync::Arc<std::sync::Mutex<Option<(i32, i32, i32, i32)>>>,
+    app: &tauri::AppHandle,
+) {
+    let pending = {
+        let mut g = latest.lock().unwrap_or_else(|e| {
+            tracing::warn!("geom_persister latest poisoned (flush), recovering");
+            e.into_inner()
+        });
+        g.take()
+    };
+    if let Some((x, y, w, h)) = pending {
+        let state = app.state::<AppState>();
+        let mut cfg = state.config.write().await;
+        let mut dirty = false;
+        if cfg.floating_x != Some(x) {
+            cfg.floating_x = Some(x);
+            dirty = true;
+        }
+        if cfg.floating_y != Some(y) {
+            cfg.floating_y = Some(y);
+            dirty = true;
+        }
+        if w > 0 && cfg.floating_w != Some(w) {
+            cfg.floating_w = Some(w);
+            dirty = true;
+        }
+        if h > 0 && cfg.floating_h != Some(h) {
+            cfg.floating_h = Some(h);
+            dirty = true;
+        }
+        if dirty {
+            let cfg_clone = cfg.clone();
+            drop(cfg);
+            match tokio::task::spawn_blocking(move || cfg_clone.save()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => {
+                    tracing::warn!(error = %e, "保存浮窗几何失败 (flush)");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "保存浮窗几何 task join 失败 (flush)");
+                }
+            }
+        }
+    }
 }
 
 /// `musage dump [provider]` 子命令：拉一次用量并打印

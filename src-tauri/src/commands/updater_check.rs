@@ -186,7 +186,14 @@ async fn do_check() -> Result<Option<UpdateInfo>, String> {
         ))
         .send()
         .await
-        .map_err(|e| format!("send: {e}"))?;
+        // H-ErrorHandling fix (2026-09-07 audit): 之前直接 `format!("send: {e}")`
+        // 把 URL 重复塞进 user-facing toast + debug 日志 (humanize_reqwest_err
+        // 在 44f958d 已统一剥 URL, codebase 其他 18 处 fetch 都走了)。
+        // 改 humanize_reqwest_err 走统一管道。
+        .map_err(|e| {
+            tracing::warn!(error = %e, "github api fetch failed");
+            crate::providers::humanize_reqwest_err(&e)
+        })?;
 
     let status = resp.status();
     if status.as_u16() == HTTP_NOT_FOUND {

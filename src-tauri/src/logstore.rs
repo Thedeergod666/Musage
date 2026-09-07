@@ -116,16 +116,24 @@ pub fn redact_message(s: &str) -> std::borrow::Cow<'_, str> {
             // 日志里两种都见过),Cookie/Set-Cookie 保持字面 (HTTP 规范就是
             // 这两个拼写,无歧义)。prefix (sk-/tvly-/tp-/tk-/eyJ) 全 case-
             // sensitive (厂商 token 格式都是 lowercase)。
+            //
+            // H-Logstore fix (2026-09-07 audit):
+            // 1) 长度阈值 8 → 4 防短 key (如 sk-abcd 5字符含厂商前缀也才 7 字,
+            //    老阈值 8 把它们当合法内容留下泄漏)。短 token 是厂商历史测试
+            //    / 短前缀场景,值再短也是机密,统一遮蔽。
+            // 2) 补 sessionKey= / sessionid= / JSESSIONID= / auth= 等通用
+            //    session token 字段 —— 老白名单全是厂商前缀,用户系统的
+            //    session token 形态完全没覆盖,日志泄露面巨大。
             r"(?:",
-            r"[Bb]earer\s+[A-Za-z0-9._\-+/=]{8,}",
+            r"[Bb]earer\s+[A-Za-z0-9._\-+/=]{4,}",
             r"|[Bb]asic\s+[A-Za-z0-9._\-+/=]{4,}",
-            r"|\bsk-[A-Za-z0-9_\-]{8,}",
-            r"|\bsk-or-v1-[A-Za-z0-9_\-]{8,}",
-            r"|\bsk-cp-[A-Za-z0-9_\-]{8,}",
-            r"|\btvly-[A-Za-z0-9_\-]{8,}",
-            r"|\btp-[A-Za-z0-9_\-]{8,}",
-            r"|\btk-[A-Za-z0-9_\-]{8,}",
-            r"|\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{2,}\.[A-Za-z0-9_\-]{2,}",
+            r"|\bsk-[A-Za-z0-9_\-]{4,}",
+            r"|\bsk-or-v1-[A-Za-z0-9_\-]{4,}",
+            r"|\bsk-cp-[A-Za-z0-9_\-]{4,}",
+            r"|\btvly-[A-Za-z0-9_\-]{4,}",
+            r"|\btp-[A-Za-z0-9_\-]{4,}",
+            r"|\btk-[A-Za-z0-9_\-]{4,}",
+            r"|\beyJ[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{2,}\.[A-Za-z0-9_\-]{2,}",
             r"|Oasis-Token=[^\s;,]+",
             r"|Oasis-Refresh-Token=[^\s;,]+",
             r"|MUSAGE_TOKEN=[^\s;,]+",
@@ -142,7 +150,13 @@ pub fn redact_message(s: &str) -> std::borrow::Cow<'_, str> {
             r"|client_secret=[^\s;,]+",
             r"|secret_key=[^\s;,]+",
             r"|refresh_token=[^\s;,]+",
-            r"|\bxai-[A-Za-z0-9_\-]{8,}",
+            r"|\bxai-[A-Za-z0-9_\-]{4,}",
+            // H-Logstore fix: 通用 session token 字段,覆盖非厂商前缀场景
+            // (用户后端系统 / 自建 SSO / Cookie 内的 session token 等)。
+            r"|sessionKey=[^\s;,]+",
+            r"|sessionid=[^\s;,]+",
+            r"|JSESSIONID=[^\s;,]+",
+            r"|auth==[^\s;,]+",
             r"|(?:Cookie|Set-Cookie):[^\n]+",
             r")",
         ))

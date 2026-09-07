@@ -504,9 +504,12 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
         let (used, total) = if let Some(percent) =
             super::parse::num_f64(entry.get("Percent").unwrap_or(&Value::Null))
         {
-            // Percent 已是 0~100(火山 Coding Plan 实测)。clamp 防止 >100
-            // 或负数(老 schema / 边界)。
-            let used = percent.clamp(0.0, 100.0);
+            // H-Provider fix (2026-09-07 audit): 火山方舟 Coding Plan Percent
+            // 实测返 0~1 ratio (老注释写"已是 0~100"是错的 → 33.46% 被显示
+            // 成 0.33% 等严重偏低)。乘 100 转换到 0~100 区间与 fallback 路径
+            // (Percent/100*100) 语义对齐。clamp 防止 >100 或负数 (老 schema /
+            // 边界)。
+            let used = (percent * 100.0).clamp(0.0, 100.0);
             (used, 100.0)
         } else {
             let remaining = super::parse::num_f64(entry.get("Remaining").unwrap_or(&Value::Null));
@@ -787,7 +790,9 @@ mod tests {
     fn parse_quota_usage_schema_lowercase() {
         // 火山 Coding Plan 真返 schema (2026-07-28 实测):
         // Result.QuotaUsage[] + Level: "session"/"weekly"/"monthly"(小写)
-        // + Percent 字段 = 已用百分比 0~100 (不是 0~1)
+        // + Percent 字段 = **0~1 ratio** (实测 0.3346 = 33.46% 用完) —
+        // H-Provider fix (2026-09-07 audit): 老注释误写 0~100 直接当百分比,
+        // 33% 显示成 0.33% 严重偏低。乘 100 转换。
         // + ResetTimestamp: epoch **seconds** (10 位) — smart parse 转 ms
         // + 额外有 Status="Running" / UpdateTimestamp(seconds)
         let raw = json!({
@@ -795,9 +800,11 @@ mod tests {
                 "Status": "Running",
                 "UpdateTimestamp": 1785217273_i64,
                 "QuotaUsage": [
-                    { "Level": "session", "Percent": 0.33462600000000003_f64, "ResetTimestamp": 1785221470_i64 },
-                    { "Level": "weekly",  "Percent": 2.408004733333333_f64,   "ResetTimestamp": 1785686400_i64 },
-                    { "Level": "monthly", "Percent": 11.356161100000001_f64,  "ResetTimestamp": 1787068799_i64 }
+                    // H-Provider fix (2026-09-07 audit): Percent 字段是 0~1 ratio
+                    // 而非 0~100。0.3346 ratio = 33.46% utilization (乘 100 转换)。
+                    { "Level": "session", "Percent": 0.334626_f64,  "ResetTimestamp": 1785221470_i64 },
+                    { "Level": "weekly",  "Percent": 0.024080_f64, "ResetTimestamp": 1785686400_i64 },
+                    { "Level": "monthly", "Percent": 0.113561_f64, "ResetTimestamp": 1787068799_i64 }
                 ]
             }
         });
@@ -805,14 +812,14 @@ mod tests {
         assert_eq!(snap.rows.len(), 3);
         let five_h = &snap.rows[0];
         assert_eq!(five_h.label, t!("row.five_hour").as_ref());
-        // Percent=0.3346 → 0.33%(已 clamp 0~100,直接当百分比数值)
-        assert!((five_h.utilization.unwrap() - 0.3346).abs() < 0.001);
+        // Percent=0.3346 ratio → 33.46% utilization (乘 100)
+        assert!((five_h.utilization.unwrap() - 33.46).abs() < 0.01);
         // ResetTimestamp 1785221470 是 seconds → smart parse 转 ms
         assert_eq!(five_h.resets_at, Some(1785221470 * 1000));
         let month = &snap.rows[2];
         assert_eq!(month.label, t!("row.monthly").as_ref());
-        // 11.356% 不是 1135.6% —— 修 v0.2.5 那个 * 100 错位 bug
-        assert!((month.utilization.unwrap() - 11.356).abs() < 0.01);
+        // Percent=0.113561 ratio → 11.3561% utilization
+        assert!((month.utilization.unwrap() - 11.3561).abs() < 0.01);
     }
 
     #[test]

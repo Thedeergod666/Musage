@@ -105,7 +105,18 @@ pub struct ExtraInstance {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom: Option<CustomSourceSpec>,
     pub created_at: i64,
+    /// H-Config fix (2026-09-07 audit): 文件级 schema 版本。serde_default = 1
+    /// 让老 extra_instances.json (无字段) 走 v1,无需迁移。未来加 required
+    /// 字段时 +1 + 在 load() 加 migrate 路径。
+    #[serde(default = "default_extra_instance_schema")]
+    pub schema_version: u32,
 }
+
+fn default_extra_instance_schema() -> u32 {
+    1
+}
+
+pub(crate) const CURRENT_EXTRA_INSTANCE_SCHEMA: u32 = 1;
 
 impl ExtraInstance {
     /// 构造一个 New API 中转站（custom）实例 —— PR 1a / PR 3 兼容。
@@ -118,6 +129,7 @@ impl ExtraInstance {
             api_key_ref: id_str,
             custom: Some(spec),
             created_at: chrono::Utc::now().timestamp(),
+            schema_version: CURRENT_EXTRA_INSTANCE_SCHEMA,
         }
     }
 
@@ -134,6 +146,7 @@ impl ExtraInstance {
             api_key_ref,
             custom: None,
             created_at: chrono::Utc::now().timestamp(),
+            schema_version: CURRENT_EXTRA_INSTANCE_SCHEMA,
         }
     }
 }
@@ -143,7 +156,9 @@ impl ExtraInstance {
 /// 行为：
 /// - 文件不存在 → `Ok(vec![])`
 /// - 文件存在但 parse 失败 → 备份到 `.bak.<timestamp>` + `Ok(vec![])`
-/// - 文件为空字符串 → `Ok(vec![])`
+/// - 文件为空字符串 → `Err` (H-Config fix 2026-09-07 audit)
+/// - 文件不存在 → `Ok(vec![])`
+/// - 文件存在但 parse 失败 → 备份到 `.bak.<timestamp>` + `Err` (C1/H-1 风格)
 pub fn load() -> Result<Vec<ExtraInstance>, String> {
     let path = extra_instances_path()?;
     if !path.exists() {
@@ -156,7 +171,32 @@ pub fn load() -> Result<Vec<ExtraInstance>, String> {
         std::fs::read_to_string(&path).map_err(|e| format!("read extra_instances.json: {e}"))?;
     let s = crate::config::strip_bom_owned(raw);
     if s.trim().is_empty() {
-        return Ok(Vec::new());
+        // H-Config fix (2026-09-07 audit): 旧实现返回 Ok(vec![]) 与 keys.json
+        // H-1 修复风格自相矛盾 —— 空 map 进 save_credential_for_id 写回基线
+        // 会把磁盘上其余所有凭据物理清除 (本文件场景: 所有 extra instance 元
+        // 数据被清除)。空文件(磁盘满/进程中断写出的 0 字节) 与 parse 失败
+        // 同属"文件损坏", 统一走 backup + Err,绝不让降级空 Vec 进入 save
+        // 基线。合法的"没有任何 extra instance"是 `[]` 或文件不存在。
+        let ts = chrono::Utc::now().timestamp();
+        let backup = path.with_extension(format!("json.bak.{ts}"));
+        if let Err(copy_err) = std::fs::copy(&path, &backup) {
+            tracing::error!(
+                source = %path.display(),
+                backup = %backup.display(),
+                copy_error = %copy_err,
+                "extra_instances.json 为空且 backup 失败, 用户失去恢复路径"
+            );
+        } else {
+            tracing::error!(
+                source = %path.display(),
+                backup = %backup.display(),
+                "extra_instances.json 为空 (疑似损坏), 已备份并拒绝读取, 避免后续 save 用空 Vec 覆盖"
+            );
+        }
+        return Err(format!(
+            "extra_instances.json 为空 (疑似磁盘损坏), 已备份到 {} —— 请恢复该备份, 或删除 extra_instances.json 后重新配置",
+            backup.display()
+        ));
     }
     match serde_json::from_str::<Vec<ExtraInstance>>(&s) {
         Ok(v) => Ok(v),
@@ -173,7 +213,7 @@ pub fn load() -> Result<Vec<ExtraInstance>, String> {
                     backup = %backup.display(),
                     copy_error = %copy_err,
                     parse_error = %e,
-                    "extra_instances.json 解析失败且备份失败 — 下次 save 会用空 Vec 覆盖",
+                    "extra_instances.json 解析失败且备份失败 — 用户失去恢复路径"
                 );
             } else {
                 tracing::warn!(
@@ -182,7 +222,12 @@ pub fn load() -> Result<Vec<ExtraInstance>, String> {
                     "extra_instances.json parse 失败，已备份到 .bak",
                 );
             }
-            Ok(Vec::new())
+            // H-Config fix (2026-09-07 audit): 返 Err,不让 save 用空 Vec
+            // 覆盖原文件(会让用户全部 extra instance 静默丢失)。
+            Err(format!(
+                "extra_instances.json 解析失败: {e}; 已备份到 {}",
+                backup.display()
+            ))
         }
     }
 }
@@ -282,6 +327,7 @@ pub fn load_or_migrate() -> Result<Vec<ExtraInstance>, String> {
             api_key_ref: spec.id.clone(),
             custom: Some(spec),
             created_at: now,
+            schema_version: crate::config::extra_instances::CURRENT_EXTRA_INSTANCE_SCHEMA,
         })
         .collect();
 
@@ -463,6 +509,7 @@ mod tests {
             api_key_ref: format!("{provider_id}#{idx}"),
             custom: None,
             created_at,
+            schema_version: CURRENT_EXTRA_INSTANCE_SCHEMA,
         }
     }
 
@@ -485,6 +532,7 @@ mod tests {
             api_key_ref: spec.id.clone(),
             custom: Some(spec),
             created_at,
+            schema_version: CURRENT_EXTRA_INSTANCE_SCHEMA,
         }
     }
 

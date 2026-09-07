@@ -229,6 +229,7 @@ pub async fn add_extra_instance(
                 api_key_ref: api_key_ref.clone(),
                 custom: Some(spec),
                 created_at: now,
+                schema_version: extra_instances::CURRENT_EXTRA_INSTANCE_SCHEMA,
             };
             (instance, api_key_ref)
         } else {
@@ -241,6 +242,7 @@ pub async fn add_extra_instance(
                 api_key_ref: api_key_ref.clone(),
                 custom: None,
                 created_at: now,
+                schema_version: extra_instances::CURRENT_EXTRA_INSTANCE_SCHEMA,
             };
             (instance, api_key_ref)
         };

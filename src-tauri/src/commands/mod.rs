@@ -1128,10 +1128,14 @@ pub async fn delete_source_credential(
         .ok_or_else(|| t!("commands.source_unknown", id = id.as_str()).into_owned())?;
     config::delete_credential_for_id(&id)?;
     // H4 fix (2026-07-06 全量审查): 删 builtin key 时,扫描 extra_instances
-    // 找到同一 provider 的副本,disable 它们 + 清掉对应 keys.json entry,
-    // 避免孤儿元数据(浮窗显示"未配置"的死副本)。
-    // 删 extra instance id 自身(如 "minimax#2")时不级联 —— #2 可能单独
-    // 没 key 也能保留给未来用户配置;只对 builtin 删做级联。
+    // 找到同一 provider 的副本,**只 disable** 副本元数据 —— 不级联删 API key。
+    // 删除 API key 是不可逆操作,即使将来用户想恢复(重新填 base key)也需要
+    // B/C 副本的旧 key。poller 跳过 disabled 实例 = 浮窗不再显示「未配置」
+    // 死卡,但 keys.json 仍保留副本凭据 → 用户重新粘 base key 后副本也能恢复。
+    //
+    // 旧实现 (CM4 fix 2026-07-28) 还级联 delete_credential_for_id("base#N"),
+    // 等价于"删 builtin key 时物理清除所有副本的 API key" —— 与 H4 注释
+    // "disable 已足够阻止未配置死卡"自相矛盾。
     if !id.contains('#') {
         let extras = state.extra_instances.read().await;
         let orphan_refs: Vec<String> = extras
@@ -1140,12 +1144,6 @@ pub async fn delete_source_credential(
             .map(|e| e.api_key_ref.clone())
             .collect();
         drop(extras);
-        // CM4 fix (2026-07-28 审查): 兑现上方注释承诺的另一半 —— 级联
-        // disable 副本。之前只清 keys.json entry,副本 enabled 仍为 true,
-        // poller 继续调度 + 浮窗显示「未配置」死卡。api_key_ref
-        // ("minimax#2") 同时是 keys.json key 和 cfg.providers key,disable
-        // 是可逆操作(设置面板可重新打开);extra_instances 条目本身的删除
-        // 归 delete_extra_instance,这里不越权。
         if !orphan_refs.is_empty() {
             let mut cfg = state.config.write().await;
             for r in &orphan_refs {
@@ -1163,17 +1161,10 @@ pub async fn delete_source_credential(
                 tracing::warn!(error = %e, "delete 级联 disable 副本落盘失败");
             }
             drop(cfg);
-        }
-        for r in &orphan_refs {
-            if let Err(e) = config::delete_credential_for_id(r) {
-                tracing::warn!(error = %e, ref_ = %r, "delete 级联清孤儿 entry 失败");
-            }
-        }
-        if !orphan_refs.is_empty() {
             tracing::info!(
                 builder = %id,
                 count = orphan_refs.len(),
-                "delete_source_credential 级联清理 extra_instances 副本"
+                "delete_source_credential 级联 disable 副本 (保留副本 keys.json 凭据,用户可后续恢复)"
             );
         }
     }

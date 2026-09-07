@@ -395,7 +395,16 @@ fn build_window_row(
     }
     // remaining 缺失时：先看显式 used，能反推就反推；否则视为已用满（0 剩余）。
     let explicit_used = parse_f64(obj.get("used"));
-    let remaining = parse_f64(obj.get("remaining"))
+    let explicit_remaining = parse_f64(obj.get("remaining"));
+    // H-Provider fix (2026-09-07 audit): 旧实现 `remaining.unwrap_or(0.0)`
+    // 在 remaining + used 同时缺失时 fallback 0 → utilization = 100%,误报
+    // "满配额耗尽"。schema 漂移 / 新字段未及时适配时用户看到假 100% 且
+    // 不知道是真满还是数据缺失。两者都缺返 None 让 UI 走 "未配置" 或空态,
+    // 比假 100% 更诚实。
+    if explicit_used.is_none() && explicit_remaining.is_none() {
+        return None;
+    }
+    let remaining = explicit_remaining
         .unwrap_or_else(|| explicit_used.map(|u| (limit - u).max(0.0)).unwrap_or(0.0));
     let used = explicit_used.unwrap_or_else(|| (limit - remaining).max(0.0));
     // clamp：防御 used > limit 的异常上限态渲染出 >100% 的 bar
@@ -738,20 +747,35 @@ mod tests {
 
     #[test]
     fn parse_5h_exhausted_remaining_omitted_keeps_row() {
-        // **核心回归**：5h 达上限时 API 省略 remaining 字段,只回 limit(+used)。
+        // **核心回归**：5h 达上限时 API 省略 remaining 字段,**但仍返 used**。
         // 旧逻辑 `(Some(l), Some(r))` 门控 → r=None → 整行 drop → 浮窗 5h 消失。
-        // 新逻辑：remaining 缺失退化为已用满 → 100% 行仍在。
+        // 新逻辑：remaining 缺失但 used 存在 → 反推 remaining = limit - used → 100% 行仍在。
         let raw = json!({
-            "limits": [{ "detail": { "limit": 100, "resetTime": 1749840000 } }],
+            "limits": [{ "detail": { "limit": 100, "used": 100, "resetTime": 1749840000 } }],
             "usage": { "limit": 1000, "remaining": 742 }
         });
         let snap = parse(&raw, "kimi", "Kimi").expect("parse");
-        assert_eq!(snap.rows.len(), 2, "remaining 省略时 5h 行不能消失");
+        assert_eq!(snap.rows.len(), 2, "remaining 省略但 used 存在时 5h 行不能消失");
         let five_h = &snap.rows[0];
         assert_eq!(five_h.kind, Some(RowKind::FiveHour));
         assert!((five_h.utilization.unwrap() - 100.0).abs() < 0.001);
         assert_eq!(five_h.total, Some(100.0));
         assert_eq!(five_h.remaining, Some(0.0));
+    }
+
+    #[test]
+    fn parse_5h_both_used_and_remaining_missing_drops_row() {
+        // H-Provider fix (2026-09-07 audit): 旧实现 remaining + used 同时缺失
+        // fallback 0 → 100% utilization, schema drift 时误报 "满配额耗尽"。
+        // 新行为: 都缺返 None, 5h 行不出现 (但 weekly 行仍在 → snap 不空)。
+        let raw = json!({
+            "limits": [{ "detail": { "limit": 100, "resetTime": 1749840000 } }],
+            "usage": { "limit": 1000, "remaining": 742 }
+        });
+        let snap = parse(&raw, "kimi", "Kimi").expect("parse");
+        // 5h 行 drop, weekly 行保留
+        assert_eq!(snap.rows.len(), 1, "5h remaining+used 都缺时该行 drop");
+        assert_eq!(snap.rows[0].kind, Some(RowKind::Weekly));
     }
 
     #[test]

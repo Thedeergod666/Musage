@@ -502,6 +502,10 @@ pub enum RowKind {
     Compensation,
     /// 小米 / New API 总额度
     MonthlyTotal,
+    /// 套餐/分组标题行（无数据，仅 label）—— 火山方舟 Coding + Agent
+    /// 双套餐用。`utilization` / `remaining` 都是 None，托盘 / tooltip
+    /// / health 计算天然跳过；前端渲染成 muted 小字分组锚点。
+    PlanHeader,
 }
 
 // ── 单个 source 的 snapshot ──────────────────────────────────────────

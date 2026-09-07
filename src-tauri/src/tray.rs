@@ -308,10 +308,18 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                                 // process 抢前台），再 SetForegroundWindow 抢前台。
                                 // **会**把焦点抢过来 —— 这是用户**主动**点菜单触发的
                                 // 操作，UX 上可接受（用户此刻在操作我们 app）。
-                                // fix (2026-07-28 审查): 不再静默吞失败，落 warn 日志。
+                                //
+                                // H-Tray fix (2026-09-07 audit): 之前传 0x00000001
+                                // 注释写 // ASFW_ANY,但 0x00000001 是有效 PID
+                                // (System/csrss),不是 ASFW_ANY。WinUser.h 定义
+                                // `ASFW_ANY = (DWORD)-1 = 0xFFFFFFFF`(允许任意
+                                // process 抢前台)。原写法等同于请求 PID=1 允许,
+                                // musage 不是 PID 1 → SetForegroundWindow 必然
+                                // 失败 → "强制置顶浮窗"菜单永远无效。诊断只说
+                                // "SetForegroundWindow 失败",误导为下个 API 问题。
                                 unsafe {
-                                    if AllowSetForegroundWindow(0x00000001) == 0 {
-                                        // ASFW_ANY
+                                    if AllowSetForegroundWindow(u32::MAX) == 0 {
+                                        // ASFW_ANY = u32::MAX
                                         tracing::warn!(
                                             error = GetLastError(),
                                             "force_top_floating: AllowSetForegroundWindow 失败"
@@ -572,11 +580,23 @@ fn start_tray_request_receiver(app: &AppHandle) {
             // （icon / tooltip / menu）永久冻结。改成 log + continue，下一条
             // 请求还有重试机会（main thread 临时 dispatch 失败 ≠ 永久失败）。
             //
-            // 不能 move 同一个变量同时又借用它：clone 一份给 closure。
+            // H-ErrorHandling fix (2026-09-07 audit): handle_tray_request 内部
+            // 任一处 panic 会沿 run_on_main_thread 闭包冒泡 → receiver task
+            // 死亡 → 后续 tray 更新全部静默丢失,托盘图标永久冻结。仅 warn +
+            // continue 处理 dispatch Err 不够,必须在闭包内 wrap catch_unwind
+            // 阻止 panic 逃逸。
             let app_for_dispatch = app_for_task.clone();
             let app_for_closure = app_for_task.clone();
             if let Err(e) = app_for_dispatch.run_on_main_thread(move || {
-                handle_tray_request(&app_for_closure, req);
+                // catch_unwind 需要 UnwindSafe, &AppHandle + &TrayRequest 都安全
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    handle_tray_request(&app_for_closure, req);
+                }))
+                .map_err(|_| {
+                    tracing::error!(
+                        "tray request handler panic, 被 catch_unwind 接住, receiver 继续运行"
+                    );
+                });
             }) {
                 tracing::warn!(error = %e, "派发 tray request 到 main thread 失败，本条丢弃，继续接收");
                 continue;
@@ -873,26 +893,61 @@ fn format_balance_tray(v: f64, unit: &str) -> String {
     format!("{symbol}{num}")
 }
 
-/// 解析 "#RRGGBB" / "RRGGBB" 为 Rgba。无效返 None。
+/// 解析 "#RRGGBB" / "#RGB" / "#RRGGBBAA" / "#RGBA" / "RRGGBB" / ... 为 Rgba。
+/// 无效返 None。
+///
+/// H-Tray fix (2026-09-07 audit): 旧实现只接 6 位 hex —— 与 commands/mod.rs
+/// `is_valid_hex_color` (接 3/6/8) 不一致,用户 `#abc` 通过校验持久化后
+/// tray parse 失败 → 永久回退 OS 默认色。统一到 4 种合法格式,alpha
+/// (#RRGGBBAA / #RGBA) 拼到 Rgba.a。
 fn parse_hex_color(s: &str) -> Option<Rgba<u8>> {
     let s = s.strip_prefix('#').unwrap_or(s);
+    // 按位走。短形式 (#RGB → #RRGGBB) + 提取 alpha。
+    let parse_pair = |hi: u8, lo: u8| -> Option<u8> {
+        u8::from_str_radix(&format!("{}{}", hi as char, lo as char), 16).ok()
+    };
     let b = s.as_bytes();
-    if b.len() != 6 {
-        return None;
+    let to_pair = |chars: &[u8]| -> Option<(u8, u8, u8)> {
+        if chars.len() != 6 {
+            return None;
+        }
+        Some((
+            parse_pair(chars[0], chars[1])?,
+            parse_pair(chars[2], chars[3])?,
+            parse_pair(chars[4], chars[5])?,
+        ))
+    };
+    match b.len() {
+        6 => {
+            // #RRGGBB
+            let (r, g, bb) = to_pair(b)?;
+            Some(Rgba([r, g, bb, 255]))
+        }
+        3 => {
+            // #RGB → #RRGGBB
+            let expand = |i: usize| [b[i], b[i]];
+            let r = parse_pair(expand(0)[0], expand(0)[1])?;
+            let g = parse_pair(expand(1)[0], expand(1)[1])?;
+            let bb = parse_pair(expand(2)[0], expand(2)[1])?;
+            Some(Rgba([r, g, bb, 255]))
+        }
+        8 => {
+            // #RRGGBBAA
+            let (r, g, bb) = to_pair(&b[..6])?;
+            let a = parse_pair(b[6], b[7])?;
+            Some(Rgba([r, g, bb, a]))
+        }
+        4 => {
+            // #RGBA → #RRGGBBAA
+            let expand = |i: usize| [b[i], b[i]];
+            let r = parse_pair(expand(0)[0], expand(0)[1])?;
+            let g = parse_pair(expand(1)[0], expand(1)[1])?;
+            let bb = parse_pair(expand(2)[0], expand(2)[1])?;
+            let a = parse_pair(expand(3)[0], expand(3)[1])?;
+            Some(Rgba([r, g, bb, a]))
+        }
+        _ => None,
     }
-    // 2026-08-17 audit H-01: 旧实现先判 s.len()==6（字节长度）再 &s[0..2] 切片。
-    // 6 字节但含多字节 UTF-8 且偏移不在 char boundary 时（如 "aé123"，'é' 占
-    // 字节 1-2）直接 panic —— 函数本意"无效返 None"却在能返 None 之前 panic。
-    // tray_fill_color 被每条刷新路径调用（publish_snapshot / refresh_now /
-    // set_tray_*），启动首个 tick panic → 整个 poller task 死亡、轮询永久停摆。
-    // 改为逐字节判 ascii hexdigit 后再 from_str_radix，panic 之前返 None。
-    if !b.iter().all(|c| c.is_ascii_hexdigit()) {
-        return None;
-    }
-    let r = u8::from_str_radix(std::str::from_utf8(&b[0..2]).ok()?, 16).ok()?;
-    let g = u8::from_str_radix(std::str::from_utf8(&b[2..4]).ok()?, 16).ok()?;
-    let bl = u8::from_str_radix(std::str::from_utf8(&b[4..6]).ok()?, 16).ok()?;
-    Some(Rgba([r, g, bl, 255]))
 }
 
 /// 计算托盘图标前景色：用户配了固定色（tray_icon_color）就用它，否则按菜单栏

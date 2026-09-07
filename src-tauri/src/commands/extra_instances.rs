@@ -229,6 +229,7 @@ pub async fn add_extra_instance(
                 api_key_ref: api_key_ref.clone(),
                 custom: Some(spec),
                 created_at: now,
+                schema_version: extra_instances::CURRENT_EXTRA_INSTANCE_SCHEMA,
             };
             (instance, api_key_ref)
         } else {
@@ -241,6 +242,7 @@ pub async fn add_extra_instance(
                 api_key_ref: api_key_ref.clone(),
                 custom: None,
                 created_at: now,
+                schema_version: extra_instances::CURRENT_EXTRA_INSTANCE_SCHEMA,
             };
             (instance, api_key_ref)
         };
@@ -630,18 +632,36 @@ pub async fn delete_extra_instance(
     // migrations_done 仅当 compact 发生(target_ref 被复用)时非空,与上面
     // !target_ref_now_used 分支互斥。
     if !migrations_done.is_empty() {
-        // H-03: 清 snapshot 中旧身份幽灵条目。new_ref 条目保留(其卡片由后续
-        // fetch 刷新,见上方 583-584 注释的既有设计意图)。
+        // H-03 (老 bug) + H-Commands fix (2026-09-07 audit): 老实现只
+        // retain(old_ref) 从 snapshot 删除旧 source_id 条目, 没把 source_id
+        // rename 到 new_ref。结果: compact 后 cfg.providers 已经在 new_ref
+        // 槽位, 但 snapshot 的 provider[].source_id 还指着旧 ref, 直到下次
+        // poller tick (60s+) 才刷新 → 用户在浮窗看副本消失。
+        //
+        // 修法: 在 snapshot 内按 source_id 旧→新 rename, 替换 cfg.providers.insert
+        // 后的实时状态。snapshot.providers[].source_id 是 stable 标识, 直接
+        // mutate 即可 (UI 已经在用 new_ref key 浮窗卡片)。
         {
             let mut snap = state.snapshot.write().await;
-            let old_refs: Vec<&str> = migrations_done.iter().map(|(o, _, _)| o.as_str()).collect();
-            let before = snap.providers.len();
-            snap.providers
-                .retain(|p| !old_refs.contains(&crate::commands::snapshot_key(p)));
-            if snap.providers.len() != before {
+            let mut renamed = 0usize;
+            for p in snap.providers.iter_mut() {
+                let sk = crate::commands::snapshot_key(p);
+                for (old_ref, new_ref, _) in &migrations_done {
+                    if sk == *old_ref {
+                        p.source_id = Some(new_ref.clone());
+                        renamed += 1;
+                        break;
+                    }
+                }
+            }
+            if renamed > 0 {
                 let s = snap.clone();
                 drop(snap);
                 let _ = app.emit("musage://snapshot", &s);
+                tracing::info!(
+                    renamed,
+                    "delete_extra_instance 紧凑迁移后 snapshot source_id 已 rename, 浮窗立即跟新"
+                );
             }
         }
         // M-06: 迁移 cfg.providers。两阶段(先全部 remove old_ref,再写 new_ref)
@@ -856,7 +876,22 @@ pub async fn test_extra_instance(
             .custom
             .ok_or_else(|| t!("commands.extra.custom_spec_required").into_owned())?;
         let temp = CustomSource::new(spec);
-        temp.fetch(&creds).await.map_err(|e| e.message)
+        match temp.fetch(&creds).await {
+            Ok(snap) => Ok(snap),
+            Err(e) => {
+                // H-ErrorHandling fix (2026-09-07 audit): 之前直接 `e.message`
+                // 透传,跳过统一错误日志管道。test_extra_instance 是 debug-only
+                // IPC, 没 AppHandle 参数,不能调 log_provider_error (它需要
+                // AppHandle)。改 tracing::error 直接落 app_log.jsonl。
+                tracing::error!(
+                    provider = %req.provider_id,
+                    kind = ?e.kind,
+                    "test_extra_instance 失败: {}",
+                    e.message
+                );
+                Err(e.message)
+            }
+        }
     } else {
         let src = instantiate_builtin_with_index(&req.provider_id, 1).ok_or_else(|| {
             t!(
@@ -867,7 +902,19 @@ pub async fn test_extra_instance(
         })?;
         // M22 fix (2026-07-03 audit): 之前这里有死代码 load_credential_for_id
         // 然后 let _ 丢弃结果,没有任何校验动作。已删除。
-        src.fetch(&creds).await.map_err(|e| e.message)
+        match src.fetch(&creds).await {
+            Ok(snap) => Ok(snap),
+            Err(e) => {
+                // H-ErrorHandling fix (2026-09-07 audit): 同 custom 分支。
+                tracing::error!(
+                    provider = %req.provider_id,
+                    kind = ?e.kind,
+                    "test_extra_instance 失败: {}",
+                    e.message
+                );
+                Err(e.message)
+            }
+        }
     }
 }
 

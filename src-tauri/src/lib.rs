@@ -182,36 +182,51 @@ pub fn run() {
             app.listen("musage://locale-changed", move |event| {
                 if let Ok(locale) = serde_json::from_str::<String>(event.payload()) {
                     rust_i18n::set_locale(&locale);
-                    // 重建 tray menu（label 走 tr!()，新 locale 立刻生效）
-                    if let Err(e) = crate::tray::rebuild_tray(&app_for_locale) {
-                        tracing::warn!(error = %e, "rebuild_tray 失败");
-                    }
-                    // 2026-08-05 审查交叉验证修复: rebuild_tray 只重建 menu, 不刷
-                    // tooltip -- tooltip 文本走 t!(), locale 切换后不刷新会显示旧
-                    // locale 文本直到下个 poller tick (≤60s). 这里用当前 snapshot
-                    // 触发一次 tray Update (icon + tooltip), 让 tooltip 立刻跟新 locale.
-                    // blocking_read 跟同文件 config 监听器 (L161) 同款, 事件回调在
-                    // tauri 专用线程跑, 不在 tokio runtime 里, 安全.
-                    {
-                        let state = app_for_locale.state::<crate::AppState>();
-                        let snap = state.snapshot.blocking_read().clone();
-                        let cfg = state.config.blocking_read();
+                    // H-lib fix (2026-09-07 audit): 老注释 "事件回调在 tauri 专用
+                    // 线程跑" 是错的 —— Tauri 2 listen 回调跑在调用 emit 的线程上:
+                    //   - JS 路径 → main thread, blocking_read 阻塞主线程 → 浮窗/
+                    //     托盘 click 全部排队,UI 瞬时冻结
+                    //   - backend set_app_locale → tokio worker,blocking_read 同步
+                    //     阻塞该 worker,其他并发 IPC 命令 (set_floating_pin_mode /
+                    //     save_config) 短暂排队等读锁,read-prefer-write 锁顺序耦合
+                    //     有放大死锁风险
+                    // 修法: 把所有 read() 移到 tauri::async_runtime::spawn 的 async
+                    // block, 走 async read, 不阻塞调用线程。注释同步纠正。
+                    let app_clone = app_for_locale.clone();
+                    tauri::async_runtime::spawn(async move {
+                        // 重建 tray menu (label 走 tr!(), 新 locale 立刻生效)
+                        if let Err(e) = crate::tray::rebuild_tray(&app_clone) {
+                            tracing::warn!(error = %e, "rebuild_tray 失败");
+                        }
+                        // rebuild_tray 只重建 menu, 不刷 tooltip -- tooltip 文本走
+                        // t!(), locale 切换后不刷新会显示旧 locale 文本直到下个
+                        // poller tick (≤60s). 用当前 snapshot 触发一次 tray Update
+                        // (icon + tooltip), 让 tooltip 立刻跟新 locale.
+                        let state = app_clone.state::<crate::AppState>();
+                        let snap = state.snapshot.read().await.clone();
+                        let cfg = state.config.read().await;
                         let style = cfg.tray_icon_style;
                         let tray_source =
                             cfg.tray_source.as_deref().unwrap_or("minimax").to_string();
+                        // merge 2026-09-08：本地 H-6 双参签名（menu_bar_is_light
+                        // 需 &AppHandle 派发主线程）+ 远端 drop(cfg) 提前释放
+                        // 读锁。app 用 async block 内的 app_clone（app_for_locale
+                        // 被 move 进外层闭包，引用逃不出 spawn）。
                         let tray_color = crate::tray::tray_fill_color(
-                            &app_for_locale,
+                            &app_clone,
                             cfg.tray_icon_color.as_deref(),
                         );
+                        drop(cfg);
                         let _ = crate::tray::update_tray_from_snapshot(
-                            &app_for_locale,
+                            &app_clone,
                             &snap,
                             style,
                             &tray_source,
                             tray_color,
                         );
-                    }
-                    // 同步 settings 窗口 title
+                    });
+                    // 同步 settings / 登录窗口 / 浮窗 title (这些是 set_title,
+                    // main thread 调用, 不需要 async 重构)
                     if let Some(w) = app_for_locale.get_webview_window("settings") {
                         let title = t!("window.settings").to_string();
                         let _ = w.set_title(&title);
@@ -221,7 +236,7 @@ pub fn run() {
                         let _ = w.set_title(&title);
                     }
                     // fix (2026-07-28 审查 L10): 登录窗口 title 同步补齐
-                    // anysearch / stepfun（旧版只同步 xiaomi-login）
+                    // anysearch / stepfun (旧版只同步 xiaomi-login)
                     if let Some(w) = app_for_locale.get_webview_window("anysearch-login") {
                         let title = t!("window.anysearch_login").to_string();
                         let _ = w.set_title(&title);
@@ -441,6 +456,9 @@ pub fn run() {
             commands::set_zenmux_mode,
             commands::set_zenmux_payg_concise,
             commands::set_zhipu_region,
+            // v0.2.9 火山方舟双套餐筛选（Coding Plan / Agent Plan checkbox）
+            commands::set_volcengine_ark_plan_coding,
+            commands::set_volcengine_ark_plan_agent,
             xiaomi_login::open_xiaomi_login_window,
             anysearch_login::open_anysearch_login_window,
             stepfun_login::open_stepfun_login_window,
@@ -582,7 +600,10 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
     // 可以改完并落盘更新快照，随后这份过期快照再落盘就把新设置回滚掉。
     // 锁内保存（与各 setter 的既有做法一致）让"最后拿到写锁者最后落盘"。
     tauri::async_runtime::spawn(async move {
-        // 返回 true = 需要继续循环
+        // merge 2026-09-08 采纳本地实现：GeomLatest 结构体（H-5 位置/尺寸
+        // 分维度跟踪）+ flush_once 锁内保存（H-4，防过期快照回滚并发 setter）
+        // + M17 SHUTDOWN_REQUESTED 兜底 —— 后两者已覆盖远端 H-lib fix 的
+        // notify 丢失场景，且数据结构对齐本文件的 Moved/Resized 回调。
         async fn flush_once(app: &tauri::AppHandle, latest: &Arc<Mutex<GeomLatest>>) -> GeomLatest {
             let pending = {
                 let mut g = latest.lock().unwrap_or_else(|e| {

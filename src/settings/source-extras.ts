@@ -23,6 +23,8 @@ import {
   setZenmuxMode,
   setZenmuxPaygConcise,
   setZhipuRegion,
+  setVolcengineArkPlanCoding,
+  setVolcengineArkPlanAgent,
 } from "./api";
 import type { AppConfig, SourceMeta } from "./types";
 
@@ -37,6 +39,8 @@ const EXTRAS: Record<string, ExtraBlock[]> = {
   zenmux: [renderBaseUrlInput, renderZenmuxMode],
   openrouter: [renderOpenrouterHelp],
   zhipu: [renderZhipuRegionSelect],
+  // v0.2.9：Coding Plan / Agent Plan 双套餐筛选 checkbox
+  volcengine_ark: [renderVolcenginePlanFilter],
   // deepseek / kimi: 无额外字段
 };
 
@@ -303,5 +307,51 @@ function renderZhipuRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElement
     el("label", { for: "zhipu-region" }, t("extras.zhipu_region_label")),
     select,
     helpDiv,
+  );
+}
+
+/// 火山方舟双套餐筛选（v0.2.9）：Coding Plan / Agent Plan 两个独立 checkbox。
+/// 同一 AppID 可同时买两份套餐，未勾选的 action 后端直接不打（省配额）。
+/// 从 cfg.volcengine_ark_plan_filter 读初值（缺省两个都勾）。
+function renderVolcenginePlanFilter(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
+  const cur = cfg.volcengine_ark_plan_filter ?? { coding: true, agent: true };
+
+  const mkCheckbox = (
+    id: string,
+    checked: boolean,
+    labelText: string,
+    onChange: (v: boolean) => Promise<void>,
+  ): HTMLElement => {
+    const cb = el("input", {
+      type: "checkbox",
+      id,
+      "data-id": id,
+    }) as HTMLInputElement;
+    cb.checked = checked;
+    cb.addEventListener("change", () => {
+      void onChange(cb.checked).catch((e) => {
+        flash(t("settings.app.switch_failed", { err: String(e) }), true);
+      });
+    });
+    return el("div", { class: "check" }, cb, el("label", { for: id }, labelText));
+  };
+
+  return el(
+    "div",
+    { class: "field" },
+    el("label", {}, t("extras.volcengine_plan_filter_label")),
+    mkCheckbox(
+      "volcengine-plan-coding",
+      cur.coding,
+      t("extras.volcengine_plan_coding"),
+      setVolcengineArkPlanCoding,
+    ),
+    mkCheckbox(
+      "volcengine-plan-agent",
+      cur.agent,
+      t("extras.volcengine_plan_agent"),
+      setVolcengineArkPlanAgent,
+    ),
+    el("div", { class: "help" }, t("extras.volcengine_plan_help")),
   );
 }

@@ -263,6 +263,29 @@ body[data-hover] #app {
   gap: 5px;
 }
 
+/* ── 套餐标题行（v0.2.9 火山方舟双套餐）──
+   RowKind::PlanHeader：无 bar / 无 pct / 无倒计时，只有一行 muted 小字，
+   作为 Coding Plan / Agent Plan 两组数据行的视觉分组锚点。 */
+
+.row-plan-header {
+  padding: 8px 0 0 0;
+  text-align: left;
+}
+
+.row-plan-header-label {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.45);
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  text-transform: none;
+  text-shadow: var(--text-shadow);
+}
+
+/* 第一个套餐的标题行贴紧卡头，上方不留额外间距 */
+.card .rows > .row-plan-header:first-child {
+  padding-top: 2px;
+}
+
 .row-label {
   display: flex;
   justify-content: space-between;

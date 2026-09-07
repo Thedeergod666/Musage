@@ -200,8 +200,16 @@ interface QuotaRow {
    *  浮窗据此显示「日重置」/「月重置」前缀（缺省走月重置，跟旧行为一致）；
    *  StepFun 一次性额度包带 `{reset_period: "expire"}` → 显示「到期」+「已到期」。
    *  Kimi 总套餐行带 `{kimi_code_used_ratio: number}`（总池里 Code 消耗占比 %）
-   *  → 「月重置」行之后多渲染一行拆分小字「Kimi xx% · Code xx%」。 */
-  extra?: { reset_period?: string; kimi_code_used_ratio?: number } | null;
+   *  → 「月重置」行之后多渲染一行拆分小字「Kimi xx% · Code xx%」。
+   *  火山方舟双套餐行带 `{plan: "coding"|"agent", is_header?: boolean}`：
+   *  plan 用于 rowKey 去重（两个套餐都有 5h/7d/月 行）；is_header=true 的行
+   *  是 RowKind::PlanHeader 标题行（无数据，渲染成 muted 小字分组锚点）。 */
+  extra?: {
+    reset_period?: string;
+    kimi_code_used_ratio?: number;
+    plan?: "coding" | "agent";
+    is_header?: boolean;
+  } | null;
   /** 行的语义分类（与 locale 解耦，**L7 fix 2026-06-19**）。
    *  rowKey 优先用这个做 DOM 稳定 key，避免切 locale 后 key 变化导致全量重建。 */
   kind?:
@@ -210,6 +218,7 @@ interface QuotaRow {
     | "plan"
     | "compensation"
     | "monthly_total"
+    | "plan_header"
     | null;
 }
 
@@ -406,10 +415,21 @@ function render(snap: QuotaSnapshot) {
   }
 
   // 1. 增量更新每张 provider 卡片
-  const existingCards = new Map<string, HTMLElement>();
+  // **防累积（2026-09-07 fix）**：收集改"多值 Map"（key → 元素数组）。
+  // 之前单值 Map 在 DOM 里出现两张同 data-provider 卡时（某次 emit 的
+  // snap.providers 含同 id 两条 —— 后端收集源重复 / extra instance 身份
+  // 迁移历史 bug 都可能造成），后者收集时覆盖前者 → 被覆盖那张不进
+  // orphan 清理名单 → 永久残留。之后每来一次重复 snapshot 再 +1 张卡，
+  // 就是"浮窗突然出现一堆重复卡、刷新才恢复"的 bug。多值收集 + shift
+  // 复用 + 全量 orphan 清理后，重复 key 只影响当次渲染，下一次数据正常
+  // 的 snapshot 会自动收敛回单卡。
+  const existingCards = new Map<string, HTMLElement[]>();
   app.querySelectorAll<HTMLElement>(".card[data-provider]").forEach((el) => {
     const key = el.dataset.provider;
-    if (key) existingCards.set(key, el);
+    if (!key) return;
+    const list = existingCards.get(key);
+    if (list) list.push(el);
+    else existingCards.set(key, [el]);
   });
 
   // 第一遍：确保所有 snap 里的 card 都存在 DOM（按 snap 顺序决定插入位置）
@@ -417,10 +437,9 @@ function render(snap: QuotaSnapshot) {
   for (const p of snap.providers) {
     // Phase 1：用 source_id 路由（registry-driven），provider 字段保兼容
     const id = p.unique_id ?? p.source_id ?? p.provider;
-    let card = existingCards.get(id);
-    if (card) {
-      existingCards.delete(id);
-    } else {
+    // shift 复用：同 id 多张时逐条取用，取完再 build 新卡
+    let card = existingCards.get(id)?.shift();
+    if (!card) {
       card = buildCardSkeleton(id);
       // 保持顺序：插在 anchor 之后
       if (anchor && anchor.parentNode) {
@@ -432,9 +451,9 @@ function render(snap: QuotaSnapshot) {
     updateCard(card, p);
     anchor = card;
   }
-  // 移除 snap 里没有的卡（provider 被关了）
-  for (const orphan of existingCards.values()) {
-    orphan.remove();
+  // 移除 snap 里没有的卡（provider 被关了 / 重复 key 多出来的卡）
+  for (const list of existingCards.values()) {
+    for (const el of list) el.remove();
   }
 
   // 第二遍：按 snap.providers 顺序把 DOM 卡片摆到正确位置。
@@ -1072,15 +1091,23 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
     rowsBox.innerHTML = "";
   }
 
-  const existing = new Map<string, HTMLElement>();
+  // **防累积（2026-09-07 fix）**：收集改"多值 Map"（key → 元素数组），与
+  // render() 卡片 diff 同款。之前单值 Map 在 rowsBox 里出现两条同 rowKey
+  // 行时（后端 rows 内 key 冲突 —— 如 v0.2.9 之前火山双套餐两条 five_hour
+  // 无 plan 区分），后者覆盖前者 → 被覆盖那条逃过 orphan 清理 → 永久
+  // 残留，每来一次冲突 snapshot 再 +1 条重复行。多值收集后下一轮数据
+  // 正常的 snapshot 自动收敛回应有的行数。
+  const existing = new Map<string, HTMLElement[]>();
   rowsBox.querySelectorAll<HTMLElement>(".row[data-row-key]").forEach((el) => {
     const k = el.dataset.rowKey;
-    // H1 fix (2026-09-05 audit)：key 冲突时**保留首个**、后来者留给 orphan
-    // 清理。原来 `set` 无条件覆盖 —— 数据里出现两行 (kind,label) 完全相同
-    // 时（custom 双余额行 / 同名额度包），map 里只剩一个 el；两行数据一行
-    // 复用它、另一行新建，被覆盖的那个 DOM 既不在 map（orphan pass 删不
-    // 掉）也不再被认领 → 每轮 render 净增一个 stale 行，浮窗无限变高。
-    if (k && !existing.has(k)) existing.set(k, el);
+    // 多值收集（a7e2662, H1 双域命中）：key 冲突（同 (kind,label) 两行数据，
+    // 如火山双套餐 / custom 双余额行）时单值 Map 覆盖会让被覆盖的 DOM 逃过
+    // orphan 清理 → 每轮 render 净增一条 stale 行，浮窗无限变高。收集成
+    // 列表后 diff 逐行 shift 认领，冲突 snapshot 下一轮自动收敛。
+    if (!k) return;
+    const list = existing.get(k);
+    if (list) list.push(el);
+    else existing.set(k, [el]);
   });
 
   // 按用户偏好过滤行（Tavily 简洁模式等）—— 跟下面 diff 逻辑透明衔接
@@ -1090,10 +1117,9 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
   const providerId = p.source_id ?? p.provider;
   rows.forEach((r, i) => {
     const key = rowKey(providerId, i, r);
-    let rowEl = existing.get(key);
-    if (rowEl) {
-      existing.delete(key);
-    } else {
+    // shift 复用：同 key 多条时逐条取用，取完再 build 新行
+    let rowEl = existing.get(key)?.shift();
+    if (!rowEl) {
       rowEl = buildRowSkeleton(r);
       rowEl.dataset.rowKey = key;
       if (rowAnchor && rowAnchor.parentNode === rowsBox) {
@@ -1105,7 +1131,9 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
     updateRow(rowEl, r);
     rowAnchor = rowEl;
   });
-  for (const orphan of existing.values()) orphan.remove();
+  for (const list of existing.values()) {
+    for (const orphan of list) orphan.remove();
+  }
 }
 
 // ── 行 ──
@@ -1118,13 +1146,18 @@ function rowKey(providerId: string, index: number, r: QuotaRow): string {
   //   2. r.label（已 deprecated，仅 kind 缺失时用）— 仍会跨 locale 失效
   //   3. index（位置 fallback）— 保证任何 r 都有稳定 key
   // prefix 用 providerId 让不同 provider 的 rowsBox key 互不撞。
+  //
+  // **v0.2.9 火山双套餐**：同 provider 内 Coding / Agent 两组行 kind 相同
+  // （各有 five_hour / weekly / plan_header），必须拼 `extra.plan` 后缀
+  // 去重 —— 不拼的话两组 5h 行拿到同一个 key，DOM diff 互相覆盖。
+  const plan = r.extra?.plan ? `@${r.extra.plan}` : "";
   let stable: string;
   if (r.kind) {
-    stable = `kind:${r.kind}`;
+    stable = `kind:${r.kind}${plan}`;
   } else if (r.label) {
-    stable = `label:${r.label}`;
+    stable = `label:${r.label}${plan}`;
   } else {
-    stable = `idx:${index}`;
+    stable = `idx:${index}${plan}`;
   }
   // Phase 1: Tavily 走"used/total"组合（"150/1000 credits"），优先于 remaining/utilization
   let kind = "unknown";
@@ -1138,6 +1171,13 @@ function rowKey(providerId: string, index: number, r: QuotaRow): string {
 function buildRowSkeleton(r: QuotaRow): HTMLElement {
   const row = document.createElement("div");
   row.className = "row";
+  // v0.2.9 火山双套餐：PlanHeader 标题行（无数据 / 无 bar / 无 pct），
+  // 只有一个 muted label，作为套餐视觉分组锚点。
+  if (r.kind === "plan_header") {
+    row.classList.add("row-plan-header");
+    row.innerHTML = `<div class="row-plan-header-label"></div>`;
+    return row;
+  }
   if (r.used != null && r.total != null) {
     // Phase 1: credits 行（"150/1000 credits"） + 进度条
     row.classList.add("credits-row");
@@ -1198,6 +1238,13 @@ function buildRowSkeleton(r: QuotaRow): HTMLElement {
 }
 
 function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
+  // v0.2.9 火山双套餐：PlanHeader 标题行只刷 label 文本（locale 切换后
+  // 后端重发 snapshot，label 由后端 bake 好带来）。
+  if (r.kind === "plan_header") {
+    const labelEl = rowEl.querySelector<HTMLElement>(".row-plan-header-label")!;
+    labelEl.textContent = r.label;
+    return;
+  }
   // Phase 1: credits 行（MiniMax 风格：大 % + used/total 副文字 + 进度条 + row-foot）
   if (r.used != null && r.total != null) {
     // P3 audit fix (2026-08-13): total=0 时 (used/total)*100 = Infinity ->

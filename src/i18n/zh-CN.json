@@ -470,6 +470,7 @@
     "volcengine_ak_placeholder": "AKLT...",
     "volcengine_sk_placeholder": "SecretAccessKey",
     "volcengine_both_required": "AccessKey ID 和 SecretAccessKey 都必须填",
+    "volcengine_sk_failed": "SecretAccessKey 保存失败（AccessKey ID 已存），请重试 SK 部分。错误: %{err}",
     "confirm_clear_xiaomi": "确认清除已保存的 Xiaomi Cookie？\n清除后需要重新登录。",
     "confirm_delete_key_with_extras": "确认删除 {name} 的 API key？\n同时会清掉 {count} 个副本的 key。",
     "xiaomi_login_only": "一键登录只对 Xiaomi 启用",
@@ -546,7 +547,11 @@
     "zhipu_region_label": "智谱 GLM 区域",
     "zhipu_region_cn": "国区 (open.bigmodel.cn)",
     "zhipu_region_en": "国际 (api.z.ai / Z.ai)",
-    "zhipu_region_help": "国区用 <a href=\"https://bigmodel.cn/user-center/projection-meter\" target=\"_blank\" class=\"link-ext\">bigmodel.cn</a> 创建的 API key；国际版用 <a href=\"https://z.ai/manage-apikey/subscription\" target=\"_blank\" class=\"link-ext\">z.ai</a> 创建的。两个平台的 key <strong>不通用</strong>。schema 一致（unit=3→5h, unit=6→周），只是 host 不同。"
+    "zhipu_region_help": "国区用 <a href=\"https://bigmodel.cn/user-center/projection-meter\" target=\"_blank\" class=\"link-ext\">bigmodel.cn</a> 创建的 API key；国际版用 <a href=\"https://z.ai/manage-apikey/subscription\" target=\"_blank\" class=\"link-ext\">z.ai</a> 创建的。两个平台的 key <strong>不通用</strong>。schema 一致（unit=3→5h, unit=6→周），只是 host 不同。",
+    "volcengine_plan_filter_label": "套餐类型",
+    "volcengine_plan_coding": "Coding Plan",
+    "volcengine_plan_agent": "Agent Plan",
+    "volcengine_plan_help": "未勾选的套餐不会发起 API 请求（节省配额）。两个都勾 = 全部显示（默认），浮窗每个套餐前有一行套餐名小标题。"
   },
   "groups": {
     "token_plan_title": "Token Plan 套餐",

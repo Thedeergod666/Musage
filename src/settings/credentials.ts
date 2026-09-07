@@ -724,11 +724,21 @@ async function saveVolcengineTwoFields(id: string, advInputId?: string) {
   try {
     // 顺序无所谓：set_source_credential 是单字段写入，save_credential_for_id
     // 用 if-let 链保留未触碰字段（v0.2.5 fix）。
-    // L-4 fix (2026-09-05 audit)：同上 —— IPC 发起前清空，失败回填。
+    await setSourceCredential(id, ak, "api_key");
+    // H-Frontend fix (2026-09-07 audit, merge 2026-09-08 采纳远端隔离方案):
+    // 之前连续 await 无 try/catch 隔离, 第二次 reject 时 AK 已存但 SK 丢,
+    // 输入框无条件清空 → 用户半保存状态无恢复路径。补 try/catch 隔离,
+    // 第二步失败时把 SK 显式保留并提示重试。
+    try {
+      await setSourceCredential(id, sk, "secret_key");
+    } catch (skErr) {
+      // SK 失败: AK 已存,提示用户 SK 未生效, 不清输入框, 让用户重试 SK 部分。
+      flash(t("credentials.volcengine_sk_failed", { err: String(skErr) }), true);
+      skInput.focus();
+      return;
+    }
     akInput.value = "";
     skInput.value = "";
-    await setSourceCredential(id, ak, "api_key");
-    await setSourceCredential(id, sk, "secret_key");
     // 双 status 徽章:主面板 + 高级 tab 都要刷
     for (const suffix of ["", "-adv"]) {
       const akStatus = document.getElementById(`api-key-status-${id}${suffix}`);
@@ -745,7 +755,9 @@ async function saveVolcengineTwoFields(id: string, advInputId?: string) {
     flash(t("credentials.flash_saved_generic", { name: await credentialProviderName(id) }));
     await refreshNow();
   } catch (e) {
-    // L-4 fix：失败回填用户原输入（前面已提前清空）
+    // L-4 fix（merge 2026-09-08 调整）：输入框现改为**成功后才清空**，
+    // AK 失败路径里输入框本就未动；这里兜底回填覆盖保存后段（徽章刷新 /
+    // refreshNow）失败的场景，保证任何失败路径用户输入都不丢。
     akInput.value = ak;
     skInput.value = sk;
     flash(t("credentials.flash_save_failed", { err: String(e) }), true);

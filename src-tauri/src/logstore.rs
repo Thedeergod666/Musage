@@ -116,16 +116,24 @@ pub fn redact_message(s: &str) -> std::borrow::Cow<'_, str> {
             // 日志里两种都见过),Cookie/Set-Cookie 保持字面 (HTTP 规范就是
             // 这两个拼写,无歧义)。prefix (sk-/tvly-/tp-/tk-/eyJ) 全 case-
             // sensitive (厂商 token 格式都是 lowercase)。
+            //
+            // H-Logstore fix (2026-09-07 audit):
+            // 1) 长度阈值 8 → 4 防短 key (如 sk-abcd 5字符含厂商前缀也才 7 字,
+            //    老阈值 8 把它们当合法内容留下泄漏)。短 token 是厂商历史测试
+            //    / 短前缀场景,值再短也是机密,统一遮蔽。
+            // 2) 补 sessionKey= / sessionid= / JSESSIONID= / auth= 等通用
+            //    session token 字段 —— 老白名单全是厂商前缀,用户系统的
+            //    session token 形态完全没覆盖,日志泄露面巨大。
             r"(?:",
-            r"[Bb]earer\s+[A-Za-z0-9._\-+/=]{8,}",
+            r"[Bb]earer\s+[A-Za-z0-9._\-+/=]{4,}",
             r"|[Bb]asic\s+[A-Za-z0-9._\-+/=]{4,}",
-            r"|\bsk-[A-Za-z0-9_\-]{8,}",
-            r"|\bsk-or-v1-[A-Za-z0-9_\-]{8,}",
-            r"|\bsk-cp-[A-Za-z0-9_\-]{8,}",
-            r"|\btvly-[A-Za-z0-9_\-]{8,}",
-            r"|\btp-[A-Za-z0-9_\-]{8,}",
-            r"|\btk-[A-Za-z0-9_\-]{8,}",
-            r"|\beyJ[A-Za-z0-9_\-]{8,}\.[A-Za-z0-9_\-]{2,}\.[A-Za-z0-9_\-]{2,}",
+            r"|\bsk-[A-Za-z0-9_\-]{4,}",
+            r"|\bsk-or-v1-[A-Za-z0-9_\-]{4,}",
+            r"|\bsk-cp-[A-Za-z0-9_\-]{4,}",
+            r"|\btvly-[A-Za-z0-9_\-]{4,}",
+            r"|\btp-[A-Za-z0-9_\-]{4,}",
+            r"|\btk-[A-Za-z0-9_\-]{4,}",
+            r"|\beyJ[A-Za-z0-9_\-]{4,}\.[A-Za-z0-9_\-]{2,}\.[A-Za-z0-9_\-]{2,}",
             r"|Oasis-Token=[^\s;,]+",
             r"|Oasis-Refresh-Token=[^\s;,]+",
             r"|MUSAGE_TOKEN=[^\s;,]+",
@@ -142,10 +150,16 @@ pub fn redact_message(s: &str) -> std::borrow::Cow<'_, str> {
             r"|client_secret=[^\s;,]+",
             r"|secret_key=[^\s;,]+",
             r"|refresh_token=[^\s;,]+",
-            r"|\bxai-[A-Za-z0-9_\-]{8,}",
-            // L-poller-4 fix (2026-09-05 audit)：(?i:…) 只对 header 名大小写
-            // 不敏感 —— HTTP/2 报文头规范即全小写（set-cookie:），原先命中
-            // 不到。补 authorization: 整值遮蔽。
+            r"|\bxai-[A-Za-z0-9_\-]{4,}",
+            // merge 2026-09-08 两域并集：远端 (H-Logstore fix) 的通用 session
+            // token 字段（非厂商前缀场景：用户后端 / 自建 SSO / Cookie 内
+            // session token）+ 本地 L-poller-4 fix (2026-09-05 audit) 的
+            // header 整值遮蔽 —— (?i:…) 对 header 名大小写不敏感（HTTP/2
+            // 报文头规范即全小写），并取代远端大小写敏感的 Cookie 版本。
+            r"|sessionKey=[^\s;,]+",
+            r"|sessionid=[^\s;,]+",
+            r"|JSESSIONID=[^\s;,]+",
+            r"|auth==[^\s;,]+",
             r"|(?i:Set-Cookie|Cookie):[^\n]+",
             r"|(?i:authorization)\s*:\s*[^\s;,]+",
             r")",
@@ -180,7 +194,17 @@ impl LogStore {
         if let Ok(path) = log_path() {
             if let Ok(file) = File::open(&path) {
                 let reader = BufReader::new(file);
+                // C1 fix (2026-09-07 audit): JSONL 首行可能被 Notepad 加 BOM
+                // (EF BB BF),首次 serde_json::from_str 会失败 → 老日志第一条
+                // 永久丢失。剥首行 BOM 后再走常规 line-by-line。
+                let mut first_line = true;
                 for line in reader.lines().map_while(Result::ok) {
+                    let line = if first_line {
+                        first_line = false;
+                        crate::config::strip_bom_owned(line)
+                    } else {
+                        line
+                    };
                     if line.trim().is_empty() {
                         continue;
                     }
@@ -365,11 +389,23 @@ fn append_entry(entry: &LogEntry) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    // C4 fix (2026-09-07 audit): 2026-07-28 已加 append_entry 后 set_permissions
+    // 0600,但**初始创建**瞬间仍是 OpenOptions 默认 0644 (world-readable) ——
+    // 同机其他用户首启瞬间可读 app_log.jsonl 内容 (含请求 URL / provider
+    // 名)。改用 OpenOptionsExt::mode(0o600) 在创建时直接 0600,零窗口。
+    // 同款模式已用于 write_tmp_secure (config.rs:1245-1258)。
+    #[cfg(unix)]
+    let mut f = {
+        use std::os::unix::fs::OpenOptionsExt;
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(&path)?
+    };
+    #[cfg(not(unix))]
     let mut f = OpenOptions::new().create(true).append(true).open(&path)?;
-    // C4 fix (2026-07-28 审查): app_log.jsonl 的 message 字段可能带 API
-    // key / cookie 的错误串,跟 keys.json 同级别敏感。OpenOptions 默认 0644
-    // 会暴露给同机其他用户 —— 跟 write_keys_atomic / extra_instances::save
-    // 对齐,显式 0600(每次 append 都设一遍,顺带覆盖历史遗留的 0644 文件)。
+    // 双层防御:对历史遗留 0644 文件继续 set_permissions 修一次 (C4-prev fix)。
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -399,7 +435,28 @@ fn append_entry(entry: &LogEntry) -> std::io::Result<()> {
 fn truncate_file_from_ring(ring: &[LogEntry]) -> Result<(), String> {
     let path = log_path()?;
     let tmp = path.with_extension("jsonl.tmp");
+    // C4 fix (2026-09-07 audit): append_entry 同款。File::create 默认 0644,
+    //    通过 OpenOptionsExt::mode(0o600) 在创建瞬间直接 0600,无 world-readable
+    //    窗口。Unix only,Windows 走默认 ACL。
+    #[cfg(unix)]
+    let mut f = {
+        use std::os::unix::fs::OpenOptionsExt;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)
+            .map_err(|e| format!("logstore truncate tmp: {e}"))?
+    };
+    #[cfg(not(unix))]
     let mut f = std::fs::File::create(&tmp).map_err(|e| format!("logstore truncate tmp: {e}"))?;
+    // 双层防御 (历史 0644 修一次)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+    }
     let write_result = (|| -> Result<(), String> {
         for entry in ring {
             if let Ok(s) = serde_json::to_string(entry) {

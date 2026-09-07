@@ -1,6 +1,10 @@
-//! 火山方舟 Coding Plan 套餐用量查询
+//! 火山方舟 Coding + Agent 双套餐用量查询（v0.2.9 双 action）
 //!
-//! 端点：`POST https://ark.cn-beijing.volcengineapi.com/?Action=GetCodingPlanUsage&Version=2024-01-01`
+//! 端点（火山 OpenAPI 总网关，POST + v4 签名，ccswitch 同款）：
+//!
+//! - Coding Plan: `POST https://open.volcengineapi.com/?Action=GetCodingPlanUsage&Region=cn-beijing&Version=2024-01-01`
+//! - Agent Plan: `POST https://open.volcengineapi.com/?Action=GetAFPUsage&Region=cn-beijing&Version=2024-01-01`
+//!
 //! 鉴权：账号级 AccessKey ID + SecretAccessKey（**不是** Coding Plan 推理 API Key）
 //!
 //! ## 鉴权流程（火山 v4，类 AWS SigV4）
@@ -9,12 +13,21 @@
 //! 1. `X-Date: 20260727T100000Z`（ISO8601 去 - : 和毫秒）
 //! 2. 算 body SHA256（空 body → `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`）
 //! 3. CanonicalRequest = METHOD\n + path + sortedQuery + canonicalHeaders + signedHeaders + bodyHash
+//!    （canonical headers 按字母序：content-type < host < x-content-sha256 < x-date）
 //! 4. StringToSign = "HMAC-SHA256\n" + xDate + "/" + region + "/" + service + "/request\n" + sha256hex(canonicalRequest)
 //! 5. kSigning = HMAC(HMAC(HMAC(HMAC(SK, shortDate), region), service), "request")
 //! 6. Signature = hex(HMAC(kSigning, StringToSign))
 //! 7. Authorization header = "HMAC-SHA256 Credential=" + AK + "/" + credentialScope + ", SignedHeaders=" + ..., ", Signature=" + ...
 //!
 //! 固定参数：Service=ark / Region=cn-beijing
+//!
+//! ## 双套餐（v0.2.9 改）
+//!
+//! 同一个 AppID 下可同时买 **Coding Plan** 和 **Agent Plan** 两份套餐，同一份
+//! AK/SK 走不同 action 拿到不同数据。fetch 阶段按 `volcengine_ark_plan_filter`
+//! 配置决定打哪些 action（默认两个都打），`tokio::join!` 并发、失败互相不连坐。
+//! 行归属用 `extra.plan = "coding" | "agent"` 标记，每个套餐的数据行前插一行
+//! `RowKind::PlanHeader` 标题行（无数据，仅供前端做视觉分组）。
 //!
 //! ## 双凭证（v0.2.5 改）
 //!
@@ -27,7 +40,7 @@
 //! - `secret_key` = **SecretAccessKey**（任意 base64）
 //! - 前端 settings panel 渲 2 个独立 input field，**避免粘错**
 //!
-//! ## 响应 schema（Coding Plan 三个窗口）
+//! ## Coding Plan 响应 schema（三个窗口）
 //!
 //! ```json
 //! {
@@ -48,17 +61,32 @@
 //! Schema 漂移保护：Level 出现 "Daily" 时也加一行（Agent Plan 字段，为
 //! 未来 Coding Plan 增加日窗口预留），但 v0.2.5 实测 Coding Plan 暂不返回 Daily。
 //!
+//! ## Agent Plan（AFP）响应 schema（ccswitch 实测，火山无官方文档）
+//!
+//! ```json
+//! {
+//!   "Result": {
+//!     "PlanType": "Large",
+//!     "AFPFiveHour": { "Quota": 1000, "Used": 800, "ResetTime": 1778806800000 },
+//!     "AFPWeekly":   { "Quota": 5000, "Used": 200, "ResetTime": 1779408000000 },
+//!     "AFPMonthly":  { "Quota": 20000, "Used": 1500, "ResetTime": 1781990400000 }
+//!   }
+//! }
+//! ```
+//!
+//! Quota <= 0 / 窗口缺失 = 未订阅该窗口，跳过；全部窗口都无数据 → 整个
+//! Agent 组（含 PlanHeader）不出现。util = Used / Quota * 100。
+//!
 //! ## 渲染策略
 //!
-//! - 主行 = "Session"（5h 滚动），label 用 `row.five_hour`（"5h" / "5h"）
-//! - 副行 = "Weekly"，label 用 `row.weekly_7d`（"7d" / "7d"）
-//! - 副行 = "Monthly"，label 用 `row.monthly`（"月" / "Monthly"）  ← 新增 i18n key
-//! - 可选 Daily 行（如果 API 返回）
-//! - util = 100 - (remaining / total * 100)，clamp [0, 100]
+//! - Coding 在前、Agent 在后；每个套餐的数据行前各插一行 PlanHeader 标题行
+//! - 套餐内行序：5h → (daily) → 7d → 月
+//! - util = 100 - (remaining / total * 100)（Coding）/ (used / quota) * 100（Agent），clamp [0, 100]
 //! - resets_at 走 "reset in" 倒计时（前端 settings 已有 daily/weekly/monthly prefix）
 
 use std::borrow::Cow;
 use std::pin::Pin;
+use std::sync::RwLock;
 
 use serde_json::Value;
 
@@ -68,24 +96,52 @@ use super::{
 };
 use crate::t;
 
-const HOST: &str = "ark.cn-beijing.volcengineapi.com";
-const ACTION: &str = "GetCodingPlanUsage";
+const HOST: &str = "open.volcengineapi.com";
+const ACTION_CODING: &str = "GetCodingPlanUsage";
+const ACTION_AFP: &str = "GetAFPUsage";
 const VERSION: &str = "2024-01-01";
 const SERVICE: &str = "ark";
 const REGION: &str = "cn-beijing";
-const URL: &str =
-    "https://ark.cn-beijing.volcengineapi.com/?Action=GetCodingPlanUsage&Version=2024-01-01";
+/// 火山 OpenAPI 总网关的标准形态：POST + 空 body + content-type header
+/// （跟官方 SDK 同款）。canonical headers / SignedHeaders 按字母序。
+const CONTENT_TYPE: &str = "application/json; charset=utf-8";
+const SIGNED_HEADERS: &str = "content-type;host;x-content-sha256;x-date";
 
 // ── QuotaSource 实现 ─────────────────────────────────────────────
+
+/// fetch 阶段要打哪些 action。由 `set_state` 从 AppConfig 顶层
+/// `volcengine_ark_plan_filter` 推出；缺省两个都查。
+#[derive(Debug, Clone, Copy)]
+struct VolcengineArkState {
+    show_coding: bool,
+    show_agent: bool,
+}
+
+impl Default for VolcengineArkState {
+    fn default() -> Self {
+        // 默认两个都查（开箱即用）。set_state 没被调过的路径
+        // （dump CLI / test_extra_instance）也走这个兜底。
+        Self {
+            show_coding: true,
+            show_agent: true,
+        }
+    }
+}
 
 pub struct VolcengineArkSource {
     /// PR 1b：1 = 内置第 1 份，≥2 = 副本
     instance_index: u32,
+    /// 套餐筛选（poller 每次 fetch 前 set_state 推入）。
+    /// std RwLock 够用：读写在无 await 点完成，不跨 await 持锁。
+    state: RwLock<Option<VolcengineArkState>>,
 }
 
 impl Default for VolcengineArkSource {
     fn default() -> Self {
-        Self { instance_index: 1 }
+        Self {
+            instance_index: 1,
+            state: RwLock::new(None),
+        }
     }
 }
 
@@ -131,17 +187,35 @@ impl QuotaSource for VolcengineArkSource {
     }
 
     fn needs_state_update(&self) -> bool {
-        // 火山 Coding Plan 无 region / mode / overrides 概念（L-24 同款，
-        // 2026-09-04 audit D2-01：此前漏在本批外，每次 fetch 白序列化整个 AppConfig）
-        false
+        // v0.2.9：火山双套餐筛选（coding / agent checkbox）走 set_state 推入，
+        // 跟 zenmux mode 同款模式 —— poller 每轮序列化 AppConfig 后由这里读取。
+        true
     }
 
     fn set_state<'a>(
         &'a self,
-        _cfg: serde_json::Value,
+        cfg: serde_json::Value,
     ) -> Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
-        // 火山 Coding Plan 无 region / mode / overrides 概念
-        Box::pin(async move {})
+        Box::pin(async move {
+            // 顶层 `volcengine_ark_plan_filter`（前端 settings 写到这里，跟
+            // zenmux_mode 同款约定）。字段缺失 → 对应 plan 默认 true
+            // （老 config.json 无感升级为全勾状态）。
+            let filter = cfg.get("volcengine_ark_plan_filter");
+            let show_coding = filter
+                .and_then(|f| f.get("coding"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            let show_agent = filter
+                .and_then(|f| f.get("agent"))
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
+            if let Ok(mut g) = self.state.write() {
+                *g = Some(VolcengineArkState {
+                    show_coding,
+                    show_agent,
+                });
+            }
+        })
     }
 
     fn fetch<'a>(
@@ -155,6 +229,12 @@ impl QuotaSource for VolcengineArkSource {
         let sk_raw = credentials.secret_key.clone();
         let source_id = self.unique_id();
         let display_name = self.display_name().to_string();
+        // 套餐筛选快照：即拿即放（Copy 值），不跨 await 持锁。
+        // set_state 未调过（dump CLI / test_extra_instance）→ 默认两个都查。
+        let plan_state = match self.state.read() {
+            Ok(g) => g.unwrap_or_default(),
+            Err(_) => VolcengineArkState::default(),
+        };
         Box::pin(async move {
             // v0.2.5 迁移: 检测到 v0.2.4 老 keys.json —— `api_key` 槽存的是
             // 整串 "AK...SK"（v0.2.4 拼格式,save_credential_for_id 当时
@@ -182,7 +262,7 @@ impl QuotaSource for VolcengineArkSource {
                     t!("error.volcengine.unconfigured_secret_key").into_owned(),
                 ));
             }
-            do_fetch(&ak, &sk, &source_id, &display_name).await
+            do_fetch(&ak, &sk, &source_id, &display_name, plan_state).await
         })
     }
 }
@@ -252,24 +332,81 @@ async fn do_fetch(
     sk: &str,
     source_id: &str,
     display_name: &str,
+    plan_state: VolcengineArkState,
 ) -> Result<ProviderSnapshot, FetchError> {
+    // 双筛选全关：用户显式关掉了两个套餐，无 action 可打。
+    // 归 UnconfiguredKey（跟"没配 key"同款 UI：引导回设置面板重新勾选）。
+    if !plan_state.show_coding && !plan_state.show_agent {
+        return Err(FetchError::unconfigured(
+            t!("error.volcengine.both_filtered").into_owned(),
+        ));
+    }
+
+    // 双 action 并发探测（tokio::join! 同时起飞，一个慢不拖另一个）。
+    // merge 层"失败不连坐"：一个 action 挂了仍渲染另一个套餐的数据，
+    // 只有两个都失败才把错误抛给浮窗。
+    let coding_fut = async {
+        if plan_state.show_coding {
+            Some(do_fetch_one(ak, sk, ACTION_CODING).await)
+        } else {
+            None
+        }
+    };
+    let agent_fut = async {
+        if plan_state.show_agent {
+            Some(do_fetch_one(ak, sk, ACTION_AFP).await)
+        } else {
+            None
+        }
+    };
+    let (coding_res, agent_res) = tokio::join!(coding_fut, agent_fut);
+
+    // 行序由 results 顺序决定：Coding 在前、Agent 在后（视觉稳定）。
+    let mut results: Vec<(&'static str, Result<Value, FetchError>)> = Vec::new();
+    if let Some(r) = coding_res {
+        results.push(("coding", r));
+    }
+    if let Some(r) = agent_res {
+        results.push(("agent", r));
+    }
+
+    let (rows, plan_name, raw) = merge_plan_results(results)?;
+    Ok(ProviderSnapshot {
+        provider: "volcengine_ark".to_string(),
+        success: true,
+        rows,
+        error: None,
+        error_kind: None,
+        fetched_at: Some(chrono::Utc::now().timestamp_millis()),
+        next_fetch_at: None,
+        raw: Some(raw),
+        is_healthy: true,
+        source_id: Some(source_id.to_string()),
+        unique_id: None,
+        source_display_name: Some(display_name.to_string()),
+        plan_name,
+        transient: None,
+    })
+}
+
+/// 打单个 action（coding 或 agent），返回原始 JSON。
+///
+/// 火山 OpenAPI 总网关标准形态：POST + 空 body + content-type header
+/// （跟官方 SDK 同款）。两个 action 只有 query 里的 `Action` 不同，
+/// 签名 / 鉴权 / 错误分类完全复用。
+async fn do_fetch_one(ak: &str, sk: &str, action: &'static str) -> Result<Value, FetchError> {
+    // canonical query 按 key 字母序：Action < Region < Version
+    let query = format!("Action={action}&Region={REGION}&Version={VERSION}");
+    let url = format!("https://{HOST}/?{query}");
+
     // 1. 准备签名参数
-    // v0.2.5 fix: 火山 Coding Plan `GetCodingPlanUsage` 是 **GET**(只读),
-    // 不是 POST。cc-switch 走 GET 能通,POST 返 200 但 Result 空 →
-    // 我们走 "响应缺少 UsageList" 错误路径。
-    // 关键变化:canonical request METHOD=GET, body=空, 仍算 body_hash(空字节
-    // 串的 sha256,AWS SigV4 规定 GET 也必须有 x-content-sha256 header)。
-    // 删 Content-Type (GET 不需要;加上反而让火山 server 验证 body 类型)。
     let x_date = chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
     let body: &[u8] = b"";
     let body_hash = sha256_hex(body);
 
-    // 2. CanonicalRequest
+    // 2. CanonicalRequest（POST + content-type；canonical headers 字母序）
     let canonical_request = format!(
-        "GET\n/\nAction={ACTION}&Version={VERSION}\nhost:{HOST}\nx-content-sha256:{body_hash}\nx-date:{x_date}\n\nhost;x-content-sha256;x-date\n{body_hash}",
-        HOST = HOST,
-        ACTION = ACTION,
-        VERSION = VERSION,
+        "POST\n/\n{query}\ncontent-type:{CONTENT_TYPE}\nhost:{HOST}\nx-content-sha256:{body_hash}\nx-date:{x_date}\n\n{SIGNED_HEADERS}\n{body_hash}",
     );
 
     // 3. StringToSign
@@ -291,24 +428,26 @@ async fn do_fetch(
 
     // 5. Authorization header
     let authorization = format!(
-        "HMAC-SHA256 Credential={ak}/{credential_scope}, SignedHeaders=host;x-content-sha256;x-date, Signature={signature}",
+        "HMAC-SHA256 Credential={ak}/{credential_scope}, SignedHeaders={SIGNED_HEADERS}, Signature={signature}",
     );
 
-    // 6. 发送请求 (GET + 空 body, 不带 Content-Type)
+    // 6. 发送请求（POST + 空 body）
     let client = super::shared_client();
     let resp = client
-        .get(URL)
+        .post(&url)
         .header("Host", HOST)
+        .header("Content-Type", CONTENT_TYPE)
         .header("X-Date", &x_date)
         .header("X-Content-Sha256", &body_hash)
         .header("Authorization", authorization)
+        .body("")
         .send()
         .await
         .map_err(|e| {
             FetchError::network(
                 t!(
                     "error.common.network",
-                    url = URL,
+                    url = url,
                     err = humanize_reqwest_err(&e)
                 )
                 .into_owned(),
@@ -333,11 +472,9 @@ async fn do_fetch(
     let raw_text = text_body_limited(resp).await.map_err(|e| {
         FetchError::parse(t!("error.common.parse_json", err = e.message).into_owned())
     })?;
-    // P0 fix (2026-08-06 cross-verify #2): 删 v0.2.5 临时诊断的 unconditional
-    // tracing::warn!。它原在 if !status.is_success() 之前,每次 fetch(含成功)
-    // 都打 2000 字符 body 到 stderr,长期泄露 PlanName / UsageList 账户信息。
-    // 错误响应 body 已由下面 !status.is_success() 分支的 FetchError::server 消息
-    // (200 字符)带出,无需无条件全量打。ak/sk 一直只打长度,不回归。
+    // P0 fix (2026-08-06 cross-verify #2): 删 unconditional tracing::warn!，
+    // 成功响应不打 body（PlanName / UsageList 账户信息不落日志）。错误
+    // body 由下面 !status.is_success() 分支的 FetchError::server 消息带出。
 
     if !status.is_success() {
         return Err(FetchError::server(
@@ -351,27 +488,19 @@ async fn do_fetch(
         ));
     }
 
-    let raw: Value = serde_json::from_str(&raw_text).map_err(|e| {
+    serde_json::from_str(&raw_text).map_err(|e| {
         FetchError::parse(t!("error.common.parse_json", err = e.to_string()).into_owned())
-    })?;
-
-    parse(&raw, source_id, display_name)
+    })
 }
 
 // ── 解析 ─────────────────────────────────────────────────────────
 
-/// 解析 `GetCodingPlanUsage` 响应。
+/// 从原始响应中提取 `Result` 节点，顺带处理两层业务错误。
 ///
-/// Coding Plan 返回的 `Level` 字段枚举（实测 + 文档）：
-/// - `Session`  → 5h 滚动窗口（主行）
-/// - `Weekly`   → 周窗口（每周一 00:00 重置）
-/// - `Monthly`  → 月窗口（订阅月首日 00:00 重置）
-/// - `Daily`    → 日窗口（Agent Plan 字段，Coding Plan 暂不返回；预留以应对 schema 加字段）
-///
-/// 不认识的 Level 静默跳过（schema 漂移保护），不让单条坏数据炸整个 snapshot。
-fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSnapshot, FetchError> {
-    let now_ms = chrono::Utc::now().timestamp_millis();
-
+/// Coding / AFP 两条解析路径共用（火山 OpenAPI 错误形态一致）：
+/// 1. 顶层 `ResponseMetadata.Error`（权限 / 参数错误时没有 Result 节点）
+/// 2. `Result.Code != "Success"`（业务级失败）
+fn extract_result(raw: &Value) -> Result<&Value, FetchError> {
     // P2 audit fix (2026-08-13): 火山 OpenAPI 的业务错误常放在顶层
     // ResponseMetadata.Error (此时没有 Result 节点)。之前先查 Result →
     // 真实 Code/Message 被"缺 Result 字段"的通用 Parse 错误吞掉, 用户
@@ -446,6 +575,44 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
         }
     }
 
+    Ok(result)
+}
+
+/// 套餐标题行（`RowKind::PlanHeader`，无数据）。
+///
+/// 前端把它渲染成 muted 小字分组锚点；托盘 / tooltip 天然跳过
+/// （`utilization` / `remaining` 都是 None）。
+fn plan_header_row(plan: &str) -> QuotaRow {
+    let label = if plan == "coding" {
+        t!("row.plan_header_coding")
+    } else {
+        t!("row.plan_header_agent")
+    };
+    QuotaRow {
+        label: label.to_string(),
+        utilization: None,
+        remaining: None,
+        used: None,
+        total: None,
+        resets_at: None,
+        unit: None,
+        extra: Some(serde_json::json!({ "plan": plan, "is_header": true })),
+        kind: Some(RowKind::PlanHeader),
+    }
+}
+
+/// 解析 `GetCodingPlanUsage` 响应 → (带 PlanHeader 的 rows, PlanName)。
+///
+/// Coding Plan 返回的 `Level` 字段枚举（实测 + 文档）：
+/// - `Session`  → 5h 滚动窗口（主行）
+/// - `Weekly`   → 周窗口（每周一 00:00 重置）
+/// - `Monthly`  → 月窗口（订阅月首日 00:00 重置）
+/// - `Daily`    → 日窗口（Agent Plan 字段，Coding Plan 暂不返回；预留以应对 schema 加字段）
+///
+/// 不认识的 Level 静默跳过（schema 漂移保护），不让单条坏数据炸整个 snapshot。
+fn parse_coding_rows(raw: &Value) -> Result<(Vec<QuotaRow>, Option<String>), FetchError> {
+    let result = extract_result(raw)?;
+
     // 火山 Coding Plan schema 兼容性:
     // - v0.2.5 我们读: Result.UsageList[] (Level: "Session"|"Weekly"|"Monthly", Remaining, Total)
     // - CodexBar #1724 提到另一种: QuotaUsage[] (Level: "session"|"weekly"|"monthly", Percent, ResetTimestamp)
@@ -514,17 +681,15 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
             });
         // CodexBar #1724 + ccswitch 实测 schema (火山 Coding Plan 真返):
         // - QuotaUsage[] + Level="session"/"weekly"/"monthly"(小写) + Percent
-        //   字段 = **已用百分比, 0.0~100.0** (实测 Percent=0.3346 → 显示 0.33%,
-        //   ccswitch 也是)。**不是** 0~1。v0.2.5 我误乘 100 → 33.46% 错。
-        // - ResetTimestamp: epoch **seconds** (10 位) 上面 smart parse 转 ms。
+        //   字段。H-Provider fix (2026-09-07 audit): Percent 实测是 0~1 ratio
+        //   (0.3346 = 33.46% 用完)，乘 100 转换，clamp 防边界值。
+        // - ResetTimestamp: epoch seconds (10 位) 上面 smart parse 转 ms。
         // - 老 UsageList[] + Remaining/Total 形态保留(虽然火山不返),做
         //   schema 漂移 fallback。
         let (used, total) = if let Some(percent) =
             super::parse::num_f64(entry.get("Percent").unwrap_or(&Value::Null))
         {
-            // Percent 已是 0~100(火山 Coding Plan 实测)。clamp 防止 >100
-            // 或负数(老 schema / 边界)。
-            let used = percent.clamp(0.0, 100.0);
+            let used = (percent * 100.0).clamp(0.0, 100.0);
             (used, 100.0)
         } else {
             let remaining = super::parse::num_f64(entry.get("Remaining").unwrap_or(&Value::Null));
@@ -566,7 +731,10 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
             total: None,
             resets_at,
             unit: None, // Coding Plan 是次数，无单位
-            extra: Some(serde_json::json!({ "reset_period": reset_period })),
+            extra: Some(serde_json::json!({
+                "reset_period": reset_period,
+                "plan": "coding"
+            })),
             kind,
         });
     }
@@ -577,7 +745,9 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
         ));
     }
 
-    // 排序：Session → Daily → Weekly → Monthly（让浮窗渲染稳定）
+    // 排序：Session → Daily → Weekly → Monthly（让浮窗渲染稳定）。
+    // PlanHeader 在排序**之后**插到开头 —— 它的 label 不是窗口标签，
+    // 不参与排序。
     rows.sort_by_key(|r| match r.label.as_str() {
         x if x == t!("row.five_hour").as_ref() => 0,
         x if x == t!("row.daily").as_ref() => 1,
@@ -585,29 +755,182 @@ fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSna
         x if x == t!("row.monthly").as_ref() => 3,
         _ => 99,
     });
+    rows.insert(0, plan_header_row("coding"));
 
     let plan_name = result
         .get("PlanName")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
 
-    let success = !rows.is_empty();
+    Ok((rows, plan_name))
+}
+
+/// 解析 `GetCodingPlanUsage` 响应为完整 snapshot。
+///
+/// 单 action 兼容入口，仅单测使用（生产路径 poller 走 [`do_fetch`] 的
+/// 双 action merge；dump CLI 同样经 do_fetch，不再单独调本函数）。
+#[cfg(test)]
+fn parse(raw: &Value, source_id: &str, display_name: &str) -> Result<ProviderSnapshot, FetchError> {
+    let (rows, plan_name) = parse_coding_rows(raw)?;
     Ok(ProviderSnapshot {
         provider: "volcengine_ark".to_string(),
-        success,
+        success: true,
         rows,
         error: None,
         error_kind: None,
-        fetched_at: Some(now_ms),
+        fetched_at: Some(chrono::Utc::now().timestamp_millis()),
         next_fetch_at: None,
         raw: Some(raw.clone()),
-        is_healthy: success,
+        is_healthy: true,
         source_id: Some(source_id.to_string()),
         unique_id: None,
         source_display_name: Some(display_name.to_string()),
         plan_name,
         transient: None,
     })
+}
+
+/// 解析 `GetAFPUsage`（Agent Plan）响应。
+///
+/// AFP schema（ccswitch 实测，火山无官方文档）：`Result` 下平铺
+/// `AFPFiveHour / AFPWeekly / AFPMonthly` 三个窗口对象（Quota / Used /
+/// ResetTime），外加 `PlanType` 套餐名。
+///
+/// - Quota <= 0 或窗口缺失 = 未订阅该窗口，跳过该行
+/// - 全部窗口都无数据 → 返回空 Vec（merge 层不为空组渲染 PlanHeader，
+///   没订阅 Agent Plan 的用户看不到空标题行）
+/// - ResetTime 兼容秒 / 毫秒（< 10^12 当秒 × 1000，同 Coding 路径的
+///   schema 漂移保护）；ts <= 0 → None
+fn parse_afp_rows(raw: &Value) -> Result<Vec<QuotaRow>, FetchError> {
+    let result = extract_result(raw)?;
+
+    let mut data = Vec::new();
+    for (key, period, kind, label) in [
+        (
+            "AFPFiveHour",
+            "five_hour",
+            Some(RowKind::FiveHour),
+            t!("row.five_hour").to_string(),
+        ),
+        (
+            "AFPWeekly",
+            "weekly",
+            Some(RowKind::Weekly),
+            t!("row.weekly_7d").to_string(),
+        ),
+        ("AFPMonthly", "monthly", None, t!("row.monthly").to_string()),
+    ] {
+        let Some(win) = result.get(key) else {
+            continue;
+        };
+        let quota = super::parse::num_f64(win.get("Quota").unwrap_or(&Value::Null));
+        let used = super::parse::num_f64(win.get("Used").unwrap_or(&Value::Null));
+        let (Some(q), Some(u)) = (quota, used) else {
+            continue;
+        };
+        if q <= 0.0 {
+            continue; // 未订阅该窗口
+        }
+        let utilization = ((u / q) * 100.0).clamp(0.0, 100.0);
+        let resets_at = super::parse::num_f64(win.get("ResetTime").unwrap_or(&Value::Null))
+            .map(|f| f as i64)
+            .filter(|ts| *ts > 0)
+            .map(|ts| {
+                if ts < 1_000_000_000_000 {
+                    ts * 1000
+                } else {
+                    ts
+                }
+            });
+        data.push(QuotaRow {
+            label,
+            utilization: Some(utilization),
+            remaining: None,
+            used: None,
+            total: None,
+            resets_at,
+            unit: None,
+            extra: Some(serde_json::json!({ "reset_period": period, "plan": "agent" })),
+            kind,
+        });
+    }
+
+    if data.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut rows = vec![plan_header_row("agent")];
+    rows.append(&mut data);
+    Ok(rows)
+}
+
+/// 合并双 action 结果 → (rows, plan_name, merged_raw)。
+///
+/// "失败不连坐"：一个 action 失败（HTTP 错误 / 解析失败 / 无数据行）只
+/// 记下错误，另一个套餐的行照常渲染；只有**全部** action 都没产出任何行
+/// 时才把第一个错误抛出去（Coding 的错误优先 —— 它是老 action，鉴权 /
+/// 权限问题在它身上最常见）。
+///
+/// 行序 = results 顺序（Coding 在前、Agent 在后）。plan_name AFP 优先
+/// （PlanType 更具体，如 "Large"），Coding fallback。
+fn merge_plan_results(
+    results: Vec<(&'static str, Result<Value, FetchError>)>,
+) -> Result<(Vec<QuotaRow>, Option<String>, Value), FetchError> {
+    let mut rows: Vec<QuotaRow> = Vec::new();
+    let mut coding_plan_name: Option<String> = None;
+    let mut agent_plan_name: Option<String> = None;
+    let mut merged_raw = serde_json::Map::new();
+    let mut first_err: Option<FetchError> = None;
+
+    for (tag, res) in results {
+        match res {
+            Ok(raw) => {
+                merged_raw.insert(tag.to_string(), raw.clone());
+                let parsed = if tag == "coding" {
+                    match parse_coding_rows(&raw) {
+                        Ok((r, plan)) => {
+                            coding_plan_name = plan;
+                            Ok(r)
+                        }
+                        Err(e) => Err(e),
+                    }
+                } else {
+                    // PlanType 更具体（如 "Large"），merge 后 plan_name 优先用它
+                    agent_plan_name = extract_result(&raw)
+                        .ok()
+                        .and_then(|r| r.get("PlanType"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string());
+                    parse_afp_rows(&raw)
+                };
+                match parsed {
+                    Ok(mut r) => rows.append(&mut r),
+                    Err(e) => {
+                        tracing::warn!(
+                            plan = tag,
+                            error = %e,
+                            "火山方舟单套餐解析失败（另一个套餐照常渲染）"
+                        );
+                        if first_err.is_none() {
+                            first_err = Some(e);
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+    }
+
+    if rows.is_empty() {
+        return Err(first_err
+            .unwrap_or_else(|| FetchError::parse(t!("error.parse.no_rows_found").into_owned())));
+    }
+    let plan_name = agent_plan_name.or(coding_plan_name);
+    Ok((rows, plan_name, Value::Object(merged_raw)))
 }
 
 // ── crypto helpers（无外部依赖，用 sha2 / hmac crate） ────────────
@@ -756,12 +1079,14 @@ mod tests {
 
     #[test]
     fn sign_coding_plan_request_deterministic() {
-        // 固定 x_date 测试签名可重现
+        // 固定 x_date 测试签名可重现。canonical form 跟 do_fetch_one 保持
+        // 一致（POST + content-type + 字母序 SignedHeaders）。
         let x_date = "20260727T100000Z";
-        let body = b"{}";
+        let body = b"";
         let body_hash = sha256_hex(body);
+        let query = format!("Action={ACTION_CODING}&Region={REGION}&Version={VERSION}");
         let canonical_request = format!(
-            "POST\n/\nAction={ACTION}&Version={VERSION}\nhost:{HOST}\nx-content-sha256:{body_hash}\nx-date:{x_date}\n\nhost;x-content-sha256;x-date\n{body_hash}",
+            "POST\n/\n{query}\ncontent-type:{CONTENT_TYPE}\nhost:{HOST}\nx-content-sha256:{body_hash}\nx-date:{x_date}\n\n{SIGNED_HEADERS}\n{body_hash}",
         );
         let credential_scope = "20260727/cn-beijing/ark/request";
         let string_to_sign = format!(
@@ -783,8 +1108,6 @@ mod tests {
     #[test]
     fn sign_uses_ark_service_cn_beijing_region() {
         // 锁定 region/service —— 写错就 401
-        let _x_date = "20260727T100000Z";
-        let _body_hash = sha256_hex(b"{}"); // 实际签名链会用到,这里只验函数名能跑
         let k_date = hmac_sha256(b"sk", "20260727");
         let k_region = hmac_sha256(&k_date, REGION); // cn-beijing
         let k_service = hmac_sha256(&k_region, SERVICE); // ark
@@ -799,13 +1122,38 @@ mod tests {
         assert_ne!(sig, sig2, "region 错了能立刻从签名差异看出来");
     }
 
-    // ── parse 单元测试 ──
+    // ── parse（Coding）单元测试 ──
+    //
+    // v0.2.9 起 parse 输出开头多一行 PlanHeader 标题行 —— 以下断言的
+    // row index 相应 +1。
+
+    /// 读 row.extra.plan 的辅助（测试专用）。
+    fn row_plan(r: &QuotaRow) -> Option<&str> {
+        r.extra
+            .as_ref()
+            .and_then(|e| e.get("plan"))
+            .and_then(|p| p.as_str())
+    }
+
+    /// ccswitch 实测的 AFP 响应 fixture。
+    fn afp_raw() -> Value {
+        json!({
+            "Result": {
+                "PlanType": "Large",
+                "AFPFiveHour": { "Quota": 1000, "Used": 800, "ResetTime": 1778806800000_i64 },
+                "AFPWeekly":   { "Quota": 5000, "Used": 200, "ResetTime": 1779408000000_i64 },
+                "AFPMonthly":  { "Quota": 20000, "Used": 1500, "ResetTime": 1781990400000_i64 }
+            }
+        })
+    }
 
     #[test]
     fn parse_quota_usage_schema_lowercase() {
         // 火山 Coding Plan 真返 schema (2026-07-28 实测):
         // Result.QuotaUsage[] + Level: "session"/"weekly"/"monthly"(小写)
-        // + Percent 字段 = 已用百分比 0~100 (不是 0~1)
+        // + Percent 字段 = **0~1 ratio** (实测 0.3346 = 33.46% 用完) —
+        // H-Provider fix (2026-09-07 audit): 老注释误写 0~100 直接当百分比,
+        // 33% 显示成 0.33% 严重偏低。乘 100 转换。
         // + ResetTimestamp: epoch **seconds** (10 位) — smart parse 转 ms
         // + 额外有 Status="Running" / UpdateTimestamp(seconds)
         let raw = json!({
@@ -813,24 +1161,29 @@ mod tests {
                 "Status": "Running",
                 "UpdateTimestamp": 1785217273_i64,
                 "QuotaUsage": [
-                    { "Level": "session", "Percent": 0.33462600000000003_f64, "ResetTimestamp": 1785221470_i64 },
-                    { "Level": "weekly",  "Percent": 2.408004733333333_f64,   "ResetTimestamp": 1785686400_i64 },
-                    { "Level": "monthly", "Percent": 11.356161100000001_f64,  "ResetTimestamp": 1787068799_i64 }
+                    // H-Provider fix (2026-09-07 audit): Percent 字段是 0~1 ratio
+                    // 而非 0~100。0.3346 ratio = 33.46% utilization (乘 100 转换)。
+                    { "Level": "session", "Percent": 0.334626_f64,  "ResetTimestamp": 1785221470_i64 },
+                    { "Level": "weekly",  "Percent": 0.024080_f64, "ResetTimestamp": 1785686400_i64 },
+                    { "Level": "monthly", "Percent": 0.113561_f64, "ResetTimestamp": 1787068799_i64 }
                 ]
             }
         });
         let snap = parse(&raw, "volcengine_ark", "Volcengine Ark").expect("parse");
-        assert_eq!(snap.rows.len(), 3);
-        let five_h = &snap.rows[0];
+        // v0.2.9: 3 数据行 + 1 PlanHeader 标题行
+        assert_eq!(snap.rows.len(), 4);
+        assert_eq!(snap.rows[0].kind, Some(RowKind::PlanHeader));
+        let five_h = &snap.rows[1];
         assert_eq!(five_h.label, t!("row.five_hour").as_ref());
-        // Percent=0.3346 → 0.33%(已 clamp 0~100,直接当百分比数值)
-        assert!((five_h.utilization.unwrap() - 0.3346).abs() < 0.001);
+        // Percent=0.3346 ratio → 33.46% utilization (乘 100)
+        assert!((five_h.utilization.unwrap() - 33.46).abs() < 0.01);
         // ResetTimestamp 1785221470 是 seconds → smart parse 转 ms
         assert_eq!(five_h.resets_at, Some(1785221470 * 1000));
-        let month = &snap.rows[2];
+        assert_eq!(row_plan(five_h), Some("coding"));
+        let month = &snap.rows[3];
         assert_eq!(month.label, t!("row.monthly").as_ref());
-        // 11.356% 不是 1135.6% —— 修 v0.2.5 那个 * 100 错位 bug
-        assert!((month.utilization.unwrap() - 11.356).abs() < 0.01);
+        // Percent=0.113561 ratio → 11.3561% utilization
+        assert!((month.utilization.unwrap() - 11.3561).abs() < 0.01);
     }
 
     #[test]
@@ -851,10 +1204,19 @@ mod tests {
         assert!(snap.success);
         assert_eq!(snap.source_id.as_deref(), Some("volcengine_ark"));
         assert_eq!(snap.plan_name.as_deref(), Some("Lite"));
-        assert_eq!(snap.rows.len(), 3);
+        // 3 数据行 + 1 PlanHeader
+        assert_eq!(snap.rows.len(), 4);
 
-        // 排序后：Session (5h) → Weekly (7d) → Monthly
-        let five_h = &snap.rows[0];
+        // 排序后：PlanHeader → Session (5h) → Weekly (7d) → Monthly
+        let header = &snap.rows[0];
+        assert_eq!(header.kind, Some(RowKind::PlanHeader));
+        assert_eq!(row_plan(header), Some("coding"));
+        assert_eq!(
+            header.extra.as_ref().unwrap().get("is_header").unwrap(),
+            &json!(true)
+        );
+
+        let five_h = &snap.rows[1];
         assert_eq!(five_h.label, t!("row.five_hour").as_ref());
         assert_eq!(five_h.used, None);
         assert_eq!(five_h.total, None);
@@ -862,11 +1224,11 @@ mod tests {
         assert!((five_h.utilization.unwrap() - 8.333).abs() < 0.01);
         assert_eq!(five_h.resets_at, Some(1753603200000));
 
-        let week = &snap.rows[1];
+        let week = &snap.rows[2];
         assert_eq!(week.label, t!("row.weekly_7d").as_ref());
         assert_eq!(week.used, None);
 
-        let month = &snap.rows[2];
+        let month = &snap.rows[3];
         assert_eq!(month.label, t!("row.monthly").as_ref());
         assert_eq!(month.used, None);
         assert!((month.utilization.unwrap() - 5.555).abs() < 0.01);
@@ -887,11 +1249,12 @@ mod tests {
             }
         });
         let snap = parse(&raw, "volcengine_ark", "Volcengine Ark").expect("parse");
-        assert_eq!(snap.rows.len(), 3);
+        assert_eq!(snap.rows.len(), 4);
         // Daily 应排在 Session 之后、Weekly 之前
-        assert_eq!(snap.rows[0].label, t!("row.five_hour").as_ref());
-        assert_eq!(snap.rows[1].label, t!("row.daily").as_ref());
-        assert_eq!(snap.rows[2].label, t!("row.weekly_7d").as_ref());
+        assert_eq!(snap.rows[0].kind, Some(RowKind::PlanHeader));
+        assert_eq!(snap.rows[1].label, t!("row.five_hour").as_ref());
+        assert_eq!(snap.rows[2].label, t!("row.daily").as_ref());
+        assert_eq!(snap.rows[3].label, t!("row.weekly_7d").as_ref());
     }
 
     #[test]
@@ -907,9 +1270,9 @@ mod tests {
             }
         });
         let snap = parse(&raw, "volcengine_ark", "Volcengine Ark").expect("parse");
-        // Yearly 未知 → 跳过，只剩 Session
-        assert_eq!(snap.rows.len(), 1);
-        assert_eq!(snap.rows[0].label, t!("row.five_hour").as_ref());
+        // Yearly 未知 → 跳过，只剩 Session + PlanHeader
+        assert_eq!(snap.rows.len(), 2);
+        assert_eq!(snap.rows[1].label, t!("row.five_hour").as_ref());
     }
 
     #[test]
@@ -928,8 +1291,8 @@ mod tests {
             }
         });
         let snap = parse(&raw, "volcengine_ark", "Volcengine Ark").expect("parse");
-        let r = &snap.rows[0];
-        // used = (1200 - 1250).max(0) = 0 → utilization = 0%
+        let r = &snap.rows[1]; // rows[0] = PlanHeader
+                               // used = (1200 - 1250).max(0) = 0 → utilization = 0%
         assert_eq!(r.used, None);
         assert_eq!(r.total, None);
         // remaining 字段保留 total-used 推导值(>=0),超用时钳到 0
@@ -988,8 +1351,8 @@ mod tests {
             }
         });
         let snap = parse(&raw, "volcengine_ark", "Volcengine Ark").expect("parse");
-        assert_eq!(snap.rows.len(), 1);
-        assert_eq!(snap.rows[0].label, t!("row.weekly_7d").as_ref());
+        assert_eq!(snap.rows.len(), 2); // PlanHeader + Weekly
+        assert_eq!(snap.rows[1].label, t!("row.weekly_7d").as_ref());
     }
 
     /// H4 fix (2026-08-03 audit): ResetTimestamp = 0 / 负数必须被拒 (D-013
@@ -1009,13 +1372,13 @@ mod tests {
         });
         let snap = parse(&raw, "volcengine_ark", "Volcengine Ark").expect("parse");
         assert!(snap.success);
-        assert_eq!(snap.rows.len(), 2);
-        // Session 行 ResetTimestamp=0 → resets_at=None (不显示 1970)
-        // 通过 resets_at 验证 5h 行(0 被过滤为 None)
+        assert_eq!(snap.rows.len(), 3); // PlanHeader + 5h + Weekly
+                                        // Session 行 ResetTimestamp=0 → resets_at=None (不显示 1970)
+                                        // 通过 resets_at 验证 5h 行(0 被过滤为 None)
         let _five_h = snap
             .rows
             .iter()
-            .find(|r| r.resets_at.is_none())
+            .find(|r| r.resets_at.is_none() && r.kind != Some(RowKind::PlanHeader))
             .expect("5h row (ts=0)");
         // Weekly 行(resets_at 正常)
         let week = snap
@@ -1039,8 +1402,260 @@ mod tests {
         });
         let snap = parse(&raw, "volcengine_ark", "Volcengine Ark").expect("parse");
         assert!(snap.success);
-        assert_eq!(snap.rows.len(), 1);
-        let five_h = &snap.rows[0];
+        assert_eq!(snap.rows.len(), 2); // PlanHeader + 5h
+        let five_h = &snap.rows[1];
         assert_eq!(five_h.resets_at, None, "ts=-1 must be filtered to None");
+    }
+
+    // ── v0.2.9 PlanHeader / 双套餐单元测试 ──
+
+    #[test]
+    fn parse_coding_includes_plan_header() {
+        // Coding 解析后 rows[0] 是 PlanHeader 行（即使只显示 Coding 一个套餐）
+        let raw = json!({
+            "Result": {
+                "Code": "Success",
+                "PlanName": "Lite",
+                "UsageList": [
+                    { "Level": "Session", "Remaining": 1100, "Total": 1200, "ResetTimestamp": 1753603200000_i64 }
+                ]
+            }
+        });
+        let (rows, _) = parse_coding_rows(&raw).expect("parse coding");
+        assert_eq!(rows.len(), 2);
+        let header = &rows[0];
+        assert_eq!(header.kind, Some(RowKind::PlanHeader));
+        assert_eq!(row_plan(header), Some("coding"));
+        assert_eq!(header.utilization, None);
+        assert_eq!(header.resets_at, None);
+        assert!(
+            header.label.contains("Coding"),
+            "header label 应含套餐名,实际: {}",
+            header.label
+        );
+    }
+
+    #[test]
+    fn parse_afp_basic() {
+        // 三窗口齐全，util 计算正确：800/1000=80%、200/5000=4%、1500/20000=7.5%
+        let rows = parse_afp_rows(&afp_raw()).expect("parse afp");
+        assert_eq!(rows.len(), 4); // header + 3
+        let five = &rows[1];
+        assert_eq!(five.label, t!("row.five_hour").as_ref());
+        assert!((five.utilization.unwrap() - 80.0).abs() < 0.01);
+        assert_eq!(five.kind, Some(RowKind::FiveHour));
+        assert_eq!(row_plan(five), Some("agent"));
+        assert_eq!(
+            five.extra.as_ref().unwrap().get("reset_period").unwrap(),
+            &json!("five_hour")
+        );
+        let weekly = &rows[2];
+        assert!((weekly.utilization.unwrap() - 4.0).abs() < 0.01);
+        assert_eq!(weekly.kind, Some(RowKind::Weekly));
+        let monthly = &rows[3];
+        assert!((monthly.utilization.unwrap() - 7.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn parse_afp_partial() {
+        // monthly 缺 → 跳过该行，其余照常
+        let raw = json!({
+            "Result": {
+                "PlanType": "Large",
+                "AFPFiveHour": { "Quota": 1000, "Used": 800, "ResetTime": 1778806800000_i64 },
+                "AFPWeekly":   { "Quota": 5000, "Used": 200, "ResetTime": 1779408000000_i64 }
+            }
+        });
+        let rows = parse_afp_rows(&raw).expect("parse afp");
+        assert_eq!(rows.len(), 3); // header + 2
+        assert_eq!(rows.iter().last().unwrap().kind, Some(RowKind::Weekly));
+    }
+
+    #[test]
+    fn parse_afp_ms_reset() {
+        // ResetTime 13 位毫秒直用（不乘 1000）
+        let raw = json!({
+            "Result": {
+                "AFPFiveHour": { "Quota": 1000, "Used": 0, "ResetTime": 1778806800000_i64 }
+            }
+        });
+        let rows = parse_afp_rows(&raw).expect("parse afp");
+        assert_eq!(rows[1].resets_at, Some(1778806800000));
+    }
+
+    #[test]
+    fn parse_afp_negative_reset() {
+        // ResetTime = -1 → resets_at = None（D-013 一致性，不显示 1970 / 溢出）
+        let raw = json!({
+            "Result": {
+                "AFPFiveHour": { "Quota": 1000, "Used": 0, "ResetTime": -1_i64 }
+            }
+        });
+        let rows = parse_afp_rows(&raw).expect("parse afp");
+        assert_eq!(rows[1].resets_at, None);
+    }
+
+    #[test]
+    fn parse_afp_includes_plan_header() {
+        // rows[0] 是 PlanHeader 行，kind=PlanHeader、extra.plan=agent
+        let rows = parse_afp_rows(&afp_raw()).expect("parse afp");
+        let header = &rows[0];
+        assert_eq!(header.kind, Some(RowKind::PlanHeader));
+        assert_eq!(row_plan(header), Some("agent"));
+        assert_eq!(
+            header.extra.as_ref().unwrap().get("is_header").unwrap(),
+            &json!(true)
+        );
+        assert_eq!(header.utilization, None);
+        assert!(
+            header.label.contains("Agent"),
+            "header label 应含套餐名,实际: {}",
+            header.label
+        );
+    }
+
+    #[test]
+    fn parse_afp_all_windows_unsubscribed_is_empty() {
+        // 全部窗口 Quota=0（未订阅 Agent Plan）→ 空 Vec，
+        // merge 层不为空组渲染 PlanHeader（浮窗不出现空标题行）
+        let raw = json!({
+            "Result": {
+                "PlanType": "",
+                "AFPFiveHour": { "Quota": 0, "Used": 0, "ResetTime": 0 },
+                "AFPWeekly":   { "Quota": 0, "Used": 0, "ResetTime": 0 }
+            }
+        });
+        let rows = parse_afp_rows(&raw).expect("parse afp");
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn parse_afp_business_error_propagates() {
+        // ResponseMetadata.Error → 直接透传错误（跟 Coding 同款）
+        let raw = json!({
+            "ResponseMetadata": { "Error": { "Code": "NotAuthorized", "Message": "no perm" } }
+        });
+        let err = parse_afp_rows(&raw).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::ServerError);
+    }
+
+    #[test]
+    fn parse_combined_orders_coding_first() {
+        // 合 fetch 后 Coding 行（含 PlanHeader）整体在 Agent 行之前；
+        // plan_name AFP 优先（PlanType 更具体）
+        let results = vec![
+            (
+                "coding",
+                Ok(json!({
+                    "Result": {
+                        "Code": "Success",
+                        "PlanName": "Lite",
+                        "UsageList": [
+                            { "Level": "Session", "Remaining": 1100, "Total": 1200, "ResetTimestamp": 1753603200000_i64 }
+                        ]
+                    }
+                })),
+            ),
+            ("agent", Ok(afp_raw())),
+        ];
+        let (rows, plan_name, raw) = merge_plan_results(results).expect("merge");
+        let first_coding = rows
+            .iter()
+            .position(|r| row_plan(r) == Some("coding"))
+            .expect("coding rows");
+        let first_agent = rows
+            .iter()
+            .position(|r| row_plan(r) == Some("agent"))
+            .expect("agent rows");
+        assert!(
+            first_coding < first_agent,
+            "Coding 行必须整体在 Agent 行之前"
+        );
+        assert_eq!(rows[0].kind, Some(RowKind::PlanHeader));
+        assert_eq!(row_plan(&rows[0]), Some("coding"));
+        assert_eq!(plan_name.as_deref(), Some("Large"));
+        // merged_raw 双 key（调试面板 / dump 可看两个原始响应）
+        assert!(raw.get("coding").is_some());
+        assert!(raw.get("agent").is_some());
+    }
+
+    #[test]
+    fn merge_skips_failed_action() {
+        // Coding 挂（HTTP 500）+ Agent 成功 → 照常渲染 Agent 组（失败不连坐）
+        let results = vec![
+            (
+                "coding",
+                Err(FetchError::server("HTTP 500: boom".to_string())),
+            ),
+            ("agent", Ok(afp_raw())),
+        ];
+        let (rows, plan_name, _) = merge_plan_results(results).expect("agent rows survive");
+        assert!(rows.iter().all(|r| row_plan(r) == Some("agent")));
+        assert_eq!(plan_name.as_deref(), Some("Large"));
+    }
+
+    #[test]
+    fn merge_all_fail_returns_first_err() {
+        // 两个 action 都挂 → 抛第一个错误（Coding 优先）
+        let results = vec![
+            ("coding", Err(FetchError::server("coding boom".to_string()))),
+            ("agent", Err(FetchError::auth("agent boom".to_string()))),
+        ];
+        let err = merge_plan_results(results).unwrap_err();
+        assert_eq!(err.message, "coding boom");
+    }
+
+    #[test]
+    fn merge_coding_parse_fail_agent_empty_is_err() {
+        // Coding 数据行空（parse 错）+ Agent 空组 → 无行可渲染 → 抛错误
+        let results = vec![
+            (
+                "coding",
+                Ok(json!({ "Result": { "Code": "Success", "UsageList": [] } })),
+            ),
+            ("agent", Ok(json!({ "Result": {} }))),
+        ];
+        let err = merge_plan_results(results).unwrap_err();
+        assert_eq!(err.kind, ErrorKind::Parse);
+    }
+
+    // ── v0.2.9 set_state（套餐筛选推送）单元测试 ──
+
+    #[tokio::test]
+    async fn set_state_reads_filter() {
+        let src = VolcengineArkSource::default();
+        src.set_state(json!({
+            "volcengine_ark_plan_filter": { "coding": false, "agent": true }
+        }))
+        .await;
+        let g = src.state.read().unwrap();
+        let s = g.expect("state should be set");
+        assert!(!s.show_coding);
+        assert!(s.show_agent);
+    }
+
+    #[tokio::test]
+    async fn set_state_defaults_both_true_when_filter_missing() {
+        // 老 config.json 无该字段（或半缺）→ 对应 plan 默认 true（无感升级）
+        let src = VolcengineArkSource::default();
+        src.set_state(json!({})).await;
+        let g = src.state.read().unwrap();
+        let s = g.expect("state should be set");
+        assert!(s.show_coding && s.show_agent);
+
+        let src2 = VolcengineArkSource::default();
+        src2.set_state(json!({ "volcengine_ark_plan_filter": { "coding": false } }))
+            .await;
+        let g2 = src2.state.read().unwrap();
+        let s2 = g2.expect("state should be set");
+        assert!(!s2.show_coding);
+        assert!(s2.show_agent, "缺 agent 键时默认 true");
+    }
+
+    #[test]
+    fn default_state_enables_both_plans() {
+        // dump CLI / test_extra_instance 不走 set_state → fetch 用 Default 兜底
+        let s = VolcengineArkState::default();
+        assert!(s.show_coding && s.show_agent);
     }
 }

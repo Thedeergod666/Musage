@@ -622,6 +622,48 @@ pub async fn set_zhipu_region(
     Ok(())
 }
 
+// ── v0.2.9 火山方舟双套餐筛选（Coding Plan / Agent Plan）─────────────
+//
+// 两个独立 checkbox，改哪个落哪个键；另一个键保留用户已选值
+//（unwrap_or_default = 两个都开）。后端落盘 → emit config-changed →
+// spawn 后台 refresh_single，浮窗立即按新筛选重新拉取。
+
+#[tauri::command]
+pub async fn set_volcengine_ark_plan_coding(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    {
+        let mut cfg = state.config.write().await;
+        let mut f = cfg.volcengine_ark_plan_filter.unwrap_or_default();
+        f.coding = enabled;
+        cfg.volcengine_ark_plan_filter = Some(f);
+        cfg.save()?;
+    }
+    spawn_refresh_single(&app, "volcengine_ark");
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_volcengine_ark_plan_agent(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    {
+        let mut cfg = state.config.write().await;
+        let mut f = cfg.volcengine_ark_plan_filter.unwrap_or_default();
+        f.agent = enabled;
+        cfg.volcengine_ark_plan_filter = Some(f);
+        cfg.save()?;
+    }
+    spawn_refresh_single(&app, "volcengine_ark");
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn get_snapshot(state: State<'_, AppState>) -> Result<QuotaSnapshot, String> {
     let snap = state.snapshot.read().await.clone();
@@ -942,6 +984,12 @@ pub async fn save_config(
     // 真可能失败的 platform call，再改成 Result<(), String> 传播
     crate::platform::set_auto_hide_in_fullscreen(&app, cfg.auto_hide_in_fullscreen);
 
+    // H-lib fix (2026-09-07 audit): save_config 改 low_power_mode 时同步 OS 层
+    // Acrylic —— CSS 关不掉 compositor, 必须走 apply_floating_window_blur。
+    // 与 set_low_power_mode (2403) / set_floating_pin_mode (1441) 路径对齐,
+    // 否则 save_config 路径下 Win 用户切省电模式视觉失效,重启 app 才自愈。
+    apply_floating_window_blur(&app, !cfg.low_power_mode);
+
     // 广播省电模式给浮窗，让前端 toggle body[data-low-power]
     // 失败 log warn 但不阻断（emit 失败不应让 user 重试整个 save_config）
     if let Err(e) = app.emit("musage://low-power-mode-changed", cfg.low_power_mode) {
@@ -1169,10 +1217,14 @@ pub async fn delete_source_credential(
         .ok_or_else(|| t!("commands.source_unknown", id = id.as_str()).into_owned())?;
     config::delete_credential_for_id(&id)?;
     // H4 fix (2026-07-06 全量审查): 删 builtin key 时,扫描 extra_instances
-    // 找到同一 provider 的副本,disable 它们 + 清掉对应 keys.json entry,
-    // 避免孤儿元数据(浮窗显示"未配置"的死副本)。
-    // 删 extra instance id 自身(如 "minimax#2")时不级联 —— #2 可能单独
-    // 没 key 也能保留给未来用户配置;只对 builtin 删做级联。
+    // 找到同一 provider 的副本,**只 disable** 副本元数据 —— 不级联删 API key。
+    // 删除 API key 是不可逆操作,即使将来用户想恢复(重新填 base key)也需要
+    // B/C 副本的旧 key。poller 跳过 disabled 实例 = 浮窗不再显示「未配置」
+    // 死卡,但 keys.json 仍保留副本凭据 → 用户重新粘 base key 后副本也能恢复。
+    //
+    // 旧实现 (CM4 fix 2026-07-28) 还级联 delete_credential_for_id("base#N"),
+    // 等价于"删 builtin key 时物理清除所有副本的 API key" —— 与 H4 注释
+    // "disable 已足够阻止未配置死卡"自相矛盾。
     if !id.contains('#') {
         let extras = state.extra_instances.read().await;
         let orphan_refs: Vec<String> = extras
@@ -1181,12 +1233,6 @@ pub async fn delete_source_credential(
             .map(|e| e.api_key_ref.clone())
             .collect();
         drop(extras);
-        // CM4 fix (2026-07-28 审查): 兑现上方注释承诺的另一半 —— 级联
-        // disable 副本。之前只清 keys.json entry,副本 enabled 仍为 true,
-        // poller 继续调度 + 浮窗显示「未配置」死卡。api_key_ref
-        // ("minimax#2") 同时是 keys.json key 和 cfg.providers key,disable
-        // 是可逆操作(设置面板可重新打开);extra_instances 条目本身的删除
-        // 归 delete_extra_instance,这里不越权。
         if !orphan_refs.is_empty() {
             let mut cfg = state.config.write().await;
             for r in &orphan_refs {
@@ -1204,17 +1250,10 @@ pub async fn delete_source_credential(
                 tracing::warn!(error = %e, "delete 级联 disable 副本落盘失败");
             }
             drop(cfg);
-        }
-        for r in &orphan_refs {
-            if let Err(e) = config::delete_credential_for_id(r) {
-                tracing::warn!(error = %e, ref_ = %r, "delete 级联清孤儿 entry 失败");
-            }
-        }
-        if !orphan_refs.is_empty() {
             tracing::info!(
                 builder = %id,
                 count = orphan_refs.len(),
-                "delete_source_credential 级联清理 extra_instances 副本"
+                "delete_source_credential 级联 disable 副本 (保留副本 keys.json 凭据,用户可后续恢复)"
             );
         }
     }
@@ -2192,41 +2231,10 @@ pub async fn resolve_login_refresh_target(
     None
 }
 
-/// H-8 fix (2026-09-05 audit)：登录 token **镜像写入**刷新目标槽。
-///
-/// 三个登录模块的提取 token 永远写 base 凭据槽（`"anysearch"` /
-/// `"stepfun"` / `"xiaomimimo"`），而 D7-02 的「登录后立即拉取」目标在
-/// base 禁用 + 副本启用时是 `"<base>#N"` —— 副本 refresh 读自己的槽读不到
-/// 刚登录的 token，浮窗弹「未配置凭据」。base 本体已由各模块自己写入；
-/// 这里只负责把同一 token **补写**到解析出的副本槽（best-effort，失败仅
-/// warn —— base 槽是主写入，不因镜像失败回滚）。
-pub async fn mirror_login_credential_to_refresh_target(
-    window: &tauri::WebviewWindow,
-    base: &str,
-    cookie_value: &str,
-) {
-    let cred = crate::providers::Credentials {
-        api_key: None,
-        cookie: Some(cookie_value.to_string()),
-        secret_key: None,
-    };
-    let app = window.app_handle();
-    let state = app.state::<AppState>();
-    let Some(target) = resolve_login_refresh_target(&state, base).await else {
-        return;
-    };
-    if target == base {
-        return;
-    }
-    if let Err(e) = crate::config::save_credential_for_id(&target, &cred) {
-        tracing::warn!(
-            error = %e,
-            target = %target,
-            base,
-            "H-8: 登录 token 镜像写入副本槽失败（base 槽已写入）"
-        );
-    }
-}
+// H-8 (2026-09-05 audit) 的 mirror_login_credential_to_refresh_target 已随
+// merge 2026-09-08 删除：远端 D7-02 方案（login save 直接写 resolve 出的
+// target 槽，见三个 login 模块的 save_token / extract_and_save）单次写入即
+// 让 refresh 必命中，无需「base 落盘 + 镜像副本槽」双写。
 
 /// H5 fix (2026-07-30 audit): `caller` 区分失败行为 (见 poller_backoff::RefreshSource)。
 /// - 全量 refresh / Poller 入口 → Poller(失败退避)

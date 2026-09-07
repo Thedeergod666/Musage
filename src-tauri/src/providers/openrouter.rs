@@ -340,6 +340,31 @@ fn parse_credits(
     display_name: &str,
 ) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
+    // H-Provider fix (2026-09-07 audit): 旧实现只看 `data` 字段,忽略 body 内
+    // `error` —— OpenRouter HTTP 200 + `{"error": {"code": 401, "message": "..."},
+    // "data": null}` 会 fallback 到 "missing field data" Parse 错误, 内部错误
+    // 当成 schema 漂移, 用户看不到 "重新登录" 引导。先 check `error` 字段,
+    // 按 status/code 分类 (401 → auth, 其他 → server) 让前端走正确的错误路径。
+    if let Some(err) = raw.get("error").filter(|e| !e.is_null()) {
+        let code = err
+            .get("code")
+            .and_then(|v| v.as_i64())
+            .or_else(|| err.get("status").and_then(|v| v.as_i64()))
+            .unwrap_or(0);
+        let msg = err.get("message").and_then(|v| v.as_str()).unwrap_or("");
+        let reason = t!(
+            "error.common.api_error",
+            provider = "OpenRouter",
+            code = code,
+            msg = msg
+        )
+        .into_owned();
+        return Err(if code == 401 || code == 403 {
+            FetchError::auth(reason)
+        } else {
+            FetchError::server(reason)
+        });
+    }
     let data = raw.get("data").ok_or_else(|| {
         FetchError::parse(
             t!(

@@ -25,6 +25,8 @@
     "weekly_7d": "7d",
     "daily": "日",
     "monthly": "月",
+    "plan_header_coding": "Coding Plan",
+    "plan_header_agent": "Agent Plan",
     "credit": "套餐用量",
     "balance": "余额",
     "plan": "套餐",
@@ -104,7 +106,8 @@
       "missing_five_hour_seven_day": "Claude 响应里没找到 five_hour / seven_day 字段"
     },
     "volcengine": {
-      "unconfigured_secret_key": "火山方舟 SecretAccessKey 未配置（在设置面板 · 火山方舟 Coding Plan 同时填 AccessKey ID 和 SecretAccessKey）"
+      "unconfigured_secret_key": "火山方舟 SecretAccessKey 未配置（在设置面板 · 火山方舟 Coding Plan 同时填 AccessKey ID 和 SecretAccessKey）",
+      "both_filtered": "火山方舟 Coding Plan 和 Agent Plan 都未启用，无法查询（到设置面板重新勾选要监控的套餐）"
     },
     "anysearch": {
       "token_empty": "未配置 AnySearch 登录凭据（设置面板 · AnySearch · 点「登录 AnySearch」）",
@@ -164,6 +167,7 @@
     "config_mkdir": "mkdir: %{err}",
     "config_serialize": "serialize: %{err}",
     "config_write": "write config: %{err}",
+    "config_schema_too_new": "config.json 的 schema_version %{file} 高于本 build 支持的 %{app}，已拒绝保存以保留未来字段。请升级应用。",
     "config_dir_not_found": "无法定位配置目录",
     "read_keys": "read keys: %{err}",
     "parse_keys": "parse keys.json: %{err}",

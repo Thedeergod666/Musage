@@ -755,7 +755,11 @@ mod tests {
             "usage": { "limit": 1000, "remaining": 742 }
         });
         let snap = parse(&raw, "kimi", "Kimi").expect("parse");
-        assert_eq!(snap.rows.len(), 2, "remaining 省略但 used 存在时 5h 行不能消失");
+        assert_eq!(
+            snap.rows.len(),
+            2,
+            "remaining 省略但 used 存在时 5h 行不能消失"
+        );
         let five_h = &snap.rows[0];
         assert_eq!(five_h.kind, Some(RowKind::FiveHour));
         assert!((five_h.utilization.unwrap() - 100.0).abs() < 0.001);

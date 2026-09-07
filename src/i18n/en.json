@@ -545,7 +545,11 @@
     "zhipu_region_label": "Zhipu GLM region",
     "zhipu_region_cn": "Mainland (open.bigmodel.cn)",
     "zhipu_region_en": "International (api.z.ai / Z.ai)",
-    "zhipu_region_help": "Mainland uses <a href=\"https://bigmodel.cn/user-center/projection-meter\" target=\"_blank\" class=\"link-ext\">bigmodel.cn</a> API key; international uses <a href=\"https://z.ai/manage-apikey/subscription\" target=\"_blank\" class=\"link-ext\">z.ai</a>. Keys are <strong>not</strong> interchangeable. Same schema (unit=3→5h, unit=6→weekly), only host differs."
+    "zhipu_region_help": "Mainland uses <a href=\"https://bigmodel.cn/user-center/projection-meter\" target=\"_blank\" class=\"link-ext\">bigmodel.cn</a> API key; international uses <a href=\"https://z.ai/manage-apikey/subscription\" target=\"_blank\" class=\"link-ext\">z.ai</a>. Keys are <strong>not</strong> interchangeable. Same schema (unit=3→5h, unit=6→weekly), only host differs.",
+    "volcengine_plan_filter_label": "Plan types",
+    "volcengine_plan_coding": "Coding Plan",
+    "volcengine_plan_agent": "Agent Plan",
+    "volcengine_plan_help": "Unchecked plans won't fire API requests (saves quota). Both checked by default — the floating window shows a small plan-name header above each group."
   },
   "groups": {
     "token_plan_title": "Token Plan",

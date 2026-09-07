@@ -344,6 +344,16 @@ export async function setZhipuRegion(region: "cn" | "en"): Promise<void> {
   await invoke("set_zhipu_region", { region });
 }
 
+/// v0.2.9 火山方舟双套餐筛选：Coding Plan / Agent Plan 两个独立开关。
+/// 后端落盘 + emit config-changed + spawn 后台 refresh_single。
+export async function setVolcengineArkPlanCoding(enabled: boolean): Promise<void> {
+  await invoke("set_volcengine_ark_plan_coding", { enabled });
+}
+
+export async function setVolcengineArkPlanAgent(enabled: boolean): Promise<void> {
+  await invoke("set_volcengine_ark_plan_agent", { enabled });
+}
+
 // ── P2 区域向导 ──
 
 /** P2 区域：用户选定后 apply 默认 provider 顺序 + endpoint */

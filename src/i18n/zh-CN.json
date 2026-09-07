@@ -545,7 +545,11 @@
     "zhipu_region_label": "智谱 GLM 区域",
     "zhipu_region_cn": "国区 (open.bigmodel.cn)",
     "zhipu_region_en": "国际 (api.z.ai / Z.ai)",
-    "zhipu_region_help": "国区用 <a href=\"https://bigmodel.cn/user-center/projection-meter\" target=\"_blank\" class=\"link-ext\">bigmodel.cn</a> 创建的 API key；国际版用 <a href=\"https://z.ai/manage-apikey/subscription\" target=\"_blank\" class=\"link-ext\">z.ai</a> 创建的。两个平台的 key <strong>不通用</strong>。schema 一致（unit=3→5h, unit=6→周），只是 host 不同。"
+    "zhipu_region_help": "国区用 <a href=\"https://bigmodel.cn/user-center/projection-meter\" target=\"_blank\" class=\"link-ext\">bigmodel.cn</a> 创建的 API key；国际版用 <a href=\"https://z.ai/manage-apikey/subscription\" target=\"_blank\" class=\"link-ext\">z.ai</a> 创建的。两个平台的 key <strong>不通用</strong>。schema 一致（unit=3→5h, unit=6→周），只是 host 不同。",
+    "volcengine_plan_filter_label": "套餐类型",
+    "volcengine_plan_coding": "Coding Plan",
+    "volcengine_plan_agent": "Agent Plan",
+    "volcengine_plan_help": "未勾选的套餐不会发起 API 请求（节省配额）。两个都勾 = 全部显示（默认），浮窗每个套餐前有一行套餐名小标题。"
   },
   "groups": {
     "token_plan_title": "Token Plan 套餐",

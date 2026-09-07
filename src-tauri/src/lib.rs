@@ -449,6 +449,9 @@ pub fn run() {
             commands::set_zenmux_mode,
             commands::set_zenmux_payg_concise,
             commands::set_zhipu_region,
+            // v0.2.9 火山方舟双套餐筛选（Coding Plan / Agent Plan checkbox）
+            commands::set_volcengine_ark_plan_coding,
+            commands::set_volcengine_ark_plan_agent,
             xiaomi_login::open_xiaomi_login_window,
             anysearch_login::open_anysearch_login_window,
             stepfun_login::open_stepfun_login_window,
@@ -576,7 +579,9 @@ fn spawn_debounced_geom_persister(app: tauri::AppHandle, win: tauri::WebviewWind
                 }
             }
             if crate::poller::SHUTDOWN_REQUESTED.load(std::sync::atomic::Ordering::SeqCst) {
-                tracing::info!("geom_persister 兜底检测到 SHUTDOWN_REQUESTED,最后 flush 一次后退出");
+                tracing::info!(
+                    "geom_persister 兜底检测到 SHUTDOWN_REQUESTED,最后 flush 一次后退出"
+                );
                 flush_latest_geom(&latest, &app).await;
                 break;
             }

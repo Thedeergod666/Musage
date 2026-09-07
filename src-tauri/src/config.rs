@@ -279,6 +279,35 @@ pub struct AppConfig {
     /// `#[serde(default)]` 让老 config.json 缺这字段时走 "cn"（不动现有行为）。
     #[serde(default)]
     pub user_region: UserRegion,
+    /// 火山方舟套餐筛选（v0.2.9）：Coding Plan / Agent Plan 双 action 开关。
+    /// None = 走默认（两个都查）。serde default 让老 config.json 无感升级
+    /// 为全勾状态。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub volcengine_ark_plan_filter: Option<VolcengineArkPlanFilter>,
+}
+
+/// 火山方舟双套餐开关（`volcengine_ark_plan_filter`）。两个键独立可选，
+/// `#[serde(default = "default_true")]` 兜住手改 config.json 只写一个键
+/// 的情况（没写的键 = true）。
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VolcengineArkPlanFilter {
+    #[serde(default = "default_true")]
+    pub coding: bool,
+    #[serde(default = "default_true")]
+    pub agent: bool,
+}
+
+impl Default for VolcengineArkPlanFilter {
+    fn default() -> Self {
+        Self {
+            coding: true,
+            agent: true,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// 用户的"主用区域"——影响默认 provider 顺序 + 部分 provider 的默认 endpoint。
@@ -458,6 +487,8 @@ impl Default for AppConfig {
             locale: default_locale(),
             // P2 首次启动默认 Cn（保持现有用户体验），用户主动切区域后变 Custom
             user_region: UserRegion::default(),
+            // None = 火山双套餐都查（向后兼容，老 config.json 无此字段）
+            volcengine_ark_plan_filter: None,
         }
     }
 }
@@ -1077,6 +1108,21 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
     if let Some(s) = obj.get("zhipu_region").and_then(|x| x.as_str()) {
         recognized_any = true;
         cfg.zhipu_region = Some(s.to_string());
+    }
+    if let Some(f) = obj
+        .get("volcengine_ark_plan_filter")
+        .and_then(|x| x.as_object())
+    {
+        recognized_any = true;
+        // 双 bool 键独立挑（半缺的键走 default true），单键损坏不拖垮整块
+        let mut filter = cfg.volcengine_ark_plan_filter.unwrap_or_default();
+        if let Some(b) = f.get("coding").and_then(|x| x.as_bool()) {
+            filter.coding = b;
+        }
+        if let Some(b) = f.get("agent").and_then(|x| x.as_bool()) {
+            filter.agent = b;
+        }
+        cfg.volcengine_ark_plan_filter = Some(filter);
     }
     if let Some(arr) = obj.get("color_thresholds").and_then(|x| x.as_array()) {
         recognized_any = true;

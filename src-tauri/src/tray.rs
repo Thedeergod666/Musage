@@ -593,7 +593,9 @@ fn start_tray_request_receiver(app: &AppHandle) {
                     handle_tray_request(&app_for_closure, req);
                 }))
                 .map_err(|_| {
-                    tracing::error!("tray request handler panic, 被 catch_unwind 接住, receiver 继续运行");
+                    tracing::error!(
+                        "tray request handler panic, 被 catch_unwind 接住, receiver 继续运行"
+                    );
                 });
             }) {
                 tracing::warn!(error = %e, "派发 tray request 到 main thread 失败，本条丢弃，继续接收");
@@ -883,7 +885,11 @@ fn parse_hex_color(s: &str) -> Option<Rgba<u8>> {
         if chars.len() != 6 {
             return None;
         }
-        Some((parse_pair(chars[0], chars[1])?, parse_pair(chars[2], chars[3])?, parse_pair(chars[4], chars[5])?))
+        Some((
+            parse_pair(chars[0], chars[1])?,
+            parse_pair(chars[2], chars[3])?,
+            parse_pair(chars[4], chars[5])?,
+        ))
     };
     match b.len() {
         6 => {

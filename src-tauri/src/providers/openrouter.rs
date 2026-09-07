@@ -351,10 +351,7 @@ fn parse_credits(
             .and_then(|v| v.as_i64())
             .or_else(|| err.get("status").and_then(|v| v.as_i64()))
             .unwrap_or(0);
-        let msg = err
-            .get("message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let msg = err.get("message").and_then(|v| v.as_str()).unwrap_or("");
         let reason = t!(
             "error.common.api_error",
             provider = "OpenRouter",

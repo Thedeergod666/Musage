@@ -474,10 +474,7 @@ async fn extract_with_retry(
 /// D7-02 fix (2026-09-07 audit, 2 域独立命中): 旧实现硬编码写 "xiaomimimo"
 /// base 槽,base 禁用 + 副本启用场景 refresh 命中副本空槽 → 401 循环。caller
 /// 早期 resolve 传 target,save 写 target 槽让 refresh 命中。
-async fn extract_and_save(
-    window: &tauri::WebviewWindow,
-    target: &str,
-) -> Result<usize, String> {
+async fn extract_and_save(window: &tauri::WebviewWindow, target: &str) -> Result<usize, String> {
     let url: Url = (LOGIN_URL.parse::<Url>())
         .map_err(|e| t!("xiaomi_login.parse_url", err = e.to_string()).into_owned())?;
 

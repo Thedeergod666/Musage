@@ -186,8 +186,16 @@ interface QuotaRow {
    *  浮窗据此显示「日重置」/「月重置」前缀（缺省走月重置，跟旧行为一致）；
    *  StepFun 一次性额度包带 `{reset_period: "expire"}` → 显示「到期」+「已到期」。
    *  Kimi 总套餐行带 `{kimi_code_used_ratio: number}`（总池里 Code 消耗占比 %）
-   *  → 「月重置」行之后多渲染一行拆分小字「Kimi xx% · Code xx%」。 */
-  extra?: { reset_period?: string; kimi_code_used_ratio?: number } | null;
+   *  → 「月重置」行之后多渲染一行拆分小字「Kimi xx% · Code xx%」。
+   *  火山方舟双套餐行带 `{plan: "coding"|"agent", is_header?: boolean}`：
+   *  plan 用于 rowKey 去重（两个套餐都有 5h/7d/月 行）；is_header=true 的行
+   *  是 RowKind::PlanHeader 标题行（无数据，渲染成 muted 小字分组锚点）。 */
+  extra?: {
+    reset_period?: string;
+    kimi_code_used_ratio?: number;
+    plan?: "coding" | "agent";
+    is_header?: boolean;
+  } | null;
   /** 行的语义分类（与 locale 解耦，**L7 fix 2026-06-19**）。
    *  rowKey 优先用这个做 DOM 稳定 key，避免切 locale 后 key 变化导致全量重建。 */
   kind?:
@@ -196,6 +204,7 @@ interface QuotaRow {
     | "plan"
     | "compensation"
     | "monthly_total"
+    | "plan_header"
     | null;
 }
 
@@ -1038,13 +1047,18 @@ function rowKey(providerId: string, index: number, r: QuotaRow): string {
   //   2. r.label（已 deprecated，仅 kind 缺失时用）— 仍会跨 locale 失效
   //   3. index（位置 fallback）— 保证任何 r 都有稳定 key
   // prefix 用 providerId 让不同 provider 的 rowsBox key 互不撞。
+  //
+  // **v0.2.9 火山双套餐**：同 provider 内 Coding / Agent 两组行 kind 相同
+  // （各有 five_hour / weekly / plan_header），必须拼 `extra.plan` 后缀
+  // 去重 —— 不拼的话两组 5h 行拿到同一个 key，DOM diff 互相覆盖。
+  const plan = r.extra?.plan ? `@${r.extra.plan}` : "";
   let stable: string;
   if (r.kind) {
-    stable = `kind:${r.kind}`;
+    stable = `kind:${r.kind}${plan}`;
   } else if (r.label) {
-    stable = `label:${r.label}`;
+    stable = `label:${r.label}${plan}`;
   } else {
-    stable = `idx:${index}`;
+    stable = `idx:${index}${plan}`;
   }
   // Phase 1: Tavily 走"used/total"组合（"150/1000 credits"），优先于 remaining/utilization
   let kind = "unknown";
@@ -1058,6 +1072,13 @@ function rowKey(providerId: string, index: number, r: QuotaRow): string {
 function buildRowSkeleton(r: QuotaRow): HTMLElement {
   const row = document.createElement("div");
   row.className = "row";
+  // v0.2.9 火山双套餐：PlanHeader 标题行（无数据 / 无 bar / 无 pct），
+  // 只有一个 muted label，作为套餐视觉分组锚点。
+  if (r.kind === "plan_header") {
+    row.classList.add("row-plan-header");
+    row.innerHTML = `<div class="row-plan-header-label"></div>`;
+    return row;
+  }
   if (r.used != null && r.total != null) {
     // Phase 1: credits 行（"150/1000 credits"） + 进度条
     row.classList.add("credits-row");
@@ -1118,6 +1139,13 @@ function buildRowSkeleton(r: QuotaRow): HTMLElement {
 }
 
 function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
+  // v0.2.9 火山双套餐：PlanHeader 标题行只刷 label 文本（locale 切换后
+  // 后端重发 snapshot，label 由后端 bake 好带来）。
+  if (r.kind === "plan_header") {
+    const labelEl = rowEl.querySelector<HTMLElement>(".row-plan-header-label")!;
+    labelEl.textContent = r.label;
+    return;
+  }
   // Phase 1: credits 行（MiniMax 风格：大 % + used/total 副文字 + 进度条 + row-foot）
   if (r.used != null && r.total != null) {
     // P3 audit fix (2026-08-13): total=0 时 (used/total)*100 = Infinity ->

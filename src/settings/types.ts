@@ -117,6 +117,9 @@ export interface AppConfig {
   /// 影响默认 provider 顺序 + MiniMax endpoint。手动改过顺序/endpoint 后
   /// 自动变 "custom"（防止 wizard 反复弹）。
   user_region?: "cn" | "global" | "custom";
+  /// 火山方舟套餐筛选（v0.2.9）：Coding Plan / Agent Plan 双 action 开关。
+  /// undefined = 两个都查（Rust 端 skip_serializing_if 的 None）。
+  volcengine_ark_plan_filter?: { coding: boolean; agent: boolean };
 }
 
 export interface ProviderSnapshot {

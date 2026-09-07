@@ -25,6 +25,8 @@
     "weekly_7d": "7d",
     "daily": "Daily",
     "monthly": "Monthly",
+    "plan_header_coding": "Coding Plan",
+    "plan_header_agent": "Agent Plan",
     "credit": "Plan usage",
     "balance": "Balance",
     "plan": "Plan",
@@ -103,7 +105,8 @@
       "missing_five_hour_seven_day": "Claude response missing five_hour / seven_day field"
     },
     "volcengine": {
-      "unconfigured_secret_key": "Volcengine Ark SecretAccessKey not configured (fill both AccessKey ID and SecretAccessKey in Settings → 火山方舟 Coding Plan)"
+      "unconfigured_secret_key": "Volcengine Ark SecretAccessKey not configured (fill both AccessKey ID and SecretAccessKey in Settings → 火山方舟 Coding Plan)",
+      "both_filtered": "Both Volcengine Ark Coding Plan and Agent Plan are disabled — nothing to query (re-check the plans you want to monitor in Settings)"
     },
     "anysearch": {
       "token_empty": "AnySearch session token not configured (Settings → AnySearch → click \"Login AnySearch\")",

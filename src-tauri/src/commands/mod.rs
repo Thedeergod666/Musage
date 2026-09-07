@@ -615,6 +615,48 @@ pub async fn set_zhipu_region(
     Ok(())
 }
 
+// ── v0.2.9 火山方舟双套餐筛选（Coding Plan / Agent Plan）─────────────
+//
+// 两个独立 checkbox，改哪个落哪个键；另一个键保留用户已选值
+//（unwrap_or_default = 两个都开）。后端落盘 → emit config-changed →
+// spawn 后台 refresh_single，浮窗立即按新筛选重新拉取。
+
+#[tauri::command]
+pub async fn set_volcengine_ark_plan_coding(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    {
+        let mut cfg = state.config.write().await;
+        let mut f = cfg.volcengine_ark_plan_filter.unwrap_or_default();
+        f.coding = enabled;
+        cfg.volcengine_ark_plan_filter = Some(f);
+        cfg.save()?;
+    }
+    spawn_refresh_single(&app, "volcengine_ark");
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_volcengine_ark_plan_agent(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    enabled: bool,
+) -> Result<(), String> {
+    {
+        let mut cfg = state.config.write().await;
+        let mut f = cfg.volcengine_ark_plan_filter.unwrap_or_default();
+        f.agent = enabled;
+        cfg.volcengine_ark_plan_filter = Some(f);
+        cfg.save()?;
+    }
+    spawn_refresh_single(&app, "volcengine_ark");
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn get_snapshot(state: State<'_, AppState>) -> Result<QuotaSnapshot, String> {
     let snap = state.snapshot.read().await.clone();

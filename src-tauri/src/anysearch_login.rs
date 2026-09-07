@@ -388,6 +388,12 @@ pub async fn open_anysearch_login_window(app: AppHandle) -> Result<(), String> {
     // 轮询任务：读 cookie jar 抽 JWT
     let app2 = app.clone();
     let window_clone = window.clone();
+    // D7-02 fix (2026-09-07 audit, cross-verified): 在 spawn 前 resolve refresh
+    // target (base 或副本 unique_id),让 save_token 直接写 target 槽,refresh
+    // 命中。target 解析失败时 fallback 到 base (旧行为,保持向后兼容)。
+    let target = crate::commands::resolve_login_refresh_target(&app2.state(), "anysearch")
+        .await
+        .unwrap_or_else(|| "anysearch".to_string());
     tauri::async_runtime::spawn(async move {
         // L9 fix (2026-07-28 审查): panic 兜底 guard —— 任意退出路径(正常 /
         // Cancelled / Failed / panic unwind)都确保窗口被关闭;panic 时额外打
@@ -395,7 +401,7 @@ pub async fn open_anysearch_login_window(app: AppHandle) -> Result<(), String> {
         // 未来新增提前 return 的路径上兜底。
         let _close_guard = WindowCloseGuard(window_clone.clone());
         let my_gen = gen;
-        let result = poll_token_from_cookie(&app2, &window_clone, my_gen).await;
+        let result = poll_token_from_cookie(&app2, &window_clone, my_gen, &target).await;
         // gen 已被新流程取代 → 静默退出,不发任何事件,不要 close(新窗口接管)
         if !is_current_gen(my_gen) {
             tracing::debug!(my_gen, "anysearch 老轮询流程被新流程取代,静默退出");
@@ -404,20 +410,18 @@ pub async fn open_anysearch_login_window(app: AppHandle) -> Result<(), String> {
         match result {
             PollOutcome::Saved(len) => {
                 DONE.store(true, Ordering::SeqCst);
-                tracing::info!(len, "anysearch JWT 提取 + 保存成功");
-                // 立即拉一次（让浮窗立刻看到数据）。D7-02: base 禁用时改刷副本。
-                if let Some(target) =
-                    crate::commands::resolve_login_refresh_target(&app2.state(), "anysearch").await
+                tracing::info!(len, target = %target, "anysearch JWT 提取 + 保存成功");
+                // D7-02 fix (2026-09-07 audit): target 已在 spawn 前 resolve
+                // 且 save_token 已直接写到 target 槽, 这里直接刷 target 即可。
+                // 不再二次 resolve (避免 resolve 结果与 save 目标漂移)。
+                if let Err(e) = crate::commands::refresh_single_inner(
+                    &app2,
+                    &target,
+                    crate::poller_backoff::RefreshSource::Manual,
+                )
+                .await
                 {
-                    if let Err(e) = crate::commands::refresh_single_inner(
-                        &app2,
-                        &target,
-                        crate::poller_backoff::RefreshSource::Manual,
-                    )
-                    .await
-                    {
-                        tracing::warn!(error = %e, "登录后立即拉取失败（不阻塞成功事件）");
-                    }
+                    tracing::warn!(error = %e, target = %target, "登录后立即拉取失败（不阻塞成功事件）");
                 }
                 let _ = window_clone.close();
                 let _ = app2.emit("musage://anysearch-login-success", len);
@@ -465,6 +469,9 @@ async fn poll_token_from_cookie(
     app: &AppHandle,
     window: &tauri::WebviewWindow,
     my_gen: u64,
+    // D7-02 fix (2026-09-07 audit): 接收 caller 在 spawn 前 resolve 的
+    // refresh target (base 或副本 unique_id), 让 save_token 直接写 target 槽。
+    target: &str,
 ) -> PollOutcome {
     // 安全上限：~14 分钟，防窗口句柄异常残留时任务永不退出。
     //
@@ -558,7 +565,7 @@ async fn poll_token_from_cookie(
                 if !is_current_gen(my_gen) {
                     return PollOutcome::Cancelled;
                 }
-                return match save_token(raw) {
+                return match save_token(target, raw) {
                     Ok(len) => PollOutcome::Saved(len),
                     Err(e) => PollOutcome::Failed(e),
                 };
@@ -586,14 +593,19 @@ fn anysearch_timeout_reason() -> String {
     t!("login.anysearch.timeout", secs = 14 * 60).into_owned()
 }
 
-/// 把抽到的 JWT 写进 keys.json 的 cookie 槽位。返回写入字节数。
-fn save_token(token: &str) -> Result<usize, String> {
+/// 把抽到的 JWT 写进 keys.json 的 target 槽位（base 或副本 unique_id）。
+///
+/// D7-02 fix (2026-09-07 audit, 2 域独立命中): 旧实现硬编码写 "anysearch"
+/// base 槽,当 base 禁用 + 副本启用时,`resolve_login_refresh_target` 返副本
+/// unique_id ("anysearch#2"),refresh 命中副本槽 → 空凭据 → 401 循环。改成
+/// 由 caller 在早期 resolve 后传入 target,save 直接写 target 槽,refresh 命中。
+fn save_token(target: &str, token: &str) -> Result<usize, String> {
     let cred = Credentials {
         api_key: None,
         cookie: Some(token.to_string()),
         secret_key: None,
     };
-    config::save_credential_for_id("anysearch", &cred)
+    config::save_credential_for_id(target, &cred)
         .map_err(|e| t!("anysearch_login.save_keys_failed", err = e.to_string()).into_owned())?;
     Ok(token.len())
 }

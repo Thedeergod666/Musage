@@ -218,13 +218,18 @@ pub async fn open_stepfun_login_window(app: AppHandle) -> Result<(), String> {
     let app2 = app.clone();
     let window_clone = window.clone();
     let my_gen = gen;
+    // D7-02 fix (2026-09-07 audit): 在 spawn 前 resolve refresh target,
+    // 让 save_token 直接写 target 槽。fallback 到 base 保持向后兼容。
+    let target = crate::commands::resolve_login_refresh_target(&app2.state(), "stepfun")
+        .await
+        .unwrap_or_else(|| "stepfun".to_string());
     tauri::async_runtime::spawn(async move {
         // L9 fix (2026-07-28 审查): panic 兜底 guard —— 任意退出路径(正常 /
         // Cancelled / Failed / panic unwind)都确保窗口被关闭;panic 时额外打
         // error 日志。正常路径各分支已显式 close(幂等),guard 主要在 panic /
         // 未来新增提前 return 的路径上兜底。
         let _close_guard = WindowCloseGuard(window_clone.clone());
-        let result = poll_token_from_cookie(&app2, &window_clone, my_gen).await;
+        let result = poll_token_from_cookie(&app2, &window_clone, my_gen, &target).await;
         // gen 已被新流程取代 → 静默退出,不发任何事件,不要 close(新窗口接管)
         if !is_current_gen(my_gen) {
             tracing::debug!(my_gen, "stepfun 老轮询流程被新流程取代,静默退出");
@@ -233,20 +238,16 @@ pub async fn open_stepfun_login_window(app: AppHandle) -> Result<(), String> {
         match result {
             PollOutcome::Saved(len) => {
                 DONE.store(true, Ordering::SeqCst);
-                tracing::info!(len, "stepfun cookie 提取 + 保存成功");
-                // 立即拉一次（让浮窗立刻看到数据）。D7-02: base 禁用时改刷副本。
-                if let Some(target) =
-                    crate::commands::resolve_login_refresh_target(&app2.state(), "stepfun").await
+                tracing::info!(len, target = %target, "stepfun cookie 提取 + 保存成功");
+                // D7-02 fix: target 已 resolve + save 直接写 target 槽,直接刷 target。
+                if let Err(e) = crate::commands::refresh_single_inner(
+                    &app2,
+                    &target,
+                    crate::poller_backoff::RefreshSource::Manual,
+                )
+                .await
                 {
-                    if let Err(e) = crate::commands::refresh_single_inner(
-                        &app2,
-                        &target,
-                        crate::poller_backoff::RefreshSource::Manual,
-                    )
-                    .await
-                    {
-                        tracing::warn!(error = %e, "登录后立即拉取失败（不阻塞成功事件）");
-                    }
+                    tracing::warn!(error = %e, target = %target, "登录后立即拉取失败（不阻塞成功事件）");
                 }
                 let _ = window_clone.close();
                 let _ = app2.emit("musage://stepfun-login-success", len);
@@ -299,6 +300,9 @@ async fn poll_token_from_cookie(
     app: &AppHandle,
     window: &tauri::WebviewWindow,
     my_gen: u64,
+    // D7-02 fix (2026-09-07 audit): 接收 caller 在 spawn 前 resolve 的
+    // refresh target (base 或副本 unique_id),让 save_token 直接写 target 槽。
+    target: &str,
 ) -> PollOutcome {
     // 安全上限：~14 分钟（1200 × 700ms），覆盖手动手机号 + 验证码登录；
     // 防窗口句柄异常残留时任务永不退出。
@@ -384,7 +388,7 @@ async fn poll_token_from_cookie(
                 if !is_current_gen(my_gen) {
                     return PollOutcome::Cancelled;
                 }
-                return match save_token(&combined) {
+                return match save_token(target, &combined) {
                     Ok(len) => PollOutcome::Saved(len),
                     Err(e) => PollOutcome::Failed(e),
                 };
@@ -467,7 +471,11 @@ fn combine_token(access: &str, refresh: Option<&str>) -> String {
 ///
 /// 存盘格式 `Oasis-Token=<combined>`：provider 侧
 /// `normalize_oasis_token` 会剥掉前缀，跟手动粘贴整段 cookie 的形态一致。
-fn save_token(combined: &str) -> Result<usize, String> {
+/// D7-02 fix (2026-09-07 audit, 2 域独立命中): 旧实现硬编码写 "stepfun" base
+/// 槽,当 base 禁用 + 副本启用时,`resolve_login_refresh_target` 返副本 unique_id,
+/// refresh 命中副本槽 → 空凭据 → 401 循环。改成由 caller 早期 resolve 后传入
+/// target,save 直接写 target 槽,refresh 命中。
+fn save_token(target: &str, combined: &str) -> Result<usize, String> {
     // M2 fix (2026-07-30 audit): 12 KB 上限。
     // RFC 6265 § 6.1 单 cookie 推荐上限 4 KB(浏览器实际更紧,Chrome / Safari 软上限
     // ~4093 / ~4097 bytes),kernel-side netfilter 也有 cookie 大小限制(老版本
@@ -483,7 +491,7 @@ fn save_token(combined: &str) -> Result<usize, String> {
         cookie: Some(cookie_slot.clone()),
         secret_key: None,
     };
-    config::save_credential_for_id("stepfun", &cred)
+    config::save_credential_for_id(target, &cred)
         .map_err(|e| t!("stepfun_login.save_keys_failed", err = e.to_string()).into_owned())?;
     Ok(cookie_slot.len())
 }
@@ -510,7 +518,7 @@ mod tests {
         // cookie 上限 + kernel-side 软上限 8 KB)直接拒,避免 kernel cookie store
         // 截断 + 后续 fetch 401。dummy token 不走实际 save,但走 length gate。
         let big = "a".repeat(13 * 1024);
-        let err = save_token(&big).unwrap_err();
+        let err = save_token("stepfun", &big).unwrap_err();
         assert!(
             err.contains("12288") || err.contains("12"),
             "expected size-cap error, got: {err}"

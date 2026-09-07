@@ -165,9 +165,13 @@ pub async fn open_kimi_login_window(app: AppHandle) -> Result<(), String> {
     let app2 = app.clone();
     let window_clone = window.clone();
     let my_gen = gen;
+    // D7-02 fix: spawn 前 resolve refresh target,fallback 到 base 保持向后兼容。
+    let target = crate::commands::resolve_login_refresh_target(&app2.state(), "kimi")
+        .await
+        .unwrap_or_else(|| "kimi".to_string());
     tauri::async_runtime::spawn(async move {
         let _close_guard = WindowCloseGuard(window_clone.clone());
-        let result = poll_token_from_cookie(&app2, &window_clone, my_gen).await;
+        let result = poll_token_from_cookie(&app2, &window_clone, my_gen, &target).await;
         if !is_current_gen(my_gen) {
             tracing::debug!(my_gen, "kimi 老轮询流程被新流程取代,静默退出");
             return;
@@ -175,23 +179,16 @@ pub async fn open_kimi_login_window(app: AppHandle) -> Result<(), String> {
         match result {
             PollOutcome::Saved(len) => {
                 DONE.store(true, Ordering::SeqCst);
-                tracing::info!(len, "kimi-auth token 提取 + 保存成功");
-                // 立即拉一次（让浮窗立刻多出「总套餐」行；未配 API key 时
-                // refresh 报 unconfigured 仅警告，不阻塞成功事件）。
-                // D7-02: base 被禁用而副本启用时改刷第一个启用副本，
-                // 否则 enabled 守卫会静默跳过、浮窗要等 poller 下一轮。
-                if let Some(target) =
-                    crate::commands::resolve_login_refresh_target(&app2.state(), "kimi").await
+                tracing::info!(len, target = %target, "kimi-auth token 提取 + 保存成功");
+                // D7-02 fix: target 已 resolve + save 直接写 target 槽,直接刷 target。
+                if let Err(e) = crate::commands::refresh_single_inner(
+                    &app2,
+                    &target,
+                    crate::poller_backoff::RefreshSource::Manual,
+                )
+                .await
                 {
-                    if let Err(e) = crate::commands::refresh_single_inner(
-                        &app2,
-                        &target,
-                        crate::poller_backoff::RefreshSource::Manual,
-                    )
-                    .await
-                    {
-                        tracing::warn!(error = %e, "kimi 登录后立即拉取失败（不阻塞成功事件）");
-                    }
+                    tracing::warn!(error = %e, target = %target, "kimi 登录后立即拉取失败（不阻塞成功事件）");
                 }
                 let _ = window_clone.close();
                 let _ = app2.emit("musage://kimi-login-success", len);
@@ -255,6 +252,8 @@ async fn poll_token_from_cookie(
     app: &AppHandle,
     window: &tauri::WebviewWindow,
     my_gen: u64,
+    // D7-02 fix (2026-09-07 audit): 接收 caller 在 spawn 前 resolve 的 target。
+    target: &str,
 ) -> PollOutcome {
     // 安全上限：~14 分钟（覆盖手动扫码 / 手机号 + 验证码登录）；
     // wall-clock deadline 为主，MAX_ITERS 兜底防 runaway。
@@ -308,7 +307,7 @@ async fn poll_token_from_cookie(
                 if !is_current_gen(my_gen) {
                     return PollOutcome::Cancelled;
                 }
-                return match save_token(token) {
+                return match save_token(target, token) {
                     Ok(len) => PollOutcome::Saved(len),
                     Err(e) => PollOutcome::Failed(e),
                 };
@@ -355,7 +354,9 @@ fn is_fresh_token(value: &str) -> bool {
 /// `kimi-auth=` 前缀 —— provider 侧 `resolve_session_token` 直接当
 /// Bearer 用；`save_credential_for_id` 对 None 字段跳过不删，API key
 /// 槽不受影响）。返回写入字节数。
-fn save_token(token: &str) -> Result<usize, String> {
+/// D7-02 fix (2026-09-07 audit): 旧实现硬编码写 "kimi" base 槽,base 禁用 +
+/// 副本启用场景 refresh 命中副本空槽 → 401 循环。caller 早期 resolve 传 target。
+fn save_token(target: &str, token: &str) -> Result<usize, String> {
     // 12 KB 上限（stepfun M2 同款：RFC 6265 § 6.1 cookie 4 KB 推荐上限的
     // 3x 冗余；实测 kimi-auth JWT ~555 字符，未来扩 claim 也远够）
     if token.len() > 12 * 1024 {
@@ -366,7 +367,7 @@ fn save_token(token: &str) -> Result<usize, String> {
         cookie: Some(token.to_string()),
         secret_key: None,
     };
-    config::save_credential_for_id("kimi", &cred)
+    config::save_credential_for_id(target, &cred)
         .map_err(|e| t!("kimi_login.save_keys_failed", err = e.to_string()).into_owned())?;
     Ok(token.len())
 }
@@ -401,7 +402,7 @@ mod tests {
     fn save_token_rejects_over_12kb() {
         // 12 KB length gate（不走实际 save，只验证 size 短路）
         let big = "a".repeat(13 * 1024);
-        let err = save_token(&big).unwrap_err();
+        let err = save_token("kimi", &big).unwrap_err();
         assert!(
             err.contains("13312") || err.contains("12"),
             "expected size-cap error, got: {err}"

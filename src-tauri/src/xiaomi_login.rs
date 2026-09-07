@@ -330,7 +330,16 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
                 // L-gen fix (2026-07-28 审查): guard 携带本次 gen —— 老流程
                 // 的 drop 不能清新流程的锁(否则用户重复点登录会出现并发提取)。
                 let _extracting_guard = ExtractingGuard::new(my_gen);
-                let result = extract_with_retry(&window_clone, &app2, my_gen).await;
+                // D7-02 fix (2026-09-07 audit): resolve target 必须放在 async
+                // block 内 (on_page_load 是 Fn 非 async Fn, 不能 .await)。fallback
+                // 到 base 保持向后兼容。
+                let target = crate::commands::resolve_login_refresh_target(
+                    &app2.state(),
+                    "xiaomimimo",
+                )
+                .await
+                .unwrap_or_else(|| "xiaomimimo".to_string());
+                let result = extract_with_retry(&window_clone, &app2, my_gen, &target).await;
                 // 注意: 不显式 EXTRACTING.store(false) —— ExtractingGuard
                 // 的 Drop 已经做这件事,而且带 gen 检查 (is_current_gen)。
                 // 显式 store 会无视 gen,老流程可能在新流程拿锁之后才跑到
@@ -347,23 +356,17 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
                 match result {
                     Ok(saved_len) => {
                         DONE.store(true, Ordering::SeqCst);
-                        tracing::info!(saved_len, "xiaomi cookie 提取 + 保存成功");
-                        // 立即拉一次（让浮窗立刻看到数据）。D7-02: base 禁用时改刷副本。
-                        if let Some(target) = crate::commands::resolve_login_refresh_target(
-                            &app2.state(),
-                            "xiaomimimo",
+                        tracing::info!(saved_len, target = %target, "xiaomi cookie 提取 + 保存成功");
+                        // D7-02 fix (2026-09-07 audit): target 已在 spawn 前 resolve,
+                        // extract 已直接写到 target 槽,直接刷 target 即可。
+                        if let Err(e) = crate::commands::refresh_single_inner(
+                            &app2,
+                            &target,
+                            crate::poller_backoff::RefreshSource::Manual,
                         )
                         .await
                         {
-                            if let Err(e) = crate::commands::refresh_single_inner(
-                                &app2,
-                                &target,
-                                crate::poller_backoff::RefreshSource::Manual,
-                            )
-                            .await
-                            {
-                                tracing::warn!(error = %e, "登录后立即拉取失败（不阻塞成功事件）");
-                            }
+                            tracing::warn!(error = %e, target = %target, "登录后立即拉取失败（不阻塞成功事件）");
                         }
                         // 关 webview
                         let _ = window_clone.close();
@@ -404,6 +407,8 @@ async fn extract_with_retry(
     window: &tauri::WebviewWindow,
     _app: &AppHandle,
     my_gen: u64,
+    // D7-02 fix (2026-09-07 audit): 接收 caller resolve 的 refresh target。
+    target: &str,
 ) -> Result<usize, String> {
     // 重试策略：1s, 2s, 2s, 3s, 3s（共 11s 覆盖大部分场景）
     let retry_delays = [1u64, 2, 2, 3, 3];
@@ -447,7 +452,7 @@ async fn extract_with_retry(
         }
 
         // 尝试提取
-        match extract_and_save(window).await {
+        match extract_and_save(window, target).await {
             Ok(saved_len) => {
                 tracing::info!(saved_len, attempt_num, "cookie 提取成功");
                 return Ok(saved_len);
@@ -465,7 +470,14 @@ async fn extract_with_retry(
 /// 从 webview 提取 cookie → 过滤白名单 → 拼字符串 → 写 keys.json。
 ///
 /// 返回写入的字节数（便于前端展示"已保存 N 字节"）。
-async fn extract_and_save(window: &tauri::WebviewWindow) -> Result<usize, String> {
+///
+/// D7-02 fix (2026-09-07 audit, 2 域独立命中): 旧实现硬编码写 "xiaomimimo"
+/// base 槽,base 禁用 + 副本启用场景 refresh 命中副本空槽 → 401 循环。caller
+/// 早期 resolve 传 target,save 写 target 槽让 refresh 命中。
+async fn extract_and_save(
+    window: &tauri::WebviewWindow,
+    target: &str,
+) -> Result<usize, String> {
     let url: Url = (LOGIN_URL.parse::<Url>())
         .map_err(|e| t!("xiaomi_login.parse_url", err = e.to_string()).into_owned())?;
 
@@ -564,7 +576,7 @@ async fn extract_and_save(window: &tauri::WebviewWindow) -> Result<usize, String
         cookie: Some(cookie_str.clone()),
         secret_key: None,
     };
-    config::save_credential_for_id("xiaomimimo", &cred)
+    config::save_credential_for_id(target, &cred)
         .map_err(|e| t!("xiaomi_login.save_keys_failed", err = e.to_string()).into_owned())?;
 
     Ok(cookie_str.len())

@@ -95,6 +95,17 @@ export function ensureProviderMetaReady() {
 onLocaleChange(() => {
   _providerMeta = buildProviderMeta();
 });
+// Vite HMR 监听清理:模块整体被 HMR 替换时 dispose 回调跑 → 清掉模块
+// 状态,避免下次 locale 切换拿到旧 _providerMeta 残留。import.meta.hot
+// 仅 vite dev 注入, prod 不存在, 用 any cast 避免每个前端文件都加
+// vite/client triple-slash directive。
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const _h = (import.meta as any).hot;
+if (_h) {
+  _h.dispose(() => {
+    _providerMeta = null as any;
+  });
+}
 
 export function getProviderMeta(id: string): ProviderMeta | undefined {
   ensureProviderMetaReady();

@@ -148,7 +148,12 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
 
   // ── 托盘图标颜色 (方案 A: 选 tray icon 数字/进度条颜色) ──
   const trayColorInput = el("input", { type: "color", id: "tray-color" }) as HTMLInputElement;
-  trayColorInput.value = cfg.tray_icon_color ?? "#ffffff";
+  // H-Frontend fix (2026-09-07 audit): 手编 config.json 把 tray_icon_color
+  // 写成 "blue"/"rgb(...)"/3 位 hex/8 位 hex (老校验端接受, tray parse 端
+  // 之前只认 6 位) → input.value 静默 fallback 成 #000000,用户改任意颜色
+  // 后原值永久丢失。先 #RRGGBB 严格校验, 非法值 fallback 到 #ffffff。
+  const rawTrayColor = cfg.tray_icon_color ?? "#ffffff";
+  trayColorInput.value = /^#[0-9a-fA-F]{6}$/.test(rawTrayColor) ? rawTrayColor : "#ffffff";
   const trayColorAutoBtn = el("button", { type: "button", class: "tray-color-auto" }, t("settings.app.tray_color_auto")) as HTMLButtonElement;
   trayColorInput.addEventListener("change", () => {
     void setTrayIconColor(trayColorInput.value)

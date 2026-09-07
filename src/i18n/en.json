@@ -469,6 +469,7 @@
     "volcengine_ak_placeholder": "AKLT...",
     "volcengine_sk_placeholder": "SecretAccessKey",
     "volcengine_both_required": "Both AccessKey ID and SecretAccessKey are required",
+    "volcengine_sk_failed": "SecretAccessKey save failed (AccessKey ID is saved); please retry. Error: %{err}",
     "confirm_clear_xiaomi": "Clear saved Xiaomi Cookie?\nYou'll need to login again.",
     "confirm_delete_key_with_extras": "Delete {name} API key?\nThis will also clear {count} extra instance key(s).",
     "xiaomi_login_only": "Quick login only enabled for Xiaomi",

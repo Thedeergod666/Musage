@@ -228,6 +228,11 @@ export function createProviderPanel(meta: SourceMeta, cfg: AppConfig): HTMLEleme
     withSuppress(() => setProviderEnabled(meta.id, target))
       .catch((e) => {
         flash(t("settings.providers.flash_toggle_failed", { err: String(e) }), true);
+        // H-Frontend fix (2026-09-07 audit): IPC 失败时回滚 checkbox 状态,
+        // 否则 UI 留新值、后端留旧值, 用户 reload settings 之前永远错位。
+        // withSuppress 内部已经吃掉 reentrant config-changed (L14 fix),
+        // 这里手动改 DOM 不触发新一轮 listener。
+        enabledCheckbox.checked = !target;
       });
   });
 

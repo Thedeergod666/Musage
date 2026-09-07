@@ -800,7 +800,17 @@ async function saveVolcengineTwoFields(id: string, advInputId?: string) {
     // 顺序无所谓：set_source_credential 是单字段写入，save_credential_for_id
     // 用 if-let 链保留未触碰字段（v0.2.5 fix）。
     await setSourceCredential(id, ak, "api_key");
-    await setSourceCredential(id, sk, "secret_key");
+    // H-Frontend fix (2026-09-07 audit): 之前连续 await 无 try/catch 隔离,
+    // 第二次 reject 时 AK 已存但 SK 丢, 输入框无条件清空 → 用户半保存状态无
+    // 恢复路径。补 try/catch 隔离, 第二步失败时把 SK 显式保留并提示重试。
+    try {
+      await setSourceCredential(id, sk, "secret_key");
+    } catch (skErr) {
+      // SK 失败: AK 已存,提示用户 SK 未生效, 不清输入框, 让用户重试 SK 部分。
+      flash(t("credentials.volcengine_sk_failed", { err: String(skErr) }), true);
+      skInput.focus();
+      return;
+    }
     akInput.value = "";
     skInput.value = "";
     // 双 status 徽章:主面板 + 高级 tab 都要刷

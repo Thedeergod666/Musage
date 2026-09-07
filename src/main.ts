@@ -401,10 +401,21 @@ function render(snap: QuotaSnapshot) {
   }
 
   // 1. 增量更新每张 provider 卡片
-  const existingCards = new Map<string, HTMLElement>();
+  // **防累积（2026-09-07 fix）**：收集改"多值 Map"（key → 元素数组）。
+  // 之前单值 Map 在 DOM 里出现两张同 data-provider 卡时（某次 emit 的
+  // snap.providers 含同 id 两条 —— 后端收集源重复 / extra instance 身份
+  // 迁移历史 bug 都可能造成），后者收集时覆盖前者 → 被覆盖那张不进
+  // orphan 清理名单 → 永久残留。之后每来一次重复 snapshot 再 +1 张卡，
+  // 就是"浮窗突然出现一堆重复卡、刷新才恢复"的 bug。多值收集 + shift
+  // 复用 + 全量 orphan 清理后，重复 key 只影响当次渲染，下一次数据正常
+  // 的 snapshot 会自动收敛回单卡。
+  const existingCards = new Map<string, HTMLElement[]>();
   app.querySelectorAll<HTMLElement>(".card[data-provider]").forEach((el) => {
     const key = el.dataset.provider;
-    if (key) existingCards.set(key, el);
+    if (!key) return;
+    const list = existingCards.get(key);
+    if (list) list.push(el);
+    else existingCards.set(key, [el]);
   });
 
   // 第一遍：确保所有 snap 里的 card 都存在 DOM（按 snap 顺序决定插入位置）
@@ -412,10 +423,9 @@ function render(snap: QuotaSnapshot) {
   for (const p of snap.providers) {
     // Phase 1：用 source_id 路由（registry-driven），provider 字段保兼容
     const id = p.unique_id ?? p.source_id ?? p.provider;
-    let card = existingCards.get(id);
-    if (card) {
-      existingCards.delete(id);
-    } else {
+    // shift 复用：同 id 多张时逐条取用，取完再 build 新卡
+    let card = existingCards.get(id)?.shift();
+    if (!card) {
       card = buildCardSkeleton(id);
       // 保持顺序：插在 anchor 之后
       if (anchor && anchor.parentNode) {
@@ -427,9 +437,9 @@ function render(snap: QuotaSnapshot) {
     updateCard(card, p);
     anchor = card;
   }
-  // 移除 snap 里没有的卡（provider 被关了）
-  for (const orphan of existingCards.values()) {
-    orphan.remove();
+  // 移除 snap 里没有的卡（provider 被关了 / 重复 key 多出来的卡）
+  for (const list of existingCards.values()) {
+    for (const el of list) el.remove();
   }
 
   // 第二遍：按 snap.providers 顺序把 DOM 卡片摆到正确位置。
@@ -1006,10 +1016,19 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
     rowsBox.innerHTML = "";
   }
 
-  const existing = new Map<string, HTMLElement>();
+  // **防累积（2026-09-07 fix）**：收集改"多值 Map"（key → 元素数组），与
+  // render() 卡片 diff 同款。之前单值 Map 在 rowsBox 里出现两条同 rowKey
+  // 行时（后端 rows 内 key 冲突 —— 如 v0.2.9 之前火山双套餐两条 five_hour
+  // 无 plan 区分），后者覆盖前者 → 被覆盖那条逃过 orphan 清理 → 永久
+  // 残留，每来一次冲突 snapshot 再 +1 条重复行。多值收集后下一轮数据
+  // 正常的 snapshot 自动收敛回应有的行数。
+  const existing = new Map<string, HTMLElement[]>();
   rowsBox.querySelectorAll<HTMLElement>(".row[data-row-key]").forEach((el) => {
     const k = el.dataset.rowKey;
-    if (k) existing.set(k, el);
+    if (!k) return;
+    const list = existing.get(k);
+    if (list) list.push(el);
+    else existing.set(k, [el]);
   });
 
   // 按用户偏好过滤行（Tavily 简洁模式等）—— 跟下面 diff 逻辑透明衔接
@@ -1019,10 +1038,9 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
   const providerId = p.source_id ?? p.provider;
   rows.forEach((r, i) => {
     const key = rowKey(providerId, i, r);
-    let rowEl = existing.get(key);
-    if (rowEl) {
-      existing.delete(key);
-    } else {
+    // shift 复用：同 key 多条时逐条取用，取完再 build 新行
+    let rowEl = existing.get(key)?.shift();
+    if (!rowEl) {
       rowEl = buildRowSkeleton(r);
       rowEl.dataset.rowKey = key;
       if (rowAnchor && rowAnchor.parentNode === rowsBox) {
@@ -1034,7 +1052,9 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
     updateRow(rowEl, r);
     rowAnchor = rowEl;
   });
-  for (const orphan of existing.values()) orphan.remove();
+  for (const list of existing.values()) {
+    for (const orphan of list) orphan.remove();
+  }
 }
 
 // ── 行 ──

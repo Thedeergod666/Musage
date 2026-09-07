@@ -505,13 +505,23 @@ pub fn start_fullscreen_watcher<R: Runtime>(app: AppHandle<R>) {
                 last_fs = is_fs;
 
                 if is_fs {
-                    // 进入全屏 —— 隐藏浮窗（若我们尚未藏）
-                    if !WINDOW_HIDDEN_BY_FULLSCREEN.swap(true, Ordering::SeqCst) {
+                    // 进入全屏 —— 仅在我们**之前未藏过**且**当前可见**时才藏。
+                    // H-Tray fix (2026-09-07 audit): 模块 doc 自承 flag 语义是
+                    // "避免用户手动隐藏后又被我们误恢复",但实现是无条件 swap(true),
+                    // 即使用户先手动 hide_floating 再进全屏 → flag 仍被置 true →
+                    // 退出全屏时误调 show_floating 把用户手动隐藏的窗口弹回来。
+                    // 加 is_visible() 闸:窗口已经不可见就不动 flag,让用户保留
+                    // 自己的隐藏意图。
+                    if !WINDOW_HIDDEN_BY_FULLSCREEN.load(Ordering::SeqCst)
+                        && is_floating_visible(&app)
+                    {
+                        WINDOW_HIDDEN_BY_FULLSCREEN.store(true, Ordering::SeqCst);
                         tracing::debug!("检测到全屏 → 隐藏浮窗");
                         hide_floating(&app);
                     }
                 } else {
-                    // 退出全屏 —— 恢复浮窗（若是我们之前藏的）
+                    // 退出全屏 —— 仅在我们**之前自己藏过**时才恢复(防止恢复用户
+                    // 手动隐藏的窗口)。
                     if WINDOW_HIDDEN_BY_FULLSCREEN.swap(false, Ordering::SeqCst) {
                         tracing::debug!("退出全屏 → 恢复浮窗");
                         show_floating(&app);
@@ -610,6 +620,25 @@ fn show_floating<R: Runtime>(app: &AppHandle<R>) {
             let _ = win.show();
         }
     });
+}
+
+/// 探测浮窗当前是否可见(主线程同步)。给 H-Tray 全屏 watcher 用:仅当可见
+/// 才让 watcher 把 WINDOW_HIDDEN_BY_FULLSCREEN 置 true,避免用户手动隐藏后
+/// 退出全屏时被我们误恢复。
+fn is_floating_visible<R: Runtime>(app: &AppHandle<R>) -> bool {
+    // `run_on_main_thread` 闭包要 'static,AppHandle 是 Clone (内部 Arc),clone 一份。
+    use std::sync::mpsc;
+    let app2 = app.clone();
+    let (tx, rx) = mpsc::channel();
+    let _ = app.run_on_main_thread(move || {
+        let visible = app2
+            .get_webview_window("floating")
+            .map(|w| w.is_visible().unwrap_or(false))
+            .unwrap_or(false);
+        let _ = tx.send(visible);
+    });
+    rx.recv_timeout(std::time::Duration::from_millis(100))
+        .unwrap_or(false)
 }
 
 /// H2 fix (2026-07-29 审查): 检测 macOS 菜单栏当前外观。菜单栏在

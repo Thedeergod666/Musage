@@ -308,10 +308,18 @@ pub fn setup(app: &AppHandle) -> tauri::Result<()> {
                                 // process 抢前台），再 SetForegroundWindow 抢前台。
                                 // **会**把焦点抢过来 —— 这是用户**主动**点菜单触发的
                                 // 操作，UX 上可接受（用户此刻在操作我们 app）。
-                                // fix (2026-07-28 审查): 不再静默吞失败，落 warn 日志。
+                                //
+                                // H-Tray fix (2026-09-07 audit): 之前传 0x00000001
+                                // 注释写 // ASFW_ANY,但 0x00000001 是有效 PID
+                                // (System/csrss),不是 ASFW_ANY。WinUser.h 定义
+                                // `ASFW_ANY = (DWORD)-1 = 0xFFFFFFFF`(允许任意
+                                // process 抢前台)。原写法等同于请求 PID=1 允许,
+                                // musage 不是 PID 1 → SetForegroundWindow 必然
+                                // 失败 → "强制置顶浮窗"菜单永远无效。诊断只说
+                                // "SetForegroundWindow 失败",误导为下个 API 问题。
                                 unsafe {
-                                    if AllowSetForegroundWindow(0x00000001) == 0 {
-                                        // ASFW_ANY
+                                    if AllowSetForegroundWindow(u32::MAX) == 0 {
+                                        // ASFW_ANY = u32::MAX
                                         tracing::warn!(
                                             error = GetLastError(),
                                             "force_top_floating: AllowSetForegroundWindow 失败"

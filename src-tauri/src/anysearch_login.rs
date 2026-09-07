@@ -228,6 +228,12 @@ fn init_script() -> String {
             function isAllowed() {
                 try { return location.hostname === ALLOW_HOST; } catch (_) { return false; }
             }
+            // H-Login fix (2026-09-07 audit): init script 在每次 document_start 都跑,
+            // 跨域 SSO 跳转 (未来 anysearch 新 OAuth) 时也跑 —— 若无条件装 prototype
+            // 锁,OIDC state / PKCE code_verifier 在 localStorage.setItem 时被 patch 拦截
+            // (因为 isAllowed() 返回 false → set 被吞),SSO 回调读不到 state → 整个
+            // 跨域 OAuth 流程被 break。必须在受信 host 才生效。
+            if (!isAllowed()) return;
             // ── 锁 cookie / storage 读取到受信 host（挡第三方 tracker 偷 JWT）──
             try {
                 // D3-001 fix (2026-07-30 audit): 锁 Document.prototype.cookie

@@ -266,6 +266,13 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
                 function isAllowed() {
                     try { return location.hostname === ALLOW_HOST; } catch (_) { return false; }
                 }
+                // H-Login fix (2026-09-07 audit): 跨域 SSO 跳转 (xiaomi →
+                // account.xiaomi.com) 时 init script 也跑, 若无条件装 prototype 锁,
+                // 会破坏 account.xiaomi.com 的 OIDC state / PKCE code_verifier 在
+                // localStorage 的存取 (patched getItem 返 null / setItem 被吞) → SSO
+                // 回调读不到 state → 永远 "cookie 不完整" 循环登录失败。仅受信
+                // host 装锁。
+                if (!isAllowed()) return;
                 // D3-001 fix (2026-07-30 audit): 同 anysearch_login.rs, 锁 prototype
                 // 而非 instance. xiaomi 抓的 cookie 是 HttpOnly, 实际威胁面小,
                 // 但对齐 hardening 一致性, 防止未来 cookie 路径变化。

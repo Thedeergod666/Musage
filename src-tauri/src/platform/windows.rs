@@ -357,7 +357,9 @@ pub fn menu_bar_is_light() -> bool {
     use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 
     fn wide(s: &str) -> Vec<u16> {
-        std::os::windows::ffi::OsStr::new(s)
+        // 注意用 std::ffi::OsStr 而不是 std::os::windows::ffi::OsStr ——
+        // 后者是 deprecated re-export，新版 rustc 已私有化（E0603）
+        std::ffi::OsStr::new(s)
             .encode_wide()
             .chain(std::iter::once(0))
             .collect()

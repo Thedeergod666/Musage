@@ -155,46 +155,76 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
   });
 
   // ── 托盘图标颜色 (方案 A: 选 tray icon 数字/进度条颜色) ──
-  const trayColorInput = el("input", { type: "color", id: "tray-color" }) as HTMLInputElement;
-  // H-Frontend fix (2026-09-07 audit): 手编 config.json 把 tray_icon_color
-  // 写成 "blue"/"rgb(...)"/3 位 hex/8 位 hex (老校验端接受, tray parse 端
-  // 之前只认 6 位) → input.value 静默 fallback 成 #000000,用户改任意颜色
-  // 后原值永久丢失。先 #RRGGBB 严格校验, 非法值 fallback 到 #ffffff。
-  const rawTrayColor = cfg.tray_icon_color ?? "#ffffff";
-  trayColorInput.value = /^#[0-9a-fA-F]{6}$/.test(rawTrayColor) ? rawTrayColor : "#ffffff";
-  const trayColorAutoBtn = el("button", { type: "button", class: "tray-color-auto" }, t("settings.app.tray_color_auto")) as HTMLButtonElement;
-  // WKWebView (macOS) 的 <input type="color"> 走 NSColorPanel：拖动取色只发
-  // `input` 事件，`change` 要等面板关闭才提交（部分 WebKit 版本甚至不发）。
-  // 只听 change → macOS 上"点了没效果"。补听 input + 400ms 防抖；change 到来
-  // 时立即冲刷挂起的防抖，两事件都触发的平台（WebView2）不会双发。
-  let trayColorTimer: ReturnType<typeof setTimeout> | null = null;
-  const sendTrayColor = (immediate: boolean) => {
-    if (trayColorTimer !== null) {
-      clearTimeout(trayColorTimer);
-      trayColorTimer = null;
-    }
-    const send = () => {
-      trayColorTimer = null;
-      void setTrayIconColor(trayColorInput.value)
-        .then(() => flash(t("settings.app.tray_color_changed")))
-        .catch((e) => flash(t("settings.app.tray_color_failed", { err: String(e) }), true));
-    };
-    if (immediate) {
-      send();
-    } else {
-      trayColorTimer = setTimeout(send, 400);
+  // 2026-09-08 第二轮：原生 <input type="color"> 在 WKWebView 判死刑 ——
+  // NSColorPanel 打开/取色/关闭全程不派发 input/change（上一轮 input+change
+  // 双听实测仍全哑，config.json 从未落盘过 tray_icon_color）。换纯 DOM 色板 +
+  // hex 文本框，不依赖原生取色器。色板复用 extra-instance-form 的
+  // .accent-swatch 样式；白/黑排最前（托盘字色两大真实用例：深菜单栏白字 /
+  // 浅菜单栏黑字）。
+  const TRAY_COLOR_PALETTE = [
+    "#ffffff",
+    "#000000",
+    "#9b59ff",
+    "#4a90e2",
+    "#00d4a8",
+    "#ff6a00",
+  ];
+  const HEX6_RE = /^#[0-9a-fA-F]{6}$/;
+  // H-Frontend fix (2026-09-07 audit) 精神保留：非法存量值不展示成默认色。
+  const initialTrayColor =
+    cfg.tray_icon_color != null && HEX6_RE.test(cfg.tray_icon_color)
+      ? cfg.tray_icon_color.toLowerCase()
+      : null;
+  const trayColorHexInput = el("input", {
+    type: "text",
+    id: "tray-color",
+    placeholder: "#RRGGBB",
+    autocomplete: "off",
+    spellcheck: "false",
+    style: "width: 96px;",
+    value: initialTrayColor ?? "",
+  });
+  const trayColorSwatches = TRAY_COLOR_PALETTE.map((c) =>
+    el("button", {
+      type: "button",
+      class: "accent-swatch",
+      "data-color": c,
+      style: `background: ${c};`,
+      title: c,
+    }),
+  );
+  const markTraySwatch = (color: string | null) => {
+    for (const s of trayColorSwatches) {
+      s.classList.toggle("selected", color !== null && s.dataset.color === color);
     }
   };
-  trayColorInput.addEventListener("input", () => sendTrayColor(false));
-  trayColorInput.addEventListener("change", () => sendTrayColor(true));
-  trayColorAutoBtn.addEventListener("click", () => {
-    void setTrayIconColor(null)
+  markTraySwatch(initialTrayColor);
+  const applyTrayColor = (color: string | null) => {
+    void setTrayIconColor(color)
       .then(() => {
-        trayColorInput.value = "#ffffff";
+        markTraySwatch(color);
+        trayColorHexInput.value = color ?? "";
         flash(t("settings.app.tray_color_changed"));
       })
       .catch((e) => flash(t("settings.app.tray_color_failed", { err: String(e) }), true));
+  };
+  for (const s of trayColorSwatches) {
+    s.addEventListener("click", () => applyTrayColor(s.dataset.color ?? null));
+  }
+  // hex 文本框：Enter / 失焦提交。text 输入的 change 事件在 WKWebView 里可靠
+  // （只有 color 类型的事件链是坏的）。#RRGGBB 严格校验；清空提交 = 切回自动。
+  trayColorHexInput.addEventListener("change", () => {
+    const v = trayColorHexInput.value.trim().toLowerCase();
+    if (v === "") {
+      applyTrayColor(null);
+    } else if (HEX6_RE.test(v)) {
+      applyTrayColor(v);
+    } else {
+      flash(t("settings.app.tray_color_failed", { err: trayColorHexInput.value }), true);
+    }
   });
+  const trayColorAutoBtn = el("button", { type: "button", class: "tray-color-auto" }, t("settings.app.tray_color_auto"));
+  trayColorAutoBtn.addEventListener("click", () => applyTrayColor(null));
 
   const testBtn = el("button", { id: "test", class: "primary" }, t("settings.common.test")) as HTMLButtonElement;
   testBtn.addEventListener("click", () => void testConn());
@@ -234,7 +264,8 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
       el("div", { class: "field" },
         el("label", { for: "tray-color" }, t("settings.app.tray_color_title")),
         el("div", { class: "row" },
-          trayColorInput,
+          el("div", { class: "accent-palette" }, ...trayColorSwatches),
+          trayColorHexInput,
           trayColorAutoBtn,
         ),
         el("div", { class: "help" }, t("settings.app.tray_color_help")),

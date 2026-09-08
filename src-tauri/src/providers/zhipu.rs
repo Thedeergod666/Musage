@@ -833,12 +833,25 @@ mod tests {
     /// 且真实 code 透传（此前硬编码 0）。
     #[test]
     fn business_failure_code_only_payload_is_caught() {
-        // code-only 失败（无 success 字段）
+        // code-only 失败（无 success 字段）。
+        // M-6 fix (2026-09-05 audit)：401xx 鉴权码归 AuthFailed —— 前端出
+        // 「重新登录」引导（needs_settings）+ backoff 停手，不是 ServerError
+        // （对齐 xiaomi 的 classify_xiaomi_business_code）。
         let raw = json!({ "code": 40101, "msg": "account expired" });
+        let err = check_business_failure(&raw).expect("code-only failure must be caught");
+        assert_eq!(err.kind, FetchError::auth("test").kind);
+        assert!(
+            err.message.contains("40101"),
+            "real code must surface: {}",
+            err.message
+        );
+
+        // 非鉴权业务码 → 仍 ServerError
+        let raw = json!({ "code": 40001, "msg": "quota exhausted" });
         let err = check_business_failure(&raw).expect("code-only failure must be caught");
         assert_eq!(err.kind, FetchError::server("test").kind);
         assert!(
-            err.message.contains("40101"),
+            err.message.contains("40001"),
             "real code must surface: {}",
             err.message
         );

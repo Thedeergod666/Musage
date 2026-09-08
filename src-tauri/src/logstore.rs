@@ -154,13 +154,23 @@ pub fn redact_message(s: &str) -> std::borrow::Cow<'_, str> {
             // merge 2026-09-08 两域并集：远端 (H-Logstore fix) 的通用 session
             // token 字段（非厂商前缀场景：用户后端 / 自建 SSO / Cookie 内
             // session token）+ 本地 L-poller-4 fix (2026-09-05 audit) 的
-            // header 整值遮蔽 —— (?i:…) 对 header 名大小写不敏感（HTTP/2
-            // 报文头规范即全小写），并取代远端大小写敏感的 Cookie 版本。
+            // header 整值遮蔽。
+            //
+            // Cookie 整行遮蔽分两档（CI fix 2026-09-08，回归 merge 前远端
+            // 大小写敏感版本的行为 + 保留 L-poller-4 的 HTTP/2 诉求）：
+            // 1) 标准拼写 Cookie:/Set-Cookie: 任意位置整行遮蔽 —— 最保守，
+            //    HTTP 规范只有这两个拼写、无歧义（见上方"不开 (?i)"注释）。
+            // 2) HTTP/2 全小写 cookie:/set-cookie: 只认行首（(?m)^[ \t]*）
+            //    —— 真实 HTTP/2 报文头总是独占一行；而业务错误串里的
+            //    "; cookie: tk-xxx" 在行中，不得整行吞掉（否则后续 sk-/eyJ
+            //    等 pattern 全被吃掉，见上方注释），其 token 值由前缀
+            //    pattern 单独遮蔽。全局 (?i:…) 会把这俩场景混为一谈。
             r"|sessionKey=[^\s;,]+",
             r"|sessionid=[^\s;,]+",
             r"|JSESSIONID=[^\s;,]+",
             r"|auth==[^\s;,]+",
-            r"|(?i:Set-Cookie|Cookie):[^\n]+",
+            r"|(?:Cookie|Set-Cookie):[^\n]+",
+            r"|(?m)^[ \t]*(?:cookie|set-cookie):[^\n]+",
             r"|(?i:authorization)\s*:\s*[^\s;,]+",
             r")",
         ))

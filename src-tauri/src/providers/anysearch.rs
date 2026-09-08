@@ -223,6 +223,25 @@ fn split_token(combined: &str) -> (&str, Option<&str>) {
     }
 }
 
+/// M-5.1 fix (2026-09-08)：锁内重读判定 —— 磁盘 combined 的 **refresh 半段**
+/// 是否已被别的 caller 换新（AnySearch refresh 单次轮换，换新即旧 token 作废）。
+///
+/// 原实现（bug）直接拿磁盘 combined 跟调用方传入的 refresh 半段比大小（恒不等），
+/// 导致 refresh_token 从不真正 POST。正确语义：
+/// - 磁盘 refresh 半段 == 调用方手里的 refresh → 尚无别的 caller 换新 → 正常 POST
+/// - 磁盘 refresh 半段 != 调用方手里的（且磁盘确有 refresh 半段）→ 已被换新 →
+///   复用磁盘 combined 跳过 POST（避免并发 40114 revoked 误报"重新登录"）
+/// - 磁盘无 cookie / 无 refresh 半段（裸 access）→ 未换新，正常 POST
+fn disk_refresh_changed(disk_combined: Option<&str>, caller_refresh: &str) -> bool {
+    match disk_combined {
+        Some(c) => match split_token(c) {
+            (_, Some(latest_refresh)) => latest_refresh != caller_refresh,
+            (_, None) => false,
+        },
+        None => false,
+    }
+}
+
 /// 本地预检 access token 的 `exp` claim（不校验签名，参考 stepfun）。
 ///
 /// 返回距过期的秒数：`> 0` = 还有 N 秒有效；`<= 0` = 已过期 |N| 秒。
@@ -257,16 +276,24 @@ async fn refresh_token(refresh: &str, unique_id: &str) -> Result<String, FetchEr
     // 40114 revoked，见模块头注释）—— 并发 caller（poller tick + 手动刷新）
     // 各自用进锁前的旧 refresh POST，第二个必然 40114 误报"重新登录"。
     // 锁内重读：若槽里的 combined 已被别的 caller 换新，直接复用，跳过 POST。
+    //
+    // M-5.1 fix (2026-09-08 排查修正, 根因): 原实现 `.filter(|t| t != refresh)`
+    // 拿磁盘 **combined**（`<access>...<refresh>`）跟调用方传入的 **refresh
+    // 半段** 比较 —— 两种格式恒不等 → filter 恒通过 → refresh_token 恒走
+    // "复用" 分支 **从不真正 POST** refresh 端点，"续期"每次把磁盘旧 combined
+    // 原样回传 → access 过期后 billing 401 死循环（auth_failed 刷屏、必须
+    // 手动重登）。修正为按 refresh 半段比较（见 [`disk_refresh_changed`]）。
     if let Some(latest) = crate::config::load_credential_for_id(unique_id)
         .ok()
         .flatten()
         .and_then(|c| c.cookie)
         .map(|s| s.trim().to_string())
-        .filter(|t| !t.is_empty() && t != refresh)
+        .filter(|t| !t.is_empty())
+        .filter(|t| disk_refresh_changed(Some(t.as_str()), refresh))
     {
         tracing::info!(
             unique_id,
-            "anysearch refresh: 锁内重读发现 token 已更新, 复用, 跳过 POST"
+            "anysearch refresh: 锁内重读发现 refresh 已被换新, 复用, 跳过 POST"
         );
         return Ok(latest);
     }
@@ -706,6 +733,32 @@ mod tests {
         let (a, r) = split_token("  eyJx  ...   ");
         assert_eq!(a, "eyJx");
         assert_eq!(r, None, "空 refresh 半段 → None");
+    }
+
+    // ── M-5.1：锁内重读判定（2026-09-08 回归锁定） ──
+
+    #[test]
+    fn disk_refresh_unchanged_means_post() {
+        // 磁盘 refresh 半段 == 调用方手里 → 未换新 → 必须走正常 POST（false）
+        assert!(!disk_refresh_changed(Some("eyJaccess...myrefresh"), "myrefresh"));
+    }
+
+    #[test]
+    fn disk_refresh_rotated_means_reuse() {
+        // 磁盘 refresh 已被别的 caller 换新 → 复用（true）
+        assert!(disk_refresh_changed(
+            Some("eyJaccess2...newrefresh"),
+            "oldrefresh"
+        ));
+    }
+
+    #[test]
+    fn disk_refresh_no_half_or_empty_falls_back_to_post() {
+        // 磁盘是裸 access（无 refresh 半段）→ 未换新，POST
+        assert!(!disk_refresh_changed(Some("eyJbareaccess"), "anything"));
+        // 磁盘无 cookie / 空 → 未换新，POST
+        assert!(!disk_refresh_changed(None, "anything"));
+        assert!(!disk_refresh_changed(Some(""), "anything"));
     }
 
     #[test]

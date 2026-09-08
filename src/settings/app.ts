@@ -163,11 +163,30 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
   const rawTrayColor = cfg.tray_icon_color ?? "#ffffff";
   trayColorInput.value = /^#[0-9a-fA-F]{6}$/.test(rawTrayColor) ? rawTrayColor : "#ffffff";
   const trayColorAutoBtn = el("button", { type: "button", class: "tray-color-auto" }, t("settings.app.tray_color_auto")) as HTMLButtonElement;
-  trayColorInput.addEventListener("change", () => {
-    void setTrayIconColor(trayColorInput.value)
-      .then(() => flash(t("settings.app.tray_color_changed")))
-      .catch((e) => flash(t("settings.app.tray_color_failed", { err: String(e) }), true));
-  });
+  // WKWebView (macOS) 的 <input type="color"> 走 NSColorPanel：拖动取色只发
+  // `input` 事件，`change` 要等面板关闭才提交（部分 WebKit 版本甚至不发）。
+  // 只听 change → macOS 上"点了没效果"。补听 input + 400ms 防抖；change 到来
+  // 时立即冲刷挂起的防抖，两事件都触发的平台（WebView2）不会双发。
+  let trayColorTimer: ReturnType<typeof setTimeout> | null = null;
+  const sendTrayColor = (immediate: boolean) => {
+    if (trayColorTimer !== null) {
+      clearTimeout(trayColorTimer);
+      trayColorTimer = null;
+    }
+    const send = () => {
+      trayColorTimer = null;
+      void setTrayIconColor(trayColorInput.value)
+        .then(() => flash(t("settings.app.tray_color_changed")))
+        .catch((e) => flash(t("settings.app.tray_color_failed", { err: String(e) }), true));
+    };
+    if (immediate) {
+      send();
+    } else {
+      trayColorTimer = setTimeout(send, 400);
+    }
+  };
+  trayColorInput.addEventListener("input", () => sendTrayColor(false));
+  trayColorInput.addEventListener("change", () => sendTrayColor(true));
   trayColorAutoBtn.addEventListener("click", () => {
     void setTrayIconColor(null)
       .then(() => {

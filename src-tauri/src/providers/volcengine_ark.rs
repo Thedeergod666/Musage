@@ -681,15 +681,18 @@ fn parse_coding_rows(raw: &Value) -> Result<(Vec<QuotaRow>, Option<String>), Fet
             });
         // CodexBar #1724 + ccswitch 实测 schema (火山 Coding Plan 真返):
         // - QuotaUsage[] + Level="session"/"weekly"/"monthly"(小写) + Percent
-        //   字段。H-Provider fix (2026-09-07 audit): Percent 实测是 0~1 ratio
-        //   (0.3346 = 33.46% 用完)，乘 100 转换，clamp 防边界值。
+        //   字段 = **已用百分比, 0.0~100.0**（8ccd8d2 用户 dev-stderr body 实测：
+        //   session=0.3346 / weekly=2.408 / monthly=11.356，ccswitch 同款 0~100
+        //   语义显示 0% / 2% / 11%）。**不是** 0~1 ratio —— 2026-09-07 H-Provider#2
+        //   误判成 ratio 乘 100，真实值 11.356 × 100 → clamp 全 100%，浮窗全满。
         // - ResetTimestamp: epoch seconds (10 位) 上面 smart parse 转 ms。
         // - 老 UsageList[] + Remaining/Total 形态保留(虽然火山不返),做
         //   schema 漂移 fallback。
         let (used, total) = if let Some(percent) =
             super::parse::num_f64(entry.get("Percent").unwrap_or(&Value::Null))
         {
-            let used = (percent * 100.0).clamp(0.0, 100.0);
+            // Percent 已是 0~100 百分比（实测），直接 clamp，不再乘 100。
+            let used = percent.clamp(0.0, 100.0);
             (used, 100.0)
         } else {
             let remaining = super::parse::num_f64(entry.get("Remaining").unwrap_or(&Value::Null));
@@ -1149,11 +1152,12 @@ mod tests {
 
     #[test]
     fn parse_quota_usage_schema_lowercase() {
-        // 火山 Coding Plan 真返 schema (2026-07-28 实测):
+        // 火山 Coding Plan 真返 schema (2026-07-28 实测, 8ccd8d2 body 日志):
         // Result.QuotaUsage[] + Level: "session"/"weekly"/"monthly"(小写)
-        // + Percent 字段 = **0~1 ratio** (实测 0.3346 = 33.46% 用完) —
-        // H-Provider fix (2026-09-07 audit): 老注释误写 0~100 直接当百分比,
-        // 33% 显示成 0.33% 严重偏低。乘 100 转换。
+        // + Percent 字段 = **已用百分比 0~100**（实测 session=0.3346 /
+        //   weekly=2.408 / monthly=11.356，ccswitch 显示 0% / 2% / 11%）。
+        //   **不是** 0~1 ratio —— 2026-09-07 H-Provider#2 误乘 100 导致
+        //   全 100% 回归，本测试用实测值锁死语义。
         // + ResetTimestamp: epoch **seconds** (10 位) — smart parse 转 ms
         // + 额外有 Status="Running" / UpdateTimestamp(seconds)
         let raw = json!({
@@ -1161,11 +1165,11 @@ mod tests {
                 "Status": "Running",
                 "UpdateTimestamp": 1785217273_i64,
                 "QuotaUsage": [
-                    // H-Provider fix (2026-09-07 audit): Percent 字段是 0~1 ratio
-                    // 而非 0~100。0.3346 ratio = 33.46% utilization (乘 100 转换)。
-                    { "Level": "session", "Percent": 0.334626_f64,  "ResetTimestamp": 1785221470_i64 },
-                    { "Level": "weekly",  "Percent": 0.024080_f64, "ResetTimestamp": 1785686400_i64 },
-                    { "Level": "monthly", "Percent": 0.113561_f64, "ResetTimestamp": 1787068799_i64 }
+                    // 实测值 (2026-07-28): Percent 已经是 0~100 百分比,
+                    // 0.3346 = 0.33% 已用,不是 33.46%。
+                    { "Level": "session", "Percent": 0.33462600000000003_f64, "ResetTimestamp": 1785221470_i64 },
+                    { "Level": "weekly",  "Percent": 2.408004733333333_f64,   "ResetTimestamp": 1785686400_i64 },
+                    { "Level": "monthly", "Percent": 11.356161100000001_f64,  "ResetTimestamp": 1787068799_i64 }
                 ]
             }
         });
@@ -1175,15 +1179,15 @@ mod tests {
         assert_eq!(snap.rows[0].kind, Some(RowKind::PlanHeader));
         let five_h = &snap.rows[1];
         assert_eq!(five_h.label, t!("row.five_hour").as_ref());
-        // Percent=0.3346 ratio → 33.46% utilization (乘 100)
-        assert!((five_h.utilization.unwrap() - 33.46).abs() < 0.01);
+        // Percent=0.3346 (0~100) → 0.33% utilization (直接当百分比,不乘 100)
+        assert!((five_h.utilization.unwrap() - 0.3346).abs() < 0.001);
         // ResetTimestamp 1785221470 是 seconds → smart parse 转 ms
         assert_eq!(five_h.resets_at, Some(1785221470 * 1000));
         assert_eq!(row_plan(five_h), Some("coding"));
         let month = &snap.rows[3];
         assert_eq!(month.label, t!("row.monthly").as_ref());
-        // Percent=0.113561 ratio → 11.3561% utilization
-        assert!((month.utilization.unwrap() - 11.3561).abs() < 0.01);
+        // Percent=11.356 → 11.356% utilization，**不是** 1135.6% clamp 成 100%
+        assert!((month.utilization.unwrap() - 11.356).abs() < 0.01);
     }
 
     #[test]

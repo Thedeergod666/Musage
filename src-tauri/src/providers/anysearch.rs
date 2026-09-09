@@ -740,7 +740,10 @@ mod tests {
     #[test]
     fn disk_refresh_unchanged_means_post() {
         // 磁盘 refresh 半段 == 调用方手里 → 未换新 → 必须走正常 POST（false）
-        assert!(!disk_refresh_changed(Some("eyJaccess...myrefresh"), "myrefresh"));
+        assert!(!disk_refresh_changed(
+            Some("eyJaccess...myrefresh"),
+            "myrefresh"
+        ));
     }
 
     #[test]

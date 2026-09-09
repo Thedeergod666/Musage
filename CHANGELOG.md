@@ -5,6 +5,59 @@ All notable changes to Musage will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.9] - 2026-09-09
+
+**TL;DR**: 基于 2026-09-04 全量代码审查报告（[audit-reports/2026-09-04-full/SUMMARY.md](audit-reports/2026-09-04-full/SUMMARY.md)）完成 12 H + 37 M + 54 L = 103 条发现全量落地；新增火山方舟 Coding + Agent 双套餐支持、设置页版本检查、托盘归位悬浮窗。本版距 v0.2.8 共 37 commit，测试 +32（`cargo test --lib` 416 → 448）。
+
+### Added
+
+- **火山方舟 Coding + Agent 双套餐支持**（commit `5d0a863`）：同一 AppID 可同时买两份套餐，过去只能看到 Coding Plan 一份。AFP 探针探测用户实际开通的套餐，`tokio::join!` 并发拉取、失败不连坐（一边挂另一边照常渲染）。浮窗新增 `RowKind::PlanHeader` 分组标题行 + 设置面板「套餐类型」双 checkbox（按套餐筛选，未勾选的 action 不打省配额）。端点迁到火山 OpenAPI 总网关 `open.volcengineapi.com`，POST + content-type header + 字母序 SignedHeaders，与 ccswitch / 官方 SDK 数字对齐。18 文件 +958 / −121 行，新增 13 测试。配套 `c97ce3b` 把 Percent 语义回滚到 0~100（修浮窗全 100% 假满）。
+- **托盘菜单新增「归位悬浮窗」**（commit `f2105f7`）：复用 settings.html 同款 `reset_floating_window` IPC handler，走 Tauri 内置 `win.center()` + 持久化位置，多显示器 / 负坐标场景安全。菜单顺序同步重排（归位紧跟切换悬浮窗形成浮窗操作组），「设置...」改「打开设置…」加动词。
+- **设置页「关于」section 新增 GitHub releases 版本检查**（commit `d59da5b`）：启动 5s 后后端 spawn 一次探测 `/releases/latest`，写模块私有 `OnceLock<UpdateInfo>` 缓存；打开关于 section 时同步读缓存（空时后台 fire-and-forget fetch）；「检查更新」按钮手动触发。新版本 banner + 跳转 GitHub releases 页；pre-release 不算；网络失败保留旧 banner（抖一次不丢新版本）。**仍不做应用内自动更新**（macOS 签名 + notarize 链路未稳定前会触发「应用已损坏」）。
+
+### Fixed (P1 / High, 2026-09-04 全量审查 8 域并行)
+
+报告 [audit-reports/2026-09-04-full/SUMMARY.md](audit-reports/2026-09-04-full/SUMMARY.md)（0C / 12H / 37M / 54L = 103 条，**全量修复落地** `e9d31ef`）。Rust 域 providers/poller/config/platform/login（30 文件 +1030 / −297，`4f54ee7`）+ 前端域浮窗/设置面板（17 文件 +417 / −165，`e608a9f`）。后续收尾：`575f2f4`（4 High）/ `6265e86`（baseId 派生）/ `5cc6f49`（4 critical: BOM strip / tmp allow-list / save Err / log 0600）/ `da76f5b`（D7-02 登录直写 refresh target 槽）。
+
+关键 High 修复：
+- **AnySearch 登录后 30 分钟必掉线死循环**根治（commit `12da140`）：`combined vs refresh` 半段恒不等 → refresh 从不 POST → 登录后 30min 死循环。配套 `9c51917` 修 cookie 冻结死锁 + JWT 校验恒拒。
+- **浮窗重复卡/行累积**根治（commit `a7e2662`）：DOM diff 用单值 Map 覆盖，孤儿元素逃过清理，浮窗永久多出幽灵行。
+- **Win 浮窗 hover-raise 卡死**根治（commit `45ca131`）：raised 意图缓存与现实脱同步后 steady re-assert 被短路。删除 raised 变量 + re-assert 条件简化（`inside && ACTIVE`）。
+- **Win 浮窗 OS 模糊移除**（commit `45ca131` 同批）：OS 层 Acrylic per-window 合成器效果覆盖整窗，卡片间隙被灰色填满，与"逐卡片玻璃"设计冲突；CSS `backdrop-filter` 在 WebView2 透明窗不可用（[tauri-apps/tauri#15512](https://github.com/tauri-apps/tauri/issues/15512) closed as not planned），待后续评估替代实现。`apply_floating_window_blur` 函数保留签名变 no-op，4 个调用方（启动恢复 / save_config / set_floating_pin_mode 重同步 / set_low_power_mode）零改动。
+
+### Fixed (P1 / High, Windows / macOS 平台专项)
+
+- 浮窗透明改程序化构造 + CSS 兜底（commit `2a6de3c`，修 Win WebView2 白底）
+- Win backdrop-refresh 补齐 + 浅色任务栏检测 + pin×blur 联动（commit `8f55941`）
+- Win hover-raise 断链修复 + Acrylic ExtendFrame 前置 + 双击进设置（commit `d801adc`）
+- macOS 全屏 `is_visible` 闸 + 跨域 init-script 早返（commit `b8cb37d`）
+- CI Windows E0603 修复（commit `ef2fd20`）
+
+### Fixed (P2 / P3 批次, 按域分组, 仅概述)
+
+- **provider 错误码归类统一**：`44f958d` 网络错误剥 reqwest 重复 URL 前缀（19 个 provider）+ 3 i18n key 归类人话；`fcfb83d` xiaomi 业务码 401xx → AuthFailed；`d3adf4c` zhipu 业务失败 code 优先 + openrouter unlimited key + zenmux i18n 对齐
+- **设置面板 UX 收尾**：托盘颜色选择器 macOS 全哑（`4105e6b` → `6931dfb` 两连击，最终换纯 DOM 色板 + hex 文本框）
+- **provider / config 收尾**：`5c36413` extra_instances schema 强化 + cascade 保留 + kimi/openrouter/volcengine 三 provider 修正
+- **CI 两测**（commit `8c78464`）：cookie 整行遮蔽回归字面拼写 + 行首锚定小写 variant；zhipu 40101 测试同步 M-6 AuthFailed
+
+### Changed
+
+- **火山方舟 Percent 语义**：`c97ce3b` 0~100 实测回滚（修浮窗全 100% 假满）
+- **省电模式幂等路径补 blur 重同步**（commit `87c3cc7`，配套 `45ca131` 把 blur 函数改成 no-op 后清理冗余调用）
+- **锁契约文档**：`355befe` 锁契约文档 + snapshot 重命名 + order.ts 3 处 enabled rollback
+- **稳健性**：`4719ff8` tray catch_unwind + updater humanize + geom shutdown 兜底 + locale async 化
+
+### 守门
+
+- `cargo test --lib` **448 passed / 0 failed / 0 ignored**（v0.2.8 是 416，本版 +32 主要来自 audit hotfix 批次 + 火山双套餐 AFP 解析 13 个）
+- `cargo fmt --all -- --check` 干净
+- `cargo clippy --locked --all-targets` exit 0（无新增 warning；27 个 pre-existing 老文件不在 scope）
+- `pnpm build` exit 0（Vite build 355ms）
+- `pnpm exec tsc --noEmit` 0 错
+- `LANG=en_US.UTF-8 cargo test --locked` 448 passed（i18n locale 覆盖）
+- `cargo check --target x86_64-unknown-linux-gnu --locked --all-targets` exit 0（跨平台 stub 坑排查）
+- `bash scripts/check-no-native-dialogs.sh` 通过（macOS WKWebView 不实现原生 dialog）
+
 ## [0.2.8] - 2026-08-18
 
 **TL;DR**: 基于 2026-08-17 全量代码审查（[audit-reports/2026-08-17-full/SUMMARY.md](audit-reports/2026-08-17-full/SUMMARY.md)）完成 1 Critical + 6 High + 多项 Medium 修复；新增 TokenDance 余额 provider（14 号内置）、Zhipu GLM 积分套餐、用户手动拖浮窗高度。本版距 v0.2.7 共 30 commit，测试 +12、命中率 100%。

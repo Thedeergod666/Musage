@@ -130,9 +130,13 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 - `*_remaining_percent=100` 不代表"还有 100%"，可能是 `status=2/3`（不在套餐内）
 - 旧字段对 Plus 订阅者全为 0
 
-## 当前进度（v0.2.8 快照，2026-08-18）
+## 当前进度（v0.2.9 快照，2026-09-09）
 
-✅ **v0.2.4 / v0.2.5 / v0.2.6 / v0.2.7 / v0.2.8 已发布**（v0.2.4 tag 2026-07-17 / v0.2.5 tag 2026-07-29 / v0.2.6 tag 2026-08-05 / v0.2.7 tag 2026-08-06 / **v0.2.8 tag 2026-08-18**）。v0.2.8 = C-01 zenmux 泄密钥修复 + 2026-08-17 全量 audit (1 C + 6 H) 修 + TokenDance (14 号内置 provider) + Zhipu GLM 积分套餐 + 用户手动拖浮窗高度 + 8-13 P3 批 (providers/security/parse/persist/login) + 8-18 P2/L 收尾 (cart fmt / config M-07+09 / P2 一行批)，详见 CHANGELOG 对应段 + [audit-reports/2026-08-17-full/SUMMARY.md](audit-reports/2026-08-17-full/SUMMARY.md)。
+✅ **v0.2.4 / v0.2.5 / v0.2.6 / v0.2.7 / v0.2.8 / v0.2.9 已发布**（v0.2.4 tag 2026-07-17 / v0.2.5 tag 2026-07-29 / v0.2.6 tag 2026-08-05 / v0.2.7 tag 2026-08-06 / v0.2.8 tag 2026-08-18 / **v0.2.9 tag 2026-09-09**）。v0.2.9 = 火山方舟 Coding + Agent 双套餐支持 + 设置页版本检查 + 托盘归位悬浮窗 + 2026-09-04 全量 audit (0 C + 12 H + 37 M + 54 L = 103 条) 全量修复 + AnySearch 登录死循环根治 + 浮窗重复行根治 + Win hover-raise 卡死根治 + Win 浮窗 OS 模糊移除，详见 CHANGELOG [0.2.9] 段 + [audit-reports/2026-09-04-full/SUMMARY.md](audit-reports/2026-09-04-full/SUMMARY.md)。
+   - **v0.2.9 feat(volcengine)** Coding + Agent 双套餐：端点迁到 OpenAPI 总网关，AFP 探针 + PlanHeader 分组行 + 双 action 并发拉取 + 失败不连坐（commit `5d0a863`，18 文件 +958 / −121，13 个新测试）
+   - **v0.2.9 feat(settings)** 关于 section GitHub releases 版本检查：启动 5s 后探测 + 缓存 + 「检查更新」按钮 + 新版本 banner，仍不做应用内自动更新（commit `d59da5b`）
+   - **v0.2.9 feat(tray)** 托盘菜单新增「归位悬浮窗」+ 菜单顺序调整 + 「设置...」→「打开设置…」（commit `f2105f7`）
+   - **v0.2.9 撤回** Win 浮窗 Acrylic 模糊（commit `290dba9` 引入 → `45ca131` no-op）—— OS 层 per-window 效果覆盖整窗导致卡片间隙被灰色填满，待找到逐卡片方案或 WebView2 支持后再评估
    - feat(kimi)：浮窗左侧标签改动态窗口剩余（剩 <1 天 → `5h`，≥1 天 → `7d`），替代 used/total；foot 前缀跟随（`5h重置`/`7d重置`），Tavily 无 kind 标记保持原样（commit `75a5d8f`）
    - feat(floating)：双击浮窗打开设置面板（原双击"立即刷新"移除，托盘菜单仍可触发；跳过 button/input/select/a 防误触）（commit `361fc55`）
    - fix：5h 用量达 100% 上限时 kimi / zhipu / claude_official 行被隐藏（commit `de6668b`）

@@ -70,6 +70,14 @@
 //! → 浮窗继续 401、窗口「弹出即消失」。fix：init script 在 document_start 删旧
 //! auth state + 清旧 cookie，并置 `MUSAGE_READY` 标记；Rust 轮询见到 READY 才
 //! 接受 token，保证抓到的一定是清理后新登录的 JWT。
+//!
+//! 2026-09-09 死锁回归 fix：M-19「有 auth 就跳过清理」× D3-006「interval 首写
+//! 成功即 clearInterval」组合把 cookie 冻结在过期残留值上 —— Rust freshness
+//! 门拒旧值后，用户真登录写入 localStorage 的新 token 无人搬运（interval 已
+//! 自杀）→ 登录后永远轮询到 14min 超时（实测日志 len 恒 618 × 14min 不变）。
+//! 两层修：清理条件升级为「token **新鲜**才跳过」（JS 解 exp，对齐 Rust 60s
+//! skew）；interval 改**永活 + 值变化才写**的镜像泵（稳态零 cookie 写入，
+//! D3-006 的 fsync 目标由值比对达成而非自杀）。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
@@ -173,9 +181,18 @@ const READY_COOKIE_NAME: &str = "MUSAGE_READY";
 /// 不是 JWT 规范强制的最小值（实测 AnySearch JWT ≈ 572 字符）。
 ///
 /// L-3 fix (2026-09-05 audit)：对 combined token（`<access>...<refresh>`）
-/// 按哨兵 split 后**逐半段**校验 —— 原来 4096 上限作用于整串，任一侧
-/// token 膨胀到两段合计超限就整体永假 → 登录静默等满 14 分钟超时无任何
-/// 明确错误（stepfun 为同类膨胀已把上限放宽到 12KB）。
+/// 按哨兵 split 后逐半段校验（原来 4096 上限作用于整串，任一侧 token 膨胀
+/// 到两段合计超限就整体永假）。
+///
+/// 2026-09-09 fix（L-3 回归，登录死因第二案）：L-3 把 **refresh 半段也按
+/// JWT 校验**（eyJ 开头 + ≥2 个点）是 stepfun 的双-JWT 约定 —— 但 AnySearch
+/// 的 refreshToken 是 43 字符 **opaque 串**（实测 `lMLx...` / `_kOc_...` 开头，
+/// 非 JWT、非 eyJ），导致 2026-09-05 起所有 combined token 形态门**恒拒**、
+/// 登录永远「继续轮询」到 14min 超时。铁证：修复镜像泵后新日志
+/// `expired=false`（fresh token 已到 cookie、freshness 门已过）仍被拒 ——
+/// 拒的就是 shape。改回：**只对 access 半段要求 JWT 形态**，refresh 半段
+/// 做宽松检查（非空 / 无空白控制字符 / ≤ 4096）—— 无效 refresh 交给服务端
+/// 40114 拒，不在登录门口挡。
 fn is_jwt_like(s: &str) -> bool {
     if s.is_empty() {
         return false;
@@ -183,7 +200,15 @@ fn is_jwt_like(s: &str) -> bool {
     let halves: Vec<&str> = s.split("...").collect();
     match halves.as_slice() {
         [single] => is_jwt_like_single(single),
-        [access, refresh] => is_jwt_like_single(access) && is_jwt_like_single(refresh),
+        // AnySearch combined：access 是 JWT，refresh 是 opaque 串（非 JWT）
+        [access, refresh] => {
+            is_jwt_like_single(access)
+                && !refresh.is_empty()
+                && refresh.len() <= 4096
+                && refresh
+                    .chars()
+                    .all(|c| !c.is_whitespace() && !c.is_control())
+        }
         _ => false,
     }
 }
@@ -293,18 +318,27 @@ fn init_script() -> String {
             // （OAuth 回跳等）会把刚写入的 auth state 抹掉，登录永远等不到
             // token、14 分钟超时。有 token 时跳过清理（过期 token 由 Rust 端
             // is_fresh_access 门拒绝，不会误存）。
+            //
+            // 2026-09-09 fix（M-19 + D3-006 死锁回归）：「有 accessToken 就跳过
+            // 清理」在残留的是**过期** token 时把过期值送进 cookie 后 interval
+            // 自杀（见下方 D3-006 回归说明）→ Rust 拒绝旧值后新 token 永远
+            // 无人搬运。判定升级为「**新鲜** accessToken 才跳过清理」（expFresh，
+            // 解 exp + 60s skew，对齐 Rust is_fresh_access）；解不出 exp 时保守
+            // 跳过清理（对齐 Rust None→放行，不卡登录）。M-19 的原场景（OAuth
+            // 整页回跳时 token 刚写入、必然新鲜）不受影响。
             try {
                 if (isAllowed()) {
-                    var _musageHasAuth = false;
+                    var _musageHasFreshAuth = false;
                     try {
                         var _raw = localStorage.getItem(LS_KEY);
                         if (_raw) {
                             var _st = JSON.parse(_raw);
                             var _s = (_st && _st.state) || {};
-                            _musageHasAuth = !!(_s && _s.accessToken);
+                            var _at = (_s && _s.accessToken) || "";
+                            _musageHasFreshAuth = !!_at && expFresh(_at);
                         }
                     } catch (_) {}
-                    if (!_musageHasAuth) {
+                    if (!_musageHasFreshAuth) {
                         localStorage.removeItem(LS_KEY);
                         document.cookie = COOKIE_NAME + "=; path=/; max-age=0";
                     }
@@ -332,24 +366,46 @@ fn init_script() -> String {
                     return refresh ? (access + "..." + refresh) : access;
                 } catch (_) { return ""; }
             }
-            // ── 每 500ms 把 token 写到 cookie（覆盖式，方便 Rust 端轮询读）──
-            // 同时清掉上一次写入的过期 cookie 防止积累；token 为空时清 cookie（让
-            // Rust 知道"还在等"）。
-            // D3-006 fix (2026-07-30 audit): 拿到 interval handle, 首次成功写
-            // 非空 token 后 clearInterval. 之前永远 24h × 2 次/秒 = 17 万次
-            // cookie store fsync. SPA 跳转 / 新 tab 会叠加新 interval (init script
-            // 在每个 document_start 跑), webview 关才停, 资源浪费.
-            var _musageIv = setInterval(function () {
+            // access JWT 新鲜度（对齐 Rust is_fresh_access / kimi_desktop
+            // jwt_exp_seconds_ago）：解出 exp 且已过期（60s skew）→ false；
+            // 解不出（非 JWT / 缺 exp / 格式漂移）→ true，保守跳过清理，
+            // 交给 Rust 端门禁拒绝，不卡登录。
+            function expFresh(tok) {
+                try {
+                    var payload = (tok.split(".")[1] || "")
+                        .replace(/-/g, "+").replace(/_/g, "/");
+                    while (payload.length % 4) payload += "=";
+                    var claims = JSON.parse(atob(payload));
+                    if (typeof claims.exp !== "number") return true;
+                    return claims.exp > Date.now() / 1000 - 60;
+                } catch (_) { return true; }
+            }
+            // ── 每 500ms 把 localStorage 的 token 镜像到 cookie（值变化才写）──
+            // 2026-09-09 fix（D3-006 回归）：「首次写成功即 clearInterval」在
+            // M-19 跳过清理 + localStorage 残留过期 token 的场景下，把 cookie
+            // 冻结在过期值上 —— Rust freshness 门拒旧值后，用户真登录写入的
+            // 新 token 永远无人搬运到 cookie（登录后一直轮询到 14min 超时，
+            // 实测日志 len 恒定不变）。interval 必须**永远活着**当镜像泵；
+            // token 为空且之前写过非空 → 清一次 cookie（让 Rust 知道"还在等"）。
+            // D3-006 的 fsync 目标改由**值比对**达成：记上次 verify 成功的值
+            // （含 ""），值不变零 cookie 写入，稳态成本只剩每 500ms 一次
+            // localStorage.getItem + JSON.parse（微秒级）。interval 生命周期 =
+            // document 生命周期，页面卸载自然死；同 document 的 init script 只
+            // 在 document_start 跑一次，无叠加泄漏。
+            var _musageLast = null;
+            setInterval(function () {
                 if (!isAllowed()) return;
                 var tok = readToken();
+                if (tok === _musageLast) return;
                 try {
                     if (tok) {
                         document.cookie = COOKIE_NAME + "=" + tok + "; path=/; max-age=900; SameSite=Lax; Secure";
                         // 2026-08-03 audit (McClintock P2): 写后回读 verify
                         // —— cookie 写入可能因 size limit / special chars /
                         // webview cookie store 截断 失败但 assignment 不抛错
-                        // (assign 成功 ≠ cookie 落地). 验证失败时不清 interval,
-                        // 下个 tick 重试; 验证成功才 clearInterval + 通知 Rust
+                        // (assign 成功 ≠ cookie 落地). 验证失败时不记
+                        // _musageLast, 下个 tick 重试; 成功才记（之后值不变
+                        // 零写入）.
                         // P3 audit fix (2026-08-13): 之前按 length 比对
                         // (c.length >= 写入长度) -- 截断到等长的脏值也通过,
                         // Rust 读到截断后的 token。改成严格值相等。
@@ -359,10 +415,11 @@ fn init_script() -> String {
                                 return c === COOKIE_NAME + "=" + tok;
                             });
                         if (written) {
-                            clearInterval(_musageIv);
+                            _musageLast = tok;
                         }
                     } else {
                         document.cookie = COOKIE_NAME + "=; path=/; max-age=0";
+                        _musageLast = "";
                     }
                 } catch (_) {}
             }, 500);
@@ -537,6 +594,11 @@ async fn poll_token_from_cookie(
         return PollOutcome::Cancelled;
     }
 
+    // READY 长期不出现的 tick 计数（≈60s 打一条 warn 帮白屏/断网排查，之后
+    // 不刷屏）。注意 15min 内重开时旧会话的 READY cookie 仍有效，此 warn
+    // 只在首次开窗 / 距上次 >15min 时能命中 —— 尽力而为的诊断信号。
+    let mut not_ready_ticks: u32 = 0;
+
     for _ in 0..MAX_ITERS {
         if DONE.load(Ordering::SeqCst) {
             return PollOutcome::Cancelled;
@@ -591,6 +653,14 @@ async fn poll_token_from_cookie(
         // 没见到 READY 就不读 token —— 否则可能抓到清理之前残留在 cookie store
         // 里的过期 MUSAGE_TOKEN（「弹出即消失 + 信息不更新」bug 的根因）。
         if !cookies.iter().any(|c| c.name() == READY_COOKIE_NAME) {
+            // 2026-09-09：页面未完成加载（断网 / WKWebView 白屏）时 init script
+            // 不跑、READY 永不出现 —— ~60s 打一条 warn 帮排查
+            not_ready_ticks += 1;
+            if not_ready_ticks == 85 {
+                tracing::warn!(
+                    "anysearch 登录页 ~60s 未见 MUSAGE_READY（页面未加载完成？网络不通？），继续等待"
+                );
+            }
             sleep(Duration::from_millis(700)).await;
             continue;
         }
@@ -614,10 +684,15 @@ async fn poll_token_from_cookie(
                     Err(e) => PollOutcome::Failed(e),
                 };
             }
-            // cookie 在但不是 JWT（空 / 脏字符 / 已过期缓存）—— 继续等
+            // cookie 在但被门禁拒（形态不合法 / 已过期缓存）—— 继续等
+            // 2026-09-09 fix：拒因拆开打 —— 上次「登录后一直轮询」排查时两类
+            // 拒因混一条日志，分不清是 shape 门禁还是 freshness 门禁在拒。
+            // expired=true 表示形态合法但已过期（等 init script 镜像泵写入
+            // 新值）；false 表示形态本身不合法。
             tracing::debug!(
                 len = raw.len(),
-                "MUSAGE_TOKEN cookie 存在但形态不合法或已过期，继续轮询"
+                expired = !is_fresh_access(raw),
+                "MUSAGE_TOKEN cookie 被拒继续轮询（expired=true 已过期 / false 形态不合法）"
             );
         }
         // 没有 MUSAGE_TOKEN cookie = 用户还没登录或 interval 还没写 —— 继续等
@@ -678,5 +753,26 @@ mod tests {
     fn jwt_like_rejects_whitespace_and_control() {
         assert!(!is_jwt_like("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0\n.sig"));
         assert!(!is_jwt_like("eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0 .sig"));
+    }
+
+    // 2026-09-09 L-3 回归锁定：AnySearch refreshToken 是 43 字符 opaque 串
+    // （非 JWT、非 eyJ 开头，实测 keys.json `lMLx...` 形态），combined 的
+    // refresh 半段不能按 JWT 校验 —— L-3 曾把它当 stepfun 双-JWT 约定，
+    // 导致 2026-09-05 起所有 combined token 形态门恒拒、登录 14min 超时。
+    #[test]
+    fn jwt_like_accepts_combined_with_opaque_refresh() {
+        let access =
+            "eyJhbGciOiJFZERTQSIsImtpZCI6ImtpZC12MSIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1c3JfZm9vIn0.sig";
+        let refresh = "lMLxNNlLZJP9WLM9MBCX8EFGBl5uxBsslyXykIv-JDw"; // 43 字符，非 eyJ
+        assert!(is_jwt_like(&format!("{access}...{refresh}")));
+    }
+
+    #[test]
+    fn jwt_like_rejects_garbage_refresh_half() {
+        let access = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig";
+        // 尾哨兵后为空 / 带空白 / 带控制字符的 refresh 半段都拒
+        assert!(!is_jwt_like(&format!("{access}...")));
+        assert!(!is_jwt_like(&format!("{access}...abc def")));
+        assert!(!is_jwt_like(&format!("{access}...\u{7}xyz")));
     }
 }

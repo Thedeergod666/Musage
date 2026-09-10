@@ -796,7 +796,14 @@ pub async fn save_config(
             .collect();
         cfg.provider_order = sanitize_provider_order(cfg.provider_order, &known);
         if let Some(src) = cfg.tray_source.as_deref() {
-            if src.contains('#') || !known.contains(src) {
+            // v0.2.9 火山双套餐：":agent" 后缀合法（剥掉后按 base 查 known），
+            // 其余后缀连同未知 base 一起清空
+            let (base, suffix) = match src.split_once(':') {
+                Some((b, p)) => (b, Some(p)),
+                None => (src, None),
+            };
+            let suffix_ok = suffix.map_or(true, |p| p == "agent");
+            if src.contains('#') || !suffix_ok || !known.contains(base) {
                 cfg.tray_source = None;
             }
         }
@@ -2696,11 +2703,22 @@ pub async fn set_tray_source(
     // M11 fix (2026-09-05 audit)：find_source 接受副本 unique_id（"minimax#2"），
     // 但 pick_tray_rows 按 source_id 的 base 前缀匹配 —— 副本 id 永远匹配
     // 不上，托盘照样退化 logo（正是 D6-05 要堵的症状）。拒绝带 '#' 的 id。
+    //
+    // v0.2.9 火山双套餐：放行 "<base>:agent" 形式（托盘数据源可选 Agent
+    // Plan，pick_tray_rows 按 plan 过滤行）。后缀白名单仅 "agent"，其余
+    // 拒绝 —— 防任意字符串借后缀绕过 find_source 校验。
     if let Some(s) = &source {
         if s.contains('#') {
             return Err(t!("error.common.unknown_source_id", id = s).into_owned());
         }
-        if crate::providers::find_source(&state, s).await.is_none() {
+        let (base, suffix) = match s.split_once(':') {
+            Some((b, p)) => (b, Some(p)),
+            None => (s.as_str(), None),
+        };
+        if suffix.is_some_and(|p| p != "agent") {
+            return Err(t!("error.common.unknown_source_id", id = s).into_owned());
+        }
+        if crate::providers::find_source(&state, base).await.is_none() {
             return Err(t!("error.common.unknown_source_id", id = s).into_owned());
         }
     }

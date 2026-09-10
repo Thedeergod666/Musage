@@ -170,7 +170,8 @@
         "options": {
           "minimax": "MiniMax",
           "kimi": "Kimi",
-          "volcengine_ark": "Volcengine Ark",
+          "volcengine_ark": "Volcengine Ark Coding Plan",
+          "volcengine_ark_agent": "Volcengine Ark Agent Plan",
           "zhipu": "Zhipu GLM",
           "claude_official": "Claude Official",
           "deepseek": "DeepSeek",

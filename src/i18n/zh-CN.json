@@ -170,7 +170,8 @@
         "options": {
           "minimax": "MiniMax",
           "kimi": "Kimi",
-          "volcengine_ark": "火山方舟",
+          "volcengine_ark": "火山方舟 Coding Plan",
+          "volcengine_ark_agent": "火山方舟 Agent Plan",
           "zhipu": "智谱 GLM",
           "claude_official": "Claude 官方",
           "deepseek": "DeepSeek",

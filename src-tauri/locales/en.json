@@ -7,6 +7,7 @@
       "force_top": "Force top",
       "quit": "Quit",
       "source_title": "Tray data source",
+      "source_volcengine_agent": "Volcengine Ark Agent Plan",
       "reset_to_center": "Recenter window"
     },
     "tooltip": {

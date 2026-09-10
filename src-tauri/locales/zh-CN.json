@@ -7,6 +7,7 @@
       "force_top": "置顶一下",
       "quit": "退出",
       "source_title": "托盘数据源",
+      "source_volcengine_agent": "火山方舟 Agent Plan",
       "reset_to_center": "归位悬浮窗"
     },
     "tooltip": {

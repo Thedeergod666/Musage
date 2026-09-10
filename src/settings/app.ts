@@ -121,6 +121,8 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
     { value: "minimax", label: t("settings.app.tray_source.options.minimax") },
     { value: "kimi", label: t("settings.app.tray_source.options.kimi") },
     { value: "volcengine_ark", label: t("settings.app.tray_source.options.volcengine_ark") },
+    // v0.2.9 火山双套餐：Agent 源（base 值 = Coding 优先 + fallback）
+    { value: "volcengine_ark:agent", label: t("settings.app.tray_source.options.volcengine_ark_agent") },
     { value: "zhipu", label: t("settings.app.tray_source.options.zhipu") },
     { value: "claude_official", label: t("settings.app.tray_source.options.claude_official") },
     { value: "deepseek", label: t("settings.app.tray_source.options.deepseek") },

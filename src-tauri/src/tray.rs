@@ -24,7 +24,7 @@ use tauri::{
 use tokio::sync::mpsc;
 
 use crate::config::TrayIconStyle;
-use crate::providers::{ProviderSnapshot, QuotaSnapshot, RowKind};
+use crate::providers::{ProviderSnapshot, QuotaRow, QuotaSnapshot, RowKind};
 // rust-i18n t! macro 在 crate 根（lib.rs）定义，子模块需显式 use 才能用。
 // 不要在子模块里写 `use rust_i18n::t;` —— 那会找错 macro；必须走 crate::t
 // 才能拿到 i18n!("locales") 生成的那份。
@@ -451,6 +451,9 @@ fn tray_source_label(id: &str) -> String {
         "minimax" => "provider_name.minimax",
         "kimi" => "provider_name.kimi",
         "volcengine_ark" => "provider_name.volcengine_ark",
+        // v0.2.9: 火山双套餐 —— Agent 套餐单独一个源（provider_name 原值
+        // 已含 "Coding Plan" 字样，直接拼会变 "Coding Plan Agent Plan"）
+        "volcengine_ark:agent" => "tray.menu.source_volcengine_agent",
         "zhipu" => "provider_name.zhipu_cn",
         "claude_official" => "provider_name.claude_official",
         "deepseek" => "provider_name.deepseek",
@@ -494,6 +497,8 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         "minimax",
         "kimi",
         "volcengine_ark",
+        // v0.2.9: 火山双套餐 Agent 源（base 值 = Coding 优先 + 自然 fallback）
+        "volcengine_ark:agent",
         "zhipu",
         "claude_official",
         "deepseek",
@@ -779,7 +784,37 @@ fn render_icon(
 /// L-tray-8 fix (2026-09-05 audit)：非默认 source 解析失败时打一条 warn
 /// —— 原来静默返 None，用户删了 tray_source 对应的副本后托盘永久退化
 /// logo 且无任何日志可查。
+/// v0.2.9 火山双套餐：解析 tray_source 的 `<base>:<plan>` 形式。
+/// `"volcengine_ark:agent"` → `("volcengine_ark", Some("agent"))`；
+/// 无后缀 → `(原值, None)`（老语义，Coding 行在前自然优先）。
+fn split_tray_source(source_id: &str) -> (&str, Option<&str>) {
+    match source_id.split_once(':') {
+        Some((base, plan)) => (base, Some(plan)),
+        None => (source_id, None),
+    }
+}
+
+/// row.extra.plan 读出（火山双套餐行标记，"coding" / "agent"）。
+fn row_plan(r: &QuotaRow) -> Option<&str> {
+    r.extra.as_ref()?.get("plan")?.as_str()
+}
+
+/// kind 匹配 + 可选 plan 过滤。plan = Some 时只认 extra.plan 相同的行
+/// （`:agent` 源只取 Agent 组数据）；None 不过滤（兼容老 snapshot /
+/// 非火山 provider 的行）。
+fn row_matches_plan(r: &QuotaRow, kind: RowKind, plan: Option<&str>) -> bool {
+    if r.kind != Some(kind) {
+        return false;
+    }
+    match plan {
+        Some(p) => row_plan(r) == Some(p),
+        None => true,
+    }
+}
+
 fn pick_tray_rows(snap: &QuotaSnapshot, source_id: &str) -> Option<(TrayCell, TrayCell)> {
+    // v0.2.9 火山双套餐：先剥 ":agent" 后缀再匹配 provider。
+    let (base_id, plan) = split_tray_source(source_id);
     // H1 fix (2026-07-03 audit): 之前精确匹配 "minimax",extra instance 的 source_id
     // 是 "minimax#2" 被过滤掉,托盘图标不显示副本数据。改为按 base id 匹配
     // (split('#')[0] == source_id)。
@@ -790,7 +825,7 @@ fn pick_tray_rows(snap: &QuotaSnapshot, source_id: &str) -> Option<(TrayCell, Tr
             p.success
                 && p.source_id
                     .as_deref()
-                    .map(|s| s.split('#').next().unwrap_or(s) == source_id)
+                    .map(|s| s.split('#').next().unwrap_or(s) == base_id)
                     .unwrap_or(false)
         })
         .collect();
@@ -809,14 +844,23 @@ fn pick_tray_rows(snap: &QuotaSnapshot, source_id: &str) -> Option<(TrayCell, Tr
         .iter()
         .copied()
         .min_by(|a, b| {
-            five_hour_util(b)
-                .partial_cmp(&five_hour_util(a))
+            five_hour_util(b, plan)
+                .partial_cmp(&five_hour_util(a, plan))
                 .unwrap_or(std::cmp::Ordering::Equal)
         })
         .unwrap_or(candidates[0]);
-    // 阶段 2：优先百分比系（有 FiveHour/Weekly row），否则余额系（取 remaining）
-    let five = best.rows.iter().find(|r| r.kind == Some(RowKind::FiveHour));
-    let weekly = best.rows.iter().find(|r| r.kind == Some(RowKind::Weekly));
+    // 阶段 2：优先百分比系（有 FiveHour/Weekly row），否则余额系（取 remaining）。
+    // plan 过滤（v0.2.9）：`:agent` 源只认 extra.plan=="agent" 的行 ——
+    // 双套餐后 Coding / Agent 各有一条 FiveHour/Weekly，不过滤永远取到
+    // 排在前的 Coding 组。PlanHeader 行 kind 不匹配，天然跳过。
+    let five = best
+        .rows
+        .iter()
+        .find(|r| row_matches_plan(r, RowKind::FiveHour, plan));
+    let weekly = best
+        .rows
+        .iter()
+        .find(|r| row_matches_plan(r, RowKind::Weekly, plan));
     if five.is_some() || weekly.is_some() {
         let top = five
             .and_then(|r| r.utilization)
@@ -969,14 +1013,15 @@ pub(crate) fn tray_fill_color<R: tauri::Runtime>(
     }
 }
 
-fn five_hour_util(p: &ProviderSnapshot) -> f64 {
+fn five_hour_util(p: &ProviderSnapshot, plan: Option<&str>) -> f64 {
     p.rows
         .iter()
         // M2 fix (2026-07-08 全量审查): 按 RowKind 枚举匹配,不再依赖
         // label 字符串。provider 端把 label bake 成 fetch 时的 locale 字符串,
         // tray 端 t!() 重新求值拿到的是当前 locale,切语言后两个字符串
         // 不一致 → util 永远 0%。改用枚举匹配彻底跟 locale 解耦。
-        .find(|r| r.kind == Some(RowKind::FiveHour))
+        // v0.2.9: 火山双套餐 plan 过滤（`:agent` 源副本比较也按 Agent 5h）。
+        .find(|r| row_matches_plan(r, RowKind::FiveHour, plan))
         .and_then(|r| r.utilization)
         .unwrap_or(0.0)
 }
@@ -1475,10 +1520,12 @@ mod tests {
     /// key 时在此挂掉。
     #[test]
     fn tray_source_label_resolves_all_builtin_keys() {
-        const BUILTIN_IDS: [&str; 10] = [
+        // v0.2.9: +1 火山 Agent 源（走 tray.menu.* key 而非 provider_name.*）
+        const BUILTIN_IDS: [&str; 11] = [
             "minimax",
             "kimi",
             "volcengine_ark",
+            "volcengine_ark:agent",
             "zhipu",
             "claude_official",
             "deepseek",
@@ -1490,12 +1537,123 @@ mod tests {
         for id in BUILTIN_IDS {
             let label = tray_source_label(id);
             assert!(
-                !label.starts_with("provider_name."),
-                "tray_source_label({id}) 回显了 i18n key（locale 缺 provider_name.{id}）: {label}"
+                !label.starts_with("provider_name.") && !label.starts_with("tray.menu."),
+                "tray_source_label({id}) 回显了 i18n key（locale 缺对应条目）: {label}"
             );
         }
         // 未知 id 走原文兜底
         assert_eq!(tray_source_label("custom_abcd1234"), "custom_abcd1234");
+    }
+
+    // ── v0.2.9 火山双套餐 tray_source 过滤 ──
+
+    /// 双套餐 snapshot fixture：Coding 组（5h=20% / 7d=10%）在前，
+    /// Agent 组（5h=90% / 7d=30%）在后，各带 PlanHeader 行。
+    fn volcengine_dual_plan_snap() -> QuotaSnapshot {
+        let coding_5h = QuotaRow {
+            label: "5h".into(),
+            utilization: Some(20.0),
+            kind: Some(RowKind::FiveHour),
+            extra: Some(serde_json::json!({ "plan": "coding" })),
+            ..Default::default()
+        };
+        let coding_7d = QuotaRow {
+            label: "7d".into(),
+            utilization: Some(10.0),
+            kind: Some(RowKind::Weekly),
+            extra: Some(serde_json::json!({ "plan": "coding" })),
+            ..Default::default()
+        };
+        let agent_5h = QuotaRow {
+            label: "5h".into(),
+            utilization: Some(90.0),
+            kind: Some(RowKind::FiveHour),
+            extra: Some(serde_json::json!({ "plan": "agent" })),
+            ..Default::default()
+        };
+        let agent_7d = QuotaRow {
+            label: "7d".into(),
+            utilization: Some(30.0),
+            kind: Some(RowKind::Weekly),
+            extra: Some(serde_json::json!({ "plan": "agent" })),
+            ..Default::default()
+        };
+        let rows = vec![
+            plan_header_like("coding"),
+            coding_5h,
+            coding_7d,
+            plan_header_like("agent"),
+            agent_5h,
+            agent_7d,
+        ];
+        QuotaSnapshot {
+            providers: vec![ProviderSnapshot {
+                success: true,
+                rows,
+                source_id: Some("volcengine_ark".to_string()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn plan_header_like(plan: &str) -> QuotaRow {
+        QuotaRow {
+            label: if plan == "coding" {
+                "Coding Plan".into()
+            } else {
+                "Agent Plan".into()
+            },
+            kind: Some(RowKind::PlanHeader),
+            extra: Some(serde_json::json!({ "plan": plan, "is_header": true })),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn pick_tray_rows_volcengine_base_prefers_coding_group() {
+        // 无后缀（老值）→ Coding 组在前自然优先（行为与 v0.2.8 一致）
+        let snap = volcengine_dual_plan_snap();
+        let (top, bot) = pick_tray_rows(&snap, "volcengine_ark").expect("rows");
+        assert!(matches!(top, TrayCell::Percent(v) if (v - 20.0).abs() < 0.01));
+        assert!(matches!(bot, TrayCell::Percent(v) if (v - 10.0).abs() < 0.01));
+    }
+
+    #[test]
+    fn pick_tray_rows_volcengine_agent_suffix_filters_agent_rows() {
+        // ":agent" → 只取 Agent 组（5h=90% / 7d=30%），不能被 Coding 组抢占
+        let snap = volcengine_dual_plan_snap();
+        let (top, bot) = pick_tray_rows(&snap, "volcengine_ark:agent").expect("rows");
+        assert!(matches!(top, TrayCell::Percent(v) if (v - 90.0).abs() < 0.01));
+        assert!(matches!(bot, TrayCell::Percent(v) if (v - 30.0).abs() < 0.01));
+    }
+
+    #[test]
+    fn pick_tray_rows_agent_suffix_without_agent_rows_falls_back_logo() {
+        // 只订阅 Coding（Agent 组不存在）时，":agent" 源无匹配行 → None
+        // → caller 走 logo fallback（跟 provider 缺数据一致）
+        let mut snap = volcengine_dual_plan_snap();
+        let p = &mut snap.providers[0];
+        p.rows.retain(|r| {
+            r.extra
+                .as_ref()
+                .and_then(|e| e.get("plan"))
+                .and_then(|v| v.as_str())
+                .map(|plan| plan == "coding")
+                .unwrap_or(true)
+        });
+        assert!(pick_tray_rows(&snap, "volcengine_ark:agent").is_none());
+        // 同一 snapshot 无后缀源仍正常取 Coding 组
+        assert!(pick_tray_rows(&snap, "volcengine_ark").is_some());
+    }
+
+    #[test]
+    fn split_tray_source_parses_suffix() {
+        assert_eq!(split_tray_source("minimax"), ("minimax", None));
+        assert_eq!(
+            split_tray_source("volcengine_ark:agent"),
+            ("volcengine_ark", Some("agent"))
+        );
     }
 
     #[test]

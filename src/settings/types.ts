@@ -78,6 +78,10 @@ export interface AppConfig {
   tavily_concise_mode?: boolean;
   /// 浮窗底部提示行（默认隐藏，用户手动开启）
   show_footer_hint?: boolean;
+  /// 浮窗 fit 高度上限的底部余量（逻辑 px，0–120，默认 80）。上限 =
+  /// screen.availHeight − 该值；Dock 自动隐藏的机器需要 80 兜住滑出带，
+  /// Dock 常驻可调小换可视行
+  floating_fit_bottom_margin?: number;
   /// Provider 在浮窗里的渲染顺序。空数组 = 用 builtin_sources() 注册表顺序
   provider_order?: string[];
   /// ZenMux 自定义 Management API endpoint URL。null/空 = 用 zenmux.rs 里的默认 URL

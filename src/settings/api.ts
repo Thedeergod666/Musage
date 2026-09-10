@@ -144,6 +144,12 @@ export async function setShowFooterHint(enabled: boolean): Promise<void> {
   await invoke("set_show_footer_hint", { enabled });
 }
 
+/// 即时调整浮窗 fit 高度上限的底部余量（0–120 逻辑 px，后端再 clamp 一次）。
+/// 落盘 + emit config-changed，浮窗用新余量立即重算高度。
+export async function setFloatingFitBottomMargin(margin: number): Promise<void> {
+  await invoke("set_floating_fit_bottom_margin", { margin });
+}
+
 /// v0.6+ 新增：即时切换托盘图标样式（logo / bars / percent）。
 /// 后端会落盘 + 立即重渲托盘（不等下次 poller）。
 export async function setTrayIconStyle(

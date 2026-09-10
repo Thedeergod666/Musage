@@ -427,6 +427,7 @@ pub fn run() {
             commands::set_low_power_mode,
             commands::set_auto_hide_in_fullscreen,
             commands::set_show_footer_hint,
+            commands::set_floating_fit_bottom_margin,
             commands::set_tray_icon_color,
             commands::set_tray_source,
             commands::set_tray_icon_style,

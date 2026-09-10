@@ -195,6 +195,14 @@ pub struct AppConfig {
     /// 开启后窗口首次打开自适应高度会多一行的高度。
     #[serde(default)]
     pub show_footer_hint: bool,
+    /// 浮窗 fit 高度上限的底部余量（逻辑 px，clamp 0–120，默认 80）。
+    /// fit 上限 = `screen.availHeight − 该余量`（见前端 main.ts `workAreaMaxH()`）。
+    /// 余量存在的根因：`availHeight` 只在 Dock **常驻**时才扣掉 Dock 区，
+    /// 自动隐藏 Dock 的机器上它包含 Dock 滑出带，余量 0 会让浮窗长进
+    /// Dock 区被盖（2026-09-10 实测回归）。Dock 常驻的机器可调小换可视行。
+    /// set_floating_fit_bottom_margin / save_config 两路都 clamp。
+    #[serde(default = "default_fit_bottom_margin")]
+    pub floating_fit_bottom_margin: u32,
     /// 用户手动指定的 provider 显示/轮询顺序（用 id 字符串）。空 Vec
     /// = 用 builtin_sources() 的注册表顺序。设置面板拖拽/上下按钮改
     /// 这个；poller 按这个顺序排，浮窗也按这个顺序渲染卡片。
@@ -398,6 +406,11 @@ const fn default_show_in_tray_on_close() -> bool {
     true
 }
 
+/// 浮窗 fit 底部余量默认 80（≈ 默认 Dock 滑出高度，见 AppConfig 字段注释）
+const fn default_fit_bottom_margin() -> u32 {
+    80
+}
+
 /// 给定 provider id 返回一份"最小合理的" ProviderConfig 兜底。
 ///
 /// C1 fix: 之前 `migrated()` 对非 minimax/deepseek/xiaomimimo 的 id 走
@@ -467,6 +480,7 @@ impl Default for AppConfig {
             auto_hide_in_fullscreen: false,
             tavily_concise_mode: true,
             show_footer_hint: false,
+            floating_fit_bottom_margin: default_fit_bottom_margin(),
             provider_order: Vec::new(),
             schema_overrides: BTreeMap::new(),
             // 4 个 source-specific 设置：None 让 source 内部用各自的默认值
@@ -1640,6 +1654,31 @@ mod tests {
         };
         let cfg = cfg.migrated();
         assert_eq!(cfg.schema_version, CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn floating_fit_bottom_margin_default_and_roundtrip() {
+        // v0.2.9 及之前的所有存量 config.json 都没有 floating_fit_bottom_margin
+        // 字段 → serde default 80，行为零变化（80 = 2026-09-10 回归修复前
+        // main.ts 硬编码值）。
+        let raw = serde_json::json!({
+            "providers": {},
+            "refresh_interval_secs": 60,
+            "autostart": false,
+        });
+        let cfg: AppConfig = serde_json::from_value(raw).expect("最小配置应可反序列化");
+        assert_eq!(cfg.floating_fit_bottom_margin, 80);
+
+        // 合法值原样读回（0–120 clamp 在 save_config / setter 两路做，
+        // 反序列化层不篡改磁盘上的合法值）
+        let raw = serde_json::json!({
+            "providers": {},
+            "refresh_interval_secs": 60,
+            "autostart": false,
+            "floating_fit_bottom_margin": 8,
+        });
+        let cfg: AppConfig = serde_json::from_value(raw).expect("带余量的配置应可反序列化");
+        assert_eq!(cfg.floating_fit_bottom_margin, 8);
     }
 
     #[test]

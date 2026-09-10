@@ -14,6 +14,7 @@ import {
   resetFloatingWindow,
   setDisplayThresholds,
   setShowFooterHint,
+  setFloatingFitBottomMargin,
 } from "./api";
 import { t } from "../i18n";
 import type { AppConfig, FloatingPinMode } from "./types";
@@ -127,6 +128,47 @@ export function renderFloatingSection(container: HTMLElement, cfg: AppConfig) {
       .catch((e) => flash(t("settings.floating.toggle_failed", { err: String(e) }), true));
   });
 
+  // ── fit 底部余量 number input（0–120 逻辑 px，默认 80）──
+  // fit 上限 = screen.availHeight − 该值。手编 config.json 塞进非法值时
+  // 回落默认 80（对齐 D8-16 对 color_thresholds 的 init 校验策略）。
+  const FIT_MARGIN_DEFAULT = 80;
+  const rawMargin = cfg.floating_fit_bottom_margin;
+  const marginInit =
+    typeof rawMargin === "number" && Number.isInteger(rawMargin) &&
+    rawMargin >= 0 && rawMargin <= 120
+      ? rawMargin
+      : FIT_MARGIN_DEFAULT;
+  if (rawMargin !== undefined && marginInit !== rawMargin) {
+    console.warn("[floating] cfg.floating_fit_bottom_margin 非法，回落默认 80", rawMargin);
+  }
+  let lastGoodMargin = marginInit;
+  const marginInput = el("input", {
+    type: "number",
+    id: "fit-bottom-margin",
+    min: "0",
+    max: "120",
+    step: "1",
+    value: String(marginInit),
+  }) as HTMLInputElement;
+  marginInput.addEventListener("change", () => {
+    const v = Number(marginInput.value);
+    // M33 式客户端即时校验：非整数 / 越界立刻 flash 拦下，不等 IPC 往返
+    if (!Number.isInteger(v) || v < 0 || v > 120) {
+      flash(t("settings.floating.fit_margin_invalid"), true);
+      marginInput.value = String(lastGoodMargin);
+      return;
+    }
+    void setFloatingFitBottomMargin(v)
+      .then(() => {
+        lastGoodMargin = v;
+        flash(t("settings.floating.fit_margin_saved"));
+      })
+      .catch((e) => {
+        flash(t("settings.floating.toggle_failed", { err: String(e) }), true);
+        marginInput.value = String(lastGoodMargin);
+      });
+  });
+
   container.appendChild(
     el("section", { class: "section-card" },
       el("h2", {}, `🪟 ${t("settings.floating.section_title")}`),
@@ -166,6 +208,12 @@ export function renderFloatingSection(container: HTMLElement, cfg: AppConfig) {
         // P0 fix: 之前 t() 不传 count，en.json 里的 '{count} providers' 占位符不被替换。
         // 改用固定描述：去掉花括号让 i18n 走字面量；中文用 1 个 provider 通用描述。
         el("div", { class: "help" }, t("settings.floating.footer_hint_help_no_placeholder")),
+      ),
+      // fit 底部余量
+      el("div", { class: "field" },
+        el("label", { for: "fit-bottom-margin" }, t("settings.floating.fit_margin_label")),
+        el("div", { class: "row" }, marginInput),
+        el("div", { class: "help" }, t("settings.floating.fit_margin_help")),
       ),
       el("div", { class: "divider" }),
       // ── 颜色档位阈值（v0.6+ 用户可调） ──

@@ -888,6 +888,9 @@ pub async fn save_config(
             return Err(t!("commands.wallet_threshold_negative", n = n).into_owned());
         }
     }
+    // 浮窗 fit 底部余量：clamp 而非拒绝（导入老/手编配置走宽容策略），
+    // 与 set_floating_fit_bottom_margin 的 clamp 同一范围。
+    cfg.floating_fit_bottom_margin = cfg.floating_fit_bottom_margin.clamp(0, 120);
     // D4-008 fix (2026-07-30 audit): save_config 之前不校验浮窗坐标,
     // 负数 / 极大值 (例如 IntMax) 会让 position_is_visible 永久 false,
     // 下次启动浮窗不在可见区,用户看到"浮窗不见了"。补上和 lib.rs:542
@@ -1655,7 +1658,8 @@ pub async fn resize_floating_window(app: AppHandle, height: f64) -> Result<(), S
         }
         // 限高 —— 必须与 tauri.conf.json 的 minHeight/maxHeight 同步，否则
         // Tauri 会把后端 set_size 拽回 conf 设的范围 → "前端给 1500 但窗口还是 800"。
-        // 真正"别超出 monitor 工作区"由前端 `screen.availHeight` 兜底。
+        // 真正"别超出 monitor 工作区"由前端 `screen.availHeight - 80` 兜底
+        // （80 = FIT_MAXH_BOTTOM_MARGIN，防 Dock 自动隐藏时 availHeight 不扣 Dock 区）。
         let height = height.clamp(100.0, 2400.0);
         let _ = w.set_size(tauri::LogicalSize::new(width, height));
     }
@@ -2640,6 +2644,28 @@ pub async fn set_show_footer_hint(
             return Ok(());
         }
         cfg.show_footer_hint = enabled;
+        cfg.save()?;
+    }
+    let _ = app.emit("musage://config-changed", ());
+    Ok(())
+}
+
+/// 即时调整浮窗 fit 高度上限的底部余量（0–120 逻辑 px，默认 80）：写 cfg +
+/// emit config-changed，浮窗收到后会用新余量立即重算 fit（涨/缩都跟上，
+/// 不等下次内容变化）。IPC 参数侧 clamp；save_config 全量路径另有同款 clamp。
+#[tauri::command]
+pub async fn set_floating_fit_bottom_margin(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    margin: u32,
+) -> Result<(), String> {
+    let clamped = margin.clamp(0, 120);
+    {
+        let mut cfg = state.config.write().await;
+        if cfg.floating_fit_bottom_margin == clamped {
+            return Ok(());
+        }
+        cfg.floating_fit_bottom_margin = clamped;
         cfg.save()?;
     }
     let _ = app.emit("musage://config-changed", ());

@@ -616,6 +616,40 @@ let pendingShrinkTimer: number | null = null;
 ///   恢复到非默认尺寸但 listener 还没触发过的场景）。
 let userLastManualH = 0;
 
+/// fit 高度上限的底部余量（逻辑 px）。**默认 80，设置面板「浮窗」可调 0–120**
+/// （`cfg.floating_fit_bottom_margin`，启动 + config-changed 时经 applyFitMargin
+/// 同步）。为什么不能是 0：
+/// - `screen.availHeight` 只在 Dock **常驻**时才扣掉 Dock 区；Dock 设了
+///   「自动隐藏」时 NSScreen.visibleFrame 不扣（availHeight ≈ 全屏高 − 菜单栏），
+///   余量 0 会让浮窗一路长到屏幕物理底边，Dock 一滑出就盖住末尾卡片
+///   （PinBottom 模式浮窗在 kCGNormalWindowLevel-1，低于 Dock 必被盖）。80 ≈ 默认 Dock 滑出高度。
+/// - set_size 保持左上角原点向下生长，窗口顶部被拖离工作区顶部多少，
+///   底部就同量越界多少 —— 余量顺带兜住小幅度下移。
+/// 历史教训：5a7a851（2026-07-28）为「榨干每像素」改成 0，潜伏到
+/// v0.2.9 火山方舟双套餐（5d0a863）内容首破 availHeight 才暴露 ——
+/// 浮窗底部怼进 Dock 滑出区被遮挡（2026-09-10 用户实测截图）。
+let fitBottomMargin = 80;
+
+/// fit 的工作区硬上限。fitOnObserverTick / commitPendingShrink 的 maxH 与
+/// applyFitResize 里各下限的 cap 共用这一个函数，保证「下限永远不越过上限」
+/// 只有一份实现。
+function workAreaMaxH(): number {
+  return Math.max(200, (window.screen?.availHeight ?? 2400) - fitBottomMargin);
+}
+
+/// 同步设置面板下发的底部余量并立即重算 fit。上限变化不改变 DOM 内容，
+/// ResizeObserver 不会自己触发 —— 主动清 lastFitContentH 强制下一拍重 fit。
+/// IPC 之外再做一次 clamp（后端 set_floating_fit_bottom_margin 已 clamp，
+/// 这里防手编 config.json 经 get_config 进来的脏值）。
+function applyFitMargin(raw: number | undefined): void {
+  const v = typeof raw === "number" && Number.isFinite(raw) ? Math.round(raw) : 80;
+  const clamped = Math.max(0, Math.min(120, v));
+  if (clamped === fitBottomMargin) return;
+  fitBottomMargin = clamped;
+  lastFitContentH = -1;
+  void fitOnObserverTick();
+}
+
 function clampWindowH(h: number): number {
   // 与 Rust resize_floating_window 的 height.clamp(100.0, 2400.0) 同步。
   // lastFitWindowH 必须存钳位后的值，否则 Rust 把 50 钳到 100 后 emit 100，
@@ -655,12 +689,13 @@ async function applyFitResize(target: number): Promise<void> {
     startupFloorApplied = true;
     if (userLastManualH === 0) target = Math.max(target, window.innerHeight);
   }
+  // 下限（启动一次性下限 / userLastManualH）不得越过工作区上限：持久化恢复
+  // 的 floating_h 或历史手拖高度可能本身就是「余量 0」时代拉出来的越界值
+  // （首发实测 floating_h=3210 物理px ≈ 旧 availHeight 上限的产物），floor
+  // 无上限会把坏几何永久锁死 —— fitOnObserverTick 里的 maxH cap 管不到这里，
+  // floor 是在本函数加回去的（2026-09-10 首发修复漏了这条，浮窗仍怼 Dock）。
+  target = Math.min(Math.max(target, userLastManualH), workAreaMaxH());
   if (Math.abs(window.innerHeight - target) <= 1) return;
-  // 尊重用户手动拖动的高度：缩窗不能比用户拖过的还矮。
-  // 拖到 130 → provider 出错 contentH=50 → target=50 → 提到 130，
-  // window.innerHeight 已是 130 → 上面 1px 早退命中 → no-op。
-  // Grow 不受此约束（Math.max 不影响更大的值）。
-  target = Math.max(target, userLastManualH);
   lastFitWindowH = clampWindowH(target);
   lastFitAt = Date.now();
   try {
@@ -700,9 +735,7 @@ async function commitPendingShrink(): Promise<void> {
   const appEl = document.getElementById("app");
   if (!appEl) return;
   const contentH = measureContentHeight(appEl);
-  const screenH = window.screen?.availHeight ?? 2400;
-  const maxH = Math.max(200, screenH);
-  const target = Math.round(Math.min(contentH, maxH));
+  const target = Math.round(Math.min(contentH, workAreaMaxH()));
   pendingShrinkTarget = -1;
   lastFitContentH = contentH;
   await applyFitResize(target);
@@ -720,9 +753,7 @@ async function fitOnObserverTick() {
     // 去重：内容跟上次落地的高度一致就跳过（observer 回声 / hover 抖动时不白跑）。
     // 防抖期 lastFitContentH 不更新（保持上次落地值），所以内容骤降时这里不会误跳过。
     if (contentH === lastFitContentH) return;
-    const screenH = window.screen?.availHeight ?? 2400;
-    const maxH = Math.max(200, screenH);  // 余量 0 -- availHeight 已扣菜单栏/Dock，榨干每像素（旧 -80 在 stepfun 加入后内容顶过屏幕被裁）
-    const target = Math.round(Math.min(contentH, maxH));
+    const target = Math.round(Math.min(contentH, workAreaMaxH()));
 
     if (target > window.innerHeight + 1) {
       // 涨 —— 立即应用，并撤销挂起的缩窗
@@ -1943,6 +1974,7 @@ async function init() {
       wallet_alert_threshold?: number | null;
       color_overrides?: Record<string, string>;
       show_footer_hint?: boolean;
+      floating_fit_bottom_margin?: number;
     }>("get_config");
     pinMode = cfg.floating_pin_mode ?? "pin_top";
     setLowPowerAttr(cfg.low_power_mode ?? false);
@@ -1955,6 +1987,7 @@ async function init() {
       showFooterHint: cfg.show_footer_hint ?? false,
     };
     applyColorOverrides();
+    applyFitMargin(cfg.floating_fit_bottom_margin);
     // M23 fix (2026-09-05 audit)：初始 render 跑在 get_config **之前**（用
     // 默认 renderPrefs），读到非默认配置后不重渲的话，tavily_concise_mode /
     // show_footer_hint / 阈值色等要等下一次 snapshot 事件才生效 —— 而
@@ -1987,6 +2020,7 @@ async function init() {
         wallet_alert_threshold?: number | null;
         color_overrides?: Record<string, string>;
         show_footer_hint?: boolean;
+        floating_fit_bottom_margin?: number;
       }>("get_config");
       renderPrefs = {
         tavilyConciseMode: cfg.tavily_concise_mode ?? true,
@@ -1997,6 +2031,7 @@ async function init() {
         showFooterHint: cfg.show_footer_hint ?? false,
       };
       applyColorOverrides();
+      applyFitMargin(cfg.floating_fit_bottom_margin);
       if (lastRenderedSnap) render(lastRenderedSnap);
     } catch (e) {
       console.error("[floating] 重新读 config 失败", e);

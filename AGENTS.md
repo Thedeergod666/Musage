@@ -130,9 +130,11 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 - `*_remaining_percent=100` 不代表"还有 100%"，可能是 `status=2/3`（不在套餐内）
 - 旧字段对 Plus 订阅者全为 0
 
-## 当前进度（v0.2.9 快照，2026-09-09）
+## 当前进度（v0.2.9 已发布 + 2026-09-28 未发布修复，2026-09-28）
 
-✅ **v0.2.4 / v0.2.5 / v0.2.6 / v0.2.7 / v0.2.8 / v0.2.9 已发布**（v0.2.4 tag 2026-07-17 / v0.2.5 tag 2026-07-29 / v0.2.6 tag 2026-08-05 / v0.2.7 tag 2026-08-06 / v0.2.8 tag 2026-08-18 / **v0.2.9 tag 2026-09-09**）。v0.2.9 = 火山方舟 Coding + Agent 双套餐支持 + 设置页版本检查 + 托盘归位悬浮窗 + 2026-09-04 全量 audit (0 C + 12 H + 37 M + 54 L = 103 条) 全量修复 + AnySearch 登录死循环根治 + 浮窗重复行根治 + Win hover-raise 卡死根治 + Win 浮窗 OS 模糊移除，详见 CHANGELOG [0.2.9] 段 + [audit-reports/2026-09-04-full/SUMMARY.md](audit-reports/2026-09-04-full/SUMMARY.md)。
+✅ **v0.2.4 ~ v0.2.9 已发布**（最新 tag **v0.2.9 / 2026-09-09**）。**v0.2.10 未发布**，main 上是 [Unreleased] 段：2026-09-28 全量审查修复 61/62 条（0 C / 9 H / 26 M / 27 L）+ 5 条新 CI 守门脚本，详见 CHANGELOG [Unreleased] 段 + [audit-reports/2026-09-28-full/SUMMARY.md](audit-reports/2026-09-28-full/SUMMARY.md)。**唯一未修是 H-5 单实例保护**（需引入新依赖，留 v0.3，详见「v0.3 待做」段）。
+
+✅ **v0.2.9 = 火山方舟 Coding + Agent 双套餐支持 + 设置页版本检查 + 托盘归位悬浮窗 + 2026-09-04 全量 audit (103 条) 全量修复**，详见 CHANGELOG [0.2.9] 段 + [audit-reports/2026-09-04-full/SUMMARY.md](audit-reports/2026-09-04-full/SUMMARY.md)。
    - **v0.2.9 feat(volcengine)** Coding + Agent 双套餐：端点迁到 OpenAPI 总网关，AFP 探针 + PlanHeader 分组行 + 双 action 并发拉取 + 失败不连坐（commit `5d0a863`，18 文件 +958 / −121，13 个新测试）
    - **v0.2.9 feat(settings)** 关于 section GitHub releases 版本检查：启动 5s 后探测 + 缓存 + 「检查更新」按钮 + 新版本 banner，仍不做应用内自动更新（commit `d59da5b`）
    - **v0.2.9 feat(tray)** 托盘菜单新增「归位悬浮窗」+ 菜单顺序调整 + 「设置...」→「打开设置…」（commit `f2105f7`）
@@ -187,12 +189,13 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 ✅ AnySearch 一键登录 WebView（v0.2.5，commit `1e0c877`）：仿 Xiaomi 但鉴权不同 —— JWT 在 localStorage 不在 cookie jar，所以 init script 用 `setInterval` 把 token 写到 `MUSAGE_TOKEN` cookie（同源），Rust 端 `cookies_for_url` + 白名单 `COOKIE_NAME` 读。**第一版用 `document.title` 中转失败**——Tauri 2 `WebviewWindow::title()` 读 OS 窗口标题不是 `document.title`，两套 API。这条经验加 [memory/anysearch-provider-integration.md](memory/anysearch-provider-integration.md)。
 ✅ import/export 配置（无 keys）
 ❌ ~~自动更新~~：**v0.2.0 已删 tauri-plugin-updater**（`TAURI_SIGNING_PRIVATE_KEY` GitHub Secret 未配 → Windows build 报 "Missing comment in secret key" 整批 release 挂，commit `586e55c`）。升级走「GitHub release 手动下载 dmg/nsis/AppImage/deb/rpm 覆盖装」，设置面板「关于」页放 releases 链接（[src/settings/about.ts](src/settings/about.ts)）。详见 [RELEASING.md](RELEASING.md)
-✅ **`cargo check` 0 错**（v0.2.8 阶段：pre-existing `inst` @extra_instances.rs:475 仍是唯一 warning；`cargo clippy` 24 pre-existing warnings / 20 duplicates / 0 errors，与 v0.2.7 同；本版 12 commit 净增测试无新增 warning）
-✅ **`cargo test --lib` 416 passed / 0 failed / 1 ignored**（v0.2.8 阶段：v0.2.7 404 + 12 audit hotfix 批次（refresh_inner 锁序重构 + extra_instances update 分叉迁移 + parse 数值边界 + commands lock + backoff unique_id 对齐 + comfyui 等新覆盖测试））
+✅ **`cargo check` 0 错**（2026-09-28 audit 修复后：`cargo clippy --lib --all-targets` 0 errors）
+✅ **`cargo test --lib` 511 passed / 0 failed**（v0.2.9 阶段 416 → 2026-09-28 全量审查修复后 **511**，净增 95 条回归测试）
 ✅ **`cargo fmt --check` 0 违规**
-✅ **`pnpm tsc --noEmit` 0 errors**（1 个 `[WARN]` = pnpm 9.x 弃用 `package.json` 的 `pnpm.onlyBuiltDependencies` 字段，非阻塞，待 v0.2.9 切到 `pnpm-workspace.yaml`）
+✅ **`pnpm tsc --noEmit` 0 errors**（1 个 `[WARN]` = pnpm 9.x 弃用 `package.json` 的 `pnpm.onlyBuiltDependencies` 字段，非阻塞，待切到 `pnpm-workspace.yaml`）
 ✅ **`pnpm vitest` 29/29 passed**
-✅ **`pnpm tauri build` 通过**（v0.2.8 待验证 CI matrix：v0.2.7 全绿模板基础上，加 C-01 zenmux SSRF + 8-13 P3 批 + 8-17 audit 修；windows-x64 仍走 MSVC + `crt-static`）
+✅ **`pnpm tauri build` 通过**（windows-x64 仍走 MSVC + `crt-static`）
+✅ **CI 守门 5 条**（2026-09-28 新增，见「守门脚本」节）
 
 ⚠️ **坑：MinGW 工具链 16-bit 导出表上限**
 - 现象：`cdylib` 链接时 `ld.exe: error: export ordinal too large: 141874`
@@ -201,18 +204,36 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 - 依据：Tauri 2 在 Windows 上只用 staticlib 就够，cdylib 是为 iOS/Android 准备的
 - **别再用 RUSTFLAGS 全局加 `-Wl,--no-export-all-symbols`**：会污染 build script exe
 
-⏳ **v0.3 待做**（v0.2.8 后剩余，已修完的项已删）：
-- ~~Claude cookie 一键重登~~ → **AnySearch 已落地**（v0.2.5，commit `1e0c877`）；Claude cookie 抓取仍待研究
+## 守门脚本（2026-09-28 新增，CI frontend job 第一批）
+
+全量审查的 7 条 Medium 根因是**「约定写了但没有 enforcement」**或**「修复未平行移植 / 修复是空操作」**。比起逐条修，这些脚本更值得保留 —— 否则同类问题下次改动里会原样复发。全部挂在 `.github/workflows/ci.yml` 的 frontend job（ubuntu/macos/windows 三平台矩阵）。
+
+| 脚本 | 挡什么 | 类型 |
+|---|---|---|
+| `scripts/check-i18n-callsite-keys.sh`（包装 `.py`） | `t!()` / `t()` 引用的 key 不在 locale 里。**已有的 `validate-i18n-keys.sh` 只查 en↔zh 对称性，挡不住「两份 locale 都没收录」**—— 2026-09-28 那 2 处缺 key 正是这样溜过去的 | fail |
+| `scripts/check-no-color-input.sh` | 禁 `<input type="color">`。WKWebView 的 NSColorPanel 全程不派发 input/change（memory `wkwebview-color-input-change-footgun` 已写死约定，但只手工修了托盘那 4 个） | fail |
+| `scripts/check-hex-color-parity.sh` | 前端正则 / 写侧 `is_valid_hex_color` / 读侧 `parse_hex_color` 三处长度口径必须一致（一度是 6 / 3\|6\|8 / 3\|4\|6\|8 三个不同集合 → 写侧比读侧严会让渲染正常的值把 `save_config` 永久拒掉） | fail |
+| `scripts/check-provider-helper-parity.sh` | 共享 helper（`validate_bearer_key` / `json_i64` / null 守卫 / `config_error`）尚未平行移植到哪些 provider | 提示型（exit 0） |
+| `scripts/README-failures-are-noops.md` | 「修复是空操作」的判别标准 —— 9-04 的 M30/M32/M33 标为已修但改的是空操作 | 文档 |
+
+⚠️ **写这些脚本时踩的两个坑**（都产生过「静默假绿」）：
+- **Rust `regex` 不支持 look-around**。想写「匹配 `auth=` 但不匹配 `auth==`」不能用 `(?!=)`，编译期直接报 `look-around, including look-ahead and look-behind, is not supported`。改用字符类：`\bauth=[^=;\s][^\s;,]*`
+- **Python 正则里 `(r#*)` 是错的** —— `r` 必选（`#*` 只是零或多），会把不带原始字符串前缀的 `t!("k")` 全部漏掉，脚本报「0 个 key 全部存在」。正确写法 `(r#+)?`。**守门脚本必须用注入已知 bug 的方式做反向验证**，否则「0 命中」和「全部通过」长得一模一样
+
+⏳ **v0.3 待做**（2026-09-28 后剩余，已修完的项已删）：
+- **单实例保护（2026-09-28 audit H-5，本轮唯一未修项）**：四条原子写路径都用**固定名** tmp + `rename`，`save_lock()` 只是进程内 `std::sync::Mutex` 对第二进程零保护。同时跑已安装版和 `pnpm tauri dev` → 双进程互相截断对方写了一半的 tmp，可能写出非法 JSON（= 全部凭据不可读），config 改动 last-writer-wins 静默吞，且**两个进程各跑 poller → 5h/周配额双倍消耗**。修法是加 `tauri-plugin-single-instance`（官方插件，v2.4.3 已在本地 cargo 缓存，不需联网）——**本轮未做是因为引入新外部依赖需维护者拍板**
+- ~~Claude cookie 一键重登~~ → **AnySearch 已落地**（v0.2.5）；Claude cookie 抓取仍待研究
 - monitor hotplug 监听（拔插副屏时实时重新判定浮窗位置）
 - 错误卡"忽略本次错误"按钮
-- Frontend 单元测试 4 核心函数（contentFingerprint / render / updateCard / autoResizeWindow）
+- Frontend 单元测试 4 核心函数（contentFingerprint / render / updateCard / autoResizeWindow）+ **认证回滚的失败路径断言**（见 [scripts/README-failures-are-noops.md](scripts/README-failures-are-noops.md)：空操作回滚在成功路径断言下会通过，必须断言失败路径）
 - ~~`http_status_to_error_kind` helper~~ → 已落地为 [`classify_http_status`](src-tauri/src/providers/mod.rs)（2026-07-02 audit L1 fix），kimi 先用；其余 provider 保留各自的具体 msg 短路，**全面推广留 v0.3**
 - `refresh_inner` 每次 `Box::new` 13 个 source 优化（按 Arc 缓存）—— v0.2.8 修过 lock 序但未做 Arc 缓存
 - Backoff 状态持久化到 disk
-- Per-provider poller task shutdown signal（App 退出时不泄漏）—— v0.2.8 `e2affc5` 给 geom persist 加了 `SHUTDOWN.notified()` 分支，**poller shutdown 仍未做**
-- ~~`delete_extra_instance` v2（重命名 keys.json + spec）~~ → **v0.2.8 commit `eb70ad4` 已做**（custom spec.id 凭据槽注入 + update id 分叉迁移；compact 重命名后身份迁移 H-03 `f15cea8` 配套补全）
+- ~~Per-provider poller task shutdown signal~~ → **已落地，AGENTS.md 此前记录过时**：`SHUTDOWN` Notify + `SHUTDOWN_REQUESTED` AtomicBool 兜底 + `abort_all()` + `join_next()` drain，quit_app 等 500ms（2026-09-28 审查复核确认）
+- ~~`delete_extra_instance` v2~~ → **v0.2.8 `eb70ad4` 已做**
 - i18n 收尾：`types.ts` 6 行 / `credentials.ts:307/387` 等 <5% 残留硬编码中文
-- 2026-08-17 audit 26 Medium + 41 Low 见 [SUMMARY.md](audit-reports/2026-08-17-full/SUMMARY.md) 主表（v0.2.9 复审）
+- 2026-09-28 审查遗留：登录成功事件 `musage://kimi-login-success` payload 不带 instance id（副本行徽章刷不到）；`floating.ts` 的 `applyAllInner` 阈值非法时早退导致刚点的色板静默丢失
+- 2026-08-17 audit 26 Medium + 41 Low 见 [SUMMARY.md](audit-reports/2026-08-17-full/SUMMARY.md) 主表
 
 ## 构建与打包（2026-06-13 实测）
 
@@ -405,6 +426,19 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 │           ├── mod.rs
 │           ├── macos.rs      ← PinBottom 走 NSWindow.setLevel(-1) + hover emitter
 │           └── windows.rs    ← hover emitter（dwell hysteresis + 两级命中）+ Per-Monitor V2 DPI
+├── scripts/                 ← CI 守门脚本（见「守门脚本」节）
+│   ├── check-no-native-dialogs.sh   ← 禁 confirm/prompt/alert（macOS WKWebView 静默失效）
+│   ├── check-no-color-input.sh      ← 禁 <input type=color>（WKWebView 死控件）
+│   ├── check-hex-color-parity.sh    ← hex 长度三侧口径一致性
+│   ├── check-provider-helper-parity.sh ← 共享 helper 接入清单（提示型）
+│   ├── check-i18n-callsite-keys.{sh,py} ← t!() key 存在性（补 validate-i18n-keys.sh 的盲区）
+│   ├── validate-i18n-keys.sh        ← 已有：只查 en↔zh 对称性
+│   └── README-failures-are-noops.md ← 「修复是空操作」判别标准
+├── audit-reports/            ← 全量代码审查报告存档
+│   ├── SUMMARY.md            ← 2026-07-30 汇总
+│   ├── 2026-08-17-full/       ← 1C + 6H + 26M + 41L
+│   ├── 2026-09-04-full/       ← 0C + 12H + 37M + 54L（103 条，已全修）
+│   └── 2026-09-28-full/       ← 0C + 9H + 26M + 27L（62 条，已修 61）
 └── docs/
     ├── codeplan/             ← 历史 plan / review notes
     │   └── 2026-06-15-extend-providers.md
@@ -431,6 +465,10 @@ xcrun notarytool store-credentials Thedeergod666-Notary \
 10. **tray 逻辑合并在 tray.rs**：原 icon.rs 已删除，所有托盘 + 图标生成代码都集中在 `tray.rs`
 11. **macOS 置底走私有 API（platform/macos.rs）**：仅 `set_always_on_top(false)` 在 macOS 上不够 —— 窗口会变成 `kCGNormalWindowLevel = 0`，前台调度会把它埋掉。`platform::macos` 用 `objc2` 直接调 `NSWindow.setLevel()`，PinBottom 时设到 `kCGNormalWindowLevel - 1`（即 -1），低于所有普通 app 窗口但高于桌面。同时启一个 background thread 轮询 `NSEvent.mouseLocation()` + 窗口 `frame` 做点-in-rect，因为窗口在 level -1 时被其它 app 盖住，JS `mouseenter` 触发不到。详见 [musage-ui-design](memory/musage-ui-design.md)。非 macOS 平台 stub 走 Tauri 原生 `set_always_on_top`。
 12. **前端禁用 native `confirm()`/`prompt()`/`alert()`（2026-07-27）**：macOS WKWebView（tauri 2.x / wry 0.55）的 UIDelegate 没实现 JS dialog panel 方法 —— `confirm()` 不弹窗同步返回 false、`prompt()` 返回 null、`alert()` no-op，用它们做守卫会**静默拦截**后续逻辑（"× 删除按钮没反应"bug 的根因；Windows WebView2 原生支持所以 Win 端看不出来）。确认/输入一律走 [src/settings/modal.ts](src/settings/modal.ts) 的 `confirmInApp()` / `showModal()` in-app `<dialog>`。CI 有守门脚本 [scripts/check-no-native-dialogs.sh](scripts/check-no-native-dialogs.sh)（ci.yml frontend job 第一步）。
+
+13. **失败回滚必须取自「事件派发前」的时间锚点（2026-09-28）**：在 `change` 回调**内部**读 `select.value` 当"旧值"是错的 —— `change` 在值已被改掉之后才派发，`previous === v`，`.catch` 里的回滚是**空操作**。正确写法是闭包 `let lastGoodX`（初始化为已持久化的值，IPC 成功后更新，失败时回填它），见 `settings/app.ts` 的 `currentStyle` / `floating.ts` 的 `lastGoodMargin` / `order.ts` 在 `mousedown` 抓 `wasEnabled`。同源的两个坑：① 回滚到「下拉里没有的 option」会把 `selectedIndex` 置 -1 变空白；② 校验早退前不回填盘上真值，输入框会留一个从未生效的值。**这类逻辑纯断言式单测抓不到**（成功路径下空操作同样通过），必须断言失败路径。详见 [scripts/README-failures-are-noops.md](scripts/README-failures-are-noops.md)。
+
+14. **「修了」不等于「修得做功」，「改了 A」不等于「B 也改了」（2026-09-28）**：本轮审查从 8-04 / 9-04 两轮「已修复」条目里挖出两类系统性问题 —— **修复是空操作**（M30/M32/M33，代码改了但不产生效果，比未修更危险：报告绿、CI 绿、逻辑看着对、功能坏着）与**修复未平行移植**（改了 `anysearch.rs` 忘了 `xiaomi.rs` / `siliconflow.rs`；改了 `custom.rs` 忘了 `zenmux.rs`；守卫加在 `build_window_row` 忘了同文件的 `parse_total_quota`）。**改这类共享逻辑时必须 grep 同款调用点**，并配 [scripts/check-provider-helper-parity.sh](scripts/check-provider-helper-parity.sh) 这类清单收敛。
 
 **PR 3（2026-06-16，CustomSource + 设置面板重构）新增决策**：
 - **QuotaSource trait** `id()` / `display_name()` 从 `&'static str` 改 `Cow<'_, str>`：内置 source 返 `Cow::Borrowed`（零分配），CustomSource 返 `Cow::Owned`

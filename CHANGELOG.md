@@ -5,6 +5,65 @@ All notable changes to Musage will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+**TL;DR**: 基于 2026-09-28 全量代码审查报告（[audit-reports/2026-09-28-full/SUMMARY.md](audit-reports/2026-09-28-full/SUMMARY.md)，8 域并行）修复 **0 C / 9 H / 26 M / 27 L = 62 条**独立问题中的 **61 条**。本版无新功能，全是修复 + 守门。距 v0.2.9 共 2 commit，测试 **+95**（`cargo test --lib` 416 → **511**）。
+
+> **未修 1 条（有意）**：H-5「无单实例保护」需引入新依赖 `tauri-plugin-single-instance`，维护者决定留 v0.3。在那之前**不要同时跑已安装版和 `pnpm tauri dev`** —— 双进程会互相截断对方写了一半的 `keys.json.tmp`，可能写出非法 JSON（= 全部凭据不可读），且两个进程各跑 poller 会**双倍消耗 5h / 周配额**。
+
+### Fixed (High, 8 条)
+
+- **小米「清除 Cookie → 重新登录」死循环根治**（`xiaomi_login.rs`）：四个登录模块里只有 xiaomi 的提取没有新鲜度门，而登录 webview 走的是**持久化** WKWebView 数据 store（cookie jar 跨重启存活），「清除」按钮只删 keys.json、从不碰 jar → 清完再登录，旧 cookie 被原样提取回来并提示「登录成功」，浮窗依旧 401，且全工程没有任何逃生路径。修法两段：① 补新鲜度门（抓到的 cookie 与已存**逐 pair** 比对，相同则拒收）；② 新增 `clear_xiaomi_session` / `clear_stepfun_session` 命令，**按域名逐个删**底层 cookie。**刻意不用 `clear_all_browsing_data()`** —— 实读 wry 0.55.1 源码确认它是**进程级全清**，会连带抹掉 Kimi / StepFun / AnySearch 的登录会话。
+- **登录 / 清除 / 刷新全程串上 instance id**（`commands/mod.rs` + 4 个 `*_login.rs` + `src/main.ts` + `credentials.ts`）：9-07 的 D7-02 只改了**写入侧**。浮窗「🔑 重新登录」按钮根本不传是哪张卡的 id，清除按钮和状态徽章也仍读 base 槽 → base 禁用 + 副本启用时，token 写进副本槽但副本卡依旧红，点 base 行「清除」只删 base 槽 → **副本凭据成为 UI 上永远删不掉的孤儿**。`resolve_login_refresh_target` 加显式 `explicit` 参数；火山套餐筛选 setter 同步改为遍历全部匹配 `base_id_of()` 的实例（原写法在 base 禁用 + 副本启用时**两个 setter 完全空转**）。
+- **`read_keys()` 漏剥 UTF-8 BOM 补上**（`config.rs`）：9-07 的 C1 修复给 `config.json` / `extra_instances.json` 都接了 `strip_bom_owned`，唯独漏了 keys —— 而该 helper 的文档明写「keys.json 同根问题，所有产线读路径必须经过本 helper」。后果不止是凭据读不到：`save_credential_for_id` 同样走 `read_keys()?`，**用户在设置面板重新填 key 也会直接失败**，只能手改磁盘文件。
+- **`delete_extra_instance` 的 compact 重命名是无效修复**（`commands/extra_instances.rs`）：8-17 的 H-03 修法只改 `source_id`，但 `snapshot_key()` 明确**优先取 `unique_id`**（前端 `snapKey()` 和 `apply_provider_order` 同样三级优先）→ 身份键压根没变，幽灵卡原地保留，同函数的 cfg.providers 迁移还帮倒忙（`remove` 后走 base fallback 返回 true，enabled 过滤清不掉）。实测场景：minimax base + #2 + #3，删 #2 后浮窗同时出现「#3」陈旧卡和「#2」真实卡，且挂到重启。
+- **「添加自定义来源」accent 色板选不中**（`extra-instance-form.ts`）：色板是 `<button>`，浏览器对 button **只派发 `click`、永不派发 `change`**，而选色逻辑挂在 `change` 委托里 → 每个 custom 中转站都以 `accent: null` 落盘，浮窗永远用灰首字母头像。对照 `app.ts` 同款色板用 `click`，托盘颜色因此是好的。
+- **浮窗「4 档自定义色」在 macOS 全哑**（`floating.ts`）：仍是 `<input type="color">` + 只绑 `change`，WKWebView 的 NSColorPanel 能开能取色但**全程不派发 input/change** → `color_overrides` 永不落盘。`6931dfb` 已把托盘那 4 个换成纯 DOM 色板，这 4 个漏换。换成本轮统一的色板 + hex 文本框方案。
+- **拖拽排序在窗口外松手 → 幽灵卡**（`order.ts`）：只挂了 `mousemove`/`mouseup`，无 `blur`/`pointercancel` 兜底，窗口外松手时两个平台都不派发 `mouseup` → 收尾永不执行，ghost 常驻 + 源行永久 `display:none`，**且每次 aborted 拖拽泄漏一份**。顺带补上 `resetDragState` 自身漏还原 `display:none` 的缺口（即便 cancel 走到，列表仍会永久多一条空白行）。
+
+### Fixed (Medium, 26 条，按域概述)
+
+- **providers**：`volcengine` 把 `"Error": null` 的**成功**响应当业务错误 + `UsageList: []` 短路 `QuotaUsage` fallback；`stepfun` 二次 refresh 烧掉刚被服务端 rotate 掉的 refresh 半段（配 `illegal` 子串无边界匹配把普通业务错误归 AuthFailed）＋ refresh 写回与登录写盘无共享锁；`kimi` 总套餐 hybrid enrich 拿本机桌面端**全局账号**导致副本跨账号串行 + `parse_total_quota` 漏 H-Provider 双字段守卫导致未来假 100%；`openrouter` `parse_key` 缺 body-`error` 检查使 key 失效报成 Parse 错（前端不亮「重新登录」按钮）；`zenmux` `parse_subscription_window` 强制要求 `usage_percentage`，与它自己 L-3 fix 声称的「抗 schema 漂移」自相矛盾。
+- **托盘**：tooltip 余额系硬编码白名单只列 3 个，**漏掉 siliconflow / tokendance / 全部 custom**（图标显示余额、tooltip 一个数字都没有）→ 改成与 `pick_tray_rows` 共用的数据驱动判定；火山双套餐 tooltip 把两组一模一样的 5h/7d 并列且不带套餐名 → PlanHeader 行作分组锚点；`format_balance_tray` `<1000` 取整让 ¥0.40 显示成「¥0」而 tooltip 显示「0.40」，且负数连符号一起丢；`parse_hex_color` 采纳 8 位 hex 的 alpha 无下限 → `#ffffff00` 让托盘图标**全透明 = 用户以为 app 没启动**。
+- **持久化**：`best_effort_from_value` 把**未来版** `schema_version` 搬进内存导致该会话永久只读；三条原子写路径只 fsync 了 tmp 没 fsync **父目录**（POSIX 上 `rename()` 只有父目录 fsync 后才持久）；`next_index_for` 的 `max()+1` 未 saturating；`extra_instances.json` 损坏时 `lib.rs` 的 `unwrap_or_default()` 静默清空全部副本且后续任意写操作覆盖损坏文件。
+- **IPC**：`save_config` 是入参**全量替换**，前端 `saveChain` 只串行化「写」不串行化「读」→ 用户改轮询间隔的同一瞬间拖浮窗，刚拖好的位置被旧快照覆盖并落盘；`schema_overrides` 的「超限拒绝」是死代码（先无条件 `clear()`，后面的 `return Err` 恒 false）→ 导入 >256 条时**静默清空并报保存成功**；`set_provider_enabled` 禁用分支 emit 未做 `is_enabled_unique` 过滤 → 副本卡残留在浮窗；`set_tray_source` 的 `:agent` 白名单只校验后缀不校验 (base, suffix) 配对 → `"minimax:agent"` 能落盘并让托盘永久退化成纯 logo。
+- **logstore**：遮蔽正则 `auth==` 是 typo（两个等号）→ **永远命中不了** `auth=<token>`，而 custom 中转站的 key 没有厂商前缀（`sk-`/`tvly-`/`tp-`/`tk-`/`eyJ` 全不覆盖），`auth=` 是唯一通用兜底。
+- **平台**：macOS `is_floating_topmost_at` 把「主线程派发失败/超时」当成「鼠标确定不在浮窗上」→ 主线程卡顿时误关 hover + 误降级置底（Windows 端同类失败走 `continue`，两平台语义相反）。
+- **前端**：9-04 报告的 M30 / M32 / M33 **标为已修但改的是空操作**——`const previous = select.value` 写在 `change` 回调**内部**（此时控件值已被用户改掉，`previous === v`），回滚赋回它本来就有的值。统一改成 `lastGoodX` 闭包模式（`app.ts` 的既有正确写法），共 10 处控件。
+
+### Fixed (Low, 27 条)
+
+`health_label` 不认 `transient`（用户刚在设置里勾选 provider 的 2–5s 内托盘 tooltip 闪一个 `🔴 X: ` 空文案）＋ 钱包阈值把 Kimi 窗口余量 / AnySearch 调用余量当货币余额比；`is_valid_hex_color` 拒 4 位 `#RGBA` 而读侧接受 → 脏值让设置面板**任何一次 `save_config` 永久失败**；`set_app_locale` 落盘失败时内存 locale 已改而 runtime 未改；`build_floating_window` 的 `.visible(true)` 与「恢复位置必须在 show() 之前」的注释自相矛盾 → 每次冷启动首帧闪在 tao 默认位置；`draw_percent` 两行各调一次 `fit_scale` 导致 5h 行 100% 与周行 5% 字号差近一倍；以及 xiaomi 业务码读 `message` 但真实字段是 `msg`、`kimi` remaining 只钳下界、zhipu `unit` 只吃整数等一批解析边界。
+
+### 守门（本轮主要产出之一）
+
+7 条 Medium 的根因是「约定写了但没有 enforcement」或「修复未平行移植 / 修复是空操作」。**比起逐条修，这 5 条脚本更值得保留** —— 否则同类问题下次改动里会原样复发：
+
+| 脚本 | 挡什么 | 类型 |
+|---|---|---|
+| `check-i18n-callsite-keys.sh` | `t!()` / `t()` 引用的 key 不在 locale 里。已有的 `validate-i18n-keys.sh` **只查 en↔zh 对称性**，挡不住「两份 locale 都没收录」——这正是本轮 2 处缺 key 溜过去的原因 | fail |
+| `check-no-color-input.sh` | 禁 `<input type="color">`（WKWebView 死控件）。memory 里已写死这条约定，但只手工修了托盘那 4 个 | fail |
+| `check-hex-color-parity.sh` | 前端正则 / 写侧 `is_valid_hex_color` / 读侧 `parse_hex_color` 三处长度口径必须一致（本轮一度是 6 / 3\|6\|8 / 3\|4\|6\|8 三个不同集合） | fail |
+| `check-provider-helper-parity.sh` | 共享 helper（`validate_bearer_key` / `json_i64` / null 守卫 / `config_error`）尚未平行移植到哪些 provider —— 审查里 4 条 Medium 的共同形态 | 提示型 |
+| `README-failures-are-noops.md` | 「修复是空操作」的判别标准：回滚的旧值必须取自**事件派发前**的时间锚点 | 文档 |
+
+### Changed
+
+- **`json_i64` 提到 `providers/parse.rs` 共享**（原在 `anysearch.rs` 私有）：xiaomi 两处 + siliconflow 一处改用它，字符串业务码不再绕过整个拦截分支（否则 401 降级成 Parse 错 → 前端不亮「重新登录」按钮）。
+- **`saveConfigSerialized` 改 mutator 形式**：把 `getConfig()` 挪进保存队列，堵掉「两个面板读到同一份旧快照，后写者回滚先写者」的窗口；导入路径语义不同，另留 `saveConfigSerializedReplace`。
+- **i18n 补 1 个 key**（`login.anysearch.timeout`）+ openrouter 复用 `error.common.business_code`（原引用的 `error.common.api_error` 从未收录，rust-i18n 会返回 `zh-CN.error.common.api_error` 字面量且不做参数替换，9-07 那次「让用户看到真实报错」的修复实际效果是让用户看到一串 key 名）。
+
+### 验证
+
+`cargo check` 0 error · `cargo test --lib` **511 passed / 0 failed**（基线 416）· `cargo fmt --check` 0 违规 · `cargo clippy` 0 error · `pnpm tsc --noEmit` 0 errors · `pnpm vitest` 29/29 · 5 条守门脚本 exit 0。
+
+### 已知遗留（本轮范围外）
+
+- **H-5 无单实例保护**（见本段开头）
+- 登录成功事件 `musage://kimi-login-success` 的 payload 只有 `saved_len`、不带 instance id → 副本行登录成功后徽章刷不到
+- `settings/floating.ts` 的 `applyAllInner` 在阈值填非法值时早退，用户刚点的色板不会保存且无提示
+- 认证回滚逻辑零自动化覆盖（`order.test.ts` 只测纯函数）—— 这类逻辑**必须断言失败路径**，纯断言式单测抓不到空操作回滚
+
 ## [0.2.9] - 2026-09-09
 
 **TL;DR**: 基于 2026-09-04 全量代码审查报告（[audit-reports/2026-09-04-full/SUMMARY.md](audit-reports/2026-09-04-full/SUMMARY.md)）完成 12 H + 37 M + 54 L = 103 条发现全量落地；新增火山方舟 Coding + Agent 双套餐支持、设置页版本检查、托盘归位悬浮窗。本版距 v0.2.8 共 37 commit，测试 +32（`cargo test --lib` 416 → 448）。

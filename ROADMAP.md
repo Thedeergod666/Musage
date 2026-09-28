@@ -1,6 +1,8 @@
 # Musage 当前路线图
 
-> Status: **v0.2.7 (2026-08-06) 已发布** — 13 内置（+ volcengine_ark）+ CustomSource + 多实例 + 完整 i18n + 全平台发板（macOS dmg / Windows nsis / Linux AppImage+deb+rpm）。**v0.2.7 关键增量**：托盘数据源多 provider 可切换（含余额系 DeepSeek/OpenRouter/SiliconFlow/ZenMux）+ 颜色自定义 + 右键快捷切换（方案 A）+ 2026-08-06 cross-verify hotfix（SSRF redirect / volcengine body leak / picker auth_kind / backoff key / redact）。详见 [CHANGELOG.md](CHANGELOG.md) [0.2.7] 段。
+> Status: **v0.2.9 (2026-09-09) 已发布**，main 上有未发布的 [Unreleased] 段。
+> **v0.2.9 = 火山方舟 Coding + Agent 双套餐 + 设置页版本检查 + 托盘归位悬浮窗 + 9-04 全量审查 103 条全修**。详见 [CHANGELOG.md](CHANGELOG.md) [0.2.9] 段。
+> **[Unreleased] = 2026-09-28 全量审查 62 条修 61 条（0C/9H/26M/27L）+ 5 条 CI 守门**，无新功能。唯一未修是 H-5 单实例保护（需引入新依赖，留 v0.3）。详见 [audit-reports/2026-09-28-full/SUMMARY.md](audit-reports/2026-09-28-full/SUMMARY.md)。
 > 详尽历史见 git log + [CHANGELOG.md](CHANGELOG.md)。
 
 ## Recent (已完成,留作历史)
@@ -16,6 +18,8 @@
 | **PR 1b Extra Instance** | 内置 provider 副本 + 统一 `extra_instances.json` 持久化 + 复制按钮预选 (commits `c6ce2be`/`1985250`) | 0.5 天 | ✅ Done |
 | **v0.2.0 follow-up batch** | 35 个 commit: 错误恢复完整版 / 浮窗跨屏感知 / 系统通知 / import-export / 批量粘贴 / tray tooltip #N / `unique_id` 全链路 / 13 隐患修 (commits `00565a1`–`28e4b4e`) | 5 天 | ✅ Done |
 | **v0.2.1 ~ v0.2.4** | 全量审查修复 (3C+23H+19M) / Linux + MSI 发板 / frontend i18n hotfix ×2 / macOS 26 tray icon / Kimi 动态窗口标签 / 双击开设置 / 5h 100% 行修复 (commits `4cb80d8`~`e68125e`) | 2026-06-29 ~ 07-17 | ✅ Done |
+| **v0.2.5 ~ v0.2.9** | StepFun 集成 / AnySearch / Win hover-raise 重写 / 托盘多 provider 切换 / 8-17 + 9-04 两轮全量审查修复 (103 条) / 火山方舟双套餐 / 托盘 Agent Plan / 浮窗底部余量 | 2026-07-17 ~ 09-09 | ✅ Done |
+| **[Unreleased]** | 2026-09-28 全量审查修复 61/62 条 (0C/9H/26M/27L) + 5 条 CI 守门脚本 (commits `d4ab961`/`e9181c6`)，测试 416→511 | 2026-09-28 | 🔄 待发 v0.2.10 |
 
 详细 plan / 关键发现见 [docs/codeplan/2026-06-15-extend-providers.md](docs/codeplan/2026-06-15-extend-providers.md)。
 

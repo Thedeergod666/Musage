@@ -132,12 +132,22 @@ function buildForm(providers: PickerProvider[], initialProviderId: string): HTML
     // 变量名别叫 t：会遮蔽模块级 import 的 i18n t() 函数。
     const target = e.target as HTMLInputElement;
     if (target.name === "cs-preset") renderCustomPresetFields(target.value);
-    if (target.classList.contains("accent-swatch")) {
-      dynamicFields
-        .querySelectorAll<HTMLElement>(".accent-swatch")
-        .forEach((s) => s.classList.remove("selected"));
-      target.classList.add("selected");
-    }
+  });
+
+  // H-Frontend-1 fix (2026-09-28 audit)：accent 色板原来是**挂在这段
+  // change 委托里**的，但色板按钮是 `<button type="button">` —— 浏览器对
+  // button 只派发 `click`，**永不派发 `change`**。结果 `.selected` 类永远
+  // 加不上，每个 custom 中转站都以 `accent: null` 落盘，浮窗永远退回
+  // `#888` 灰的首字母头像。对照组 app.ts 同款色板用的是 `click`（托盘颜色
+  // 因此一直是好的）—— 这是笔误不是设计。故把 accent 分支挪到独立 click
+  // 委托，照抄 app.ts 写法。
+  dynamicFields.addEventListener("click", (e) => {
+    const target = e.target as HTMLElement;
+    if (!target.classList.contains("accent-swatch")) return;
+    dynamicFields
+      .querySelectorAll<HTMLElement>(".accent-swatch")
+      .forEach((s) => s.classList.remove("selected"));
+    target.classList.add("selected");
   });
 
   // 初始渲染（用 initialProviderId）

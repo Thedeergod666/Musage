@@ -35,23 +35,39 @@ use crate::t;
 // ═══════════════════════════════════════════════════════════════════
 //
 // 之前：所有调用方（poller / refresh_single / set_tray_icon_style）直接
-// `app.tray_by_id("main-tray")` → 拿 owned `TrayIcon`（Tauri 内部走
-// `Arc::unwrap_or_clone` 拿唯一所有权）→ set_icon / set_tooltip → 函数
-// 返回时 tray 走 `Drop for TrayIcon` → `TrayIcon::remove` → 调
-// `NSStatusBar::removeStatusItem` → **BSServiceMainRunLoopQueue::assertBarrierOnQueue
-// 触发 SIGTRAP 闪退**。
+// `app.tray_by_id("main-tray")` → 拿 owned `TrayIcon` → set_icon /
+// set_tooltip → 函数返回时 tray 出 scope drop → **闪退**。
 //
-// 根因：`app.tray_by_id` 返回的 tray 是**唯一所有者**（Tauri 资源表里
-// 只放了一个 Arc handle），函数出 scope 自动 drop，而调用方是 tokio
-// worker 线程（poller 走 `tauri::async_runtime::spawn`），不在 main
-// runloop —— AppKit NSStatusBar 操作跨线程必炸。
+// ⚠️ **2026-09-28 audit 修正：本节描述的机制前提已变，不要再照着它做决策。**
 //
-// 修法：所有 tray 写操作通过一个进程内 mpsc channel 派发到 main thread：
-// - 调用方（任何线程）`try_send` 一条 TrayRequest，立即返回，不阻塞
+// 原注释声称 tauri 有 `impl Drop for TrayIcon`，drop 时走
+// `TrayIcon::remove` → `NSStatusBar::removeStatusItem` →
+// `BSServiceMainRunLoopQueue::assertBarrierOnQueue` SIGTRAP。
+// 核对 tauri 2.11.2 / 2.11.5 源码（`src/manager/tray.rs::tray_by_id` +
+// `src/tray/mod.rs`）后确认：
+// - **tauri 2.x 没有 `impl Drop for TrayIcon`** —— 整个 tray 模块 0 处
+//   `Drop` 实现。移除 status item 只发生在显式
+//   `remove_tray_by_id`（内部 `icon.close()`）。
+// - `tray_by_id` 走的是 `resources_table().get::<TrayIcon>(rid)`（**get，
+//   不是 take**）+ `Arc::unwrap_or_clone` —— 资源表里那份 Arc **仍然在**，
+//   我们拿到的只是它的克隆，drop 克隆不会 close、不会
+//   `removeStatusItem`。
+//
+// 也就是说：**当前这条"全部 tray 写操作派发到 main thread"的链路是
+// 无害纵深，不是 correctness 前提**。仍保留（主线程操作 tray 是社区惯例、
+// 未来若 tauri 改回 remove-on-drop 也不会炸），但下面这些说法不要再
+// 当成"不改就会崩"的证据：
+// - ❌「`tray_by_id` 返唯一所有权 / 出 scope 必走 Drop → removeStatusItem」
+// - ❌「必须 main thread 否则 SIGTRAP」（本次修改里没有任何一处依赖它）
+//
+// 通道本身（`try_send` 不阻塞 poller + 每条一次 dispatch）仍然成立，
+// 那是**性能**上的理由，不是安全性的理由。
+//
+// 派发链路：
+// - 调用方（任何线程）`send` 一条 TrayRequest，立即返回，不阻塞
 // - 一个 long-lived tokio task 跑 receiver 循环，每收一条消息就
 //   `app.run_on_main_thread(closure)` 派到 main thread
-// - main thread closure 里拿 `tray_by_id` → set_icon → set_tooltip →
-//   **正常 drop**（在 main thread 上 → 不会 SIGTRAP）
+// - main thread closure 里拿 `tray_by_id` → set_icon → set_tooltip
 //
 // 注意：`run_on_main_thread` 是 `FnOnce`，所以不能在 closure 里 loop。
 // 每条消息 → 一次 dispatch（poller 1Hz × N provider → N 次/秒，完全可接受）。
@@ -68,7 +84,16 @@ enum TrayRequest {
         color: Rgba<u8>,
     },
     /// 重建菜单（locale 切换时，menu label 走 t!() 重新拿当前 locale）
-    RebuildMenu,
+    ///
+    /// M-tray-7 fix (2026-09-28 audit)：`tray_source` 由**调用方线程**
+    /// 读好一起带过来 —— 之前是 main thread closure 内部
+    /// `config.blocking_read()`。`RebuildMenu` 跑在主线程上，park 住它之后：
+    /// 某 tokio worker 正持 config 读锁调 `tray_fill_color` →
+    /// `menu_bar_is_light` 要往主线程派发闭包等 condvar → 闭包排在被 park
+    /// 的主线程后面 → 200ms 超时 → 保守返 false → 图标按"深色菜单栏 =
+    /// 白字"渲染。locale 切换的时序恰好是"先 rebuild_tray 再
+    /// tray_fill_color"（lib.rs locale 监听器），命中概率不低。
+    RebuildMenu { tray_source: String },
 }
 
 /// 进程内 tray request sender —— `update_tray_from_snapshot` / `rebuild_tray`
@@ -220,7 +245,16 @@ const ICON_SIZE: u32 = 32;
 
 pub fn setup(app: &AppHandle) -> tauri::Result<()> {
     // 构造初始菜单（tray builder 一次吃完）。
-    let menu = build_tray_menu(app)?;
+    // 启动期单线程、无竞争，这里同步 blocking_read 是安全的（AppState 已在
+    // lib.rs setup 里 manage 过，早于 tray::setup）。
+    let initial_source = app
+        .state::<crate::AppState>()
+        .config
+        .blocking_read()
+        .tray_source
+        .clone()
+        .unwrap_or_else(|| "minimax".to_string());
+    let menu = build_tray_menu(app, &initial_source)?;
 
     let _tray = TrayIconBuilder::with_id("main-tray")
         .tooltip(&t!("tray.tooltip.loading"))
@@ -466,7 +500,13 @@ fn tray_source_label(id: &str) -> String {
     t!(key).to_string()
 }
 
-fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+/// **M-tray-7 fix (2026-09-28 audit)**：签名加了 `current_source: &str` ——
+/// 之前函数内部 `app.state::<AppState>().config.blocking_read()`，而本函数
+/// 是**主线程**上跑的（`handle_tray_request` 的 RebuildMenu 分支），
+/// 于是主线程会 park 在配置锁上 → 任何要往主线程派发闭包的路径
+/// （`tray_fill_color` → `menu_bar_is_light` 的 200ms condvar 等）都被
+/// 排在后面超时。改成由调用方在自己那条线程上把值读好传进来。
+fn build_tray_menu(app: &AppHandle, current_source: &str) -> tauri::Result<Menu<tauri::Wry>> {
     let toggle_i = MenuItem::with_id(app, "toggle", &t!("tray.menu.toggle"), true, None::<&str>)?;
     let settings_i = MenuItem::with_id(
         app,
@@ -486,13 +526,7 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     )?;
     // 托盘数据源子菜单（方案 A 快捷切换）：当前选中的打 ✓。
     // provider 名复用 settings.app.tray_source.options.* 的 i18n，避免重复定义。
-    let current_source = app
-        .state::<crate::AppState>()
-        .config
-        .blocking_read()
-        .tray_source
-        .clone()
-        .unwrap_or_else(|| "minimax".to_string());
+    // `current_source` 由调用方传入（见上方签名注释：主线程不碰配置锁）。
     let source_opts = [
         "minimax",
         "kimi",
@@ -561,10 +595,9 @@ fn build_tray_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 ///   v2 优化需要时再在 receiver 内部加 "keep last" 模式。
 /// - **tokio task 跑 receiver**（不是 std::thread）：tray 模块已经重度依赖
 ///   tokio，复用 `tauri::async_runtime::spawn` 简单且不出新线程。
-/// - **main thread closure 拿 owned tray + set_icon/set_menu + 自然 drop**：
-///   这就是修复的核心 —— drop 在 main thread 跑，AppKit NSStatusBar 操作
-///   不会 SIGTRAP。`tray_by_id` 内部走 `Arc::unwrap_or_clone` 拿唯一所有权，
-///   出 scope 必走 Drop → remove → removeStatusItem。必须 main thread。
+/// - **main thread closure 里 set_icon / set_tooltip / set_menu**：主线程操作
+///   系统 tray 是社区惯例，保留。（注：**不是**因为 drop 会炸 —— tauri 2.x
+///   没有 `impl Drop for TrayIcon`，详见文件头 2026-09-28 audit 修正段。）
 fn start_tray_request_receiver(app: &AppHandle) {
     let (tx, mut rx) = mpsc::unbounded_channel::<TrayRequest>();
 
@@ -613,8 +646,9 @@ fn start_tray_request_receiver(app: &AppHandle) {
 
 /// main thread 上执行单条 tray request（tray request receiver 用）。
 ///
-/// 关键：在这里 `app.tray_by_id` 拿 owned tray + 操作 + 让 tray 出 scope drop，
-/// drop 是在 main thread 跑（`assertBarrierOnQueue` 通过），不会闪退。
+/// 关键：`app.tray_by_id` 拿到的 tray 在这里操作，出 scope drop
+/// （tauri 2.x 无 `Drop for TrayIcon`，drop 只是丢一个 Arc 克隆 —— 见文件头
+/// 2026-09-28 audit 修正段；但主线程操作 tray 仍是惯例，保留之）。
 fn handle_tray_request(app: &AppHandle, req: TrayRequest) {
     match req {
         TrayRequest::Update {
@@ -624,23 +658,29 @@ fn handle_tray_request(app: &AppHandle, req: TrayRequest) {
             color,
         } => {
             let Some(tray) = app.tray_by_id("main-tray") else {
-                tracing::warn!("tray 还没建好（tray_by_id 返 None）");
+                tracing::warn!("tray 还没建好（tray_by_id 返 None），本条 icon+tooltip 更新丢弃");
                 return;
             };
+            // M-tray-9 fix (2026-09-28 audit)：set_icon 失败**不再**
+            // early return。之前一次瞬时失败（Tauri / 系统 tray 繁忙）就让
+            // tooltip 停在旧快照，而图标下个 tick 就恢复 —— 同一个数字在
+            // 图标和 hover 提示里对不上，用户以为数据卡住。两个显示源独立
+            // try、互不短路。
             if let Err(e) = tray.set_icon(Some(render_icon(&snap, style, &source_id, color))) {
-                tracing::warn!(error = %e, "set_icon 失败");
-                return;
+                tracing::warn!(error = %e, "set_icon 失败（tooltip 仍照常更新）");
             }
             if let Err(e) = tray.set_tooltip(Some(tooltip(&snap))) {
                 tracing::warn!(error = %e, "set_tooltip 失败");
             }
-            // tray 在 main thread 上自然 drop，安全
+            // tray 在 main thread 上自然 drop
         }
-        TrayRequest::RebuildMenu => {
+        TrayRequest::RebuildMenu { tray_source } => {
             let Some(tray) = app.tray_by_id("main-tray") else {
+                tracing::warn!("tray 还没建好（tray_by_id 返 None），RebuildMenu 丢弃");
                 return;
             };
-            let menu = match build_tray_menu(app) {
+            // M-tray-7 fix：tray_source 随请求带进来，主线程不再碰配置锁。
+            let menu = match build_tray_menu(app, &tray_source) {
                 Ok(m) => m,
                 Err(e) => {
                     tracing::warn!(error = %e, "build_tray_menu 失败");
@@ -660,21 +700,64 @@ fn handle_tray_request(app: &AppHandle, req: TrayRequest) {
 /// 调用时机：[`crate::lib::run`] setup 里的 `musage://locale-changed` 监听器。
 /// 错误返回：仅 Tauri API 失败时返 Err，调用方记 warn 不阻塞。
 ///
-/// 2026-06-18：原本直接 `app.tray_by_id(...)` 拿 owned tray → set_menu →
-/// drop 跨线程 → SIGTRAP。改为派发到 main thread，drop 在 main 跑，安全。
-pub fn rebuild_tray(_app: &AppHandle) -> tauri::Result<()> {
-    dispatch_tray_request(TrayRequest::RebuildMenu);
+/// 2026-06-18：原本直接 `app.tray_by_id(...)` 拿 tray → set_menu。改为派发到
+/// main thread 统一处理。
+///
+/// **M-tray-7 fix (2026-09-28 audit)**：配置锁改在**本函数（调用方线程）**
+/// 上读，读完塞进 [`TrayRequest::RebuildMenu`]，主线程上的
+/// `build_tray_menu` 不再 `blocking_read()` —— 详见 [`TrayRequest::RebuildMenu`]
+/// 注释里"主线程被 park 在配置锁 → menu_bar_is_light 派发闭包排队超时"
+/// 那条链路。
+///
+/// ⚠️ 本函数是 **sync** 版本，读锁走 `blocking_read()`。在 tokio worker 上
+/// 调用会短暂 park 该 worker（不再 park 主线程，这是本次修复的核心收益）。
+/// **async 上下文（locale 监听器 spawn 的 async block 等）请优先用
+/// [`rebuild_tray_async`]**，它走 `config.read().await`，零阻塞。
+pub fn rebuild_tray(app: &AppHandle) -> tauri::Result<()> {
+    let tray_source = app
+        .state::<crate::AppState>()
+        .config
+        .blocking_read()
+        .tray_source
+        .clone()
+        .unwrap_or_else(|| "minimax".to_string());
+    dispatch_tray_request(TrayRequest::RebuildMenu { tray_source });
     Ok(())
 }
 
-/// 派发 tray 图标更新到 main thread（2026-06-18 修复后）。
+/// [`rebuild_tray`] 的 async 版本 —— **async 调用方一律用这个**。
 ///
-/// 旧实现直接 `tray_by_id` 拿 owned tray 然后 set_icon —— 调用方常在 tokio
-/// worker 线程（poller 1Hz tick），tray 出 scope 跨线程 drop 触发
-/// `BSServiceMainRunLoopQueue::assertBarrierOnQueue` SIGTRAP 闪退。
-/// 新实现只 try_send 消息，**毫秒级返回** —— 不会卡 poller。
+/// 读配置走 `state.config.read().await`，不阻塞任何线程。lib.rs 的
+/// `musage://locale-changed` 监听器（tauri::async_runtime::spawn 出来的
+/// async block）应把 `rebuild_tray(&app)` 换成 `rebuild_tray_async(&app).await`
+/// —— 语义完全等价，唯一变化是这个函数名 + `.await`。
+///
+/// `#[allow(dead_code)]`：在 lib.rs 切过来之前没人调它（tray 模块不是
+/// 对外公开 API，pub 不豁免 dead_code）。切完后这个 allow 可以删。
+#[allow(dead_code)]
+pub async fn rebuild_tray_async(app: &AppHandle) -> tauri::Result<()> {
+    let tray_source = app
+        .state::<crate::AppState>()
+        .config
+        .read()
+        .await
+        .tray_source
+        .clone()
+        .unwrap_or_else(|| "minimax".to_string());
+    dispatch_tray_request(TrayRequest::RebuildMenu { tray_source });
+    Ok(())
+}
+
+/// 派发 tray 图标更新到 main thread。
+///
+/// 调用方常在 tokio worker 线程（poller 1Hz tick），本实现只 send 一条消息，
+/// **毫秒级返回** —— 不会卡 poller；真正的 set_icon / set_tooltip 在 main
+/// thread 上执行。
 ///
 /// 调用方签名零变化，行为等价：最终 main thread 上跑 set_icon + set_tooltip。
+/// （注：这里"必须主线程"的历史理由已随 tauri 2.x 无 `Drop for TrayIcon`
+/// 而失效，详见文件头 2026-09-28 audit 修正段；保留派发是为了不阻塞
+/// poller + 主线程操作 tray 的惯例。）
 pub fn update_tray_from_snapshot(
     _app: &AppHandle,
     snap: &QuotaSnapshot,
@@ -812,6 +895,32 @@ fn row_matches_plan(r: &QuotaRow, kind: RowKind, plan: Option<&str>) -> bool {
     }
 }
 
+/// 余额行选择 —— **图标（[`pick_tray_rows`]）与 tooltip
+/// （[`provider_short_body`]）共用的唯一判定**，两个显示不再分叉。
+///
+/// M-tray-3 fix (2026-09-28 audit)：余额分支原先是裸
+/// `find(|r| r.remaining.is_some())`，**完全跳过 plan 过滤**，跟上面百分比
+/// 分支（过 `row_matches_plan`）行为分裂 —— 脏配置 `"deepseek:agent"`
+/// 余额照常显示，`"minimax:agent"` 却永久退化成纯 logo，同一个非法后缀
+/// 两类 provider 表现完全相反。
+///
+/// 另外顺手跳过 [`RowKind::PlanHeader`] 行（火山双套餐的分组标题行没有
+/// remaining，硬匹配靠它之前那条 `r.remaining.is_some()` 已经天然排除，
+/// 这里显式写出来是为了让"什么算余额行"只有一个定义）。
+///
+/// `plan` 语义与 `row_matches_plan` 一致：`Some(p)` 只认 `extra.plan == p`
+/// 的行；`None`（老 snapshot / 非火山 provider）不过滤。
+fn pick_balance_row<'a>(rows: &'a [QuotaRow], plan: Option<&str>) -> Option<&'a QuotaRow> {
+    rows.iter().find(|r| {
+        r.kind != Some(RowKind::PlanHeader)
+            && r.remaining.is_some()
+            && match plan {
+                Some(p) => row_plan(r) == Some(p),
+                None => true,
+            }
+    })
+}
+
 fn pick_tray_rows(snap: &QuotaSnapshot, source_id: &str) -> Option<(TrayCell, TrayCell)> {
     // v0.2.9 火山双套餐：先剥 ":agent" 后缀再匹配 provider。
     let (base_id, plan) = split_tray_source(source_id);
@@ -873,13 +982,38 @@ fn pick_tray_rows(snap: &QuotaSnapshot, source_id: &str) -> Option<(TrayCell, Tr
         // L-tray-6 fix (2026-09-05 audit)：两条 utilization 都缺失（schema
         // 漂移可造出）时 (Empty, Empty) 会画全透明图标 → 托盘"消失"。
         // 退回 None 让 caller 走 logo fallback（与 candidates 空一致）。
+        // M-tray-6 fix (2026-09-28 audit)：补 warn —— 原先只有
+        // `candidates.is_empty()` 那条日志，plan 过滤 / utilization 缺失
+        // 这两条退化路径是**零日志**的，用户看到托盘只剩一个 logo 却无处
+        // 可查。守卫沿用 `source_id != "minimax"`（默认源不刷噪音）。
         if matches!(top, TrayCell::Empty) && matches!(bot, TrayCell::Empty) {
+            if source_id != "minimax" {
+                tracing::warn!(
+                    source = %source_id,
+                    plan = plan.unwrap_or("<none>"),
+                    "tray_source 命中的 5h/周行都没有 utilization，托盘退化 logo"
+                );
+            }
             return None;
         }
         Some((top, bot))
     } else {
-        // 余额系：取第一个有 remaining 的 row
-        let row = best.rows.iter().find(|r| r.remaining.is_some())?;
+        // 余额系：取第一个有 remaining 的 row（过 plan 过滤 —— 见
+        // pick_balance_row 的 M-tray-3 注释）。
+        let Some(row) = pick_balance_row(&best.rows, plan) else {
+            // M-tray-6 fix：同上，plan 过滤后无匹配行也打 warn。存量
+            // config.json 里的脏后缀（写侧校验收紧前导入的
+            // "tokendance:agent" 之类）只能靠这条日志定位。
+            if source_id != "minimax" {
+                tracing::warn!(
+                    source = %source_id,
+                    plan = plan.unwrap_or("<none>"),
+                    candidates = candidates.len(),
+                    "tray_source 过滤后无匹配余额行（plan 后缀非法或余额缺失），托盘退化 logo"
+                );
+            }
+            return None;
+        };
         let v = row.remaining.unwrap_or(0.0);
         let u = row.unit.clone().unwrap_or_default();
         Some((TrayCell::Balance(v, u), TrayCell::Empty))
@@ -909,8 +1043,8 @@ impl TrayCell {
     }
 }
 
-/// 余额格式化：货币符号 + 短数字。32px icon 空间小，<1000 取整数（不带小数，
-/// 区别于 tooltip 的 format_amount_short 用 {:.2}）。
+/// 余额格式化：货币符号 + 短数字。32px icon 空间小，>=100 走整数（区别于
+/// tooltip 的 [`format_amount_short`] 用 {:.2}）。
 fn format_balance_tray(v: f64, unit: &str) -> String {
     let symbol = match unit {
         "CNY" | "RMB" | "¥" => "¥",
@@ -925,31 +1059,69 @@ fn format_balance_tray(v: f64, unit: &str) -> String {
         // r=1000 显示 "¥1000"（4 字符无 k）而 v=1000.4 显示 "¥1.0k"。
         let r = v.round() as i64;
         let abs = r.unsigned_abs();
-        let sign = if r < 0 { "-" } else { "" };
+        // M-tray-4 fix (2026-09-28 audit)：符号改用**原始 v** 取。之前用
+        // 取整后的 r：透支 -0.40 → r = 0 → `r < 0` 为假 → 负号连同"透支"
+        // 这个最有信息量的部分一起丢掉，图标显示 "$0"。
+        let sign = if v < 0.0 { "-" } else { "" };
         if abs >= 100_000 {
             format!("{sign}{}k", abs / 1000)
         } else if abs >= 1000 {
             format!("{sign}{:.1}k", abs as f64 / 1000.0)
+        } else if v.abs() > 0.0 && v.abs() < 100.0 {
+            // M-tray-4 fix：小额保留 1 位小数。之前这一档直接取整：
+            // ¥0.40 → 图标 "¥0" 而 tooltip 走 format_amount_short 显示
+            // "0.40"，**同一个数字两个界面自相矛盾**；用户看到 "¥0" 第一
+            // 反应是"钱没了"，实际只是余额不到 1 块。tooltip 保留 2 位、
+            // 图标保留 1 位是刻意的精度差（右对齐窄图标），但不能再退化成
+            // 整数量级的 0。
+            //
+            // 边界判据用 `v.abs()` 而不是取整后的 abs：v=0.40 时 r=0、
+            // abs=0，按 abs 判会落回整数分支、bug 原样存在。
+            format!("{sign}{:.1}", v.abs())
         } else {
+            // v == 0.0 / ±0.0 / |v| >= 100（或 NaN 已被上面拦掉）
             format!("{sign}{abs}")
         }
     };
     format!("{symbol}{num}")
 }
 
+/// 托盘图标前景色的 alpha 下限（`MIN_TRAY_ALPHA` = 32 ≈ 12.5% 不透明度）。
+///
+/// H7-regression fix (2026-09-28 audit)：`#ffffff00` 这类 alpha 极低的
+/// 用户配色，之前第 7/8 位被**原样**写进 `Rgba.a`、全程无钳制。
+/// `Percent` 样式下 `draw_text_mut` 按 alpha 混合 → 整枚图标（文字 + 进度条
+/// 填充）全透明 → **用户以为 app 没启动** —— 正是 H7 fix 当初要消灭的
+/// "应用消失"症状，从另一条路回来了。
+///
+/// 32/255 ≈ 12.5%：浅色菜单栏上仍然几乎看不见，但在深色背景上有明确的
+/// "有一层淡淡的字" 提示 —— 既保留用户想要的"低透明度"微调空间，又不会
+/// 把图标抹成空白。**不回退到黑白**：`tray_fill_color` 的黑白兜底只在
+/// alpha 语义缺失（没配色）时生效，用户主动配了 `#RRGGBBAA` 就说明他想
+/// 要这个颜色本身，不该被替换成系统色。
+const MIN_TRAY_ALPHA: u8 = 32;
+
 /// 解析 "#RRGGBB" / "#RGB" / "#RRGGBBAA" / "#RGBA" / "RRGGBB" / ... 为 Rgba。
 /// 无效返 None。
 ///
 /// H-Tray fix (2026-09-07 audit): 旧实现只接 6 位 hex —— 与 commands/mod.rs
-/// `is_valid_hex_color` (接 3/6/8) 不一致,用户 `#abc` 通过校验持久化后
-/// tray parse 失败 → 永久回退 OS 默认色。统一到 4 种合法格式,alpha
-/// (#RRGGBBAA / #RGBA) 拼到 Rgba.a。
+/// `is_valid_hex_color` 不一致,用户 `#abc` 通过校验持久化后 tray parse
+/// 失败 → 永久回退 OS 默认色。
+///
+/// **长度口径 3|4|6|8 —— 与 `commands/mod.rs::is_valid_hex_color` 的
+/// 3|4|6|8 对齐**（写侧放行 4 位是 2026-09-28 audit 的配套改动）。两边
+/// 不一致会让 4 位 `#RGBA` 在 `save_config` 被永久拒掉：写侧拒 → 用户改
+/// 不了；或写侧放行 → 读侧已经能解析，无回归。4 位分支此前是死代码
+/// （写侧不放行），现在活了 —— 两条分支都保留，并共用同一个 alpha 下限
+/// [`MIN_TRAY_ALPHA`]。
 fn parse_hex_color(s: &str) -> Option<Rgba<u8>> {
     let s = s.strip_prefix('#').unwrap_or(s);
     // 按位走。短形式 (#RGB → #RRGGBB) + 提取 alpha。
     let parse_pair = |hi: u8, lo: u8| -> Option<u8> {
         u8::from_str_radix(&format!("{}{}", hi as char, lo as char), 16).ok()
     };
+    // alpha 下限：见 MIN_TRAY_ALPHA doc（防"整枚图标全透明 = 看起来 app 没启动"）。
+    let clamp_alpha = |a: u8| a.max(MIN_TRAY_ALPHA);
     let b = s.as_bytes();
     let to_pair = |chars: &[u8]| -> Option<(u8, u8, u8)> {
         if chars.len() != 6 {
@@ -979,16 +1151,16 @@ fn parse_hex_color(s: &str) -> Option<Rgba<u8>> {
             // #RRGGBBAA
             let (r, g, bb) = to_pair(&b[..6])?;
             let a = parse_pair(b[6], b[7])?;
-            Some(Rgba([r, g, bb, a]))
+            Some(Rgba([r, g, bb, clamp_alpha(a)]))
         }
         4 => {
-            // #RGBA → #RRGGBBAA
+            // #RGBA → #RRGGBBAA（写侧 is_valid_hex_color 放行 4 位后不再是死代码）
             let expand = |i: usize| [b[i], b[i]];
             let r = parse_pair(expand(0)[0], expand(0)[1])?;
             let g = parse_pair(expand(1)[0], expand(1)[1])?;
             let bb = parse_pair(expand(2)[0], expand(2)[1])?;
             let a = parse_pair(expand(3)[0], expand(3)[1])?;
-            Some(Rgba([r, g, bb, a]))
+            Some(Rgba([r, g, bb, clamp_alpha(a)]))
         }
         _ => None,
     }
@@ -1218,14 +1390,58 @@ fn draw_percent(
     // 被裁掉,看着像 "99" → "00"。按 base_scale 起步,如超宽则按比例缩。
     // 缩放比例按"目标宽度 / 实际宽度"算,1 字符增量损失 ~20% 字号,
     // 仍清晰可读。
+    //
+    // M-tray-8 fix (2026-09-28 audit)：**两行共用同一个 scale**。
+    // `fit_scale` 是逐行独立缩放的（按 `base_scale * max_w / w`），行文本
+    // 长度不同 → 缩放系数不同；仓库自己的单测已经坐实 3 位数与 2 位数落在
+    // 不同档位（`fit_scale_returns_base_when_fits` 断言 "5%" 不缩、
+    // `fit_scale_shrinks_100_percent_to_fit` 断言 "100%" 必须缩）。触发：
+    // 5h 用到 100%（缩到 ~50%）而周只用了 5%（保持 100%）→ 同一枚 16px 高
+    // 的图标里上下两行字号差近一倍，看起来像两个不同的样式而不是"两行
+    // 数据"。取 `min(fit(top), fit(bot))`：两行都能放下，且视觉权重一致。
     let max_w = s - pad_right;
+    let shared_scale = shared_fit_scale(
+        font,
+        top_text.as_deref(),
+        bot_text.as_deref(),
+        base_scale_f,
+        max_w,
+    );
     if let Some(t) = &top_text {
-        let scale = fit_scale(font, t, base_scale_f, max_w);
-        draw_right_text(img, t, scale, y_top, pad_right, font, color);
+        draw_right_text(img, t, shared_scale, y_top, pad_right, font, color);
     }
     if let Some(t) = &bot_text {
-        let scale = fit_scale(font, t, base_scale_f, max_w);
-        draw_right_text(img, t, scale, y_bot, pad_right, font, color);
+        draw_right_text(img, t, shared_scale, y_bot, pad_right, font, color);
+    }
+}
+
+/// M-tray-8 fix (2026-09-28 audit)：两行**共用**的字号 —— `min(fit(top),
+/// fit(bot))`。
+///
+/// `fit_scale` 是逐行独立缩放的（`base_scale * max_w / w`），行文本长度不
+/// 同 → 缩放系数不同。两行被固定放在 `y_top=0` / `y_bot=s/2` 上，共用同一
+/// 枚 16px（macOS）高的图标，字号差一倍看起来像两个不同样式而不是"两行
+/// 数据"。触发最典型的场景：5h 用到 100%（"100%" 超宽 → 必须缩）而周只用了
+/// 5%（"5%" 放得下 → 不缩）。
+///
+/// 取 `min` 而不是 `max`：两行都能放下（信息不丢），且视觉权重一致 —— 宁
+/// 可两行都小一点，也不要一行大一行小。
+fn shared_fit_scale(
+    font: &FontVec,
+    top: Option<&str>,
+    bot: Option<&str>,
+    base_scale: f32,
+    max_w: i32,
+) -> PxScale {
+    match (top, bot) {
+        (Some(t), Some(b)) => {
+            let a = fit_scale(font, t, base_scale, max_w).x;
+            let b = fit_scale(font, b, base_scale, max_w).x;
+            PxScale::from(a.min(b))
+        }
+        (Some(t), None) => fit_scale(font, t, base_scale, max_w),
+        (None, Some(b)) => fit_scale(font, b, base_scale, max_w),
+        (None, None) => PxScale::from(base_scale),
     }
 }
 
@@ -1410,36 +1626,28 @@ fn provider_short_body(p: &ProviderSnapshot) -> String {
         )
         .to_string();
     }
-    // 按 source_id base id (split('#') 取主名, 兼容 extra instance `minimax#2`) 路由:
-    // - 余额系 (deepseek / zenmux / openrouter) → balance 渲染
-    // - 百分比系 (minimax / xiaomimimo / ...) → row utilization 渲染
-    // - 其它 (tavily / kimi / zhipu / stepfun / siliconflow / claude_official / custom_*)
-    //   → 通用 percent 渲染 (rows 第一条 utilization)
-    let base_id = p
-        .source_id
-        .as_deref()
-        .map(|s| s.split('#').next().unwrap_or(s))
-        .unwrap_or(&p.provider);
-    let is_balance = matches!(base_id, "deepseek" | "zenmux" | "openrouter");
-    if is_balance {
-        // "DeepSeek ¥128.50" / "ZenMux $482.74USD" / "OpenRouter $74.75USD"
-        if let Some(r) = p.rows.iter().find(|r| r.remaining.is_some()) {
-            let amount = r
-                .remaining
-                .map(format_amount_short)
-                .unwrap_or_else(|| "?".to_string());
-            let unit = r.unit.as_deref().unwrap_or("");
-            t!(
-                "tray.tooltip.provider_balance",
-                provider = display(),
-                amount = amount,
-                unit = unit
-            )
-            .to_string()
-        } else {
-            display()
-        }
-    } else {
+    // M-tray-1 fix (2026-09-28 audit)：**删掉硬编码余额白名单**
+    // `matches!(base_id, "deepseek" | "zenmux" | "openrouter")`。
+    //
+    // 白名单只列了 3 个，但 siliconflow / tokendance / 全部 custom_* 中转站
+    // 同样是纯余额行（`remaining: Some(..)` / `utilization: None`），而且
+    // siliconflow / tokendance **都在托盘数据源菜单 `source_opts` 里**。
+    // 它们走不进余额分支 → 掉进 percent 分支 → percent 分支只收
+    // `utilization` 的行 → `parts.is_empty()` → **tooltip 只剩一个光秃秃的
+    // provider 名，一个数字都没有**，而同一次更新里托盘图标（走
+    // `pick_tray_rows` 的泛化 `remaining.is_some()`）余额显示得好好的。
+    //
+    // 修法：改成**数据驱动**判定，跟 [`pick_tray_rows`] 共用同一套逻辑
+    // （[`pick_balance_row`]）—— 有 utilization 的行走 percent，否则找
+    // remaining 行走余额，两者都没有就只显示名字。新增余额 provider 不必
+    // 再回来改这张表，两个显示也不会再分叉。
+    //
+    // 判定用「有无 utilization 行」而不是「有无 FiveHour/Weekly 行」：
+    // 部分 provider（stepfun / kimi 的"总套餐"等）只有 TotalOnly 之类的
+    // utilization 行而没有 FiveHour/Weekly，按后者判会误落到余额分支、
+    // tooltip 反而丢内容。
+    let has_percent_row = p.rows.iter().any(|r| r.utilization.is_some());
+    if has_percent_row {
         // percent 渲染: "5h 45% / 周 72%" (Minimax / Xiaomimimo) 或
         // "Kimi 0% / ..." (其他 source, 任何有 utilization 的 row 都拼)
         let mut parts = Vec::new();
@@ -1453,10 +1661,25 @@ fn provider_short_body(p: &ProviderSnapshot) -> String {
                     )
                     .to_string(),
                 );
+            } else if r.kind == Some(RowKind::PlanHeader) {
+                // M-tray-2 fix (2026-09-28 audit)：火山双套餐（Coding Plan /
+                // Agent Plan）每个套餐各有一条 FiveHour + 一条 Weekly，行
+                // label 完全一样（都是 `row.five_hour` / `row.weekly_7d`），
+                // 套餐身份**只**存在 `extra.plan` 和 PlanHeader 行里。
+                // 之前这里只 push 有 utilization 的行 → tooltip 变成
+                // "5h 20% / 7d 10% / 5h 90% / 7d 30%"，两组一模一样的标签，
+                // 用户分不清哪行属于哪个套餐；更糟的是 provider 显示名里已经
+                // 含有 "Coding Plan"，**Agent 组的数据挂在 Coding Plan 名下**。
+                //
+                // 修法：把 PlanHeader 行（`utilization: None`）也当分组锚点
+                // push 进 parts → "Coding Plan: 5h 20% / 7d 10% /
+                // Agent Plan: 5h 90% / 7d 30%"，与浮窗的 PlanHeader 分组
+                // 渲染对齐。
+                parts.push(r.label.clone());
             }
         }
         if parts.is_empty() {
-            return sanitize_tooltip_segment(&display());
+            sanitize_tooltip_segment(&display())
         } else {
             let rendered = t!(
                 "tray.tooltip.provider_rows",
@@ -1466,6 +1689,25 @@ fn provider_short_body(p: &ProviderSnapshot) -> String {
             .to_string();
             sanitize_tooltip_segment(&rendered)
         }
+    } else if let Some(r) = pick_balance_row(&p.rows, None) {
+        // 余额系: "DeepSeek ¥128.50" / "ZenMux $482.74USD" /
+        // "SiliconFlow ¥74.75" / "TokenDance ¥12.30" / custom_* 同款。
+        // tooltip 一次列全部 provider（不限 tray 数据源），所以这里
+        // `plan = None` 不过滤（火山没有余额行）。
+        let amount = r
+            .remaining
+            .map(format_amount_short)
+            .unwrap_or_else(|| "?".to_string());
+        let unit = r.unit.as_deref().unwrap_or("");
+        t!(
+            "tray.tooltip.provider_balance",
+            provider = display(),
+            amount = amount,
+            unit = unit
+        )
+        .to_string()
+    } else {
+        display()
     }
 }
 
@@ -1719,6 +1961,291 @@ mod tests {
             .sum::<f32>()
             .round() as i32;
         assert!(w <= 30, "100% at fit_scale={} 宽度={w} > max_w=30", scale.x);
+    }
+
+    // ── M-tray-8 fix (2026-09-28 audit)：两行共用同一字号 ──
+
+    /// 回归护栏：`100%`（3 位数，必须缩到 ~50%）与 `5%`（2 位数，放得下不缩）
+    /// 摆在一起时，两行拿到的 scale 必须**相同**。
+    ///
+    /// 修之前两行各调一次 `fit_scale` → 5h 行缩到约一半、周行保持 100% →
+    /// 同一枚 16px 高的图标里上下两行字号差近一倍，看起来像两个不同样式
+    /// 而不是"两行数据"。
+    #[test]
+    fn shared_fit_scale_unifies_two_row_font_size() {
+        let font = load_font().expect("test needs embedded font");
+        let top = fit_scale(font, "100%", 20.0, 30);
+        let bot = fit_scale(font, "5%", 20.0, 30);
+        // 前置条件：单看，两行确实落在不同档位（否则本测试是空跑）
+        assert!(
+            top.x < bot.x - 0.01,
+            "前提失效：100%={} 与 5%={} 已经同档，无法验证 min() 合并",
+            top.x,
+            bot.x
+        );
+
+        let shared = shared_fit_scale(font, Some("100%"), Some("5%"), 20.0, 30);
+        assert!(
+            (shared.x - top.x).abs() < 0.01,
+            "共用 scale 应等于 min(fit(top), fit(bot)) = {}，实得 {}",
+            top.x,
+            shared.x
+        );
+        // 两行在共享 scale 下都必须放得下 max_w（min 保证的语义）
+        for t in ["100%", "5%"] {
+            let scaled = font.as_scaled(shared);
+            let w = t
+                .chars()
+                .map(|c| scaled.h_advance(font.glyph_id(c)))
+                .sum::<f32>()
+                .round() as i32;
+            assert!(
+                w <= 30,
+                "{t} 在共享 scale={} 下宽度 {w} > max_w=30",
+                shared.x
+            );
+        }
+    }
+
+    #[test]
+    fn shared_fit_scale_handles_missing_rows() {
+        let font = load_font().expect("test needs embedded font");
+        // 只有上行 → 退回该行自己的 fit
+        assert_eq!(
+            shared_fit_scale(font, Some("100%"), None, 20.0, 30).x,
+            fit_scale(font, "100%", 20.0, 30).x
+        );
+        // 只有下行 → 同理
+        assert_eq!(
+            shared_fit_scale(font, None, Some("100%"), 20.0, 30).x,
+            fit_scale(font, "100%", 20.0, 30).x
+        );
+        // 两行都 Empty（font 有但没数据）→ base scale（不会被用到）
+        assert!((shared_fit_scale(font, None, None, 20.0, 30).x - 20.0).abs() < 0.01);
+    }
+
+    // ── M-tray-4 fix (2026-09-28 audit)：小额余额不再显示成 ¥0 ──
+
+    /// 余额 ¥0.40：之前图标取整成 "¥0"、tooltip 走 format_amount_short 显示
+    /// "0.40"，**同一个数字两个界面自相矛盾**；用户看到 ¥0 第一反应是"钱没了"。
+    #[test]
+    fn format_balance_tray_keeps_small_amounts_readable() {
+        assert_eq!(format_balance_tray(0.40, "CNY"), "¥0.4");
+        assert_eq!(format_balance_tray(42.5, "CNY"), "¥42.5");
+        // 透支 -0.40：符号取自**原始 v**，不是取整后的 r（r=0 会把负号吃掉）。
+        // 符号位置沿用既有格式 `{symbol}{sign}{num}`（大额负数本来就是
+        // "¥-5.0k"），不在本次只动小数档、不统一改符号位置。
+        assert_eq!(format_balance_tray(-0.40, "CNY"), "¥-0.4");
+        assert_eq!(format_balance_tray(-0.40, "USD"), "$-0.4");
+        assert_eq!(format_balance_tray(-2500.0, "CNY"), "¥-2.5k");
+        // 边界：0 仍走整数分支（不要显示成 "¥0.0"）
+        assert_eq!(format_balance_tray(0.0, "CNY"), "¥0");
+        // 边界：|v| >= 100 回到整数（icon 空间小，100.0 无意义）
+        assert_eq!(format_balance_tray(99.99, "CNY"), "¥100.0");
+        assert_eq!(format_balance_tray(100.0, "CNY"), "¥100");
+        // 已有的大额分支不受影响（L-tray-1 口径）
+        assert_eq!(format_balance_tray(1000.4, "CNY"), "¥1.0k");
+        assert_eq!(format_balance_tray(250_000.0, "CNY"), "¥250k");
+        // NaN / Inf 仍然 fence
+        assert_eq!(format_balance_tray(f64::NAN, "CNY"), "¥?");
+    }
+
+    // ── 契约 1 (2026-09-28)：hex 长度 3|4|6|8 + alpha 下限 ──
+
+    /// `#ffffff00` 之前把 alpha=0 原样写进 Rgba.a → `draw_text_mut` 画出一枚
+    /// **全透明**的图标 → 用户以为 app 没启动（H7 fix 想消灭的症状换路回来）。
+    #[test]
+    fn parse_hex_color_clamps_alpha_to_visible_floor() {
+        for s in ["#ffffff00", "ffffff00", "#fff0", "fff0"] {
+            let c = parse_hex_color(s).expect("parses");
+            assert_eq!(
+                c[3], MIN_TRAY_ALPHA,
+                "{s}: alpha 被钳到下限（0 会画出全透明图标）"
+            );
+            assert_eq!([c[0], c[1], c[2]], [255, 255, 255], "{s}: RGB 不受影响");
+        }
+        // 高 alpha 原样透传（钳制只动下限）
+        assert_eq!(parse_hex_color("#ffffffc0").expect("parses")[3], 0xc0);
+        assert_eq!(parse_hex_color("#ffffffff").expect("parses")[3], 255);
+        // 3/6 位无 alpha → 不透明
+        assert_eq!(
+            parse_hex_color("#abc").expect("parses"),
+            Rgba([0xaa, 0xbb, 0xcc, 255])
+        );
+        assert_eq!(
+            parse_hex_color("#112233").expect("parses"),
+            Rgba([0x11, 0x22, 0x33, 255])
+        );
+    }
+
+    /// 4 位 `#RGBA` 与 `commands/mod.rs::is_valid_hex_color` 的 3|4|6|8 口径
+    /// 对齐（写侧放行 4 位后读侧不再是死代码）—— 两边不一致会让 4 位值
+    /// 在 `save_config` 被永久拒掉。
+    #[test]
+    fn parse_hex_color_accepts_all_four_lengths() {
+        assert!(parse_hex_color("#abc").is_some(), "3 位");
+        assert!(parse_hex_color("#abcd").is_some(), "4 位 #RGBA");
+        assert!(parse_hex_color("#aabbcc").is_some(), "6 位");
+        assert!(parse_hex_color("#aabbccdd").is_some(), "8 位");
+        assert!(parse_hex_color("#abcde").is_none(), "5 位非法");
+        assert!(parse_hex_color("#abcdefff0").is_none(), "9 位非法");
+        assert!(parse_hex_color("").is_none(), "空串");
+        assert!(parse_hex_color("#").is_none(), "只有 #");
+    }
+
+    // ── M-tray-1 / 2 / 3 fix (2026-09-28 audit)：tooltip 与图标共用判定 ──
+
+    fn balance_only_snap(source_id: &str, display: &str, amount: f64, unit: &str) -> QuotaSnapshot {
+        QuotaSnapshot {
+            providers: vec![ProviderSnapshot {
+                success: true,
+                source_id: Some(source_id.to_string()),
+                source_display_name: Some(display.to_string()),
+                rows: vec![QuotaRow {
+                    label: "balance".into(),
+                    remaining: Some(amount),
+                    unit: Some(unit.to_string()),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        }
+    }
+
+    /// siliconflow / tokendance / custom_* 都是纯余额行（`remaining: Some`、
+    /// `utilization: None`），且前两者**都在托盘数据源菜单里**。之前
+    /// `provider_short_body` 用硬编码白名单只列了 deepseek/zenmux/openrouter，
+    /// 它们走不进余额分支 → 掉进只收 `utilization` 行的 percent 分支 →
+    /// `parts.is_empty()` → **tooltip 一个数字都没有**（而同一次更新里图标
+    /// 余额显示得好好的）。
+    #[test]
+    fn provider_short_body_shows_balance_for_every_balance_provider() {
+        for (sid, name, unit) in [
+            ("siliconflow", "SiliconFlow", "CNY"),
+            ("tokendance", "TokenDance", "CNY"),
+            ("deepseek", "DeepSeek", "CNY"),
+            ("zenmux", "ZenMux", "USD"),
+            ("openrouter", "OpenRouter", "USD"),
+            ("custom_abcd1234", "custom_abcd1234", "USD"),
+        ] {
+            let snap = balance_only_snap(sid, name, 128.50, unit);
+            let body = provider_short_body(&snap.providers[0]);
+            assert!(
+                body.contains("128.50"),
+                "{sid}: tooltip 应带余额数字，实得 {body:?}"
+            );
+            assert!(
+                body.contains(name),
+                "{sid}: tooltip 应带 provider 名，实得 {body:?}"
+            );
+        }
+    }
+
+    /// 无任何数据行时退化成"只有名字"（而不是空串，也不是 panic）。
+    #[test]
+    fn provider_short_body_degrades_to_name_only_without_rows() {
+        let snap = QuotaSnapshot {
+            providers: vec![ProviderSnapshot {
+                success: true,
+                source_id: Some("claude_official".into()),
+                source_display_name: Some("Claude".into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(provider_short_body(&snap.providers[0]), "Claude");
+    }
+
+    /// 火山双套餐：Coding / Agent 各一条 FiveHour + 一条 Weekly，行 label
+    /// 完全一样。之前只 push 有 utilization 的行 → tooltip 是两组一模一样的
+    /// "5h / 7d"，且 provider 显示名里已含 "Coding Plan"，Agent 组数据挂在
+    /// Coding Plan 名下。修法：PlanHeader 行（utilization: None）也作为分组
+    /// 锚点 push 进去。
+    #[test]
+    fn provider_short_body_groups_dual_plan_rows_under_headers() {
+        let mut snap = volcengine_dual_plan_snap();
+        // 补上真实的 PlanHeader 行（火山 provider 会带，浮窗据此分组）
+        snap.providers[0].rows = vec![
+            plan_header_like("coding"),
+            plan_header_like("agent"),
+            QuotaRow {
+                label: "5h".into(),
+                utilization: Some(20.0),
+                kind: Some(RowKind::FiveHour),
+                extra: Some(serde_json::json!({ "plan": "coding" })),
+                ..Default::default()
+            },
+            QuotaRow {
+                label: "7d".into(),
+                utilization: Some(10.0),
+                kind: Some(RowKind::Weekly),
+                extra: Some(serde_json::json!({ "plan": "coding" })),
+                ..Default::default()
+            },
+            QuotaRow {
+                label: "5h".into(),
+                utilization: Some(90.0),
+                kind: Some(RowKind::FiveHour),
+                extra: Some(serde_json::json!({ "plan": "agent" })),
+                ..Default::default()
+            },
+            QuotaRow {
+                label: "7d".into(),
+                utilization: Some(30.0),
+                kind: Some(RowKind::Weekly),
+                extra: Some(serde_json::json!({ "plan": "agent" })),
+                ..Default::default()
+            },
+        ];
+        snap.providers[0].source_display_name = Some("Volcengine Ark Coding Plan".into());
+        let body = provider_short_body(&snap.providers[0]);
+        // 两个套餐名都要出现，且各自的百分比跟在后面
+        assert!(
+            body.contains("Coding Plan") && body.contains("Agent Plan"),
+            "tooltip 应把两个套餐分组，实得 {body:?}"
+        );
+        assert!(
+            body.contains("20") && body.contains("90"),
+            "两个套餐的百分比都应出现（90 = Agent 5h），实得 {body:?}"
+        );
+    }
+
+    /// M-tray-3 fix：余额分支原先**完全跳过** plan 过滤，跟百分比分支分裂 ——
+    /// 脏后缀 `"tokendance:agent"` 余额照常显示、`"minimax:agent"` 却永久
+    /// 退化成纯 logo。写侧校验收紧后存量 config.json 里仍可能有脏值。
+    #[test]
+    fn pick_tray_rows_balance_branch_honors_plan_filter() {
+        // 无 extra.plan 的普通余额 provider：无后缀 → 正常显示
+        let snap = balance_only_snap("tokendance", "TokenDance", 12.30, "CNY");
+        assert!(pick_tray_rows(&snap, "tokendance").is_some());
+        // 脏后缀 → plan 过滤后无匹配行 → None（走 logo fallback，而不是
+        // 假装过滤成功还显示余额）
+        assert!(
+            pick_tray_rows(&snap, "tokendance:agent").is_none(),
+            "余额分支必须过 plan 过滤，不能无视非法后缀"
+        );
+        // 行带 extra.plan == "coding" 时，":coding" 后缀能命中
+        let mut snap2 = balance_only_snap("volcengine_ark", "Volcengine", 12.30, "CNY");
+        snap2.providers[0].rows[0].extra = Some(serde_json::json!({ "plan": "coding" }));
+        assert!(pick_tray_rows(&snap2, "volcengine_ark:coding").is_some());
+        assert!(pick_tray_rows(&snap2, "volcengine_ark:agent").is_none());
+    }
+
+    /// PlanHeader 行（`remaining: None`）不参与余额行选择 —— 火山双套餐下
+    /// 分组标题行不能被当成余额行。
+    #[test]
+    fn pick_balance_row_skips_plan_header() {
+        let rows = vec![
+            plan_header_like("coding"),
+            QuotaRow {
+                label: "balance".into(),
+                remaining: Some(9.0),
+                ..Default::default()
+            },
+        ];
+        let picked = pick_balance_row(&rows, None).expect("有余额行");
+        assert_eq!(picked.remaining, Some(9.0));
     }
 
     /// T-M2 fix (2026-08-03 audit): NaN/±Inf 必须 fence 成 "?"。共享 parse::num_f64

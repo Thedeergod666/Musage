@@ -86,8 +86,8 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 use super::{
-    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, AuthKind,
-    Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource, RowKind,
+    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, validate_bearer_key,
+    AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource, RowKind,
 };
 use crate::kimi_desktop::KimiSessionInfo;
 use crate::t;
@@ -183,6 +183,7 @@ impl QuotaSource for KimiSource {
                 credentials.cookie.as_deref(),
                 &self.unique_id(),
                 self.display_name().as_ref(),
+                self.instance_index,
             )
             .await
         })
@@ -194,7 +195,12 @@ async fn do_fetch(
     cookie: Option<&str>,
     source_id: &str,
     display_name: &str,
+    instance_index: u32,
 ) -> Result<ProviderSnapshot, FetchError> {
+    // L-6 fix (2026-09-05 audit)：key 内含控制字符时 send() 报 invalid header
+    // 被兜底归成误导性 Network 错误；send 前显式拒绝并归类配置错误。
+    // 2026-09-28 audit H-9 补齐：当日 L-6 只接了 4/14 个 provider。
+    validate_bearer_key(api_key)?;
     let client = shared_client();
 
     let resp = client
@@ -255,19 +261,33 @@ async fn do_fetch(
     // 浮窗保持原样（只 5h + 7d）。
     let total_row = match parse_total_quota(&raw) {
         Some(row) => Some(row),
-        None => match resolve_session_token(cookie) {
-            Some((token, info)) => match fetch_total_plan_row(&token, &info).await {
-                Some((row, stats_raw)) => {
-                    // stats 原始响应挂进 snapshot.raw，dump CLI 排查用
-                    if let Some(r) = snap.raw.as_mut().and_then(|v| v.as_object_mut()) {
-                        r.insert("subscription_stats_enrich".to_string(), stats_raw);
+        None => {
+            // 2026-09-28 audit H-9: 会话解析链里含同步 SQLite 读
+            // (busy_timeout 250ms, 失败还要 immutable=1 二次打开), 直接在
+            // async fn 里跑会阻塞 tokio worker —— 桌面端持 WAL 锁时每轮
+            // 阻塞 250ms×N provider。挪进 spawn_blocking。cookie 是借用
+            // credentials 的 &str, spawn_blocking 要 'static → 先 own 一份。
+            let stored = cookie.map(str::to_owned);
+            let session = tokio::task::spawn_blocking(move || {
+                resolve_session_token(stored.as_deref(), instance_index)
+            })
+            .await
+            .ok()
+            .flatten();
+            match session {
+                Some((token, info)) => match fetch_total_plan_row(&token, &info).await {
+                    Some((row, stats_raw)) => {
+                        // stats 原始响应挂进 snapshot.raw，dump CLI 排查用
+                        if let Some(r) = snap.raw.as_mut().and_then(|v| v.as_object_mut()) {
+                            r.insert("subscription_stats_enrich".to_string(), stats_raw);
+                        }
+                        Some(row)
                     }
-                    Some(row)
-                }
+                    None => None,
+                },
                 None => None,
-            },
-            None => None,
-        },
+            }
+        }
     };
     if let Some(row) = total_row {
         // 追加到 5h/7d 之后（对齐火山方舟 5h → 7d → 月 的窗口升序；
@@ -281,7 +301,19 @@ async fn do_fetch(
 /// 解析可用的网页会话 token：`kimi:cookie` 槽优先，kimi-desktop 本地
 /// Cookies 库兜底。两侧都过 [`crate::kimi_desktop::validate_auth_token`]
 /// 本地预检（过期 / 畸形 → 换下一源 / 降级）。
-fn resolve_session_token(stored: Option<&str>) -> Option<(String, KimiSessionInfo)> {
+///
+/// 2026-09-28 audit H-9：`instance_index > 1`（副本）时**不回退**到
+/// kimi-desktop 本地会话。`load_desktop_auth_token` 读的是本机 Kimi Desktop
+/// 应用自己的 `kimi-auth` cookie —— 一台机器只有一个全局账号，而这里的
+/// 预检只验 JWT `exp`、**不跟当前 source 的 API key 绑定**。于是配了
+/// `kimi#2`（账号 B 的 key）但桌面端登的是账号 A 时，一张卡上半部分是 B 的
+/// 5h/7d、下方「总套餐」行却是 A 的月度池，数字互相矛盾且无任何提示。
+/// 副本只认自己 `{unique_id}:cookie` 槽（keys.json 按 unique_id 分槽存储），
+/// 没配就是没配 —— 宁缺毋混。
+fn resolve_session_token(
+    stored: Option<&str>,
+    instance_index: u32,
+) -> Option<(String, KimiSessionInfo)> {
     // 1) keys.json `kimi:cookie` 槽（WebView 一键登录写入的路径）
     if let Some(tok) = stored.map(str::trim).filter(|s| !s.is_empty()) {
         // 防御：用户手改 keys.json 时可能粘成 `kimi-auth=<jwt>` 整段形式
@@ -291,6 +323,13 @@ fn resolve_session_token(stored: Option<&str>) -> Option<(String, KimiSessionInf
             return Some((tok.to_string(), info));
         }
         tracing::debug!("[kimi] kimi:cookie 槽 token 过期/畸形 → 尝试 kimi-desktop 本地会话");
+    }
+    if instance_index > 1 {
+        tracing::debug!(
+            instance_index,
+            "[kimi] 副本实例无自有 cookie 槽 → 跳过 kimi-desktop 全局会话（避免跨账号串行）"
+        );
+        return None;
     }
     // 2) kimi-desktop 本地 Cookies 库（零交互，桌面端自己刷新会话 → 自动保鲜）
     let tok = crate::kimi_desktop::load_desktop_auth_token()?;
@@ -409,8 +448,12 @@ fn build_window_row(
     // L-5 fix (2026-09-05 audit, merge 2026-09-08 保留)：显式 remaining 路径
     // 补 `.max(0.0)` —— 负值（schema 漂移 / 超用态）原样透传到
     // QuotaRow.remaining，浮窗显示负余额。
+    // 2026-09-28 audit H-9: 补 `.min(limit)` 钳上界 —— `remaining > limit`
+    // （服务端两字段不同步 / schema 漂移）时旧代码算出 `used = limit -
+    // remaining < 0` → `.max(0.0)` 归 0 → utilization 0% 却显示 "100/100"
+    // 剩余，自相矛盾。钳进 [0, limit] 后 used / remaining 恒自洽。
     let remaining = explicit_remaining
-        .map(|r| r.max(0.0))
+        .map(|r| r.clamp(0.0, limit))
         .unwrap_or_else(|| explicit_used.map(|u| (limit - u).max(0.0)).unwrap_or(0.0));
     let used = explicit_used.unwrap_or_else(|| (limit - remaining).max(0.0));
     // clamp：防御 used > limit 的异常上限态渲染出 >100% 的 bar
@@ -526,7 +569,16 @@ fn parse_total_quota(raw: &Value) -> Option<QuotaRow> {
         return None;
     }
     let explicit_used = parse_f64(tq.get("used"));
-    let remaining = parse_f64(tq.get("remaining"))
+    let explicit_remaining = parse_f64(tq.get("remaining"));
+    // H-Provider fix (2026-09-07 audit) 补齐：姊妹函数 `build_window_row`
+    // 有「used + remaining 双缺失 → 返 None」守卫，本函数此前漏掉，
+    // 走 `unwrap_or(0.0)` → `used = limit` → **恒 100%**。schema 漂移 /
+    // 新字段未适配时用户看到假"总池已耗尽"。两处守卫必须同步演进。
+    if explicit_used.is_none() && explicit_remaining.is_none() {
+        return None;
+    }
+    let remaining = explicit_remaining
+        .map(|r| r.max(0.0))
         .unwrap_or_else(|| explicit_used.map(|u| (limit - u).max(0.0)).unwrap_or(0.0));
     let used = explicit_used.unwrap_or_else(|| (limit - remaining).max(0.0));
     let resets_at = extract_reset_ms(tq.get("resetTime"));
@@ -543,6 +595,10 @@ async fn fetch_total_plan_row(token: &str, info: &KimiSessionInfo) -> Option<(Qu
     // 请求头对齐 CodexBar `webRequest`（2026-08-04 本机实测 200 的完整
     // header 集合）：Bearer + Cookie 双写、connect-protocol-version、
     // x-msh-platform、JWT claims 解出的 device/session/traffic id。
+    // 2026-09-28 audit H-9 补齐 L-6：session JWT 同样拼进 Authorization 头。
+    // 本函数返 `Option`（best-effort 增强，失败只少一行）→ 用 `.ok()?` 降级，
+    // 不能让一个畸形 token 变成整轮 fetch 的错误。
+    validate_bearer_key(token).ok()?;
     let mut req = shared_client()
         .post(STATS_URL)
         .header("Authorization", format!("Bearer {token}"))

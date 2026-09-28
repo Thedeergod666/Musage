@@ -155,10 +155,23 @@ impl ExtraInstance {
 ///
 /// 行为：
 /// - 文件不存在 → `Ok(vec![])`
-/// - 文件存在但 parse 失败 → 备份到 `.bak.<timestamp>` + `Ok(vec![])`
 /// - 文件为空字符串 → `Err` (H-Config fix 2026-09-07 audit)
 /// - 文件不存在 → `Ok(vec![])`
 /// - 文件存在但 parse 失败 → 备份到 `.bak.<timestamp>` + `Err` (C1/H-1 风格)
+///
+/// # 调用方必须处理 Err（2026-09-28 audit 复核确认）
+///
+/// 本函数的「备份 + Err」语义是正确的（与 `super::read_keys` / `AppConfig::load`
+/// 同款：先 `copy` 出 `.bak.<ts>` 保留 forensic，再返 Err，绝不降级成
+/// `Ok(vec![])`）。但**把 Err 吞成空 Vec 会让下游 save 覆盖损坏文件** —— 内存
+/// 里是空 Vec，任何一次 `add/update/delete_extra_instance` 都会把磁盘上的
+/// `extra_instances.json` 全量覆盖成只剩这一条，用户其余副本静默消失。
+/// `load()` 自身**不做**任何静默降级（空文件分支也走 backup + Err）。
+///
+/// ⚠️ `lib.rs` 的启动路径目前是 `load_or_migrate().unwrap_or_default()` ——
+/// **那不属于本模块**，需要单独修（改成 `unwrap_or_else` 记 error 日志并保留
+/// 内存里的副本直到用户确认）。本文件已加注释标记，避免以后再被当成"load 已经
+/// 处理好了"。
 pub fn load() -> Result<Vec<ExtraInstance>, String> {
     let path = extra_instances_path()?;
     if !path.exists() {
@@ -270,6 +283,12 @@ pub fn save(instances: &[ExtraInstance]) -> Result<(), String> {
         let _ = std::fs::remove_file(&tmp);
         return Err(format!("rename extra_instances: {e}"));
     }
+    // L-Dir-Fsync fix (2026-09-28 audit): 上面的 tmp sync_all 只保证**内容**落盘,
+    // rename 本身要父目录 fsync 才持久 (POSIX)。掉电后可能出现「副本配置内容在、
+    // 目录项不在」，重启读回旧 extra_instances.json（minimax#2 / custom_xxx
+    // 凭空消失）。三条原子写路径（config / keys / extra_instances）统一走
+    // super::fsync_parent_dir，Unix only。
+    super::fsync_parent_dir(&path);
     Ok(())
 }
 
@@ -292,6 +311,16 @@ fn extra_instances_path() -> Result<PathBuf, String> {
 ///    - 写 `extra_instances.json`(原子写 + 0600)
 ///    - rename 老文件 → `custom_sources.json.migrated`(失败也不 panic,只是日志)
 /// 3. 都不存在 → `Ok(vec![])`
+///
+/// # Err 语义（2026-09-28 audit 复核确认）
+///
+/// 分支 1（新文件已存在）直接 `return load()`，**原样透传 `load()` 的 Err** ——
+/// 本函数没有任何静默降级。分支 2（老 custom_sources.json 损坏 / 写新文件失败）
+/// 是 best-effort 且有明确理由：老文件本身没被改写，数据安全，重启会重试。
+///
+/// 调用方**必须**处理 Err，理由见 [`load`] 的文档注释（吞掉 = 下次 save 覆盖
+/// 损坏文件 → 全部副本静默丢失）。`lib.rs` 启动路径当前的 `unwrap_or_default()`
+/// 是已知待修项，不在本文件范围内。
 pub fn load_or_migrate() -> Result<Vec<ExtraInstance>, String> {
     // 1. 新文件已存在 → 直接返
     if extra_instances_path_exists() {
@@ -434,6 +463,15 @@ fn load_custom_sources_for_migration() -> Result<Vec<crate::providers::CustomSou
 /// # 决策
 ///
 /// D1（紧凑）+ D5（按类型内编号）直接落地在这里。
+///
+/// L-Index-Overflow fix (2026-09-28 audit): `max + 1` 未防溢出。release build 下
+/// `u32::MAX + 1` 回绕成 **0** → `new_builtin_duplicate` 造出
+/// `api_key_ref = "minimax#0"`（凭据写到第 0 号槽，浮窗/keys 全对不上）；
+/// debug build（`overflow-checks = on`）直接 panic，整个 IPC handler 崩。
+/// 触发条件是手改 / 脚本生成 / 从旧版本迁过来的 extra_instances.json 里出现
+/// `instance_index = 4294967295`（serde u32 不做任何范围校验）。改用
+/// `saturating_add`：夹到 `u32::MAX` 而不是回绕，最坏情况是下一份副本编号顶格
+/// （仍唯一、仍可用），不会造出 #0。
 pub fn next_index_for(provider_id: &str, existing: &[ExtraInstance]) -> u32 {
     existing
         .iter()
@@ -441,7 +479,7 @@ pub fn next_index_for(provider_id: &str, existing: &[ExtraInstance]) -> u32 {
         .map(|e| e.instance_index)
         .max()
         .unwrap_or(1)
-        + 1
+        .saturating_add(1)
 }
 
 /// 删除一个 instance 后，**同 provider_id 内**按 created_at 升序重排 2,3,4,...
@@ -565,6 +603,28 @@ mod tests {
         assert_eq!(next_index_for("deepseek", &v), 3);
         // 还没出现过的 provider
         assert_eq!(next_index_for("xiaomi", &v), 2);
+    }
+
+    /// L-Index-Overflow regression (2026-09-28 audit): `max + 1` 未用
+    /// saturating_add。release 下 `u32::MAX + 1` 回绕成 0 →
+    /// `new_builtin_duplicate` 造出 `api_key_ref = "minimax#0"`（凭据写到第 0 号
+    /// 槽，浮窗 / keys 全对不上）；debug 下直接 panic 打挂 IPC handler。
+    /// 触发条件是手改 / 脚本生成 / 旧版迁过来的 extra_instances.json 里出现
+    /// `instance_index = 4294967295`（serde u32 不做范围校验）。
+    #[test]
+    fn next_index_for_saturates_instead_of_wrapping() {
+        let v = vec![builtin_dup("minimax", u32::MAX, 1000)];
+        let next = next_index_for("minimax", &v);
+        assert_eq!(
+            next,
+            u32::MAX,
+            "顶格时应夹住, 不能回绕成 0（否则造出 minimax#0）"
+        );
+        assert_ne!(next, 0);
+
+        // 造出来的实例 api_key_ref 不能是 #0
+        let dup = ExtraInstance::new_builtin_duplicate("minimax", next);
+        assert_ne!(dup.api_key_ref, "minimax#0", "r = {}", dup.api_key_ref);
     }
 
     #[test]

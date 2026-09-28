@@ -179,10 +179,21 @@ fn read_token_once(path: &std::path::Path, immutable: bool) -> rusqlite::Result<
         conn
     };
 
+    // 2026-09-28 audit H-9: 原 `ORDER BY last_access_utc DESC LIMIT 1` 跨 4 个
+    // host_key 抢"最近访问"，而 `www.kimi.com` 与 `.kimi.com` **可以存不同账号**
+    // （桌面端不同版本 / 不同 profile 写不同 host_key）。于是"这台机器最近
+    // 用过哪个账号"决定我们拿到谁的 token —— 与当前 source 的 API key 毫无
+    // 关系。改成 host_key 优先级排序（顺序即 HOST_KEYS 声明顺序），同一
+    // host_key 内再按 last_access_utc 倒序，行为可预测。
+    // CASE 分支用 ?1..?4 参数而非字面量，与下方 HOST_KEYS 传参共用同一组值，
+    // 保持单一来源（改 HOST_KEYS 顺序即改优先级顺序）。
     let mut stmt = conn.prepare(
         "SELECT value FROM cookies \
          WHERE name = 'kimi-auth' AND host_key IN (?1, ?2, ?3, ?4) \
-         ORDER BY last_access_utc DESC LIMIT 1",
+         ORDER BY CASE host_key WHEN ?1 THEN 0 WHEN ?2 THEN 1 \
+                              WHEN ?3 THEN 2 WHEN ?4 THEN 3 ELSE 4 END, \
+                  last_access_utc DESC \
+         LIMIT 1",
     )?;
     let mut rows = stmt.query(rusqlite::params![
         HOST_KEYS[0],

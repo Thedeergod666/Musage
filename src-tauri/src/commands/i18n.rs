@@ -31,13 +31,35 @@ pub async fn set_app_locale(
     if !matches!(locale.as_str(), "zh-CN" | "en") {
         return Err(format!("unsupported locale: {locale}（仅支持 zh-CN / en）"));
     }
-    // L-i18n-1 fix (2026-09-05 audit)：先持久化成功再切运行时 —— 原来
-    // set_locale 在 save 之前，save 失败时运行时已是新语言而 cfg.locale /
-    // 磁盘还是旧值，托盘文案与设置面板选中项分叉直到下次成功切换。
+    // L-i18n-1 fix (2026-09-05 audit)：先持久化成功再切运行时。
+    //
+    // 2026-09-28 audit L-6：原修法只把 `rust_i18n::set_locale` 挪到 save
+    // 之后，却把 `cfg.locale = locale` 留在 save **之前** —— 注释说的
+    // 「先持久化成功再切」只兑现了一半。`cfg.save()` 失败时 `?` 提前返回，
+    // 运行时 locale 一个字节都没改，但 in-memory `cfg.locale` 已经是新值：
+    //   - 语言下拉显示「English」，界面上所有 t!() 文案仍是中文（分叉）；
+    //   - 更阴的是：后续**任意一次**成功的 `cfg.save()`（改个颜色、调下
+    //     间隔都会触发）会把 "en" 静默落盘，用户重启后语言突然变了，
+    //     中间没有任何一次"切换语言"动作。
+    //
+    // 修法：在锁内 save，失败时把 in-memory 值改回旧值，保证
+    // 「内存 = 磁盘 = 运行时」三者一致。
+    //
+    // 备选方案（"先 clone 一份带新 locale 的 cfg 落盘、成功后再拿锁写内存"）
+    // 在这里**不可行**：那要求把 `cfg.save()` 挪到 config.write 锁之外，
+    // 直接违反 save_config 侧 H-4 fix 立的「save 必须在写锁内、最后拿锁者
+    // 最后落盘」纪律（geom persister 也是这个顺序），等于用一个更隐蔽的
+    // 竞态换掉一个显式的回滚。锁内回滚只有一条错误路径，漏不掉。
     {
         let mut cfg = state.config.write().await;
+        let prev = cfg.locale.clone();
         cfg.locale = locale.clone();
-        cfg.save()?;
+        if let Err(e) = cfg.save() {
+            // 回滚 in-memory，否则后续任意一次成功 save 会把这次失败的
+            // locale 静默补写进磁盘，用户重启后语言突变。
+            cfg.locale = prev;
+            return Err(e);
+        }
     }
     rust_i18n::set_locale(&locale);
     // 广播给前端（让 src/i18n/index.ts 重新 render）+ 给自己（tray rebuild listener）

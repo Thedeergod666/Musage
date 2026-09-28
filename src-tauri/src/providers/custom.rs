@@ -385,18 +385,37 @@ fn parse_with_extract(
                         .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
                 })
                 .unwrap_or(0);
-            if !relay_ok || status_code != 0 {
+            // 2026-09-28 audit H-9: one-api 系中转站用 `{"code": 401, "message": ...}`
+            // 标记鉴权失败（不返 `success` / `status_code`）—— 原实现三个字段
+            // 全读不到 → `relay_ok = true` / `status_code = 0` → 直接放行，
+            // 往下解析 `data.quota` 又失败 → 落 Parse 错「data 缺失」，用户看到
+            // schema 漂移文案而不是"key 无效"，且 Parse 不退避、needs_settings
+            // 为 false（前端不亮「重新登录」按钮）。补一层 `code` 读取。
+            // 只认 `>= 400`（HTTP 语义码）或 `== 401`（部分站点用 401 走
+            // 业务层）—— one-api 的 `code: 0` = 成功，与 status_code 同语义。
+            let top_code = raw
+                .get("code")
+                .and_then(|v| {
+                    v.as_i64()
+                        .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+                })
+                .unwrap_or(0);
+            if !relay_ok || status_code != 0 || top_code >= 400 || top_code == 401 {
                 let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
                 return Err(FetchError::auth(
                     t!("error.custom.newapi_relay_error", msg = msg).into_owned(),
                 ));
             }
+            // 2026-09-28 audit H-9: 补 `.max(0.0)` —— 上面的 divide 校验只管
+            // 除数本身，`data.quota` 本身为负（中转站欠费 / 透支 / schema 漂移）
+            // 时 `remaining = 负/500000` 原样进 QuotaRow → 浮窗显示
+            // `-1.00 USD` + 托盘 health_label 判红点。转成"欠费 = 0 余额"更诚实。
             let remaining = read_path(raw, "data.quota")
                 .and_then(num_f64)
-                .map(|v| v / div);
+                .map(|v| (v / div).max(0.0));
             let used = read_path(raw, "data.used_quota")
                 .and_then(num_f64)
-                .map(|v| v / div);
+                .map(|v| (v / div).max(0.0));
             let total = match (remaining, used) {
                 (Some(r), Some(u)) => Some(r + u),
                 _ => None,

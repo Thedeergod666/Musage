@@ -619,12 +619,22 @@ export async function loadCredentialStatus(id: string) {
 ///   providers.ts 渲染副本行同款格式）
 /// - custom_<uuid> → extra_instances 里的 display_name（查不到回退原 id）
 /// - 其余（内置 base id）→ 正常 t(`provider.<id>.name`)
+///
+/// L-2 fix (2026-09-28 audit)：`t()` 找不到 key 时**返回 key 本身**（不是
+/// null），所以原来的 `t(...) ?? id` 兜底永远不触发 → i18n 缺 key 时 flash 里
+/// 出现字面量 `provider.xxx.name`。照抄 providers.ts:78 的
+/// `const name = t(k); return name === k ? fallback : name;` 写法。
 async function credentialProviderName(id: string): Promise<string> {
+  const nameOr = (pid: string, fallback: string): string => {
+    const k = `provider.${pid as ProviderId}.name`;
+    const name = t(k);
+    return name === k ? fallback : name;
+  };
   const hashIdx = id.indexOf("#");
   if (hashIdx > 0) {
     const base = id.slice(0, hashIdx);
     const n = Number(id.slice(hashIdx + 1));
-    return formatDisplayName(t(`provider.${base as ProviderId}.name`) ?? base, n);
+    return formatDisplayName(nameOr(base, base), n);
   }
   if (id.startsWith("custom_")) {
     try {
@@ -636,7 +646,7 @@ async function credentialProviderName(id: string): Promise<string> {
     }
     return id;
   }
-  return t(`provider.${id as ProviderId}.name`) ?? id;
+  return nameOr(id, id);
 }
 
 export async function saveCredentialAction(id: string, action: "key" | "cookie", advInputId?: string) {
@@ -792,10 +802,18 @@ export async function deleteCredentialAction(id: string, action: "key" | "cookie
       ? { name: providerName, count: cascadeCount }
       : { name: providerName };
   if (!(await confirmInApp(t(confirmKey, confirmArgs)))) return;
-  // 后端 delete_source_credential 会同时清 api_key 和 cookie，统一用一个入口
-  await deleteSourceCredential(id);
-  await loadCredentialStatus(id);
-  flash(t("credentials.flash_deleted"));
+  // H-Frontend-12 fix (2026-09-28 audit)：这三条 await 之前**没有** try/catch，
+  // 而调用点是 `void deleteCredentialAction(...)` → reject 后既没有 flash 也
+  // 没有状态刷新，删除按钮「点了没反应」（同文件其它 7 个 delete/clear action
+  // 全都包了 try+flash，只有这里漏）。
+  try {
+    // 后端 delete_source_credential 会同时清 api_key 和 cookie，统一用一个入口
+    await deleteSourceCredential(id);
+    await loadCredentialStatus(id);
+    flash(t("credentials.flash_deleted"));
+  } catch (e) {
+    flash(t("credentials.flash_save_failed", { err: String(e) }), true);
+  }
 }
 
 export async function copyCredentialAction(id: string) {
@@ -812,6 +830,30 @@ export async function copyCredentialAction(id: string) {
   }
 }
 
+/// H-Frontend-11 fix (2026-09-28 契约 3)：副本行的按钮 data-id 是 **meta.id**
+/// （形如 `xiaomimimo#2`），而下面 4 个 login / 4 个 clear action 原来用
+/// `if (id !== "xiaomimimo") return` 这种**硬编码 base id**做 kind 门 →
+/// 副本行直接被静默 return，「一键登录 / 清除」在副本行上点了毫无反应
+/// （连 flash 都没有）。
+///
+/// 修法：
+/// - kind 门改判 **base id**（`id.replace(/#\d+$/, "")`，跟浮窗错误卡 main.ts
+///   的 `baseId` 派生同款），
+/// - IPC 仍传**完整 id**，精确打到用户点的这一份凭据。
+///
+/// `baseIdOf`：`kimi#2` → `kimi`（跟浮窗 main.ts 的 baseId 派生同款）。
+function baseIdOf(id: string): string {
+  return id.replace(/#\d+$/, "");
+}
+
+/// `loginInstanceArg`：后端 4 个 `open_*_login_window` 新增
+/// `instance_id: Option<String>`（跨 agent 契约 3）。base 行保持旧行为
+/// （不传该参数 → None → 后端走 base 槽），只有副本行才带 `instanceId`，
+/// 避免 base 路径被新参数改变语义。
+function loginInstanceArg(id: string): { instanceId?: string } {
+  return id.includes("#") ? { instanceId: id } : {};
+}
+
 /// 一键登录小米账号：弹 webview → 用户登录 → 后端自动提取 cookie。
 ///
 /// 数据流：
@@ -821,12 +863,12 @@ export async function copyCredentialAction(id: string) {
 /// 4. 后端 emit `musage://xiaomi-login-success` / `-failed`
 /// 5. 本函数在 init 时绑一次事件监听（见 `bindXiaomiLoginEvents`）
 export async function xiaomiLoginAction(id: string) {
-  if (id !== "xiaomimimo") {
+  if (baseIdOf(id) !== "xiaomimimo") {
     flash(t("credentials.xiaomi_login_only"), true);
     return;
   }
   try {
-    await invoke("open_xiaomi_login_window");
+    await invoke("open_xiaomi_login_window", loginInstanceArg(id));
     flash(t("credentials.xiaomi_login_opened"));
   } catch (e) {
     flash(t("credentials.xiaomi_login_failed", { err: String(e) }), true);
@@ -836,7 +878,7 @@ export async function xiaomiLoginAction(id: string) {
 /// 清除 Xiaomi cookie 并提示用户重新登录。
 /// 用于 cookie 过期（API 返 401）时，一键清掉旧 cookie + 刷新状态。
 export async function xiaomiClearCookieAction(id: string) {
-  if (id !== "xiaomimimo") return;
+  if (baseIdOf(id) !== "xiaomimimo") return;
   if (!(await confirmInApp(t("credentials.confirm_clear_xiaomi")))) return;
   // 同 deleteKey：补 try/catch + flash（2026-06-20 audit）
   try {
@@ -853,12 +895,12 @@ export async function xiaomiClearCookieAction(id: string) {
 /// 数据流同 [`xiaomiLoginAction`]，区别在后端用 `document.title` 通道读
 /// localStorage（AnySearch 的 token 不在 cookie jar 里）。
 export async function anysearchLoginAction(id: string) {
-  if (id !== "anysearch") {
+  if (baseIdOf(id) !== "anysearch") {
     flash(t("credentials.anysearch_login_only"), true);
     return;
   }
   try {
-    await invoke("open_anysearch_login_window");
+    await invoke("open_anysearch_login_window", loginInstanceArg(id));
     flash(t("credentials.anysearch_login_opened"));
   } catch (e) {
     flash(t("credentials.anysearch_login_failed", { err: String(e) }), true);
@@ -867,7 +909,7 @@ export async function anysearchLoginAction(id: string) {
 
 /// 清除 AnySearch token 并提示用户重新登录。
 export async function anysearchClearTokenAction(id: string) {
-  if (id !== "anysearch") return;
+  if (baseIdOf(id) !== "anysearch") return;
   if (!(await confirmInApp(t("credentials.confirm_clear_anysearch")))) return;
   try {
     await deleteSourceCredential(id);
@@ -890,12 +932,12 @@ export async function anysearchClearTokenAction(id: string) {
 /// 4. 后端 emit `musage://stepfun-login-success` / `-failed`
 /// 5. 本函数在 init 时绑一次事件监听(见 `bindStepfunLoginEvents`)
 export async function stepfunLoginAction(id: string) {
-  if (id !== "stepfun") {
+  if (baseIdOf(id) !== "stepfun") {
     flash(t("credentials.stepfun_login_only"), true);
     return;
   }
   try {
-    await invoke("open_stepfun_login_window");
+    await invoke("open_stepfun_login_window", loginInstanceArg(id));
     flash(t("credentials.stepfun_login_opened"));
   } catch (e) {
     flash(t("credentials.stepfun_login_failed", { err: String(e) }), true);
@@ -904,7 +946,7 @@ export async function stepfunLoginAction(id: string) {
 
 /// 清除 StepFun cookie 并提示用户重新登录。
 export async function stepfunClearCookieAction(id: string) {
-  if (id !== "stepfun") return;
+  if (baseIdOf(id) !== "stepfun") return;
   if (!(await confirmInApp(t("credentials.confirm_clear_stepfun")))) return;
   try {
     await deleteSourceCredential(id);
@@ -927,12 +969,12 @@ export async function stepfunClearCookieAction(id: string) {
 /// 4. 后端 emit `musage://kimi-login-success` / `-failed`
 /// 5. 本函数在 init 时绑一次事件监听（见 `bindKimiLoginEvents`）
 export async function kimiLoginAction(id: string) {
-  if (id !== "kimi") {
+  if (baseIdOf(id) !== "kimi") {
     flash(t("credentials.kimi_login_only"), true);
     return;
   }
   try {
-    await invoke("open_kimi_login_window");
+    await invoke("open_kimi_login_window", loginInstanceArg(id));
     flash(t("credentials.kimi_login_opened"));
   } catch (e) {
     flash(t("credentials.kimi_login_failed", { err: String(e) }), true);
@@ -942,13 +984,18 @@ export async function kimiLoginAction(id: string) {
 /// 清除已保存的 Kimi 网页会话（`kimi:cookie` 槽）。
 /// 走后端专用 `clear_kimi_session` 命令 —— **只清 cookie 槽，不动 API key**
 /// （deleteSourceCredential 会把该 id 全部凭据都删掉，kimi 不能用）。
+///
+/// H-Frontend-11 fix (2026-09-28 契约 2/3)：kind 门改判 base id，IPC 带
+/// `instanceId`（后端 `clear_kimi_session` 新增可选 `instanceId`）。此前副本行
+/// `kimi#2` 被 `id !== "kimi"` 静默 return，「清除会话」点了没反应；即使放行，
+/// 不带 id 也会清到 base 那一份去。
 export async function kimiClearSessionAction(id: string) {
-  if (id !== "kimi") return;
+  if (baseIdOf(id) !== "kimi") return;
   if (!(await confirmInApp(t("credentials.confirm_clear_kimi_session")))) return;
   try {
-    await invoke("clear_kimi_session");
+    await invoke("clear_kimi_session", loginInstanceArg(id));
     flash(t("credentials.kimi_session_clear_done"));
-    await loadKimiSessionStatus();
+    await loadKimiSessionStatus(id);
   } catch (e) {
     flash(t("credentials.flash_save_failed", { err: String(e) }), true);
   }
@@ -958,12 +1005,15 @@ export async function kimiClearSessionAction(id: string) {
 /// 读 **cookie 槽** 判定（不能用公共 loadCredentialStatus：它按"任一槽位"
 /// 判定，API key 已配时永远显示"已配置"，徽章失去意义）。
 /// settings/main.ts init 渲染完 kimi panel 后调一次；登录成功 / 清除后也调。
-export async function loadKimiSessionStatus(): Promise<void> {
-  const status = document.getElementById("cookie-status-kimi");
+///
+/// H-Frontend-11 fix (2026-09-28 契约 3)：id 参数化 —— 副本行的徽章 DOM id 是
+/// `cookie-status-kimi#2`，此前这里硬编码 base id，副本行的会话状态永远刷不到。
+export async function loadKimiSessionStatus(id = "kimi"): Promise<void> {
+  const status = document.getElementById(`cookie-status-${id}`);
   if (!status) return; // kimi panel 还没渲染
   let has = false;
   try {
-    const tok = await getSourceCredential("kimi", "cookie");
+    const tok = await getSourceCredential(id, "cookie");
     has = !!tok && tok.length > 0;
   } catch {
     has = false;

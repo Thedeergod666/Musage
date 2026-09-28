@@ -271,6 +271,9 @@
     },
     "kimi": {
       "timeout": "Login not completed within %{secs}s — please try again"
+    },
+    "anysearch": {
+      "timeout": "Login not completed within %{secs}s — please try again"
     }
   }
 }

@@ -40,9 +40,10 @@
 use std::borrow::Cow;
 use std::pin::Pin;
 
+use super::parse::json_i64;
 use super::{
-    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, AuthKind,
-    Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
+    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, validate_bearer_key,
+    AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
 };
 use crate::t;
 
@@ -143,6 +144,10 @@ async fn do_fetch(
 
     let client = shared_client();
 
+    // L-6 fix (2026-09-05 audit)：key 内含控制字符时 send() 报 invalid header
+    // 被兜底归成误导性 Network 错误；send 前显式拒绝并归类配置错误。
+    // 2026-09-28 audit H-9 补齐：当日 L-6 只接了 4/14 个 provider。
+    validate_bearer_key(api_key)?;
     let resp = client
         .get(URL)
         .header("Authorization", format!("Bearer {api_key}"))
@@ -216,7 +221,11 @@ fn parse(
             .into_owned(),
         ));
     }
-    let code = raw.get("code").and_then(|v| v.as_i64()).unwrap_or(0);
+    // 2026-09-28 audit H-9: 共享 `json_i64`（数字 / 整数字符串都吃）—— 原
+    // `.as_i64()` 在 code 被序列化成字符串时返 0，字符串错误码被当成
+    // "code == 20000 不成立" 的另一种情况，但**上面 status 分支**（只吃
+    // `as_bool()`）同样会被字符串 status 绕过，两处一起被 schema 漂移打穿。
+    let code = raw.get("code").and_then(json_i64).unwrap_or(0);
     // M13 fix: 严格只接受 code == 20000（SiliconFlow 文档的成功码）。
     // 之前兼容 code == 0 是防御性容错，但代码路径里 raw.get("status") == Some(false)
     // 已经会提前 return，这里再放 code == 0 等于把 'status=true + code=0' 这种

@@ -152,6 +152,22 @@ pub fn num_f64(v: &Value) -> Option<f64> {
     n.filter(|f| f.is_finite())
 }
 
+/// `num_f64` 的 i64 兄弟：宽容读整数字段。
+///
+/// 2026-09-28 audit H-9 提升到共享 helper（原先只有 `anysearch.rs` 有私有
+/// 同款，9-04 的 L-2 fix）：多个 provider 的**业务码**判定只吃 `.as_i64()`，
+/// 而同生态的站点（xiaomi / siliconflow / zhipu）实测会把 `code`、
+/// `nextResetTime` 序列化成**字符串** —— 字符串码直接绕过整个拦截分支，
+/// 错误响应被当成成功响应继续往下解析。
+///
+/// 与 `num_f64` 对称的设计：整数 / 整数字符串（trim 后 parse）都收，
+/// 其他（null / bool / object / array / 浮点字符串）返 None。
+/// `pub(super)` = 只在本 `providers` 模块树内可见，不扩 crate 公共面。
+pub(super) fn json_i64(v: &Value) -> Option<i64> {
+    v.as_i64()
+        .or_else(|| v.as_str().and_then(|raw| raw.trim().parse().ok()))
+}
+
 // ── 单元测试 ────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -292,5 +308,34 @@ mod tests {
         assert_eq!(num_f64(&json!("100")), Some(100.0));
         assert_eq!(num_f64(&json!("-5.5")), Some(-5.5));
         assert_eq!(num_f64(&json!("1e3")), Some(1000.0));
+    }
+
+    // ── json_i64（2026-09-28 audit H-9 提升到共享）──
+
+    #[test]
+    fn json_i64_accepts_int() {
+        assert_eq!(json_i64(&json!(401)), Some(401));
+        assert_eq!(json_i64(&json!(-1)), Some(-1));
+    }
+
+    #[test]
+    fn json_i64_accepts_numeric_string() {
+        // 核心动机：xiaomi / siliconflow / zhipu 实测会把 `code` /
+        // `nextResetTime` 序列化成字符串，`.as_i64()` 返 None → 业务码拦截
+        // 分支被整条绕过。
+        assert_eq!(json_i64(&json!("401")), Some(401));
+        assert_eq!(json_i64(&json!("  200  ")), Some(200));
+        assert_eq!(json_i64(&json!("-1")), Some(-1));
+    }
+
+    #[test]
+    fn json_i64_rejects_non_integer() {
+        assert_eq!(json_i64(&json!("1.5")), None); // 浮点串不是 i64
+        assert_eq!(json_i64(&json!(1.5)), None);
+        assert_eq!(json_i64(&json!("abc")), None);
+        assert_eq!(json_i64(&json!("")), None);
+        assert_eq!(json_i64(&json!(null)), None);
+        assert_eq!(json_i64(&json!(true)), None);
+        assert_eq!(json_i64(&json!({"code": 1})), None);
     }
 }

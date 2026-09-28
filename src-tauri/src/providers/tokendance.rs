@@ -45,8 +45,8 @@ use std::borrow::Cow;
 use std::pin::Pin;
 
 use super::{
-    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, AuthKind,
-    Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
+    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, validate_bearer_key,
+    AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
 };
 use crate::t;
 
@@ -159,6 +159,10 @@ async fn do_fetch(
         ));
     }
 
+    // L-6 fix (2026-09-05 audit)：key 内含控制字符时 send() 报 invalid header
+    // 被兜底归成误导性 Network 错误；send 前显式拒绝并归类配置错误。
+    // 2026-09-28 audit H-9 补齐：当日 L-6 只接了 4/14 个 provider。
+    validate_bearer_key(api_key)?;
     let client = shared_client();
 
     let resp = client

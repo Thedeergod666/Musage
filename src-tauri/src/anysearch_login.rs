@@ -50,10 +50,12 @@
 //! 装在一次 document load 上后，整个 SPA 生命周期都活着，客户端跳转写 localStorage
 //! 也能在 500ms 内被捕获。
 //!
-//! init script 的 `document.cookie` / `Storage.getItem` override 只在
-//! `www.anysearch.com` 域安装（L12 fix：非受信域保持原生行为 —— 旧版一律
-//! 返 null，会破坏 SSO/OAuth 页面读自己的 storage；跨域偷读本来就有同源
-//! 隔离）。
+//! init script 只在 `www.anysearch.com` 域干活（L12 fix：非受信域保持原生
+//! 行为 —— 旧版一律返 null，会破坏 SSO/OAuth 页面读自己的 storage；跨域偷读
+//! 本来就有同源隔离）。**2026-09-28 起不再有任何 prototype override** ——
+//! 原先那段 `Document.prototype.cookie` passthrough override 只把
+//! `configurable` 改成 false，防护价值为零却会让页面脚本
+//! `Object.defineProperty(Document.prototype, 'cookie', ...)` 抛 TypeError。
 //!
 //! ## 并发 / 重入
 //!
@@ -68,8 +70,9 @@
 //! webview profile 持久化 localStorage —— 上一次（可能已过期）的 JWT 会残留。
 //! 不清理就重开登录窗，interval 会立刻把旧 JWT 写进中转 cookie，Rust 抓到存盘
 //! → 浮窗继续 401、窗口「弹出即消失」。fix：init script 在 document_start 删旧
-//! auth state + 清旧 cookie，并置 `MUSAGE_READY` 标记；Rust 轮询见到 READY 才
-//! 接受 token，保证抓到的一定是清理后新登录的 JWT。
+//! auth state + 清旧 cookie，并置 `MUSAGE_READY=<本次会话 nonce>` 标记；Rust
+//! 轮询见到**值对得上本次 nonce** 的 READY 才接受 token，保证抓到的一定是
+//! 清理后新登录的 JWT（nonce 的必要性见 `READY_COOKIE_NAME` 注释）。
 //!
 //! 2026-09-09 死锁回归 fix：M-19「有 auth 就跳过清理」× D3-006「interval 首写
 //! 成功即 clearInterval」组合把 cookie 冻结在过期残留值上 —— Rust freshness
@@ -80,6 +83,7 @@
 //! D3-006 的 fsync 目标由值比对达成而非自杀）。
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use tauri::webview::Cookie;
@@ -168,12 +172,63 @@ const STORAGE_KEY: &str = "search-template-auth-state";
 const COOKIE_NAME: &str = "MUSAGE_TOKEN";
 
 /// 「清理完成」握手标记 cookie。init script 在 document_start 清掉上一次
-/// 残留的 auth state 后写 `MUSAGE_READY=1`；Rust 轮询**见到 READY 才开始接受**
-/// `MUSAGE_TOKEN`。这样能堵住一个竞态：webview profile 持久化了上一次的
-/// `MUSAGE_TOKEN` cookie，若轮询在 init script 清理之前就读 cookie，会抓到
-/// 过期 token 存盘 → 浮窗继续 401、登录窗口「弹出即消失」。READY 保证
-/// token 一定是清理之后新写入的。
+/// 残留的 auth state 后写 `MUSAGE_READY=<本次会话 nonce>`；Rust 轮询**见到
+/// 值 == 本次 nonce 的 READY 才开始接受** `MUSAGE_TOKEN`。这样能堵住一个竞态：
+/// webview profile 持久化了上一次的 `MUSAGE_TOKEN` cookie，若轮询在 init script
+/// 清理之前就读 cookie，会抓到过期 token 存盘 → 浮窗继续 401、登录窗口
+/// 「弹出即消失」。
+///
+/// ## 为什么值是 nonce 而不是常量 `1`（2026-09-28 fix）
+///
+/// READY 自己就住在**同一个持久 cookie jar** 里，而且 `max-age=900`。写死
+/// `=1` 的话，用户在 15 分钟内重开登录窗时，上一会话那个 `MUSAGE_READY=1`
+/// 还在 → 握手立刻放行，注释承诺的「保证抓到的一定是清理之后新写入的
+/// token」完全没兑现（当前实际影响为 0：Rust 的 `is_fresh_access` 会拒掉旧
+/// 值，等新 token 覆盖后自然成功；但这是「注释承诺的保证未兑现」的潜在
+/// 弱化 —— 哪天 freshness 门被改松，死循环就会回来）。
+///
+/// 带 nonce 后，旧会话的 READY 值跟本次对不上 → 拒 → 只有本次页面加载真的
+/// 跑过 init script 才放行。nonce = `进程启动时刻 + gen`，跨进程 / 跨会话
+/// 都不可能撞。
 const READY_COOKIE_NAME: &str = "MUSAGE_READY";
+
+/// 进程启动时刻（纳秒，饱和到 u64）—— READY nonce 的进程级盐。
+static PROCESS_EPOCH: OnceLock<u64> = OnceLock::new();
+
+/// 本次登录会话的 READY nonce。写进 init script 模板，Rust 侧比对 cookie 值。
+fn session_nonce(gen: u64) -> String {
+    let epoch = PROCESS_EPOCH.get_or_init(|| {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0)
+    });
+    // 只用 hex + `-`（cookie value 合法字符集），不引入需要转义的符号
+    format!("{epoch:x}-{gen:x}")
+}
+
+/// READY cookie 值是否等于本次会话 nonce。
+///
+/// 纯函数（便于单测）；cookie value 可能被 WKWebView 包双引号，调用方先剥。
+fn ready_matches(value: &str, nonce: &str) -> bool {
+    value.trim_matches('"') == nonce
+}
+
+/// 解析本次登录要写入的凭据槽（base 或副本 unique_id）。
+///
+/// 2026-09-28 fix（契约 1/2）：base 禁用 + 副本启用时，登录写 base 槽、
+/// 浮窗刷副本槽 → 「登录成功但卡片还是红的」，且副本凭据成了 UI 删不掉的
+/// 孤儿（base 行的「清除」只删 base 槽）。优先级：显式 `instance_id` >
+/// base 启用 > 升序第一个启用副本 > `instance_id` 原样 > base。
+async fn resolve_target(app: &AppHandle, base: &str, instance_id: Option<&str>) -> String {
+    match crate::commands::resolve_login_refresh_target(&app.state(), base, instance_id).await {
+        Some(t) => t,
+        None => instance_id
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(base)
+            .to_string(),
+    }
+}
 
 /// JWT 形态校验：`eyJ` 开头 + 长度合理（≥ 20，挡 3-char 短串）+ ≤ 4096 +
 /// 无空白 / 控制字符。挡掉 interval 还没拿到 token 时的空串、init script
@@ -241,12 +296,14 @@ fn is_fresh_access(token: &str) -> bool {
 }
 
 /// 注入页面的 init script：
-/// - 把 cookie / storage 读取锁在受信 host（挡第三方 tracker 偷 JWT）
 /// - **打开即清理**：删 localStorage 里上一次残留的 auth state + 清旧中转
-///   cookie，然后置 `MUSAGE_READY` 标记（重新登录不被过期 token 污染）
+///   cookie，然后置 `MUSAGE_READY=<nonce>` 标记（重新登录不被过期 token 污染）
 /// - 起 interval：localStorage 一旦出现 JWT 就写同源 cookie `MUSAGE_TOKEN`；
 ///   没 token 时把该 cookie 清成空（让 Rust 知道「还在等」）
-fn init_script() -> String {
+///
+/// `nonce`：本次会话的 READY 值（见 [`session_nonce`]）—— 让「清理完成」
+/// 这个握手真的只在本次页面加载后才成立。
+fn init_script(nonce: &str) -> String {
     // 设计：**localStorage → cookie 中转** + Rust 用 `cookies_for_url` 读。
     //
     // 之前的设计让 init script 写 `document.title`，Rust 调 `window.title()` 读。
@@ -261,47 +318,32 @@ fn init_script() -> String {
     //
     // 注意：JS 里有大量字面 `{}`（空 catch 块 / 对象字面量），所以**不能**用
     // format!（单花括号会被当占位符）。改用唯一占位符 + replace() 注入。
+    //
+    // 2026-09-28: 原先这里的 `Document.prototype.cookie` override（D3-001
+    // 「锁 prototype 防 instance 绕过」）**整段删除**，跟 xiaomi_login.rs 是同一份
+    // passthrough —— getter/setter 逐字转发，只把 `configurable` 改成 false：
+    //   - **防护价值为零**：`document.cookie` 照样返回全部 cookie，包括本 init
+    //     script 自己写的 MUSAGE_TOKEN，页面脚本照样读得到。真要挡，getter
+    //     必须返回过滤后的串。
+    //   - **净破坏**：`www.anysearch.com` 上的页面脚本 / 第三方 widget 调
+    //     `Object.defineProperty(Document.prototype, 'cookie', ...)`（严格模式 /
+    //     ESM）会因 `configurable: false` 抛 TypeError。
+    // 同款的 Storage.getItem override 此前已因 H-7 删除。真正的边界防护在
+    // WebView 实例本身（独立 webview + capabilities 只授权这一个 label）。
     const JS: &str = r#"
         (function () {
             var ALLOW_HOST = "www.anysearch.com";
             var COOKIE_NAME = "__MUSAGE_COOKIE_NAME__";
             var LS_KEY = "__MUSAGE_LS_KEY__";
             var READY_NAME = "__MUSAGE_READY_NAME__";
+            var READY_NONCE = "__MUSAGE_READY_NONCE__";
             function isAllowed() {
                 try { return location.hostname === ALLOW_HOST; } catch (_) { return false; }
             }
-            // H-Login fix (2026-09-07 audit): init script 在每次 document_start 都跑,
-            // 跨域 SSO 跳转 (未来 anysearch 新 OAuth) 时也跑 —— 若无条件装 prototype
-            // 锁,OIDC state / PKCE code_verifier 在 localStorage.setItem 时被 patch 拦截
-            // (因为 isAllowed() 返回 false → set 被吞),SSO 回调读不到 state → 整个
-            // 跨域 OAuth 流程被 break。必须在受信 host 才生效。
+            // H-Login fix (2026-09-07 audit): 只在受信 host 上干活，其余域保持
+            // 原生行为（跨域 SSO / OAuth 中间页的 storage 与 cookie 不能被锁）。
+            // 2026-09-28: prototype override 已整段删除（理由见上方 Rust 注释）。
             if (!isAllowed()) return;
-            // ── 锁 cookie / storage 读取到受信 host（挡第三方 tracker 偷 JWT）──
-            //
-            // H-7 fix (2026-09-05 audit)：prototype override **只在受信 host 上
-            // 安装**。原实现无条件安装、调用时才门控 —— 非 ALLOW_HOST 的
-            // SSO/OAuth 中间页 getItem 恒 null、cookie 写被静默丢弃，登录流程
-            // 直接坏掉（stepfun_login.rs 已用删除 init script 修复同款问题）。
-            // 受信域之外保持原生行为：JWT 本来就只存在于 ALLOW_HOST 的
-            // same-origin storage，跨域 tracker 同源策略下读不到，无需 override。
-            try {
-                if (isAllowed()) {
-                    // D3-001 fix (2026-07-30 audit): 锁 Document.prototype.cookie
-                    // 而非 document.cookie (instance). 之前 instance-level override
-                    // 可被 'Object.getOwnPropertyDescriptor(Document.prototype, "cookie")
-                    // .get.call(document)' 绕过 → 同源 XSS 能直接读 MUSAGE_TOKEN
-                    // (非 HttpOnly). 锁 prototype + configurable: false 防 redef.
-                    var _origCookie = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
-                    Object.defineProperty(Document.prototype, "cookie", {
-                        get: function () { return _origCookie.get.call(this); },
-                        set: function (v) { _origCookie.set.call(this, v); },
-                        configurable: false
-                    });
-                }
-            } catch (_) {}
-            // Storage.getItem override 在 H-7 后已无安全收益（token 只在
-            // ALLOW_HOST 的 same-origin storage 里，其它域读不到），不再安装，
-            // 让 SSO/OAuth 页面的 storage 保持原生行为。
             // ── 重新登录：清掉上一次残留的登录态（关键 fix）──
             // webview profile 持久化 localStorage —— 上一次（可能已过期）的 JWT
             // 还在 LS_KEY 里。不清的话下面的 interval 会立刻把它写进中转
@@ -309,8 +351,8 @@ fn init_script() -> String {
             // 「弹出即消失」。所以每次打开都从干净状态开始：
             //   1) 删 localStorage 里的旧 auth state（强制重新登录）
             //   2) 清掉旧的中转 cookie
-            //   3) 置 MUSAGE_READY 标记 —— Rust 见到 READY 才开始接受 token，
-            //      保证不会抓到清理之前残留在 cookie store 里的旧 MUSAGE_TOKEN
+            //   3) 置 MUSAGE_READY=<nonce> 标记 —— Rust 只接受 nonce 对得上的
+            //      READY，保证 token 一定是本次加载清理之后新写入的
             // 只在受信 host 上清（isAllowed 守卫），不碰第三方数据。
             //
             // M-19 fix (2026-09-05 audit)：**只在当前没有已建立的登录态时清理**。
@@ -342,9 +384,10 @@ fn init_script() -> String {
                         localStorage.removeItem(LS_KEY);
                         document.cookie = COOKIE_NAME + "=; path=/; max-age=0";
                     }
-                    // READY 每次（重新）置位：标记"清理已完成"，Rust 只接受
-                    // 本会话内新写入的 token。
-                    document.cookie = READY_NAME + "=1; path=/; max-age=900; SameSite=Lax; Secure";
+                    // READY 每次（重新）置位：标记"本次加载的清理已完成"。
+                    // 值带本次会话 nonce —— 旧会话留在持久 jar 里的 READY
+                    // 对不上 Rust 侧的 nonce, 不会提前放行 (2026-09-28 fix)。
+                    document.cookie = READY_NAME + "=" + READY_NONCE + "; path=/; max-age=900; SameSite=Lax; Secure";
                 }
             } catch (_) {}
             // ── 读 token ──
@@ -428,6 +471,7 @@ fn init_script() -> String {
     JS.replace("__MUSAGE_COOKIE_NAME__", COOKIE_NAME)
         .replace("__MUSAGE_LS_KEY__", STORAGE_KEY)
         .replace("__MUSAGE_READY_NAME__", READY_COOKIE_NAME)
+        .replace("__MUSAGE_READY_NONCE__", nonce)
 }
 
 /// 打开登录 webview 窗口。
@@ -442,8 +486,14 @@ fn init_script() -> String {
 ///
 /// 错误（仅“写盘失败”这类真错误）通过 `musage://anysearch-login-failed` 返回前端。
 /// 用户主动关窗 / 没登录不算错误，不弹红条。
+///
+/// `instance_id`（2026-09-28 契约 1/2）：副本行必须传自己的 `unique_id`；
+/// 标量参数走 camelCase，前端 `{ instanceId: "anysearch#2" }`；不传 → 旧行为。
 #[tauri::command]
-pub async fn open_anysearch_login_window(app: AppHandle) -> Result<(), String> {
+pub async fn open_anysearch_login_window(
+    app: AppHandle,
+    instance_id: Option<String>,
+) -> Result<(), String> {
     // 新一轮流程：gen+1（老轮询任务见 gen 不等即静默退出 —— 同 label 新窗口
     // 会让旧的 `get_webview_window().is_none()` 检查失效）
     let gen = GEN.fetch_add(1, Ordering::SeqCst) + 1;
@@ -458,6 +508,10 @@ pub async fn open_anysearch_login_window(app: AppHandle) -> Result<(), String> {
     let url: Url = LOGIN_URL
         .parse::<Url>()
         .map_err(|e| t!("anysearch_login.parse_login_url", err = e.to_string()).into_owned())?;
+
+    // 2026-09-28 fix: READY 握手改带本次会话 nonce —— 见 READY_COOKIE_NAME
+    // 注释（旧会话留在持久 jar 里的 `MUSAGE_READY=1` 会让握手提前放行）。
+    let ready_nonce = session_nonce(gen);
 
     // D3-003 fix (2026-07-30 audit): 同 xiaomi
     let b = WebviewWindowBuilder::new(&app, WINDOW_LABEL, WebviewUrl::External(url))
@@ -479,19 +533,17 @@ pub async fn open_anysearch_login_window(app: AppHandle) -> Result<(), String> {
         None => b,
     };
     let window = b
-        .initialization_script(init_script())
+        .initialization_script(init_script(&ready_nonce))
         .build()
         .map_err(|e| t!("anysearch_login.build_webview", err = e.to_string()).into_owned())?;
 
     // 轮询任务：读 cookie jar 抽 JWT
     let app2 = app.clone();
     let window_clone = window.clone();
-    // D7-02 fix (2026-09-07 audit, cross-verified): 在 spawn 前 resolve refresh
-    // target (base 或副本 unique_id),让 save_token 直接写 target 槽,refresh
-    // 命中。target 解析失败时 fallback 到 base (旧行为,保持向后兼容)。
-    let target = crate::commands::resolve_login_refresh_target(&app2.state(), "anysearch")
-        .await
-        .unwrap_or_else(|| "anysearch".to_string());
+    // D7-02 fix (2026-09-07 audit, cross-verified) + 2026-09-28 契约 1：在 spawn
+    // 前 resolve refresh target (base 或副本 unique_id)，前端显式传的
+    // instance_id 优先（见 resolve_target）。
+    let target = resolve_target(&app2, "anysearch", instance_id.as_deref()).await;
     tauri::async_runtime::spawn(async move {
         // L9 fix (2026-07-28 审查): panic 兜底 guard —— 任意退出路径(正常 /
         // Cancelled / Failed / panic unwind)都确保窗口被关闭;panic 时额外打
@@ -499,7 +551,8 @@ pub async fn open_anysearch_login_window(app: AppHandle) -> Result<(), String> {
         // 未来新增提前 return 的路径上兜底。
         let _close_guard = WindowCloseGuard(window_clone.clone());
         let my_gen = gen;
-        let result = poll_token_from_cookie(&app2, &window_clone, my_gen, &target).await;
+        let result =
+            poll_token_from_cookie(&app2, &window_clone, my_gen, &target, &ready_nonce).await;
         // gen 已被新流程取代 → 静默退出,不发任何事件,不要 close(新窗口接管)
         if !is_current_gen(my_gen) {
             tracing::debug!(my_gen, "anysearch 老轮询流程被新流程取代,静默退出");
@@ -570,6 +623,10 @@ async fn poll_token_from_cookie(
     // D7-02 fix (2026-09-07 audit): 接收 caller 在 spawn 前 resolve 的
     // refresh target (base 或副本 unique_id), 让 save_token 直接写 target 槽。
     target: &str,
+    // 2026-09-28 fix: 本次会话的 READY nonce —— 只有值对得上的 READY 才放行
+    // （见 READY_COOKIE_NAME 注释：写死 `=1` 时，15 分钟内重开登录窗会被
+    // 上一会话留在持久 jar 里的 READY 提前放行）。
+    ready_nonce: &str,
 ) -> PollOutcome {
     // 安全上限：~14 分钟，防窗口句柄异常残留时任务永不退出。
     //
@@ -595,8 +652,9 @@ async fn poll_token_from_cookie(
     }
 
     // READY 长期不出现的 tick 计数（≈60s 打一条 warn 帮白屏/断网排查，之后
-    // 不刷屏）。注意 15min 内重开时旧会话的 READY cookie 仍有效，此 warn
-    // 只在首次开窗 / 距上次 >15min 时能命中 —— 尽力而为的诊断信号。
+    // 不刷屏）。2026-09-28 起 READY 带本次会话 nonce，所以「旧会话的 READY
+    // 还留在 jar 里」不再算出现 —— 只有本次页面加载真的跑过 init script 才
+    // 算，这条 warn 恢复成真正的白屏/断网诊断信号。
     let mut not_ready_ticks: u32 = 0;
 
     for _ in 0..MAX_ITERS {
@@ -649,16 +707,21 @@ async fn poll_token_from_cookie(
             }
         };
 
-        // 握手：init script 清完上一次残留的 auth state 后才写 MUSAGE_READY。
-        // 没见到 READY 就不读 token —— 否则可能抓到清理之前残留在 cookie store
-        // 里的过期 MUSAGE_TOKEN（「弹出即消失 + 信息不更新」bug 的根因）。
-        if !cookies.iter().any(|c| c.name() == READY_COOKIE_NAME) {
-            // 2026-09-09：页面未完成加载（断网 / WKWebView 白屏）时 init script
-            // 不跑、READY 永不出现 —— ~60s 打一条 warn 帮排查
+        // 握手：init script 清完上一次残留的 auth state 后才写
+        // `MUSAGE_READY=<本次会话 nonce>`。没见到**本次**的 READY 就不读
+        // token —— 否则可能抓到清理之前残留在 cookie store 里的过期
+        // MUSAGE_TOKEN（「弹出即消失 + 信息不更新」bug 的根因）。
+        // 2026-09-28: 值必须等于本次 nonce（旧会话那个 `=1` 不算数）。
+        let ready_ok = cookies
+            .iter()
+            .any(|c| c.name() == READY_COOKIE_NAME && ready_matches(c.value(), ready_nonce));
+        if !ready_ok {
+            // 页面未完成加载（断网 / WKWebView 白屏）时 init script 不跑、
+            // READY 永不出现 —— ~60s 打一条 warn 帮排查
             not_ready_ticks += 1;
             if not_ready_ticks == 85 {
                 tracing::warn!(
-                    "anysearch 登录页 ~60s 未见 MUSAGE_READY（页面未加载完成？网络不通？），继续等待"
+                    "anysearch 登录页 ~60s 未见本次会话的 MUSAGE_READY（页面未加载完成？网络不通？），继续等待"
                 );
             }
             sleep(Duration::from_millis(700)).await;
@@ -774,5 +837,67 @@ mod tests {
         assert!(!is_jwt_like(&format!("{access}...")));
         assert!(!is_jwt_like(&format!("{access}...abc def")));
         assert!(!is_jwt_like(&format!("{access}...\u{7}xyz")));
+    }
+
+    // ── READY 握手 nonce（2026-09-28）──
+
+    #[test]
+    fn ready_accepts_matching_nonce() {
+        let n = session_nonce(7);
+        assert!(ready_matches(&n, &n));
+    }
+
+    #[test]
+    fn ready_rejects_legacy_constant_one() {
+        // 旧实现写死 `MUSAGE_READY=1` 且活在持久 jar 里 → 15 分钟内重开登录窗
+        // 时握手提前放行。带 nonce 后必须拒。
+        let n = session_nonce(7);
+        assert!(!ready_matches("1", &n));
+    }
+
+    #[test]
+    fn ready_rejects_previous_session_nonce() {
+        // 上一次登录写下的 READY 值对不上本次 gen
+        assert!(!ready_matches(&session_nonce(1), &session_nonce(2)));
+    }
+
+    #[test]
+    fn ready_tolerates_wkwebview_quote_wrapping() {
+        // macOS WKWebView 习惯在 cookie value 外包双引号
+        let n = session_nonce(3);
+        assert!(ready_matches(&format!("\"{n}\""), &n));
+    }
+
+    #[test]
+    fn session_nonce_is_cookie_value_safe_and_stable() {
+        // 只用 hex + `-`：cookie value 合法字符集，不引入需要转义的符号；
+        // 同 gen 重复调用必须同值（init script 与 Rust 侧比对要对得上）
+        let n = session_nonce(42);
+        assert_eq!(n, session_nonce(42));
+        assert!(
+            n.chars().all(|c| c.is_ascii_hexdigit() || c == '-'),
+            "nonce 含非法 cookie value 字符: {n}"
+        );
+        assert_ne!(n, session_nonce(43));
+    }
+
+    #[test]
+    fn init_script_embeds_nonce_and_drops_prototype_lock() {
+        // 1) READY cookie 值带上本次 nonce
+        let n = session_nonce(5);
+        let js = init_script(&n);
+        assert!(js.contains(&format!("\"{n}\"")), "init script 未注入 nonce");
+        assert!(!js.contains("__MUSAGE_READY_NONCE__"), "占位符未替换");
+        // 2) prototype override 整段删除（2026-09-28 bug 4）。断言用**代码标识符**
+        //    而不是 "Document.prototype" 字面 —— 后者在解释性注释里也会出现。
+        assert!(!js.contains("_origCookie"), "prototype override 残留");
+        assert!(
+            !js.contains("getOwnPropertyDescriptor"),
+            "prototype override 残留"
+        );
+        // 3) cookie 中转 + 清理逻辑仍在
+        assert!(js.contains("localStorage.removeItem"));
+        assert!(js.contains(COOKIE_NAME) && js.contains(STORAGE_KEY));
+        assert!(js.contains(READY_COOKIE_NAME));
     }
 }

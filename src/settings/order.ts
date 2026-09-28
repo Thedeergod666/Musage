@@ -172,8 +172,19 @@ let dragOffsetY = 0;
 /// 详见 onDragMouseUp 内的 DRAG_THRESHOLD_PX 注释。
 let dragStartY = 0;
 
-/** L2 fix: 重置 drag state,防止 section 重建时幽灵/placeholder 残留。 */
+/** L2 fix: 重置 drag state,防止 section 重建时幽灵/placeholder 残留。
+ *
+ *  H-Frontend-5 fix (2026-09-28 audit)：补上**源 li 的 `display:none` 还原**。
+ *  拖拽期间 `onDragMouseDown` 把源行设成 `display:none`（正常路径由
+ *  `onDragMouseUp` 开头还原）；但 aborted 拖拽（窗口外松手 / blur /
+ *  pointercancel）根本走不到 mouseup，placeholder 被摘掉后源行仍是隐藏的
+ *  → 列表永久多一条空白行。`dragSrcId` 在正常 mouseup 末尾已置 null，所以
+ *  这里只在真有一次悬空拖拽时才会去查 DOM。 */
 export function resetDragState(): void {
+  if (dragSrcId && listRef) {
+    const srcLi = listRef.querySelector<HTMLElement>(`li[data-id="${dragSrcId}"]`);
+    if (srcLi) srcLi.style.display = "";
+  }
   if (dragGhost?.parentNode) dragGhost.parentNode.removeChild(dragGhost);
   if (dragPlaceholder?.parentNode) dragPlaceholder.parentNode.removeChild(dragPlaceholder);
   dragging = false;
@@ -183,6 +194,38 @@ export function resetDragState(): void {
   dragPlaceholder = null;
   dragOffsetY = 0;
   dragStartY = 0;
+}
+
+/** 摘掉 mousedown 时挂的全部 drag listener（mousemove / mouseup /
+ *  window blur / document pointercancel）。
+ *  H-Frontend-5 fix (2026-09-28 audit)：此前**只**摘 mousemove + mouseup，
+ *  blur / pointercancel 两个 listener 会泄漏到下一次拖拽 —— 每 aborted 一次
+ *  多挂一对，cancel 一次触发 N 次 resetDragState（幂等但纯浪费）。 */
+function removeDragListeners(): void {
+  document.removeEventListener("mousemove", onDragMouseMove);
+  document.removeEventListener("mouseup", onDragMouseUp);
+  window.removeEventListener("blur", onDragCancel);
+  document.removeEventListener("pointercancel", onDragCancel);
+}
+
+/** 拖拽中途失去控制权（窗口失焦 / pointercancel）→ 无条件收尾。
+ *
+ *  H-Frontend-5 fix (2026-09-28 audit)：`onDragMouseDown` 原来在 document
+ *  上只挂了 mousemove / mouseup，**没有任何兜底**。鼠标在设置窗口**外**松开
+ *  时，WKWebView / WebView2 都不派发 mouseup → `onDragMouseUp` 永不跑 →
+ *  · `dragGhost`（position:fixed; z-index:9999，挂在 body）永远留着盖在面板上
+ *  · `dragPlaceholder` 永远留在列表里
+ *  · 被拖的源 `li` 永远是 `display:none`（列表出现一条空白）
+ *  下一个 mousedown 会**再新建**一份 ghost/placeholder 并把 module 级变量指向
+ *  新的 → 旧的再没人回收 → **每 aborted 一次拖拽泄漏一份**。
+ *
+ *  修法：mousedown 时同挂 blur + pointercancel，cancel 里走已有的
+ *  `resetDragState()`（它把 ghost / placeholder / `display:none` 全清干净），
+ *  四个 listener 一起摘。不落盘、不调任何 IPC —— 拖拽没完成就当没发生。 */
+function onDragCancel(): void {
+  if (!dragging) return;
+  removeDragListeners();
+  resetDragState();
 }
 
 function onDragMouseDown(e: MouseEvent) {
@@ -222,6 +265,11 @@ function onDragMouseDown(e: MouseEvent) {
   dragging = true;
   document.addEventListener("mousemove", onDragMouseMove);
   document.addEventListener("mouseup", onDragMouseUp);
+  // H-Frontend-5 fix (2026-09-28 audit)：窗口外松开鼠标 → 收不到 mouseup，
+  // 必须有兜底通道把 ghost/placeholder/display:none 收干净（否则每次 aborted
+  // 拖拽泄漏一份，且列表永久多一条空白行）。见 onDragCancel 注释。
+  window.addEventListener("blur", onDragCancel);
+  document.addEventListener("pointercancel", onDragCancel);
 }
 
 function onDragMouseMove(e: MouseEvent) {
@@ -260,8 +308,7 @@ function onDragMouseMove(e: MouseEvent) {
 
 function onDragMouseUp(e: MouseEvent) {
   if (!dragging) return;
-  document.removeEventListener("mousemove", onDragMouseMove);
-  document.removeEventListener("mouseup", onDragMouseUp);
+  removeDragListeners();
 
   // 恢复源 li
   const srcLi = listRef?.querySelector(`li[data-id="${dragSrcId}"]`) as HTMLElement | null;

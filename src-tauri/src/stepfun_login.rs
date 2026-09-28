@@ -60,8 +60,15 @@
 //! ## 已知取舍
 //!
 //! - 不做「切换账号」支持：旧 token 仍有效时点重新登录会直接抓走旧
-//!   token 并关窗（结果正确 —— 同账号有效 token）。要换账号需在
-//!   系统浏览器里先登出 StepFun，或等 token 过期后再重登。
+//!   token 并关窗（结果正确 —— 同账号有效 token）。
+//!   **换账号的可达路径（2026-09-28 修正）**：① 在登录窗内登出 StepFun
+//!   再登录，或 ② 设置面板走 [`clear_stepfun_session`] —— 它连 webview
+//!   cookie jar 里 stepfun 域的 SSO session 一起清，下次登录必然是真登录。
+//!   ⚠️ 旧文档写的「在**系统浏览器**里先登出 StepFun」是**不可达的**：
+//!   登录 webview 用的是 app 自己的持久化 WKWebView store，跟系统浏览器的
+//!   cookie jar 完全隔离 —— 在系统浏览器登出对登录窗毫无影响。用户照着做
+//!   会发现：token 仍新鲜 → `is_fresh_token` 直接放行秒抓旧 token 关窗；
+//!   已过期 → SSO 静默秒登**旧账号**。两种情况都拿不到新账号。
 //! - 用户主动关窗 / 超时未登录 → 静默退出，不弹错误条（跟 anysearch
 //!   一致；只有写盘失败这类真错误才 emit `-failed`）。
 
@@ -163,6 +170,26 @@ const WINDOW_LABEL: &str = "stepfun-login";
 const TOKEN_COOKIE: &str = "Oasis-Token";
 const REFRESH_COOKIE: &str = "Oasis-Refresh-Token";
 
+/// webview cookie jar 里属于 stepfun 的域名（清 jar 时按域白名单删，
+/// 不碰别的 provider 的会话）。
+const STEPFUN_COOKIE_DOMAINS: &[&str] = &["stepfun.com"];
+
+/// 解析本次登录 / 清除要作用的凭据槽（base 或副本 unique_id）。
+///
+/// 2026-09-28 fix（契约 1/2）：base 禁用 + 副本启用时，登录写 base 槽、
+/// 浮窗刷副本槽 → 「登录成功但卡片还是红的」，且副本凭据成了 UI 删不掉的
+/// 孤儿。优先级：显式 `instance_id` > base 启用 > 升序第一个启用副本 >
+/// `instance_id` 原样（用户明确点了某张卡，禁用也该作用在它身上） > base。
+async fn resolve_target(app: &AppHandle, base: &str, instance_id: Option<&str>) -> String {
+    match crate::commands::resolve_login_refresh_target(&app.state(), base, instance_id).await {
+        Some(t) => t,
+        None => instance_id
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(base)
+            .to_string(),
+    }
+}
+
 /// 打开登录 webview 窗口。
 ///
 /// 行为：
@@ -174,8 +201,14 @@ const REFRESH_COOKIE: &str = "Oasis-Refresh-Token";
 /// 错误（仅“写盘失败”这类真错误）通过 `musage://stepfun-login-failed`
 /// 返回前端。用户主动关窗 / 没登录 / 超时 → 静默退出，不弹红条
 ///（超时 / 写盘失败会补关窗口，L3/L4 fix）。
+///
+/// `instance_id`（2026-09-28 契约 1/2）：副本行必须传自己的 `unique_id`；
+/// 标量参数走 camelCase，前端 `{ instanceId: "stepfun#2" }`；不传 → 旧行为。
 #[tauri::command]
-pub async fn open_stepfun_login_window(app: AppHandle) -> Result<(), String> {
+pub async fn open_stepfun_login_window(
+    app: AppHandle,
+    instance_id: Option<String>,
+) -> Result<(), String> {
     // 新一轮流程：gen+1（旧轮询任务见到 gen 不等即静默退出 —— 同 label
     // 新窗口会让旧的 `get_webview_window().is_none()` 检查失效）
     let gen = GEN.fetch_add(1, Ordering::SeqCst) + 1;
@@ -218,11 +251,9 @@ pub async fn open_stepfun_login_window(app: AppHandle) -> Result<(), String> {
     let app2 = app.clone();
     let window_clone = window.clone();
     let my_gen = gen;
-    // D7-02 fix (2026-09-07 audit): 在 spawn 前 resolve refresh target,
-    // 让 save_token 直接写 target 槽。fallback 到 base 保持向后兼容。
-    let target = crate::commands::resolve_login_refresh_target(&app2.state(), "stepfun")
-        .await
-        .unwrap_or_else(|| "stepfun".to_string());
+    // D7-02 fix (2026-09-07 audit) + 2026-09-28 契约 1：在 spawn 前 resolve
+    // refresh target，前端显式传的 instance_id 优先（见 resolve_target）。
+    let target = resolve_target(&app2, "stepfun", instance_id.as_deref()).await;
     tauri::async_runtime::spawn(async move {
         // L9 fix (2026-07-28 审查): panic 兜底 guard —— 任意退出路径(正常 /
         // Cancelled / Failed / panic unwind)都确保窗口被关闭;panic 时额外打
@@ -502,6 +533,122 @@ fn save_token(target: &str, combined: &str) -> Result<usize, String> {
     Ok(cookie_slot.len())
 }
 
+/// 清除已保存的 `{id}:cookie` StepFun 网页会话（设置面板「清除」按钮）。
+///
+/// 2026-09-28 fix（2 处）：
+/// 1. **实例感知**：副本 `stepfun#2` 的 cookie 槽此前走通用
+///    `delete_source_credential` 只能删 base 槽 —— 登录写进去的副本凭据成了
+///    UI 删不掉的孤儿。改成跟登录同款 resolve（见 `resolve_target`）。
+/// 2. **顺带清 webview cookie jar**：只删 keys.json 的话，`account.stepfun.com`
+///    的 SSO session 还在，下次点登录会 SSO 静默秒登**旧账号** → 「切换账号」
+///    不可达（模块头「已知取舍」记录了这个不可达的旧指引）。逐个
+///    `delete_cookie` 清 stepfun 域 session 后，下一次登录必然是真登录。
+///
+/// **只清 cookie 槽，不动 API key** —— StepFun 的 API key 是独立凭据。
+#[tauri::command]
+pub async fn clear_stepfun_session(
+    app: AppHandle,
+    instance_id: Option<String>,
+) -> Result<(), String> {
+    let target = resolve_target(&app, "stepfun", instance_id.as_deref()).await;
+    config::delete_cookie_slot_for_id(&target)?;
+    tracing::info!(target = %target, "stepfun 已清除凭据槽，开始清理 webview cookie jar");
+    if let Err(e) = purge_cookies_for_domains(&app, STEPFUN_COOKIE_DOMAINS).await {
+        tracing::warn!(error = %e, target = %target, "stepfun 清 webview cookie jar 失败（下次登录可能仍秒登旧账号）");
+    }
+    // best-effort refresh：失败只警告（浮窗下一轮 poll 也会自然更新）
+    if let Err(e) = crate::commands::refresh_single_inner(
+        &app,
+        &target,
+        crate::poller_backoff::RefreshSource::Manual,
+    )
+    .await
+    {
+        tracing::warn!(error = %e, target = %target, "清除 stepfun 会话后立即拉取失败（忽略）");
+    }
+    Ok(())
+}
+
+/// 临时窗口 label 计数器（同 label 并发 build 会失败；两次清除动作同时点
+/// 不是要支持的场景，用计数器保证互不干扰）。
+static PURGE_WINDOW_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// 清掉 webview cookie jar 里属于 `domains` 的全部 cookie，返回删除条数。
+///
+/// ## 为什么不用 `WebviewWindow::clear_all_browsing_data()`
+///
+/// 2026-09-28 实读 wry 0.55.1 源码确认：macOS 上它对
+/// `WKWebsiteDataStore` 调 `removeDataOfTypes(allWebsiteDataTypes, since 1970)`，
+/// 而 Tauri 的登录窗跟主窗口 / 设置面板**共用同一个默认（非 incognito）data
+/// store** → 进程级全清，连 kimi / anysearch / xiaomi 的登录会话和 app 自己的
+/// webview 存储一起抹掉；Windows 上 `ClearBrowsingDataAll` 作用于整个
+/// user-data-folder profile，同款连带伤害。
+///
+/// 逐个 `delete_cookie` 走底层 cookie store
+/// （`WKHTTPCookieStore.deleteCookie` / `ICoreWebView2CookieManager::DeleteCookies`），
+/// 能删 HttpOnly cookie，且只影响指定域。
+///
+/// ## 实现注记
+///
+/// `cookies()` / `delete_cookie()` 是 `WebviewWindow` 的方法，要句柄就得有个
+/// webview —— 登录窗此刻通常已关，所以临时建一个**不可见**的 `about:blank`
+/// 窗（Tauri 文档的标准用法），删完立刻 destroy。它跟登录窗共享同一个 data
+/// store，删的就是登录窗的 jar。
+async fn purge_cookies_for_domains(app: &AppHandle, domains: &[&str]) -> Result<usize, String> {
+    let label = format!(
+        "musage-cookie-purge-{}",
+        PURGE_WINDOW_SEQ.fetch_add(1, Ordering::SeqCst)
+    );
+    let url = Url::parse("about:blank").map_err(|e| format!("purge window url: {e}"))?;
+    let window = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url))
+        .visible(false)
+        .build()
+        .map_err(|e| format!("purge window build: {e}"))?;
+
+    // webview 刚建好时 data store 可能还没初始化（下方 poll 的 H1 fix 记录过
+    // 同类暂态 Err），先让出一点时间再读。
+    sleep(Duration::from_millis(400)).await;
+
+    let outcome = purge_with_window(&window, domains);
+
+    // 无论成败都要回收窗口，否则每次「清除」都漏一个 webview。
+    let _ = window.destroy();
+    outcome
+}
+
+fn purge_with_window(window: &tauri::WebviewWindow, domains: &[&str]) -> Result<usize, String> {
+    let all = window
+        .cookies()
+        .map_err(|e| format!("webview.cookies(): {e}"))?;
+    let mut deleted = 0usize;
+    for c in all {
+        let domain = c.domain().unwrap_or("");
+        if !domains.iter().any(|d| cookie_domain_matches(domain, d)) {
+            continue;
+        }
+        match window.delete_cookie(c.clone()) {
+            Ok(()) => {
+                deleted += 1;
+                tracing::debug!(name = c.name(), domain, "已删除登录域 cookie");
+            }
+            Err(e) => {
+                tracing::warn!(name = c.name(), domain, error = %e, "delete_cookie 失败");
+            }
+        }
+    }
+    tracing::info!(deleted, "webview cookie jar 清理完成");
+    Ok(deleted)
+}
+
+/// cookie 的 `domain` 是否落在 `suffix` 域内（含自身）。
+///
+/// cookie domain 常见形态是前导点（`.stepfun.com`）—— 先剥掉再比。
+fn cookie_domain_matches(domain: &str, suffix: &str) -> bool {
+    let d = domain.trim().trim_start_matches('.').to_ascii_lowercase();
+    let s = suffix.trim().trim_start_matches('.').to_ascii_lowercase();
+    !s.is_empty() && (d == s || d.ends_with(&format!(".{s}")))
+}
+
 // ── 单元测试（pure function） ───────────────────────────────────────
 
 #[cfg(test)]
@@ -614,5 +761,22 @@ mod tests {
         let u: Url = PLATFORM_URL.parse().expect("parse probe url");
         assert_eq!(u.host_str(), Some("platform.stepfun.com"));
         assert_eq!(u.scheme(), "https");
+    }
+
+    #[test]
+    fn cookie_domain_matches_leading_dot_form() {
+        // cookie store 里 domain 常见 ".stepfun.com" 形态
+        assert!(cookie_domain_matches(".stepfun.com", "stepfun.com"));
+        assert!(cookie_domain_matches("account.stepfun.com", "stepfun.com"));
+    }
+
+    #[test]
+    fn cookie_domain_rejects_lookalike_suffix() {
+        // 防 `notstepfun.com` / `stepfun.com.evil.tld` 这类后缀钓鱼
+        assert!(!cookie_domain_matches("notstepfun.com", "stepfun.com"));
+        assert!(!cookie_domain_matches(
+            "stepfun.com.evil.tld",
+            "stepfun.com"
+        ));
     }
 }

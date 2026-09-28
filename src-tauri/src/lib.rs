@@ -88,6 +88,28 @@ pub fn run() {
         std::process::exit(run_dump_subcommand(args.get(2).map(|s| s.as_str())));
     }
 
+    // ── extra_instances 启动加载（必须在 builder 之前完成）──────────
+    //
+    // 2026-09-28 audit L: 原来是 `.manage(AppState{...})` 里直接
+    // `extra_instances::load_or_migrate().unwrap_or_default()`，Err 被完全
+    // 静默吞掉。`load()` 本身做得对（备份到 .bak.<ts> 后返 Err），但 Err 在
+    // 这里被抹平成空 Vec 后，用户在**同一次会话**里随便 add / update 一个来源
+    // 就会 `save(&[新的一条])` → 磁盘上那份含全部副本的损坏文件被覆盖
+    // （备份还在 .bak，但用户完全没提示）→ 静默丢配置。keys.json 走的是相反
+    // 且更严格的路（read_keys 的 Err 一路冒泡，拒绝对应写入路径）。
+    //
+    // 修法：把 Err 留下来，在 .setup() 里往 logstore 推一条 —— tracing 只走
+    // stderr（见 logstore 段注释），用户在设置面板日志页看不到。完整的
+    // "禁用 extras 写 IPC"需要 AppState 加 flag 并在
+    // commands/extra_instances.rs 的 6 个写命令里检查，留 v0.3。
+    let (extras, extras_load_err) = match extra_instances::load_or_migrate() {
+        Ok(v) => (v, None),
+        Err(e) => {
+            tracing::error!(error = %e, "extra_instances 加载失败,已备份,本次会话按空列表处理");
+            (Vec::new(), Some(e))
+        }
+    };
+
     tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_autostart::init(
@@ -108,18 +130,36 @@ pub fn run() {
             // 从磁盘 reload 最近 200 条 —— 启动时一次性 IO，不在热路径
             log: Arc::new(LogStore::load_from_disk()),
             backoff: Arc::new(RwLock::new(BackoffState::new())),
-            // PR 3 → PR 1a：extra_instances 启动 load。优先读新文件 extra_instances.json，
-            // 老 custom_sources.json 自动迁移后 rename 成 .migrated。
-            // load 失败时返空 Vec（不阻塞启动）。
-            // v0.2.1 commit 2: load_or_migrate 从 config/custom_sources.rs 内联到
-            // extra_instances.rs 同模块，wrapper 文件已删。
-            extra_instances: Arc::new(RwLock::new(
-                extra_instances::load_or_migrate().unwrap_or_default(),
-            )),
+            // PR 3 → PR 1a：extra_instances 已在 builder 之前加载完毕（见上方
+            // `let (extras, extras_load_err) = ...`），优先读新文件
+            // extra_instances.json，老 custom_sources.json 自动迁移后 rename
+            // 成 .migrated。v0.2.1 commit 2: load_or_migrate 从
+            // config/custom_sources.rs 内联到 extra_instances.rs 同模块。
+            extra_instances: Arc::new(RwLock::new(extras)),
         })
-        .setup(|app| {
+        .setup(move |app| {
             // 启动时清理上次崩溃留下的孤儿 .tmp 文件（F2/M10 修复连带）
             config::cleanup_orphan_tmp_files();
+
+            // 2026-09-28 audit L: extra_instances.json 加载失败在此处补一条
+            // logstore 记录。原来 .manage(AppState{...}) 里是
+            // `.unwrap_or_default()`，Err 被完全静默吞掉 —— tracing 只走
+            // stderr（见 logstore 段注释），用户在设置面板日志页根本看不到，
+            // 于是「本次会话副本列表按空处理 + 后续任意写操作覆盖损坏文件」
+            // 这件事完全不可诊断。必须放在 .setup() 里：manage() 的 struct
+            // literal 构造时 LogStore 自己还没建好，推不进去。
+            if let Some(err) = extras_load_err {
+                app.state::<AppState>().log.push(crate::logstore::LogEntry::error(
+                    "extras",
+                    "config",
+                    format!(
+                        "extra_instances.json 解析失败并已备份(原因: {}); 本次会话副本列表按空处理 —— \
+                         在设置面板新增/修改来源会覆盖磁盘原文件, 请先从 .bak 恢复",
+                        err
+                    ),
+                ));
+            }
+
             // 读取配置（load_from_disk 已会在损坏时备份到 .bak.<ts>，不再静默吞掉）
             let config = AppConfig::load(app.handle()).unwrap_or_default();
 
@@ -465,6 +505,15 @@ pub fn run() {
             stepfun_login::open_stepfun_login_window,
             kimi_login::open_kimi_login_window,
             kimi_login::clear_kimi_session,
+            // 2026-09-28 audit H-7/H-8: xiaomi / stepfun 的「清除会话」专用命令。
+            // 之前这两个 provider 的清除动作走通用 delete_source_credential，
+            // 只删 keys.json 槽位、**从不碰登录 webview 的 cookie jar**（持久化
+            // WKWebView 数据 store，跨重启存活）→ 小米「清除 Cookie → 重新登录」
+            // 会把同一份已失效 cookie 原样提取回来并提示「登录成功」，死循环且
+            // 无逃生路径。stepfun / kimi 同样无法换账号（无任何清理入口）。
+            // 这两个命令在删凭据槽之外还会 clear_all_browsing_data 清掉 jar。
+            xiaomi_login::clear_xiaomi_session,
+            stepfun_login::clear_stepfun_session,
             // A 选项：设置页「关于」section 的 GitHub releases 检查
             // （单 command，force 参数切缓存读 vs 强制刷新两模式）
             commands::updater_check::check_for_update,

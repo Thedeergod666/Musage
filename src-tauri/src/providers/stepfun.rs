@@ -127,8 +127,14 @@ const URL_REFRESH: &str =
 /// 完整闭环,确保第二个 caller 看到的是已 rotate 的新 refresh。
 ///
 /// 不同 unique_id 之间不互斥 (instance 独立 refresh 配额)。
-static REFRESH_LOCKS: OnceLock<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>> =
-    OnceLock::new();
+///
+/// 2026-09-28 audit H-9: 从模块私有提升为 `pub(crate)` —— `stepfun_login.rs`
+/// 的 `save_token` 写盘路径当前**不参与**本锁，两条写路径后写者赢
+/// （登录刚写下的新 pair 可能被并发 refresh 的旧值覆盖）。登录模块改造时
+/// 应共用本锁保证"读 → POST → 写回"闭环的唯一性。
+pub(crate) static REFRESH_LOCKS: OnceLock<
+    tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+> = OnceLock::new();
 
 /// CodexBar 的 login/register 流使用的默认 Webid。
 ///
@@ -270,6 +276,7 @@ async fn do_fetch(
 ) -> Result<ProviderSnapshot, FetchError> {
     // ── 主动续期：本地预检 access exp，已过期 / SKEW 内将过期且有
     //    refresh 半段 → 先调 RefreshToken 换新 pair（并写回 keys.json）──
+    let mut refreshed_this_fetch = false;
     let mut token = match access_token_exp_seconds_ago(oasis_token) {
         Some(secs_ago) if secs_ago >= -SKEW_SECS => {
             if refresh_half(oasis_token).is_some() {
@@ -279,7 +286,19 @@ async fn do_fetch(
                 // 只有明确 AuthFailed (refresh 已吊销) 才放弃, 其余继续
                 // 用当前 token 拉一次 (fetch_once 的 401 兜底会再试刷新)。
                 match refresh_oasis_token(oasis_token, source_id).await {
-                    Ok(new_token) => new_token,
+                    // 2026-09-28 audit H-9: 本轮真的换到了新 pair（token 变了）
+                    // → 服务端已 rotate 掉旧 refresh 半段，下面 401 兜底不能再发
+                    // 第二次 POST（BUG-001 注释自己写着"第二次必败 40114
+                    // revoked"）。且兜底里的"锁内重读 keys.json"守卫此刻必然
+                    // 不命中——keys.json 里正是我们刚写进去的同一串。
+                    // `!=` 判据同时覆盖锁内重读短路路径（返 latest 未 rotate，
+                    // refresh 半段仍有效，允许重试）与真正的 rotate。
+                    Ok(new_token) => {
+                        if new_token != oasis_token {
+                            refreshed_this_fetch = true;
+                        }
+                        new_token
+                    }
                     Err(e) if e.kind == ErrorKind::AuthFailed => return Err(e),
                     Err(e) => {
                         tracing::warn!(
@@ -311,7 +330,16 @@ async fn do_fetch(
     match fetch_once(&token, source_id, display_name).await {
         // 兜底：请求仍 401 / 业务层 auth 失败（本地预检没抓到、但服务端已
         // 作废 / 风控 burn），有 refresh 半段 → refresh 一次再重试一遍。
-        Err(e) if e.kind == ErrorKind::AuthFailed && refresh_half(&token).is_some() => {
+        //
+        // 2026-09-28 audit H-9：`refreshed_this_fetch` 时**不**再发 POST。
+        // 本轮顶部预检刚 rotate 掉旧 refresh 半段，第二次 POST 拿已吊销的半段
+        // 必然 40114 revoked，`?` 把 AuthFailed 直接抛给浮窗 —— 刚刷新的
+        // access token 一次都没被用过。直接返回 fetch_once 的原始错误。
+        Err(e)
+            if e.kind == ErrorKind::AuthFailed
+                && !refreshed_this_fetch
+                && refresh_half(&token).is_some() =>
+        {
             token = refresh_oasis_token(&token, source_id).await?;
             fetch_once(&token, source_id, display_name).await
         }
@@ -325,13 +353,18 @@ async fn fetch_once(
     source_id: &str,
     display_name: &str,
 ) -> Result<ProviderSnapshot, FetchError> {
-    // 并行拉 rate limit + plan status（互不依赖）
-    let rate = fetch_rate_limit(token).await?;
+    // 2026-09-28 audit H-9: 注释自称"并行拉"，实现是**串行** —— 上一行
+    // `fetch_rate_limit(token).await?` 用 `?` 短路掉 plan_status 请求，
+    // 两个 HTTP RTT 叠加。plan_status 只为拿可选的 plan_name，tokio::join!
+    // 让它与主请求并发，成功路径省一个 RTT。失败语义完全不变：rate_limit
+    // 优先决定整体成败，plan_status 仍只 warn 不阻塞。
+    let (rate_res, plan_res) = tokio::join!(fetch_rate_limit(token), fetch_plan_status(token));
+    let rate = rate_res?;
     // 2026-08-05 审查交叉验证修复: fetch_plan_status 的网络/解析错误之前被
     // .ok().flatten() 静默吞掉 (非 200 已 warn, 但 reqwest/JSON 错误无日志),
     // plan_name 变 None 时用户/开发者查不到原因. 改为显式 match 记 warn.
     // plan_name 是可选字段, 失败不阻塞主 fetch.
-    let plan = match fetch_plan_status(token).await {
+    let plan = match plan_res {
         Ok(opt) => opt,
         Err(e) => {
             tracing::warn!(error = %e, "StepFun plan_status 拉取失败, plan_name 将为 None");
@@ -448,8 +481,9 @@ async fn fetch_rate_limit(token: &str) -> Result<Value, FetchError> {
 /// - 都没有 → 宽容看有没有用量字段（顶层或 `data` 下）
 ///
 /// 失败时：`message` / `desc` / `code` 字符串化拼进错误消息；消息含
-/// "auth failed" / "unauth" / "embezzled" / "illegal" 时归 AuthFailed
-/// （让上层 do_fetch 的「401 兜底 refresh 重试」接管），否则 Server。
+/// "auth failed" / "unauth" / "embezzled" / "token is illegal" 时归
+/// AuthFailed（让上层 do_fetch 的「401 兜底 refresh 重试」接管），否则
+/// Server。
 fn ensure_success(raw: &Value, body: &str) -> Result<(), FetchError> {
     let status_field = raw.get("status").and_then(flex_i64);
     let code_num = raw.get("code").and_then(flex_i64);
@@ -485,10 +519,17 @@ fn ensure_success(raw: &Value, body: &str) -> Result<(), FetchError> {
         "[diag] stepfun rate-limit 业务失败 raw response");
 
     let haystack = format!("{msg} {code_display}").to_lowercase();
+    // 2026-09-28 audit H-9: 原第四项是无边界 `contains("illegal")` —— 普通
+    // 业务错误 `"Illegal parameter"` / `"illegal request"` 会被误判 AuthFailed，
+    // 而 AuthFailed 会触发 do_fetch 的 401 兜底二次 refresh → 白烧一个
+    // refresh 半段（服务端 rotate 后第二次必 40114 revoked）。收窄成两条
+    // 真实 oasis 鉴权文案（实测/文档见文件头：`401 "token is illegal"`、
+    // `401 "auth failed: oasis-token is embezzled"`）。`token is illegal`
+    // 本身是 `oasis-token is illegal` 的子串，两条都列只为可读性。
     let is_auth = haystack.contains("auth failed")
         || haystack.contains("unauth")
         || haystack.contains("embezzled")
-        || haystack.contains("illegal");
+        || haystack.contains("token is illegal");
 
     let msg_out = t!(
         "error.common.business_code",
@@ -1620,6 +1661,30 @@ mod tests {
     fn ensure_success_string_code_unauthenticated_is_auth() {
         // 200 + {"code":"unauthenticated",...}（字符串 code）→ AuthFailed
         let raw = json!({ "code": "unauthenticated", "message": "auth failed: token is illegal" });
+        let err = ensure_success(&raw, "{}").unwrap_err();
+        assert_eq!(err.kind, ErrorKind::AuthFailed);
+    }
+
+    /// 2026-09-28 audit H-9 回归：普通业务错误里的 "illegal" 子串不得触发
+    /// AuthFailed —— 否则 do_fetch 的 401 兜底会拿刚 rotate 掉的 refresh
+    /// 半段再 POST 一次（必败 40114 revoked）并把用户推向"重新登录"。
+    #[test]
+    fn ensure_success_illegal_parameter_is_not_auth() {
+        for msg in ["Illegal parameter", "illegal request", "IllegalArgument"] {
+            let raw = json!({ "status": -1, "message": msg });
+            let err = ensure_success(&raw, "{}").unwrap_err();
+            assert_eq!(
+                err.kind,
+                ErrorKind::ServerError,
+                "{msg} 不应被判 AuthFailed"
+            );
+        }
+    }
+
+    /// 收窄后仍需覆盖真实的 oauth token 文案（无 "auth failed" 前缀）。
+    #[test]
+    fn ensure_success_bare_token_is_illegal_is_auth() {
+        let raw = json!({ "status": -1, "message": "token is illegal" });
         let err = ensure_success(&raw, "{}").unwrap_err();
         assert_eq!(err.kind, ErrorKind::AuthFailed);
     }

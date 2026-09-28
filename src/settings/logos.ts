@@ -122,13 +122,24 @@ export function getProviderMeta(id: string): ProviderMeta | undefined {
 
 /// 解析 meta：有 logo 直接用，没 logo 走首字母 fallback。
 /// 返回 `{ logo, name }`，调用方拿这两个值设到 `<img>` 或别处。
+///
+/// L-3 fix (2026-09-28 audit)：改走 `getProviderMeta(id)` —— 它带
+/// "extra instance (deepseek#2 → deepseek)" 的 `#N` 剥离逻辑，**但此前
+/// 全项目零调用方**：实际被 providers.ts:203 / order.ts:740 调用的是本函数，
+/// 它直接 `_providerMeta[id]` 查表，副本行（`minimax#2`）必然 miss →
+/// 落到 `fallbackLogo(display_name, "#888")` 灰首字母头像。浮窗
+/// [src/main.ts:945] 走的是带剥离的路径 —— 同一个实例在浮窗是真 logo、在
+/// 设置面板是灰头像。
 export function getProviderDisplay(id: string, fallbackName?: string): { logo: string; name: string } {
   ensureProviderMetaReady();
-  const meta = _providerMeta[id];
+  const meta = getProviderMeta(id);
   if (meta) {
     return {
       logo: meta.logo || fallbackLogo(meta.name, meta.accent),
-      name: meta.name,
+      // base id 命中原路径（用 logos.ts 的 i18n 名，保持不变）；副本 id
+      // （`minimax#2`）原来必落到下面的 fallback 分支、name 用调用方传来的
+      // 带 "#2" 的 display_name —— 这里显式区分，别把 "#N" 后缀在名字上抹掉。
+      name: id.includes("#") ? (fallbackName ?? meta.name) : meta.name,
     };
   }
   // 未知 id（比如后端新增了 source 但 settings 还没更新）→ 用 fallbackName 首字母

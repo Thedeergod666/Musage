@@ -650,6 +650,45 @@ function applyFitMargin(raw: number | undefined): void {
   void fitOnObserverTick();
 }
 
+/// H-Frontend-13 fix (2026-09-28 audit)：强制重 fit 的**重试链**。
+///
+/// `applyFitMargin` 靠 `lastFitContentH = -1` 这个标志位强制下一拍重 fit，
+/// 但 `fitOnObserverTick` 有两个早退：① 用户刚手动拖过浮窗
+/// （`Date.now() - userResizedAt < 800ms`）；② `observerBusy`（并发 tick 在飞）。
+/// 被吞后**没有任何重试触发源** —— 改 margin 不改 DOM，ResizeObserver 不自触发；
+/// 更糟的是在飞的那条并发 tick 结束时会把 `lastFitContentH` 重新写成
+/// `contentH`，把 `-1` 这个强制位抹掉 → 新余量要等下一次内容变化才生效。
+///
+/// 现象：刚拖过浮窗（<800ms 内）后去设置面板改底部余量 → 「已保存」flash 正常
+/// 弹出，但浮窗高度纹丝不动，重开 app 才对。
+///
+/// 修法：早退时若强制位还在（`lastFitContentH === -1`）就排一个 ~300ms 的
+/// 重试，最多 FIT_RETRY_MAX 次（2.4s > 800ms 保护窗，跟 commitPendingShrink
+/// 的顺延防抖同款思路）；tick 真正开跑时清链。成功跑过一次 fit 后
+/// `lastFitContentH` 变回真实值，之后的早退不会再排。
+const FIT_RETRY_MS = 300;
+const FIT_RETRY_MAX = 8;
+let fitRetryTimer: number | null = null;
+let fitRetryAttempts = 0;
+
+function scheduleFitRetry(): void {
+  if (fitRetryTimer !== null) return;
+  if (fitRetryAttempts >= FIT_RETRY_MAX) return;
+  fitRetryAttempts += 1;
+  fitRetryTimer = window.setTimeout(() => {
+    fitRetryTimer = null;
+    void fitOnObserverTick();
+  }, FIT_RETRY_MS);
+}
+
+function cancelFitRetry(): void {
+  if (fitRetryTimer !== null) {
+    clearTimeout(fitRetryTimer);
+    fitRetryTimer = null;
+  }
+  fitRetryAttempts = 0;
+}
+
 function clampWindowH(h: number): number {
   // 与 Rust resize_floating_window 的 height.clamp(100.0, 2400.0) 同步。
   // lastFitWindowH 必须存钳位后的值，否则 Rust 把 50 钳到 100 后 emit 100，
@@ -742,8 +781,17 @@ async function commitPendingShrink(): Promise<void> {
 }
 
 async function fitOnObserverTick() {
-  if (Date.now() - userResizedAt < USER_RESIZE_PROTECT_MS) return;
-  if (observerBusy) return;
+  // H-Frontend-13 fix (2026-09-28 audit)：两个早退都不再"静默丢弃"强制重 fit
+  // —— 强制位（lastFitContentH === -1）还在就排重试，见 scheduleFitRetry 注释。
+  if (Date.now() - userResizedAt < USER_RESIZE_PROTECT_MS) {
+    if (lastFitContentH === -1) scheduleFitRetry();
+    return;
+  }
+  if (observerBusy) {
+    if (lastFitContentH === -1) scheduleFitRetry();
+    return;
+  }
+  cancelFitRetry(); // 本 tick 真正开跑 → 清掉重试链
   observerBusy = true;
   try {
     await new Promise<void>((r) => requestAnimationFrame(() => r()));
@@ -1047,6 +1095,10 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
     // v0.2.1 commit 10 (P2-A-7 错误恢复完整版): 通用按钮 —— 任何错误态都
     // 允许复制错误信息和跳日志 tab,跟具体 error_kind 的恢复按钮并列。
     // 用 data-unique-id 反查 snap,前端不需要给每个按钮传 p.error 长字符串。
+    // H-Frontend-11 fix (2026-09-28 契约 3)：「🔑 重新登录」三个按钮原来
+    // **完全不带是哪张卡的 id** → 点副本卡（`xiaomimimo#2`）的重新登录，弹出的
+    // webview 登录结果写回 base 槽，副本依然 401，跟没点一样。这里补
+    // data-unique-id，与 err-btn-copy / err-btn-logs / err-btn-retry 同款。
     const commonErrBtns = p.error
       ? `<button class="err-btn err-btn-copy" data-unique-id="${escapeHtml(id)}">${escapeHtml(t("floating.err_btn_copy"))}</button>`
         + `<button class="err-btn err-btn-logs" data-unique-id="${escapeHtml(id)}">${escapeHtml(t("floating.err_btn_logs"))}</button>`
@@ -1058,12 +1110,12 @@ function updateCard(card: HTMLElement, p: ProviderSnapshot): void {
       if (p.transient === true) {
         // no action button
       } else if (kind === "auth_failed" && baseId === "xiaomimimo") {
-        actionBtn = `<button class="err-btn err-btn-relogin" data-action="relogin-xiaomi">${escapeHtml(t("floating.err_btn_relogin_xiaomi"))}</button>`;
+        actionBtn = `<button class="err-btn err-btn-relogin" data-unique-id="${escapeHtml(id)}" data-action="relogin-xiaomi">${escapeHtml(t("floating.err_btn_relogin_xiaomi"))}</button>`;
       } else if (kind === "auth_failed" && baseId === "anysearch") {
-        actionBtn = `<button class="err-btn err-btn-relogin" data-action="relogin-anysearch">${escapeHtml(t("floating.err_btn_relogin_anysearch"))}</button>`;
+        actionBtn = `<button class="err-btn err-btn-relogin" data-unique-id="${escapeHtml(id)}" data-action="relogin-anysearch">${escapeHtml(t("floating.err_btn_relogin_anysearch"))}</button>`;
       } else if (kind === "auth_failed" && baseId === "stepfun") {
         // v0.2.5+: stepfun 改 webview 一键登录(原 token 过期/失效场景)
-        actionBtn = `<button class="err-btn err-btn-relogin" data-action="relogin-stepfun">${escapeHtml(t("floating.err_btn_relogin_stepfun"))}</button>`;
+        actionBtn = `<button class="err-btn err-btn-relogin" data-unique-id="${escapeHtml(id)}" data-action="relogin-stepfun">${escapeHtml(t("floating.err_btn_relogin_stepfun"))}</button>`;
       } else {
         actionBtn = `<button class="err-btn open-settings">${escapeHtml(t("floating.open_settings"))}</button>`;
       }
@@ -1348,9 +1400,17 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
     //   是"其余全部"），clamp 防 schema 漂移出负值/超界
     const note = rowEl.querySelector<HTMLElement>(".split-note");
     if (note) {
-      const codePct = clampPct(r.extra?.kimi_code_used_ratio ?? 0);
-      const kimiPct = clampPct(Math.min(r.utilization, 100) - codePct);
-      note.textContent = `Kimi ${Math.round(kimiPct)}% · Code ${Math.round(codePct)}%`;
+      if (r.extra?.kimi_code_used_ratio == null) {
+        // L-4 fix (2026-09-28 audit)：L-2 的"缺节点时动态补建"只补不删 ——
+        // 一旦某帧带 kimi_code_used_ratio 建了 .split-note，后续快照该字段
+        // 消失（总套餐行退化成普通 utilization-only 行）时节点仍在，渲染出
+        // 假的「Kimi 0% · Code 0%」。按 skeleton 语义反向收掉。
+        note.remove();
+      } else {
+        const codePct = clampPct(r.extra.kimi_code_used_ratio);
+        const kimiPct = clampPct(Math.min(r.utilization, 100) - codePct);
+        note.textContent = `Kimi ${Math.round(kimiPct)}% · Code ${Math.round(codePct)}%`;
+      }
     } else if (r.extra?.kimi_code_used_ratio != null) {
       // L-2 fix (2026-09-05 audit)：骨架按首帧定型 —— 首帧 extra 为空的
       // utilization 行没有 .split-note 节点，后续快照带 kimi_code_used_ratio
@@ -1358,7 +1418,7 @@ function updateRow(rowEl: HTMLElement, r: QuotaRow): void {
       const noteEl = document.createElement("div");
       noteEl.className = "split-note";
       bar.insertAdjacentElement("afterend", noteEl);
-      const codePct = clampPct(r.extra?.kimi_code_used_ratio ?? 0);
+      const codePct = clampPct(r.extra.kimi_code_used_ratio);
       const kimiPct = clampPct(Math.min(r.utilization, 100) - codePct);
       noteEl.textContent = `Kimi ${Math.round(kimiPct)}% · Code ${Math.round(codePct)}%`;
     }
@@ -1592,12 +1652,18 @@ async function onAppActionClick(e: MouseEvent): Promise<void> {
     invoke("open_settings_window", { section }).catch((err) => console.error(err));
   } else if (target.classList.contains("err-btn-relogin")) {
     const action = target.dataset.action;
+    // H-Frontend-11 fix (2026-09-28 契约 3)：后端 4 个 open_*_login_window 新增
+    // `instance_id: Option<String>`。base 行保持旧行为（不传 → None → 走 base
+    // 槽），只有副本行（unique_id 含 `#N`）才带 instanceId —— 否则副本卡点了
+    // 重新登录，登录结果写回 base 槽，副本依旧 401。
+    const uniqueId = target.dataset.uniqueId ?? "";
+    const loginArgs = uniqueId.includes("#") ? { instanceId: uniqueId } : {};
     if (action === "relogin-anysearch") {
-      invoke("open_anysearch_login_window").catch((err) => console.error(err));
+      invoke("open_anysearch_login_window", loginArgs).catch((err) => console.error(err));
     } else if (action === "relogin-stepfun") {
-      invoke("open_stepfun_login_window").catch((err) => console.error(err));
+      invoke("open_stepfun_login_window", loginArgs).catch((err) => console.error(err));
     } else {
-      invoke("open_xiaomi_login_window").catch((err) => console.error(err));
+      invoke("open_xiaomi_login_window", loginArgs).catch((err) => console.error(err));
     }
   } else if (target.classList.contains("err-btn-copy")) {
     const uniqueId = target.dataset.uniqueId;

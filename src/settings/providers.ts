@@ -143,10 +143,24 @@ export async function renderProvidersSection(container: HTMLElement) {
 
   // 4) 搜索 input 事件 → toggle .hidden
   const search = container.querySelector<HTMLInputElement>("#provider-search")!;
-  search.addEventListener("input", () => applySearchFilter(search.value, container));
+  // L-5 fix (2026-09-28 audit)：记下搜索词 + 重建后**重跑一次过滤** ——
+  // value 已在 renderToolbar 里回填，但 .hidden 标记要靠这里重新打上。
+  search.addEventListener("input", () => {
+    lastSearchQuery = search.value;
+    applySearchFilter(search.value, container);
+  });
+  if (lastSearchQuery) applySearchFilter(lastSearchQuery, container);
 }
 
 /// 顶部 toolbar：搜索框 + 计数 + 「+ 添加自定义来源」按钮
+///
+/// L-5 fix (2026-09-28 audit)：搜索词存 module 级变量并在重建时回填。
+/// 删除来源（providers.ts:renderDeleteExtraButton）和添加来源
+/// （extra-instance-form.ts 提交成功）都会整段重建 section，新建的
+/// `#provider-search` input 是**空 value** → 用户正在搜的列表瞬间全部铺满，
+/// 滚动位置也一并丢失。
+let lastSearchQuery = "";
+
 function renderToolbar(sources: SourceMeta[], cfg: AppConfig): HTMLElement {
   const enabled = sources.filter(
     (s) => cfg.providers?.[s.id]?.enabled ?? true,
@@ -159,6 +173,7 @@ function renderToolbar(sources: SourceMeta[], cfg: AppConfig): HTMLElement {
       id: "provider-search",
       placeholder: t("settings.providers.search_placeholder"),
       autocomplete: "off",
+      value: lastSearchQuery,
     }),
     el("span", { class: "provider-count" },
       t("settings.providers.count_label", { enabled, total: sources.length })),
@@ -316,6 +331,11 @@ function renderIntervalOverride(id: string, cfg: AppConfig): HTMLElement {
   // M9 fix (2026-07-06 全量审查): parseInt 不处理 "abc"/"99999999"。负值 / NaN
   // / 过大 值传播到后端会静默接受,变成垃圾配置。10s 是 poller tick 下限
   // (commands/mod.rs refresh tick 校验),按这个兜底。
+  //
+  // H-Frontend-5 fix (2026-09-28 audit)：`const previous = input.value` 是在
+  // change 回调**内部**读的，而 change 派发时输入框已被用户改掉 → previous
+  // === 新值，catch 里的回滚是**空操作**。改 lastGood 闭包可变（app.ts 同款）。
+  let lastGoodSecs: number | null = v ?? null;
   input.addEventListener("change", async () => {
     const raw = input.value.trim();
     let secs: number | null = null;
@@ -325,22 +345,29 @@ function renderIntervalOverride(id: string, cfg: AppConfig): HTMLElement {
       const n = Number(raw);
       if (!Number.isFinite(n) || !Number.isInteger(n) || n < 10 || n > 86400) {
         flash(t("settings.providers.invalid_interval", { val: raw }), true);
+        // H-Frontend-7 fix (2026-09-28 audit)：此前只 flash 然后 return，
+        // **既不落盘也不把输入框回填成盘上值** —— 之后用户看到输入框里是一个
+        // 从未生效的数字；再改成同样的非法串时 change 不再触发（值没变），
+        // 非法值就一直留着。回填盘上真值。
+        input.value = lastGoodSecs != null ? String(lastGoodSecs) : "";
         return;
       }
       secs = n;
     }
-    const previous = input.value;
     try {
-      const latest = await getConfig();
-      if (!latest.providers) latest.providers = {};
-      if (!latest.providers[id]) latest.providers[id] = { enabled: true };
-      latest.providers[id].refresh_interval_secs = secs;
-      await saveConfigSerialized(latest);
+      // H-Frontend-6 fix (2026-09-28 audit)：读-改-写整体进保存队列（mutator
+      // 形式），不再先 getConfig 拿旧快照。
+      await saveConfigSerialized((latest) => {
+        if (!latest.providers) latest.providers = {};
+        if (!latest.providers[id]) latest.providers[id] = { enabled: true };
+        latest.providers[id].refresh_interval_secs = secs;
+      });
+      lastGoodSecs = secs;
       // L-2 fix：保存成功后输入框归一化为落盘值
       input.value = secs != null ? String(secs) : "";
     } catch (e) {
-      // L-2 fix：IPC 失败回滚输入框（对齐 app.ts 同场景行为）
-      input.value = previous;
+      // L-2 fix：IPC 失败回滚输入框到最近一次成功值
+      input.value = lastGoodSecs != null ? String(lastGoodSecs) : "";
       flash(t("credentials.flash_save_failed", { err: String(e) }), true);
     }
   });

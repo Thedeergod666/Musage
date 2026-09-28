@@ -62,15 +62,21 @@ function renderRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
   );
   select.value = current;
   // C3 fix: 即时生效 —— change → set_minimax_region（后端落盘 + emit + refresh）
-  // M33 fix (2026-09-05 audit): IPC 失败回滚到改前值。
+  // H-Frontend-4 fix (2026-09-28 audit)：M33 的"回滚到改前值"是**空操作** ——
+  // `const previous = select.value` 是在 change 回调**内部**读的，而 change
+  // 派发时控件值已被用户改掉了 → previous === v，回滚等于什么都没做。触发：
+  // IPC 失败 → 红条「切换失败」，但控件仍停在新值、后端仍是旧值，用户以为
+  // 改了。改用 app.ts 的 lastGood 闭包可变模式（本文件 7 处同款）。
+  let lastGoodRegion = current;
   select.addEventListener("change", () => {
-    const previous = select.value;
     const v = select.value as "cn" | "en";
     if (v !== "cn" && v !== "en") return;
-    void setMinimaxRegion(v).catch((e) => {
-      select.value = previous;
-      flash(t("settings.app.switch_failed", { err: String(e) }), true);
-    });
+    void setMinimaxRegion(v)
+      .then(() => { lastGoodRegion = v; }) // 只在成功后更新最近成功值
+      .catch((e) => {
+        select.value = lastGoodRegion;
+        flash(t("settings.app.switch_failed", { err: String(e) }), true);
+      });
   });
 
   return el(
@@ -89,15 +95,18 @@ function renderXiaomiRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElemen
   select.appendChild(el("option", { value: "sgp" }, t("extras.xiaomi_region_sgp")));
   select.appendChild(el("option", { value: "ams" }, t("extras.xiaomi_region_ams")));
   select.value = current;
-  // M33 fix (2026-09-05 audit): IPC 失败回滚到改前值。
+  // H-Frontend-4 fix (2026-09-28 audit)：M33 回滚是空操作（previous 在 change
+  // 内读 === 新值）。改 lastGood 闭包可变，详见 renderRegionSelect 同款注释。
+  let lastGoodXiaomiRegion = current;
   select.addEventListener("change", () => {
-    const previous = select.value;
     const v = select.value as "cn" | "sgp" | "ams";
     if (v !== "cn" && v !== "sgp" && v !== "ams") return;
-    void setXiaomiRegion(v).catch((e) => {
-      select.value = previous;
-      flash(t("settings.app.switch_failed", { err: String(e) }), true);
-    });
+    void setXiaomiRegion(v)
+      .then(() => { lastGoodXiaomiRegion = v; })
+      .catch((e) => {
+        select.value = lastGoodXiaomiRegion;
+        flash(t("settings.app.switch_failed", { err: String(e) }), true);
+      });
   });
   return el(
     "div",
@@ -117,13 +126,17 @@ function renderConciseModeCheckbox(_meta: SourceMeta, cfg: AppConfig): HTMLEleme
     "data-id": "tavily-concise-mode",
   }) as HTMLInputElement;
   cb.checked = checked;
-  // M33 fix (2026-09-05 audit): IPC 失败回滚。
+  // H-Frontend-4 fix (2026-09-28 audit)：M33 回滚是空操作（previous 在 change
+  // 内读 === 浏览器已翻过的新值）。改 lastGood 闭包可变。
+  let lastGoodConcise = checked;
   cb.addEventListener("change", () => {
-    const previous = cb.checked;
-    void setTavilyConciseMode(cb.checked).catch((e) => {
-      cb.checked = previous;
-      flash(t("settings.app.switch_failed", { err: String(e) }), true);
-    });
+    const v = cb.checked;
+    void setTavilyConciseMode(v)
+      .then(() => { lastGoodConcise = v; })
+      .catch((e) => {
+        cb.checked = lastGoodConcise;
+        flash(t("settings.app.switch_failed", { err: String(e) }), true);
+      });
   });
 
   return el(
@@ -164,21 +177,24 @@ function renderBaseUrlInput(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
   }) as HTMLInputElement;
   input.value = value;
   // C3 fix: input 失焦后落盘 + refresh（避免每个按键就 IPC）
-  // M33 fix (2026-09-05 audit): IPC 失败回滚到改前值。
+  // H-Frontend-4 fix (2026-09-28 audit)：M33 回滚是空操作（previous 在 change
+  // 内读 === 新值）。改 lastGood 闭包可变。
+  let lastGoodBaseUrl = value;
   input.addEventListener("change", () => {
-    const previous = input.value;
     const v = input.value.trim();
     // L-3 fix (2026-09-05 audit)：前端先做同款 https:// 前缀校验 —— 后端只收
     // https://，`http://` 直送 IPC 只能收到晦涩后端报错。
     if (v && !v.startsWith("https://")) {
-      input.value = previous;
+      input.value = lastGoodBaseUrl;
       flash(t("extras.zenmux_base_url_invalid"), true);
       return;
     }
-    void setZenmuxBaseUrl(v).catch((e) => {
-      input.value = previous;
-      flash(t("settings.app.switch_failed", { err: String(e) }), true);
-    });
+    void setZenmuxBaseUrl(v)
+      .then(() => { lastGoodBaseUrl = v; })
+      .catch((e) => {
+        input.value = lastGoodBaseUrl;
+        flash(t("settings.app.switch_failed", { err: String(e) }), true);
+      });
   });
   return el(
     "div",
@@ -201,15 +217,17 @@ function renderZenmuxMode(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
   select.appendChild(el("option", { value: "payg" }, t("extras.zenmux_mode_payg")));
   select.appendChild(el("option", { value: "subscription" }, t("extras.zenmux_mode_subscription")));
   select.value = currentMode;
-  // M33 fix (2026-09-05 audit): IPC 失败回滚到改前值。
+  // H-Frontend-4 fix (2026-09-28 audit)：M33 回滚是空操作。改 lastGood 闭包可变。
+  let lastGoodMode = currentMode;
   select.addEventListener("change", () => {
-    const previous = select.value;
     const v = select.value as "payg" | "subscription";
     if (v !== "payg" && v !== "subscription") return;
-    void setZenmuxMode(v).catch((e) => {
-      select.value = previous;
-      flash(t("settings.app.switch_failed", { err: String(e) }), true);
-    });
+    void setZenmuxMode(v)
+      .then(() => { lastGoodMode = v; })
+      .catch((e) => {
+        select.value = lastGoodMode;
+        flash(t("settings.app.switch_failed", { err: String(e) }), true);
+      });
   });
 
   const cb = el("input", {
@@ -217,14 +235,18 @@ function renderZenmuxMode(_meta: SourceMeta, cfg: AppConfig): HTMLElement {
     id: "zenmux-payg-concise-mode",
     "data-id": "zenmux-payg-concise",
   }) as HTMLInputElement;
-  cb.checked = cfg.zenmux_payg_concise_mode ?? true;
-  // M33 fix (2026-09-05 audit): IPC 失败回滚。
+  const paygConciseInit = cfg.zenmux_payg_concise_mode ?? true;
+  cb.checked = paygConciseInit;
+  // H-Frontend-4 fix (2026-09-28 audit)：M33 回滚是空操作。改 lastGood 闭包可变。
+  let lastGoodPaygConcise = paygConciseInit;
   cb.addEventListener("change", () => {
-    const previous = cb.checked;
-    void setZenmuxPaygConcise(cb.checked).catch((e) => {
-      cb.checked = previous;
-      flash(t("settings.app.switch_failed", { err: String(e) }), true);
-    });
+    const v = cb.checked;
+    void setZenmuxPaygConcise(v)
+      .then(() => { lastGoodPaygConcise = v; })
+      .catch((e) => {
+        cb.checked = lastGoodPaygConcise;
+        flash(t("settings.app.switch_failed", { err: String(e) }), true);
+      });
   });
 
   return el(
@@ -281,15 +303,17 @@ function renderZhipuRegionSelect(_meta: SourceMeta, cfg: AppConfig): HTMLElement
   select.appendChild(el("option", { value: "cn" }, t("extras.zhipu_region_cn")));
   select.appendChild(el("option", { value: "en" }, t("extras.zhipu_region_en")));
   select.value = current;
-  // M33 fix (2026-09-05 audit): IPC 失败回滚到改前值。
+  // H-Frontend-4 fix (2026-09-28 audit)：M33 回滚是空操作。改 lastGood 闭包可变。
+  let lastGoodZhipuRegion = current;
   select.addEventListener("change", () => {
-    const previous = select.value;
     const v = select.value as "cn" | "en";
     if (v !== "cn" && v !== "en") return;
-    void setZhipuRegion(v).catch((e) => {
-      select.value = previous;
-      flash(t("settings.app.switch_failed", { err: String(e) }), true);
-    });
+    void setZhipuRegion(v)
+      .then(() => { lastGoodZhipuRegion = v; })
+      .catch((e) => {
+        select.value = lastGoodZhipuRegion;
+        flash(t("settings.app.switch_failed", { err: String(e) }), true);
+      });
   });
 
   const helpDiv = document.createElement("div");
@@ -328,10 +352,17 @@ function renderVolcenginePlanFilter(_meta: SourceMeta, cfg: AppConfig): HTMLElem
       "data-id": id,
     }) as HTMLInputElement;
     cb.checked = checked;
+    // H-Frontend-4 fix (2026-09-28 audit)：同款空操作/无回滚 bug —— 失败时只
+    // flash，勾留在新值而后端仍是旧值。改 lastGood 闭包可变。
+    let lastGood = checked;
     cb.addEventListener("change", () => {
-      void onChange(cb.checked).catch((e) => {
-        flash(t("settings.app.switch_failed", { err: String(e) }), true);
-      });
+      const v = cb.checked;
+      void onChange(v)
+        .then(() => { lastGood = v; })
+        .catch((e) => {
+          cb.checked = lastGood;
+          flash(t("settings.app.switch_failed", { err: String(e) }), true);
+        });
     });
     return el("div", { class: "check" }, cb, el("label", { for: id }, labelText));
   };

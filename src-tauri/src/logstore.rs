@@ -168,7 +168,21 @@ pub fn redact_message(s: &str) -> std::borrow::Cow<'_, str> {
             r"|sessionKey=[^\s;,]+",
             r"|sessionid=[^\s;,]+",
             r"|JSESSIONID=[^\s;,]+",
-            r"|auth==[^\s;,]+",
+            // L-Auth-Typo fix (2026-09-28 audit): 之前写成字面量 `auth==`（双等号）,
+            // 在 regex 里匹配的是字面串 "auth==" + 值, **永远命中不了** `auth=<token>`。
+            // 同批提交的兄弟 pattern（client_secret= / secret_key= / refresh_token=
+            // / sessionKey= / access_token= / kimi-auth=）全是单等号, 独独这条错。
+            // 危害: custom（New API 中转站）provider 在非 2xx 时把响应体前 200 字符
+            // 直接塞进错误消息，而 custom 的 key 没有厂商前缀（sk- / tvly- / tp- /
+            // tk- / eyJ 全不覆盖），`auth=` 是唯一的通用兜底 → 中转站 token 原样落
+            // app_log.jsonl。
+            // 用「首字符排除 =」而不是裸 `auth=`：`OAuth` / `X-Auth==` 这类合法双等号
+            // 查询串不该被误吞（`\b` 挡住 `X-Auth` / `oauth` 之类子串误命中，
+            // 首字符类 `[^=;\s]` 挡住 `auth==value` 形式）。
+            // **不要写成 `\bauth=(?!=)`**：Rust 的 regex crate 不支持 look-around
+            // （look-ahead / look-behind），会编译期报 "look-around, including
+            // look-ahead and look-behind, is not supported"。
+            r"|\bauth=[^=;\s][^\s;,]*",
             r"|(?:Cookie|Set-Cookie):[^\n]+",
             r"|(?m)^[ \t]*(?:cookie|set-cookie):[^\n]+",
             r"|(?i:authorization)\s*:\s*[^\s;,]+",
@@ -604,6 +618,26 @@ mod redact_tests {
         let r = redact_message("Cookie: api-platform_serviceToken=secret123; path=/");
         assert!(r.contains("<redacted>"));
         assert!(!r.contains("secret123"));
+    }
+
+    /// L-Auth-Typo regression (2026-09-28 audit): pattern 之前写成 `auth==`（双等号）,
+    /// 在 regex 里匹配的是字面串 "auth==" + 值, 对 `auth=<token>` **零命中**。
+    /// custom（New API 中转站）的 key 没有厂商前缀（sk- / tvly- / tp- / tk- /
+    /// eyJ 全不覆盖），`auth=` 是唯一的通用兜底 —— typo 期间中转站 token
+    /// 原样落 app_log.jsonl。现有 redact_tests 完全没覆盖这条，所以 CI 没红。
+    #[test]
+    fn bare_auth_param_redacted() {
+        let r = redact_message("invalid auth=secret123");
+        assert!(!r.contains("secret123"), "裸 auth= 未被遮蔽: {r}");
+        assert!(r.contains("<redacted>"), "r = {r}");
+    }
+
+    /// `auth=` 修复不能反过来误吞合法双等号查询串（`\bauth=(?!=)` 的 (?!=) 分支）。
+    #[test]
+    fn double_equals_auth_query_not_swallowed() {
+        let s = "GET /cb?OAuth?auth==secret123&x=1";
+        let r = redact_message(s);
+        assert!(r.contains("auth==secret123"), "双等号查询串被误吞: {r}");
     }
 
     #[test]

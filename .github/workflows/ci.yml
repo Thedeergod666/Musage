@@ -36,6 +36,22 @@ jobs:
       # 按钮失效 bug)。零依赖 grep,放最前面 fail-fast。
       - name: No native JS dialogs
         run: bash scripts/check-no-native-dialogs.sh
+      # 以下 4 条是 2026-09-28 全量审查后新增的守门，都属于「约定写了但没有
+      # enforcement」的类别 —— 上一轮它们全靠人记，于是同类 bug 一再复发。
+      # 详见 audit-reports/2026-09-28-full/SUMMARY.md 第五节。
+      - name: No native color input (WKWebView dead control)
+        run: bash scripts/check-no-color-input.sh
+      - name: Hex color length parity (FE / BE write / BE read)
+        run: bash scripts/check-hex-color-parity.sh
+      - name: i18n key existence at call sites
+        # 不只查 en<->zh 对称性（validate-i18n-keys.sh 已做），还要查 t!()/t()
+        # 引用 的 key 真实存在 —— rust-i18n 找不到 key 时返 "<locale>.<key>" 字面量
+        # 且不做参数替换，用户直接看到 key 串。
+        run: bash scripts/check-i18n-callsite-keys.sh
+      - name: Provider helper parity (informational)
+        # 提示型：列出共享 helper 尚未平行移植到哪些 provider，不阻断 CI。
+        # 这正是审查里 4 条 Medium 的共同形态（改了 A 忘了同款 B）。
+        run: bash scripts/check-provider-helper-parity.sh
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         # 钉到 9.15.4,跟 package.json 的 packageManager 严格对齐,避免 corepack 报 mismatch
         with: { version: 9.15.4 }

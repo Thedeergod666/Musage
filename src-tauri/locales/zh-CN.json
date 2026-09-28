@@ -271,6 +271,9 @@
     },
     "kimi": {
       "timeout": "%{secs} 秒内未完成登录 —— 请重试"
+    },
+    "anysearch": {
+      "timeout": "%{secs} 秒内未完成登录 —— 请重试"
     }
   }
 }

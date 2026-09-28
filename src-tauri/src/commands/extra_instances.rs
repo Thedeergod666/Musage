@@ -638,29 +638,30 @@ pub async fn delete_extra_instance(
         // 槽位, 但 snapshot 的 provider[].source_id 还指着旧 ref, 直到下次
         // poller tick (60s+) 才刷新 → 用户在浮窗看副本消失。
         //
-        // 修法: 在 snapshot 内按 source_id 旧→新 rename, 替换 cfg.providers.insert
-        // 后的实时状态。snapshot.providers[].source_id 是 stable 标识, 直接
-        // mutate 即可 (UI 已经在用 new_ref key 浮窗卡片)。
+        // 2026-09-28 audit H-03-bug: 上面的修法**只改 source_id 是不够的**
+        // —— snapshot_key() 明确「unique_id 优先」:
+        //     p.unique_id.as_deref().or(p.source_id.as_deref()).unwrap_or(&p.provider)
+        // apply_provider_order (commands/mod.rs) 和前端 snapKey() (src/main.ts)
+        // 是同款三级优先。而浮窗里每张成功卡片的 unique_id 由 caller 注入,
+        // 一直是 "minimax#3"。只改 source_id → 身份键压根没变 →
+        //   (a) 幽灵卡 unique_id="minimax#3" 原地保留;
+        //   (b) 下一轮 push 新的 "minimax#2" → 浮窗同时出现「#3」陈旧卡和
+        //       「#2」真实卡 (两卡 rows 数据也一模一样, 用户看不出谁是谁);
+        //   (c) 同函数下面的 cfg.providers 迁移把 "minimax#3" remove 掉之后,
+        //       is_enabled_unique("minimax#3","minimax") 走 base fallback 返
+        //       true (base 仍启用) → 幽灵卡**不会被 enabled 过滤清掉**,
+        //       一直挂到用户重启 app。
+        // 必须同时改 unique_id。source_id 同步改只是让老字段不再撒谎。
         {
             let mut snap = state.snapshot.write().await;
-            let mut renamed = 0usize;
-            for p in snap.providers.iter_mut() {
-                let sk = crate::commands::snapshot_key(p);
-                for (old_ref, new_ref, _) in &migrations_done {
-                    if sk == *old_ref {
-                        p.source_id = Some(new_ref.clone());
-                        renamed += 1;
-                        break;
-                    }
-                }
-            }
+            let renamed = rename_snapshot_entries(&mut snap, &migrations_done);
             if renamed > 0 {
                 let s = snap.clone();
                 drop(snap);
                 let _ = app.emit("musage://snapshot", &s);
                 tracing::info!(
                     renamed,
-                    "delete_extra_instance 紧凑迁移后 snapshot source_id 已 rename, 浮窗立即跟新"
+                    "delete_extra_instance 紧凑迁移后 snapshot unique_id/source_id 已 rename, 浮窗立即跟新"
                 );
             }
         }
@@ -697,6 +698,55 @@ pub async fn delete_extra_instance(
     }
     // **B-NEW-6（2026-06-19 audit 同款）**：删 source 后不要 refresh_single_inner。
     Ok(())
+}
+
+/// delete_extra_instance 的 compact 迁移配套：把 in-memory snapshot 里
+/// 「旧身份」的条目就地改名成新身份。抽成独立纯函数是为了能单测
+/// （2026-09-28 audit H-03-bug 回归测试）。
+///
+/// `migrations_done` 元素 = `(old_api_key_ref, new_api_key_ref, credential)`。
+///
+/// **必须同时改 `unique_id` 和 `source_id`**：`commands::snapshot_key` 是
+/// `unique_id || source_id || provider` 三级优先，前端 `snapKey()` 和
+/// `apply_provider_order` 是同款口径 —— 只改 source_id 的话身份键不变，
+/// 幽灵卡原地留着（详见调用点注释）。
+///
+/// `unique_id` 命中时才改 `source_id`：没有 unique_id 的老 snapshot 条目
+/// 靠 source_id 当身份键，同样要跟；反过来把「source_id == old 但
+/// unique_id 是别的实例」的条目也改掉反而会制造重复卡，所以按身份键匹配
+/// （`snapshot_key`）而不是按字段匹配。
+///
+/// 返回改动的条目数（调用方据此决定要不要 emit）。
+fn rename_snapshot_entries(
+    snap: &mut crate::providers::QuotaSnapshot,
+    migrations_done: &[(String, String, Credentials)],
+) -> usize {
+    let mut renamed = 0usize;
+    for p in snap.providers.iter_mut() {
+        for (old_ref, new_ref, _) in migrations_done {
+            if crate::commands::snapshot_key(p) == *old_ref {
+                p.unique_id = Some(new_ref.clone());
+                p.source_id = Some(new_ref.clone());
+                renamed += 1;
+                break;
+            }
+        }
+    }
+    // 不变量：改完之后身份键**必须**等于新 ref。snapshot_key 是
+    // unique_id 优先,这里显式断言把「只改一半」的写法挡在编译期之外 ——
+    // 一旦有人日后把 unique_id 赋值删掉,单测 rename_snapshot_entries_moves_identity_key
+    // 会先红。
+    debug_assert!(
+        snap.providers
+            .iter()
+            .filter(|p| migrations_done
+                .iter()
+                .any(|(_, n, _)| n == crate::commands::snapshot_key(p)))
+            .count()
+            == renamed,
+        "compact 迁移后 snapshot 身份键未全部更新为 new_ref"
+    );
+    renamed
 }
 
 /// 前端 modal 的 provider picker 数据源：13 内置 + 1 custom。
@@ -987,5 +1037,116 @@ mod tests {
             "custom",
         ];
         assert_eq!(ids.len(), 15);
+    }
+
+    /// 2026-09-28 audit H-03-bug 回归：compact 重命名必须改 **unique_id**。
+    ///
+    /// 复现的现场：minimax 有 #2 / #3 两份副本，用户删 #2 →
+    /// `compact_indexes_for` 把幸存者 #3 重编号成 #2，`migrations_done`
+    /// 收到 ("minimax#3", "minimax#2")。snapshot 里那条卡片的真实字段是
+    /// `unique_id: Some("minimax#3")`（浮窗里每张成功卡片的 unique_id 都由
+    /// caller 注入），而身份键 `snapshot_key` 是 unique_id 优先 —— 8-17
+    /// 的 H-03 修法只改 `source_id`，身份键压根没变。
+    #[test]
+    fn rename_snapshot_entries_moves_identity_key() {
+        let mut snap = crate::providers::QuotaSnapshot {
+            providers: vec![crate::providers::ProviderSnapshot {
+                provider: "minimax".to_string(),
+                unique_id: Some("minimax#3".to_string()),
+                source_id: Some("minimax#3".to_string()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let migrations_done: Vec<(String, String, Credentials)> = vec![(
+            "minimax#3".to_string(),
+            "minimax#2".to_string(),
+            Credentials {
+                api_key: Some("k".to_string()),
+                cookie: None,
+                secret_key: None,
+            },
+        )];
+
+        let renamed = rename_snapshot_entries(&mut snap, &migrations_done);
+
+        assert_eq!(renamed, 1);
+        // 身份键必须变成 new_ref —— 这是整条修法的全部意义。
+        assert_eq!(
+            crate::commands::snapshot_key(&snap.providers[0]),
+            "minimax#2"
+        );
+        // 两个字段都该跟上（source_id 只改不改会留着过期的 "minimax#3"）。
+        assert_eq!(snap.providers[0].unique_id.as_deref(), Some("minimax#2"));
+        assert_eq!(snap.providers[0].source_id.as_deref(), Some("minimax#2"));
+    }
+
+    /// 反向：不该动别人的条目。链式迁移（#3→#2、#4→#3）时同一次调用里
+    /// 有两条 new_ref，被误改的条目会让浮窗出现重复卡。
+    #[test]
+    fn rename_snapshot_entries_leaves_unrelated_entries_alone() {
+        let mut snap = crate::providers::QuotaSnapshot {
+            providers: vec![
+                crate::providers::ProviderSnapshot {
+                    provider: "minimax".to_string(),
+                    unique_id: Some("minimax#3".to_string()),
+                    source_id: Some("minimax#3".to_string()),
+                    ..Default::default()
+                },
+                crate::providers::ProviderSnapshot {
+                    provider: "deepseek".to_string(),
+                    unique_id: Some("deepseek#2".to_string()),
+                    source_id: Some("deepseek#2".to_string()),
+                    ..Default::default()
+                },
+                // 没有 unique_id 的老条目（回退到 source_id 当身份键）
+                crate::providers::ProviderSnapshot {
+                    provider: "kimi".to_string(),
+                    source_id: Some("kimi#2".to_string()),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let migrations_done: Vec<(String, String, Credentials)> = vec![(
+            "minimax#3".to_string(),
+            "minimax#2".to_string(),
+            Credentials::default(),
+        )];
+
+        let renamed = rename_snapshot_entries(&mut snap, &migrations_done);
+
+        assert_eq!(renamed, 1);
+        assert_eq!(
+            crate::commands::snapshot_key(&snap.providers[1]),
+            "deepseek#2",
+            "别的 provider 的条目不该被动"
+        );
+        assert_eq!(crate::commands::snapshot_key(&snap.providers[2]), "kimi#2");
+    }
+
+    /// 老 snapshot（无 unique_id）也必须跟迁移，否则它的身份键
+    /// （fallback source_id）会留在已不存在的旧 ref 上。
+    #[test]
+    fn rename_snapshot_entries_handles_legacy_source_id_only() {
+        let mut snap = crate::providers::QuotaSnapshot {
+            providers: vec![crate::providers::ProviderSnapshot {
+                provider: "minimax".to_string(),
+                source_id: Some("minimax#3".to_string()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let migrations_done: Vec<(String, String, Credentials)> = vec![(
+            "minimax#3".to_string(),
+            "minimax#2".to_string(),
+            Credentials::default(),
+        )];
+
+        assert_eq!(rename_snapshot_entries(&mut snap, &migrations_done), 1);
+        assert_eq!(
+            crate::commands::snapshot_key(&snap.providers[0]),
+            "minimax#2"
+        );
     }
 }

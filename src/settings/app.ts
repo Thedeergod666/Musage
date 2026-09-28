@@ -7,7 +7,7 @@
 // - 「测试连接」按钮（拉一次所有 source + 摘要）
 
 import { el, flash } from "./utils";
-import { setTrayIconStyle, setTraySource, setTrayIconColor, getConfig, saveConfigSerialized } from "./api";
+import { setTrayIconStyle, setTraySource, setTrayIconColor, saveConfigSerialized } from "./api";
 import { testConn } from "./test";
 import { t } from "../i18n";
 import type { AppConfig } from "./types";
@@ -36,9 +36,12 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
     }
     secs = n;
     try {
-      const latest = await getConfig();
-      latest.refresh_interval_secs = secs;
-      await saveConfigSerialized(latest);
+      // H-Frontend-6 fix (2026-09-28 audit)：读-改-写整体进保存队列（mutator
+      // 形式），不再先 getConfig 拿快照 —— 那样两个面板并发时会各拿同一份旧
+      // 快照，后写者把先写者的改动回滚。
+      await saveConfigSerialized((latest) => {
+        latest.refresh_interval_secs = secs;
+      });
       cfg.refresh_interval_secs = secs;
       flash(t("settings.app.refresh_interval_saved", { secs: String(secs) }));
     } catch (e) {
@@ -58,9 +61,10 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
   autostartCb.addEventListener("change", async () => {
     const target = autostartCb.checked;
     try {
-      const latest = await getConfig();
-      latest.autostart = target;
-      await saveConfigSerialized(latest);
+      // H-Frontend-6 fix (2026-09-28 audit)：mutator 形式，读-改-写进队列。
+      await saveConfigSerialized((latest) => {
+        latest.autostart = target;
+      });
       cfg.autostart = target;
       flash(target ? t("settings.app.autostart_enabled") : t("settings.app.autostart_disabled"));
     } catch (e) {
@@ -139,6 +143,23 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
     if (currentSource === opt.value) o.selected = true;
     traySourceSelect.appendChild(o);
   }
+  // H-Frontend-8 fix (2026-09-28 audit)：traySourceOptions 只是**内置 source
+  // 的固定清单**，而后端 set_tray_source 接受任何 find_source 能解析的 id
+  // （stepfun / 导入配置带来的其它 id 等）。currentSource 不在清单里时：
+  //   ① 浏览器 selectedIndex 落到 0，面板**谎报当前是 MiniMax**（实际托盘
+  //      显示的是别的源）—— 用户看面板无从发现；
+  //   ② 回滚 `select.value = currentSource` 找不到匹配 option → selectedIndex
+  //      被置 -1，**下拉变成空白一行**，且此后所有回滚都失效。
+  // 触发路径：导出配置 → 另一台机器托盘选的是清单外的源 → 这台导入 → 打开本
+  // section → 选别的源 → 后端 reject → catch 回滚 → 下拉空白。
+  // 修法：渲染时若 currentSource 不在清单中，追加一条 value=currentSource 的
+  // option（label 直接用 id 原值 —— 本地没有它的显示名，list_sources 的
+  // 显示名要额外 IPC，收益不抵一次往返）。
+  if (!traySourceOptions.some((o) => o.value === currentSource)) {
+    traySourceSelect.appendChild(
+      el("option", { value: currentSource }, currentSource) as HTMLOptionElement,
+    );
+  }
   traySourceSelect.addEventListener("change", () => {
     const v = traySourceSelect.value;
     void setTraySource(v)
@@ -171,10 +192,16 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
     "#00d4a8",
     "#ff6a00",
   ];
-  const HEX6_RE = /^#[0-9a-fA-F]{6}$/;
+  // H-Frontend-9 fix (2026-09-28 audit)：原正则只收 6 位，比 Rust 侧严格 ——
+  // 后端 is_valid_hex_color 已放宽到 3|4|6|8（读侧 parse_hex_color 还多接受
+  // 4 位 #RGBA），前端不放宽会导致后端**已经存下来的** 3 位 / 8 位色值在面板上
+  // 显示为「未设置」。三处口径（校验 / 初始回填 / 保存）统一用这一个正则。
+  const HEX_RE = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
   // H-Frontend fix (2026-09-07 audit) 精神保留：非法存量值不展示成默认色。
+  // H-Frontend-9 fix：判据换成与校验同一个 HEX_RE（3|4|6|8），否则后端已存的
+  // 3 位 / 8 位值会被当成非法 → 面板显示「未设置」，用户以为没配过。
   const initialTrayColor =
-    cfg.tray_icon_color != null && HEX6_RE.test(cfg.tray_icon_color)
+    cfg.tray_icon_color != null && HEX_RE.test(cfg.tray_icon_color)
       ? cfg.tray_icon_color.toLowerCase()
       : null;
   const trayColorHexInput = el("input", {
@@ -201,28 +228,42 @@ export function renderAppSection(container: HTMLElement, cfg: AppConfig) {
     }
   };
   markTraySwatch(initialTrayColor);
+  // H-Frontend-10 fix (2026-09-28 audit)：最近一次**成功**的托盘色，失败回滚
+  // 用（app.ts 的 lastGood 模式；此前 IPC 失败只 flash，输入框/色板停在新值，
+  // 后端仍是旧值）。
+  let lastGoodTrayColor: string | null = initialTrayColor;
   const applyTrayColor = (color: string | null) => {
     void setTrayIconColor(color)
       .then(() => {
+        lastGoodTrayColor = color;
         markTraySwatch(color);
         trayColorHexInput.value = color ?? "";
         flash(t("settings.app.tray_color_changed"));
       })
-      .catch((e) => flash(t("settings.app.tray_color_failed", { err: String(e) }), true));
+      .catch((e) => {
+        markTraySwatch(lastGoodTrayColor);
+        trayColorHexInput.value = lastGoodTrayColor ?? "";
+        flash(t("settings.app.tray_color_failed", { err: String(e) }), true);
+      });
   };
   for (const s of trayColorSwatches) {
     s.addEventListener("click", () => applyTrayColor(s.dataset.color ?? null));
   }
   // hex 文本框：Enter / 失焦提交。text 输入的 change 事件在 WKWebView 里可靠
-  // （只有 color 类型的事件链是坏的）。#RRGGBB 严格校验；清空提交 = 切回自动。
+  // （只有 color 类型的事件链是坏的）。与后端同口径校验 3|4|6|8；
+  // 清空提交 = 切回自动。
   trayColorHexInput.addEventListener("change", () => {
     const v = trayColorHexInput.value.trim().toLowerCase();
     if (v === "") {
       applyTrayColor(null);
-    } else if (HEX6_RE.test(v)) {
+    } else if (HEX_RE.test(v)) {
       applyTrayColor(v);
     } else {
       flash(t("settings.app.tray_color_failed", { err: trayColorHexInput.value }), true);
+      // H-Frontend-10 fix (2026-09-28 audit)：非法值此前只 flash，输入框留着
+      // 一个从未生效的串；改成同样的非法串时 change 不再触发，脏值会一直在。
+      // 回填最近一次成功值。
+      trayColorHexInput.value = lastGoodTrayColor ?? "";
     }
   });
   const trayColorAutoBtn = el("button", { type: "button", class: "tray-color-auto" }, t("settings.app.tray_color_auto"));

@@ -40,11 +40,46 @@ export async function saveConfig(cfg: AppConfig): Promise<void> {
 // M30 fix (2026-09-05 audit)：saveConfig 是"getConfig 快照整体替换"语义，
 // 两个面板并发 读→改→写 时后写者会把前者的修改回滚（改 interval 的同时
 // 拖浮窗 → floating_x 被旧快照写回）。这里加**进程内保存队列**串行化所有
-// 全量保存：后发起的保存基于最新一次保存完成后的快照，消除面板间覆盖。
-// （根治是后端补单字段 command，见审查报告 M30 建议一。）
+// 全量保存。
+//
+// H-Frontend-6 fix (2026-09-28 audit)：原实现只串行化了「写」，**没串行化
+// 「读」** —— 调用方先 `await getConfig()` 拿到 cfg，再把这份 cfg 丢进队列。
+// 两个面板并发时两边拿到的是同一份旧快照，队列只保证「B 在 A 之后写」，B 的
+// 快照不含 A 的改动 → A 的改动被回滚。注释里"后发起的保存基于最新一次保存
+// 完成后的快照"与实现不符。
+//
+// 修法：把 `getConfig()` 挪进队列 —— 调用方传 **mutator** 而不是成品 cfg，
+// 队列里先读最新 cfg、再 mutate、再写，窗口关到"两次 IPC 之间"为止。
+// （根治仍是后端补单字段 command，见审查报告 M30 建议一。）
 let saveChain: Promise<unknown> = Promise.resolve();
 
-export function saveConfigSerialized(cfg: AppConfig): Promise<void> {
+/** 串行化「读-改-写」全量保存。
+ *
+ *  @param mutator 在**队列内**、对着刚读回来的最新 cfg 做增量修改。
+ *                 注意它闭包捕获的外部变量（要写的值）必须是调用瞬间取好的
+ *                 标量 —— cfg 本身由本函数读，调用方不要提前读。
+ *
+ *  典型用法：
+ *    await saveConfigSerialized((cfg) => { cfg.refresh_interval_secs = secs; });
+ */
+export function saveConfigSerialized(
+  mutator: (cfg: AppConfig) => void,
+): Promise<void> {
+  const task = saveChain.then(async () => {
+    const latest = await getConfig();
+    mutator(latest);
+    await saveConfig(latest);
+  });
+  saveChain = task.catch(() => {});
+  return task;
+}
+
+/** 串行化**整份替换**式保存（不走 getConfig）。
+ *
+ *  仅供「导入配置」用 —— 用户挑的是一份完整 config.json，语义就是替换而非
+ *  合并（其它面板的 pending 修改也不该被悄悄合进来）。仍然走同一条队列，
+ *  避免与 saveConfigSerialized 的读-改-写交错。 */
+export function saveConfigSerializedReplace(cfg: AppConfig): Promise<void> {
   const task = saveChain.then(() => saveConfig(cfg));
   saveChain = task.catch(() => {});
   return task;

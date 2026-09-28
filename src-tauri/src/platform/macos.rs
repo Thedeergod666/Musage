@@ -188,7 +188,18 @@ pub fn start_hover_emitter<R: Runtime>(app: AppHandle<R>) {
                 // 不光检查"鼠标在不在浮窗 frame 内"，还要确认浮窗在该点是**最上层**。
                 // PinBottom 模式下浮窗经常被其它 app 部分遮挡，单纯 point-in-rect
                 // 会在被遮挡区域也误触发置顶（用户其实在操作遮挡它的那个 app）。
-                let inside = is_floating_topmost_at(&app, mouse);
+                //
+                // M-tray-10 fix (2026-09-28 audit)：`None` = 本 tick 无法判定
+                // （主线程派发失败 / 50ms 超时 / MainThreadMarker 拿不到 / 只看到
+                // 迟到的上一拍闭包），**必须 continue 不采纳**。之前函数把三条
+                // 失败路径都塌缩成 `false`，emitter 攒够 EXIT_THRESHOLD=2 个
+                // 连续 false 就把 inside 改成 false：鼠标明明还在窗上，玻璃效果
+                // 被撤销、PinBottom 下窗口被 setWindowLevel(BELOW_NORMAL) 从光标
+                // 底下抽走 —— 用户看到浮窗"闪一下降到底部再抬起"。跟 Windows 端
+                // （`hit_test_floating → None → continue`）对齐。
+                let Some(inside) = is_floating_topmost_at(&app, mouse) else {
+                    continue;
+                };
 
                 if inside == last_inside {
                     // D6-002 fix (2026-07-30 audit): 同步 Win 同款, 稳定态 reset
@@ -303,63 +314,119 @@ pub fn set_window_level<R: Runtime>(app: &AppHandle<R>, level: CGWindowLevel, is
 /// 解决 PinBottom 模式下浮窗被部分遮挡时，鼠标移到被盖的区域也误触发的问题。
 ///
 /// dispatch 到 main thread（NSWindow API 强制要求）。channel 同步等待。
-/// 拿不到 / 超时 / 浮窗未上屏 → 保守返回 false。
+///
+/// **返回 `Option<bool>` —— `None` = "本 tick 无法判定"，`Some(v)` = 判定成功。**
+///
+/// M-tray-10 fix (2026-09-28 audit)：之前这个函数返 `bool`，把"派发失败 /
+/// 超时 / MainThreadMarker 拿不到"三条**失败**路径全部塌缩成语义确定的
+/// `false`。hover emitter 拿到连续 2 个 false（`EXIT_THRESHOLD = 2`，见
+/// [`start_hover_emitter`]）就采纳 `inside = false` → emit
+/// `musage://floating-hover=false`（**鼠标还在窗上**，玻璃效果却撤销了），
+/// PinBottom 下还会 `set_window_level(LEVEL_BELOW_NORMAL)` 把窗口从光标底
+/// 下抽走。触发条件很日常：主线程任何 >=100ms 的阻塞（NSOpenPanel、
+/// WKWebView 首次初始化 / 重绘、NSAlert 嵌套循环）恰好落在用户悬停浮窗期
+/// 间 → 浮窗**闪一下降到底部再抬起**。这正是 H7 fix 当初要消灭的"应用消
+/// 失"症状换了个触发路径。
+///
+/// Windows 端同类失败一直走的是正确做法（`hit_test_floating → None →
+/// continue`，`platform/windows.rs`）—— 两平台语义相反，本次对齐。
 ///
 /// **L12 fix（2026-06-19）**：旧实现每调用一次就新建一对 `mpsc::channel::<bool>()`。
 /// hover emitter 20Hz × 86,400s ≈ 1.7M 次/24h，allocator churn 严重。改用
-/// 全局复用的 `std::sync::Mutex<Option<bool>>` + `Condvar` 单槽位（外层包
-/// `OnceLock<Arc<...>>` 复用）。hover emitter 串行调用，单槽位足够。
-fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> bool {
+/// 全局复用的 `Mutex` + `Condvar` 单槽位（外层包 `OnceLock<Arc<...>>` 复用）。
+/// hover emitter 串行调用，单槽位足够。
+fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> Option<bool> {
     use std::sync::{Arc, Condvar, Mutex};
 
+    /// 单槽位回填状态。`ticket` 是 M-tray-10 fix 追加的**代际标记**（见下方
+    /// "迟到闭包"注释）；`filled` 里的值本身是 `Option<bool>`，`None` 表示
+    /// "闭包跑完了但没法判定"。
+    struct SlotState {
+        ticket: u64,
+        filled: Option<(u64, Option<bool>)>,
+    }
     struct OneSlot {
-        slot: Mutex<Option<bool>>,
+        slot: Mutex<SlotState>,
         cvar: Condvar,
     }
     static SLOT: OnceLock<Arc<OneSlot>> = OnceLock::new();
     let slot = SLOT.get_or_init(|| {
         Arc::new(OneSlot {
-            slot: Mutex::new(None),
+            slot: Mutex::new(SlotState {
+                ticket: 0,
+                filled: None,
+            }),
             cvar: Condvar::new(),
         })
     });
 
     let app2 = app.clone();
     let slot2 = slot.clone();
-    // **M2 fix（2026-07-02 audit）**：之前 `let _ = app.run_on_main_thread(...)`
-    // 静默吞 Err —— main thread 忙 / Tauri event loop 挂时,run_on_main_thread
-    // 返 Err,closure 永远不被调度 → cvar 等 50ms 超时返 false。下一次 poll
-    // 又重复同样流程。如果 main thread 长时间忙（极少见但理论可能），hover
-    // emitter 持续 20Hz 失败但用户看不到任何 log,浮窗玻璃效果永久失效。
-    // 改为: run_on_main_thread 失败时记录 warning (首次 fail 后降级为 trace
-    // 避免 log spam),把 slot 填 false 让 cvar 立即 notify 走 timeout 路径。
+
+    // M-tray-10 fix：**派发前先清槽 + 领一个 ticket**。
+    //
+    // "迟到闭包"问题：上一次调用超时返回后，它派发的闭包才落到主线程上执行
+    // 并写槽。此时本次调用进来若直接等 `filled` 为空，会把**上一拍**的值当
+    // 成自己的结果读走 —— hover emitter 的迟滞计数被陈旧值污染，且这个污
+    // 染是系统性的（每次主线程拥堵都会发生）。
+    //
+    // 修法两件套：(1) 派发前 `filled = None`，杜绝读残留；(2) 闭包写回时带上
+    // 自己那一拍的 ticket，等待侧只接受 ticket 匹配的写 —— 迟到的旧闭包即
+    // 使落地也只会被忽略，本 tick 走超时返 `None`（emitter `continue`，不
+    // 采纳）。串行调用 + ticket 让迟滞计数重新可信，且没有恢复 per-call
+    // channel 的 allocator churn。
+    let ticket = {
+        let mut g = slot.slot.lock().unwrap_or_else(|e| e.into_inner());
+        g.ticket = g.ticket.wrapping_add(1);
+        g.filled = None;
+        g.ticket
+    };
+
+    // **M2 fix（2026-07-02 audit）**：`run_on_main_thread` 返 Err 时必须记
+    // warning（首次 fail 后降级为 trace 避免 log spam），否则 main thread
+    // 长时间忙时 hover emitter 持续 20Hz 失败、用户看不到任何 log，浮窗玻
+    // 璃效果永久失效且完全无声。
     let dispatch_result = app.run_on_main_thread(move || {
-        let result = (|| -> Option<bool> {
-            let win = app2.get_webview_window("floating")?;
-            let ptr = win.ns_window().ok()?;
+        let result: Option<bool> = (|| {
+            // 浮窗不存在 / ns_window 拿不到 / 指针为空 / Retained::retain 失败 /
+            // 窗口还没上屏（windowNumber == 0）—— 这些都是"这里没有一个可抬起
+            // 的浮窗"，语义**确定**的 false，直接给结论（也省掉本 tick 的 50ms
+            // 超时等待，hover 循环不会因为浮窗缺席而退化到 10Hz）。
+            let Some(win) = app2.get_webview_window("floating") else {
+                return Some(false);
+            };
+            let Ok(ptr) = win.ns_window() else {
+                return Some(false);
+            };
             if ptr.is_null() {
-                return None;
+                return Some(false);
             }
             // D6-003 fix (2026-07-30 audit): 改用 Retained::retain() 拿 NSWindow,
             // 对齐 H2 fix (set_window_level) 的安全模式, 防止 future footgun.
             // 之前裸 &*ptr.cast 借 raw pointer 引用, 若浮窗在引用期间被 close,
             // 后续 windowNumber() 调 dispatch use-after-free. Retained 增加
             // 一次 retain 引用计数, 闭包内一直 hold 住, 闭包结束自动 release.
-            let window: Retained<NSWindow> = unsafe { Retained::retain(ptr.cast::<NSWindow>()) }?;
+            let window: Retained<NSWindow> =
+                match unsafe { Retained::retain(ptr.cast::<NSWindow>()) } {
+                    Some(w) => w,
+                    None => return Some(false),
+                };
             let our_id = window.windowNumber();
             if our_id == 0 {
                 // 窗口还没上屏（极少见，初始化竞态）→ 直接 false
                 return Some(false);
             }
             // 传 0 = 不排除任何窗口，返回整个屏幕在该点 topmost window 的 number
-            // **2026-06-20 audit**：MainThreadMarker 拿不到时改返 false 兜底，
-            // 避免拿不到 → panic → hover emitter 永久停掉。
             let Some(mtm) = MainThreadMarker::new() else {
                 // fix (2026-07-28 审查): 之前 warn! —— 此分支一旦进入会随
                 // hover emitter 20Hz 全天刷屏（≈172 万条/天）。降 trace，
                 // 与函数内其它失败路径（dispatch 失败等）的级别对齐。
+                // M-tray-10 fix：`return Some(false)` → `return None`。拿不到
+                // marker = 这次读不到 AppKit 状态 = **无法判定**，不能当成
+                // "鼠标不在窗上"。返 Some(false) 会喂给 hover emitter 的退
+                // 场迟滞计数，凑够 2 tick 就把浮窗从光标底下抽走。
                 tracing::trace!("is_floating_topmost_at: MainThreadMarker 不可用，跳过本 tick");
-                return Some(false);
+                return None;
             };
             let topmost = NSWindow::windowNumberAtPoint_belowWindowWithWindowNumber(point, 0, mtm);
             Some(topmost == our_id)
@@ -370,13 +437,11 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
         // 都会跟着 panic，tray 整体停摆。改成 unwrap_or_else(|e| e.into_inner())。
         {
             let mut g = slot2.slot.lock().unwrap_or_else(|e| e.into_inner());
-            *g = Some(result.unwrap_or(false));
+            g.filled = Some((ticket, result));
         }
         slot2.cvar.notify_all();
     });
     if let Err(e) = dispatch_result {
-        // 主线程无法调度 (临时忙 / 退出中) —— 立即把 slot 填 false 让
-        // cvar notify_all 提前返 poll 路径,避免调用方空等 50ms。
         // D6-04 (2026-09-04 audit): 纯 trace 让「main thread 长期阻塞
         // (modal 面板) → hover 永久失灵」的场景完全无声。加连续失败计数，
         // 跨过阈值（20Hz × 50s = 1000 tick）时 warn 一次——不刷屏，但
@@ -393,29 +458,32 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
         } else {
             tracing::trace!(
                 error = %e,
-                "is_floating_topmost_at: dispatch to main thread 失败，立即返 false"
+                "is_floating_topmost_at: dispatch to main thread 失败，本 tick 无法判定（不采纳）"
             );
         }
-        {
-            let mut g = slot.slot.lock().unwrap_or_else(|e| e.into_inner());
-            if g.is_none() {
-                *g = Some(false);
-            }
-        }
-        slot.cvar.notify_all();
-    } else {
-        MAIN_DISPATCH_CONSECUTIVE_FAILS.store(0, Ordering::Relaxed);
+        // M-tray-10 fix：**不再**把 slot 填 `Some(false)` + notify 让 caller
+        // 立刻拿到 false。闭包永远不会被调度，等下去没有意义 —— 直接返
+        // `None`（无法判定），caller / emitter `continue`。
+        return None;
     }
+    MAIN_DISPATCH_CONSECUTIVE_FAILS.store(0, Ordering::Relaxed);
 
-    // 50ms 超时兜底：main thread 卡住时 hover 轮询不至于一起卡住
+    // 50ms 超时兜底：main thread 卡住时 hover 轮询不至于一起卡住。
+    // 超时 / 只看到别的 ticket 的迟到写 → `None` = 无法判定，不采纳。
     let started = std::time::Instant::now();
     let deadline = Duration::from_millis(50);
     // 同样：poison 恢复（mutex 共享，跟上面 write 路径同源）
     let mut guard = slot.slot.lock().unwrap_or_else(|e| e.into_inner());
-    while guard.is_none() && started.elapsed() < deadline {
+    loop {
+        // 只接受本 tick 自己的回填；ticket 不匹配 = 迟到的上一拍闭包，忽略。
+        if let Some((t, v)) = guard.filled {
+            if t == ticket {
+                return v;
+            }
+        }
         let remaining = deadline.saturating_sub(started.elapsed());
         if remaining.is_zero() {
-            break;
+            return None;
         }
         let (g, _wait_timeout) = slot
             .cvar
@@ -423,10 +491,6 @@ fn is_floating_topmost_at<R: Runtime>(app: &AppHandle<R>, point: NSPoint) -> boo
             .unwrap_or_else(|e| e.into_inner());
         guard = g;
     }
-    // fix (2026-07-28 审查): 用 take() 消费 slot —— 之前 `guard.unwrap_or(false)`
-    // 只读不取，Some(value) 残留在槽里，下一调用进来直接命中 `!is_none()`
-    // 跳过等待，读到一拍前的旧值（每调用稳定滞后一个 tick）。
-    guard.take().unwrap_or(false)
 }
 
 // ═══════════════════════════════════════════════════════════════════

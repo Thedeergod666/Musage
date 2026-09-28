@@ -41,7 +41,33 @@
 //! 不在白名单里的 cookie 一律丢弃（最小权限）。
 //! dashboard API 实际依赖的就这 4 个（参考 `providers/xiaomi.rs` 的注释）。
 //! 平台如果改名 → 改这里就行，UI 不变。
+//!
+//! ## 「清除 Cookie → 重新登录」死循环（2026-09-28 fix）
+//!
+//! 本模块是 4 个登录模块里**唯一**没有新鲜度门的 —— stepfun `is_fresh_token`
+//! / kimi `is_fresh_token` / anysearch `is_fresh_access` 都能解 token 的 exp，
+//! 拒掉「cookie jar 里上一次会话的残留」；xiaomi 的 cookie 是 HttpOnly 会话
+//! cookie，JS 读不到 exp，**本地无从判断新旧**，旧实现只查「4 个白名单 cookie
+//! 存在且值非空」就写盘。
+//!
+//! 死循环链路（无需重启即可复现）：
+//! 1. cookie 失效（浮窗报 `error.xiaomi.cookie_invalid_hint`）
+//! 2. 用户点「清除 Cookie」→ 只删 keys.json 的 `{id}:cookie` 槽，
+//!    **从不碰 webview cookie jar**
+//! 3. 用户点「🔑 登录小米账号」→ webview 用的是 app 默认的**持久化**
+//!    WKWebView data store → jar 里旧 cookie 还在
+//! 4. `on_page_load` 命中 dashboard → 首次重试就提取成功 → 关窗 + toast
+//!    「登录成功」→ keys.json 里是**同一份已失效的 cookie** → 浮窗依旧 401
+//! 5. 用户无路可走（全工程没有任何 UI 能清 cookie jar）
+//!
+//! 两段修：
+//! - **新鲜度门**（[`is_same_as_stored`]）：抓到的 cookie 与已存**逐 pair
+//!   相同** → 拒绝写盘（归一化后比集合，绕开 cookie jar 枚举顺序漂移）。
+//!   Err 走既有重试通道 —— 用户若在重试窗口内登出重登，新 cookie 立刻放行。
+//! - **逃生口**（[`clear_xiaomi_session`]）：删凭据槽 + 逐个
+//!   [`purge_cookies_for_domains`] 清 jar 里 xiaomi 域的 cookie。
 
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -208,8 +234,52 @@ async fn wait_window_closed(app: &AppHandle, label: &str) {
     }
 }
 
+/// 解析本次登录要写入的凭据槽（base 或副本 unique_id）。
+///
+/// 2026-09-28 fix（契约 1/2：登录命令不带 instance id → 多账号凭据成为
+/// UI 删不掉的孤儿）：base 被禁用 + 副本启用时，登录写进 base 槽而浮窗刷的是
+/// 副本槽 → 用户看到「登录成功但卡片还是红的」，且副本槽永远没凭据可清。
+/// 前端登录卡片手里就有这张卡的 unique_id，后端没理由不用。
+///
+/// 优先级：
+/// 1. `instance_id` 合法 → 它（base 前缀校验在 resolve 内部做）
+/// 2. base 启用 → base
+/// 3. 按 index 升序第一个启用副本
+/// 4. 全禁用 → `instance_id` 原样（用户明确点了某张卡，即使禁用也该写进去）
+///    再兜底 base（保持旧行为）
+async fn resolve_target(app: &AppHandle, base: &str, instance_id: Option<&str>) -> String {
+    match crate::commands::resolve_login_refresh_target(&app.state(), base, instance_id).await {
+        Some(t) => t,
+        None => instance_id
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(base)
+            .to_string(),
+    }
+}
+
+/// 打开登录 webview 窗口。
+///
+/// 行为：
+/// 1. 如果已有 `xiaomi-login` 窗口（用户再次点按钮），先关掉
+/// 2. 开新 webview 指向 `LOGIN_URL`
+/// 3. 监听 `on_page_load`：URL 命中 dashboard 启发式 → 等待 + 重试提取
+///    cookie → 保存 → 关闭 → emit 成功事件
+///
+/// macOS WKWebView 上 `on_page_load` 会多次触发（SSO 重定向链 +
+/// 页面内导航），用 `EXTRACTING` 保证只有一个任务在提取。
+///
+/// 错误通过 `musage://xiaomi-login-failed` 事件返回前端；用户主动关窗 /
+/// 被新一轮登录流程取代 → 静默退出（L2/L-gen fix），不弹错误条。
+///
+/// `instance_id`（2026-09-28 契约 1/2）：前端登录卡片传自己的 `unique_id`，
+/// 副本行（`xiaomimimo#2`）必须带上，否则凭据落 base 槽、浮窗刷副本槽。
+/// 标量参数走 camelCase（tauri-macros 的 `ArgumentCase::Camel`），
+/// 前端 `{ instanceId: "xiaomimimo#2" }` 即可；不传 → None → 行为同旧版。
 #[tauri::command]
-pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
+pub async fn open_xiaomi_login_window(
+    app: AppHandle,
+    instance_id: Option<String>,
+) -> Result<(), String> {
     // 新一轮流程：gen+1（老任务的 guard / 轮询 / emit 见到不一致即失效）
     let gen = GEN.fetch_add(1, Ordering::SeqCst) + 1;
     // 重置提取锁 + 完成标记（新窗口 = 全新流程）
@@ -224,6 +294,10 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
 
     let url: Url = (LOGIN_URL.parse::<Url>())
         .map_err(|e| t!("xiaomi_login.parse_login_url", err = e.to_string()).into_owned())?;
+
+    // 2026-09-28: target 提前 resolve（on_page_load 是 Fn 非 FnOnce 闭包，
+    // 只能按引用捕获 target，进 task 前必须 clone）。
+    let target = resolve_target(&app, "xiaomimimo", instance_id.as_deref()).await;
 
     // 闭包必须 'static + Send + Sync → 克隆 AppHandle（内部 Arc 包装，廉价）
     let app_for_callback = app.clone();
@@ -251,49 +325,24 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
         None => b,
     };
     b
-        // H8 fix (2026-07-06 全量审查): 在 webview 里注入 init script,挡住
-        // dashboard 域之外的 cookie 读取 + 第三方 widget 在受信 webview
-        // 上下文里跑 JS 偷 session。
-        //   - document.cookie getter: 仅当 location.hostname ===
-        //     "platform.xiaomimimo.com" 时返回真值,否则返空串。
-        //   - sessionStorage / localStorage: 同样限制。
-        // 配合 capabilities/default.json 把 webview create 权限 only 给
-        // xiaomi-login 窗口（已拆 capabilities/xiaomi-login.json）。
+        // 2026-09-28 fix（H8 / H-7 的净效果为负，整段删除 init script）：
+        // 这段 override 现在只剩「把 `Document.prototype.cookie` 的
+        // `configurable` 从 true（WebIDL 原生）改成 false，getter/setter
+        // 逐字 passthrough」一件事 —— 见 4f54ee7：门控被改成 `if (!isAllowed())
+        // return` 早返（这一步是对的，跨域 SSO 中间页不再被锁），但 override
+        // 本身没恢复成真实现。
         //
-        // H-7 fix (2026-09-05 audit)：prototype override **只在受信 host 上
-        // 安装**。原实现无条件安装、调用时才门控 —— account.xiaomi.com SSO
-        // 等中间页的 cookie/storage 被锁死（getter 空串 / getItem null /
-        // setter 丢弃），登录流程直接坏掉。受信域之外保持原生行为：xiaomi
-        // session cookie 是 HttpOnly（JS 本来读不到），override 的防护价值
-        // 仅在受信域内的 hardening。
-        .initialization_script(
-            r#"
-            (function () {
-                const ALLOW_HOST = "platform.xiaomimimo.com";
-                function isAllowed() {
-                    try { return location.hostname === ALLOW_HOST; } catch (_) { return false; }
-                }
-                // H-Login fix (2026-09-07 audit): 跨域 SSO 跳转 (xiaomi →
-                // account.xiaomi.com) 时 init script 也跑, 若无条件装 prototype 锁,
-                // 会破坏 account.xiaomi.com 的 OIDC state / PKCE code_verifier 在
-                // localStorage 的存取 (patched getItem 返 null / setItem 被吞) → SSO
-                // 回调读不到 state → 永远 "cookie 不完整" 循环登录失败。仅受信
-                // host 装锁。
-                if (!isAllowed()) return;
-                // D3-001 fix (2026-07-30 audit): 同 anysearch_login.rs, 锁 prototype
-                // 而非 instance. xiaomi 抓的 cookie 是 HttpOnly, 实际威胁面小,
-                // 但对齐 hardening 一致性, 防止未来 cookie 路径变化。
-                try {
-                    const _origCookie = Object.getOwnPropertyDescriptor(Document.prototype, "cookie");
-                    Object.defineProperty(Document.prototype, "cookie", {
-                        get() { return _origCookie.get.call(this); },
-                        set(v) { _origCookie.set.call(this, v); },
-                        configurable: false
-                    });
-                } catch (_) {}
-            })();
-            "#,
-        )
+        // 净效果全是负的：
+        // - **防护价值为零**：xiaomi 抓的是 HttpOnly 会话 cookie，JS 本来就
+        //   读不到；getter 又是 passthrough，页面脚本 `document.cookie` 照常
+        //   拿到全部 cookie（真要做域隔离，这里必须返回过滤后的串）。
+        // - **净破坏**：`platform.xiaomimimo.com` 上的页面脚本或第三方 widget
+        //   调 `Object.defineProperty(Document.prototype, 'cookie', ...)`
+        //   （严格模式 / ESM）会因 `configurable: false` 抛 TypeError，
+        //   页面脚本中断。
+        // 真正的边界防护在 WebView 实例本身（独立 webview + capabilities
+        // 只授权这一个 label），不在 JS 层。anysearch_login.rs 的同款
+        // override 一并删除（同一份 passthrough 论证）。
         .on_page_load(move |window, payload| {
             let url = payload.url();
             tracing::debug!(url = %redact_url_for_log(&url), "xiaomi login webview page load");
@@ -320,6 +369,9 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
             let app2 = app_for_callback.clone();
             let window_clone = window.clone();
             let my_gen = gen;
+            // on_page_load 是 `Fn`（WKWebView 上多次触发）→ 不能把 `target`
+            // move 进 task，只能 clone 一份（String clone 很便宜）。
+            let task_target = target.clone();
             tauri::async_runtime::spawn(async move {
                 // M4 fix: panic 兜底关窗 —— 任意路径退出都强制关 webview
                 let _close_guard = WindowCloseGuard(window_clone.clone());
@@ -332,15 +384,11 @@ pub async fn open_xiaomi_login_window(app: AppHandle) -> Result<(), String> {
                 // L-gen fix (2026-07-28 审查): guard 携带本次 gen —— 老流程
                 // 的 drop 不能清新流程的锁(否则用户重复点登录会出现并发提取)。
                 let _extracting_guard = ExtractingGuard::new(my_gen);
-                // D7-02 fix (2026-09-07 audit): resolve target 必须放在 async
-                // block 内 (on_page_load 是 Fn 非 async Fn, 不能 .await)。fallback
-                // 到 base 保持向后兼容。
-                let target = crate::commands::resolve_login_refresh_target(
-                    &app2.state(),
-                    "xiaomimimo",
-                )
-                .await
-                .unwrap_or_else(|| "xiaomimimo".to_string());
+                // D7-02 fix (2026-09-07 audit) 的 resolve 已上移到
+                // `open_xiaomi_login_window`（见 resolve_target）：on_page_load
+                // 是 `Fn` 闭包，无法 await，且 4 个登录模块的 resolve 位置
+                // 现在完全一致（都在开窗前一次）。
+                let target = task_target;
                 let result = extract_with_retry(&window_clone, &app2, my_gen, &target).await;
                 // 注意: 不显式 EXTRACTING.store(false) —— ExtractingGuard
                 // 的 Drop 已经做这件事,而且带 gen 检查 (is_current_gen)。
@@ -598,6 +646,33 @@ async fn extract_and_save(
 
     let cookie_str = cookie_parts.join("; ");
 
+    // ── 新鲜度门（2026-09-28 fix，见模块头「清除 Cookie → 重新登录」死循环）──
+    // xiaomi 是 4 个登录模块里唯一解不出 token exp 的（HttpOnly 会话 cookie，
+    // JS 读不到），所以唯一能判「这是不是新东西」的手段就是**跟已存的比**。
+    // 抓到的 pair 集合与 `{target}:cookie` 完全相同 → 没有任何新信息，
+    // 写盘 + emit「登录成功」只会把同一份已失效 cookie 再确认一遍，
+    // 让用户陷在「登录成功 → 浮窗依旧 401 → 再登录」的循环里。
+    //
+    // 这里返 Err 而不是直接失败退出：Err 会进 `extract_with_retry` 的重试
+    // 通道（1s/2s/2s/3s/3s）。用户在重试窗口里**在登录窗内登出再登入**，
+    // 下一轮 cookie 变化 → 正常写盘。这是本模块唯一可用的「让用户自己
+    // 打破僵局」路径，不能一上来就把窗口关了。
+    let stored = config::load_credential_for_id(target)
+        .ok()
+        .flatten()
+        .and_then(|c| c.cookie);
+    if is_same_as_stored(&cookie_str, stored.as_deref()) {
+        tracing::warn!(
+            target = %target,
+            len = cookie_str.len(),
+            "抓到的 cookie 与 keys.json 已存内容逐 pair 相同 —— 判定为旧会话残留，拒绝写盘"
+        );
+        // 复用现有 key（本次不新增 i18n key）：语义上「没提取到新东西」与
+        // 「没提取到预期 cookie」对用户是同一件事 —— 都是「这次登录白登了，
+        // 请确认是否真的登录成功、在不在 dashboard 页」。
+        return Err(t!("xiaomi_login.cookie_extraction_failed").into_owned());
+    }
+
     let cred = Credentials {
         api_key: None,
         cookie: Some(cookie_str.clone()),
@@ -620,6 +695,168 @@ async fn extract_and_save(
 fn emit_failed(app: &AppHandle, msg: String) {
     tracing::error!(error = %msg, "xiaomi login flow failed");
     let _ = app.emit("musage://xiaomi-login-failed", msg);
+}
+
+/// 把 `Cookie: a=1; b=2` 头字符串拆成**排序去重**后的 pair 集合。
+///
+/// 2026-09-28：新鲜度门必须比集合而不是比字符串 —— `cookies_for_url` 的
+/// 枚举顺序在 WKWebView / WebView2 上都不保证跨调用稳定（同一份 cookie 两次
+/// 拿到不同顺序），直接 `==` 比字符串会把「同一份 cookie」误判成「新值」，
+/// 死循环照旧。
+///
+/// 同时剥掉 macOS WKWebView 习惯包的外层双引号（与 extract 时同款处理）。
+fn normalized_cookie_pairs(cookie_header: &str) -> BTreeSet<String> {
+    cookie_header
+        .split(';')
+        .map(|p| p.trim().trim_matches('"'))
+        .filter(|p| !p.is_empty())
+        .map(|p| p.to_string())
+        .collect()
+}
+
+/// 新鲜度门：抓到的 cookie 与 keys.json 已存的是**同一份**内容 → 拒收。
+///
+/// xiaomi 的 cookie 是 HttpOnly 会话 cookie，本地解不出 exp（stepfun / kimi /
+/// anysearch 都有 JWT exp 可解），所以「跟已存的比」是唯一可用的判据。
+/// `stored` 为 None / 空串（从没配过凭据）→ 一定放行。
+fn is_same_as_stored(fresh: &str, stored: Option<&str>) -> bool {
+    let fresh_pairs = normalized_cookie_pairs(fresh);
+    if fresh_pairs.is_empty() {
+        return false;
+    }
+    match stored.map(normalized_cookie_pairs) {
+        Some(stored_pairs) if !stored_pairs.is_empty() => fresh_pairs == stored_pairs,
+        _ => false,
+    }
+}
+
+/// webview cookie jar 里属于 xiaomi 系（登录相关）的域名。
+///
+/// 登录窗会经过 `platform.xiaomimimo.com` + `account.xiaomi.com`（SSO）
+/// + `xiaomi.com`（品牌 / passport），死循环里被原样抓回来的是
+/// `api-platform_*` 那几个。清 jar 时按域白名单删，别的 provider 的会话不动。
+const XIAOMI_COOKIE_DOMAINS: &[&str] = &["xiaomi.com", "xiaomimimo.com"];
+
+/// 清除已保存的 Xiaomi dashboard cookie（设置面板 / 浮窗「清除 Cookie」按钮）。
+///
+/// 2026-09-28 fix：旧路径走通用 `delete_source_credential("xiaomimimo")`，
+/// 只删 keys.json 槽位，**从不碰 webview cookie jar** → 用户被
+/// 「清除 → 重登 → 抓到同一份失效 cookie → 401」死循环锁死（全工程无任何
+/// UI 能清 jar，`clear_all_browsing_data` 只在注释里出现过）。本命令在删槽
+/// 位之外补上 jar 清理，这才是真正的逃生口。
+///
+/// `instance_id`：副本行（`xiaomimimo#2`）必须带上，否则副本凭据永远删不掉。
+#[tauri::command]
+pub async fn clear_xiaomi_session(
+    app: AppHandle,
+    instance_id: Option<String>,
+) -> Result<(), String> {
+    let target = resolve_target(&app, "xiaomimimo", instance_id.as_deref()).await;
+    // 只删 cookie 槽，不动 api_key（xiaomi 的 API key 是独立凭据，
+    // 「清除 Cookie」按钮的语义就是只清 cookie —— 同 kimi 的取舍）。
+    config::delete_cookie_slot_for_id(&target)?;
+    tracing::info!(target = %target, "xiaomi 已清除凭据槽，开始清理 webview cookie jar");
+    if let Err(e) = purge_cookies_for_domains(&app, XIAOMI_COOKIE_DOMAINS).await {
+        // 清 jar 失败不吞掉主操作的成功（槽位已删），但必须 warn：用户下一次
+        // 登录仍可能抓回旧 cookie。
+        tracing::warn!(error = %e, target = %target, "xiaomi 清 webview cookie jar 失败（下次登录可能仍抓到旧 cookie）");
+    }
+    // best-effort refresh：失败只警告（浮窗下一轮 poll 也会自然更新）
+    if let Err(e) = crate::commands::refresh_single_inner(
+        &app,
+        &target,
+        crate::poller_backoff::RefreshSource::Manual,
+    )
+    .await
+    {
+        tracing::warn!(error = %e, target = %target, "清除 xiaomi 会话后立即拉取失败（忽略）");
+    }
+    Ok(())
+}
+
+/// 清掉 webview cookie jar 里属于 `domains` 的全部 cookie，返回删除条数。
+///
+/// ## 为什么不用 `WebviewWindow::clear_all_browsing_data()`
+///
+/// 2026-09-28 实读 wry 0.55.1 源码确认：
+/// - macOS：`WKWebsiteDataStore` 取自 webview 的 `configuration()`，而 Tauri
+///   的登录窗跟主窗口 / 设置面板**共用同一个默认（非 incognito）data store**
+///   → `removeDataOfTypes(allWebsiteDataTypes, since 1970)` 是**进程级**全清：
+///   连 kimi / stepfun / anysearch 的登录会话和 app 自己的 webview 存储一起抹。
+/// - Windows：`ICoreWebView2Profile2::ClearBrowsingDataAll` 作用于整个
+///   user-data-folder 的 profile，同款连带伤害。
+/// - Linux(webkitgtk)：同理是全局 `WebKitWebsiteDataManager`。
+///
+/// 用户点「清除小米 Cookie」却把 Kimi / StepFun 的登录一起清掉，是不可接受的
+/// 连带伤害，所以这里逐个 `delete_cookie`（`WKHTTPCookieStore.deleteCookie` /
+/// `ICoreWebView2CookieManager::DeleteCookies` —— 都是**底层 cookie store**
+/// API，能删 HttpOnly cookie）。
+///
+/// ## 实现注记
+///
+/// `cookies()` / `delete_cookie()` 是 `WebviewWindow` 的方法，要拿句柄就得有
+/// 个 webview。登录窗此刻通常已经关掉了，所以临时建一个**不可见**的
+/// `about:blank` 窗（Tauri 文档里 `WebviewUrl::External("about:blank")` 就是
+/// 标准用法），拿到句柄删完立刻 destroy。它跟登录窗共享同一个 data store，
+/// 删的就是登录窗的 jar。
+async fn purge_cookies_for_domains(app: &AppHandle, domains: &[&str]) -> Result<usize, String> {
+    let label = format!(
+        "musage-cookie-purge-{}",
+        PURGE_WINDOW_SEQ.fetch_add(1, Ordering::SeqCst)
+    );
+    let url = Url::parse("about:blank").map_err(|e| format!("purge window url: {e}"))?;
+    let window = WebviewWindowBuilder::new(app, &label, WebviewUrl::External(url))
+        .visible(false)
+        .build()
+        .map_err(|e| format!("purge window build: {e}"))?;
+
+    // webview 刚建好时 data store 可能还没初始化（stepfun H1 记录过同类
+    // 暂态 Err），先让出一点时间再读。
+    sleep(Duration::from_millis(400)).await;
+
+    let outcome = purge_with_window(&window, domains);
+
+    // 无论成败都要回收窗口，否则每次「清除」都漏一个 webview。
+    let _ = window.destroy();
+    outcome
+}
+
+/// 临时窗口 label 计数器（同 label 并发 build 会失败，且"两个清除动作同时点"
+/// 不是要支持的场景 —— 用计数器保证互不干扰）。
+static PURGE_WINDOW_SEQ: AtomicU64 = AtomicU64::new(0);
+
+fn purge_with_window(window: &tauri::WebviewWindow, domains: &[&str]) -> Result<usize, String> {
+    let all = window
+        .cookies()
+        .map_err(|e| format!("webview.cookies(): {e}"))?;
+    let mut deleted = 0usize;
+    for c in all {
+        let domain = c.domain().unwrap_or("");
+        if !domains.iter().any(|d| cookie_domain_matches(domain, d)) {
+            continue;
+        }
+        match window.delete_cookie(c.clone()) {
+            Ok(()) => {
+                deleted += 1;
+                tracing::debug!(name = c.name(), domain, "已删除登录域 cookie");
+            }
+            Err(e) => {
+                tracing::warn!(name = c.name(), domain, error = %e, "delete_cookie 失败");
+            }
+        }
+    }
+    tracing::info!(deleted, "webview cookie jar 清理完成");
+    Ok(deleted)
+}
+
+/// cookie 的 `domain` 是否落在 `suffix` 域内（含自身）。
+///
+/// cookie domain 常见形态是前导点（`.xiaomi.com`）—— 先剥掉再比，
+/// 否则 `.xiaomi.com` 永远匹配不上 `xiaomi.com`。
+fn cookie_domain_matches(domain: &str, suffix: &str) -> bool {
+    let d = domain.trim().trim_start_matches('.').to_ascii_lowercase();
+    let s = suffix.trim().trim_start_matches('.').to_ascii_lowercase();
+    !s.is_empty() && (d == s || d.ends_with(&format!(".{s}")))
 }
 
 /// 从 URL 查询参数中提取 `userId`。
@@ -745,5 +982,89 @@ mod tests {
         // D3-005 fix: 受信任 host 但 path 不在白名单 → 拒
         let url = url("https://platform.xiaomimimo.com/some/random/path?userId=12345");
         assert_eq!(extract_user_id_from_url(&url), None);
+    }
+
+    // ── 新鲜度门（2026-09-28：清除 Cookie → 重新登录 死循环）──
+
+    #[test]
+    fn same_cookie_as_stored_is_rejected() {
+        // 死循环的核心场景：webview jar 里还是上一份已失效 cookie，
+        // 抓出来跟 keys.json 逐 pair 相同 → 必须拒收，否则又「登录成功」一次。
+        let stored = "api-platform_serviceToken=deadbeef; userId=12345";
+        assert!(is_same_as_stored(stored, Some(stored)));
+    }
+
+    #[test]
+    fn same_cookie_different_pair_order_is_rejected() {
+        // cookies_for_url 的枚举顺序跨调用不稳定（WKWebView / WebView2 都不保证）
+        // —— 顺序不同但内容相同，必须照样拒收，否则死循环绕过去。
+        let stored = "api-platform_serviceToken=deadbeef; userId=12345";
+        let fresh = "userId=12345; api-platform_serviceToken=deadbeef";
+        assert!(is_same_as_stored(fresh, Some(stored)));
+    }
+
+    #[test]
+    fn same_cookie_ignores_pair_order_and_whitespace() {
+        // 归一化 = trim + 去重 + 排序：cookie jar 的枚举顺序跨调用不稳定
+        // （WKWebView / WebView2 都不保证），手写 cookie 时分隔符两侧空格也不定。
+        let stored = "api-platform_serviceToken=deadbeef; userId=12345";
+        let fresh = " api-platform_serviceToken=deadbeef;userId=12345 ";
+        assert!(is_same_as_stored(fresh, Some(stored)));
+    }
+
+    #[test]
+    fn same_cookie_tolerates_whole_pair_quote_wrapping() {
+        // 防御性：整对被 WKWebView 包一层引号时归一化后仍判同。
+        // （value 级引号在 extract 阶段就 `trim_matches('"')` 剥掉了，
+        //   所以存盘串里本来就不该有引号 —— 这里只锁归一化的健壮性。）
+        let stored = "api-platform_serviceToken=deadbeef";
+        assert!(is_same_as_stored(
+            "\"api-platform_serviceToken=deadbeef\"",
+            Some(stored)
+        ));
+    }
+
+    #[test]
+    fn new_token_passes_freshness_gate() {
+        let stored = "api-platform_serviceToken=deadbeef; userId=12345";
+        let fresh = "api-platform_serviceToken=freshcafe; userId=12345";
+        assert!(!is_same_as_stored(fresh, Some(stored)));
+    }
+
+    #[test]
+    fn no_stored_cookie_always_passes() {
+        // 从没配过凭据（首次登录 / 刚点过「清除 Cookie」）→ 无从比较，放行
+        let fresh = "api-platform_serviceToken=freshcafe; userId=12345";
+        assert!(!is_same_as_stored(fresh, None));
+        assert!(!is_same_as_stored(fresh, Some("")));
+        assert!(!is_same_as_stored(fresh, Some("   ")));
+    }
+
+    #[test]
+    fn empty_fresh_cookie_is_never_same_as_stored() {
+        // 空串（一次都没提到 cookie）不该被当成「跟已存相同」—— 那会让
+        // 重试循环白白烧掉 11s。
+        assert!(!is_same_as_stored("", Some("api-platform_serviceToken=x")));
+    }
+
+    // ── cookie domain 匹配 ──
+
+    #[test]
+    fn cookie_domain_matches_leading_dot_form() {
+        // cookie store 里 domain 常见 ".xiaomi.com" 形态
+        assert!(cookie_domain_matches(".xiaomi.com", "xiaomi.com"));
+        assert!(cookie_domain_matches("account.xiaomi.com", "xiaomi.com"));
+        assert!(cookie_domain_matches(
+            "platform.xiaomimimo.com",
+            "xiaomimimo.com"
+        ));
+    }
+
+    #[test]
+    fn cookie_domain_rejects_lookalike_suffix() {
+        // 防 `notxiaomi.com` / `xiaomi.com.evil.tld` 这类后缀钓鱼
+        assert!(!cookie_domain_matches("notxiaomi.com", "xiaomi.com"));
+        assert!(!cookie_domain_matches("xiaomi.com.evil.tld", "xiaomi.com"));
+        assert!(!cookie_domain_matches("xiaomimimo.com", "xiaomi.com"));
     }
 }

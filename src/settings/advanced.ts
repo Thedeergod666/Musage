@@ -405,8 +405,11 @@ async function doImportConfig(file: File) {
       }), true);
       return;
     }
-    const { saveConfigSerialized } = await import("./api");
-    await saveConfigSerialized(obj.config);
+    // H-Frontend-6 fix (2026-09-28 audit)：导入语义是**整份替换**而不是
+    // 读-改-写合并，所以走 saveConfigSerializedReplace（只进队列、不 getConfig
+    // 合并）。仍与面板其它保存串行化，避免交错写。
+    const { saveConfigSerializedReplace } = await import("./api");
+    await saveConfigSerializedReplace(obj.config);
     // 注意: extra_instances 单独存 extra_instances.json,不走 saveConfig
     // (PR 1b 设计),import 只覆盖 config 部分。extra_instances 手动添加。
     flash(t("settings.advanced.io_imported", { n: 1 }));

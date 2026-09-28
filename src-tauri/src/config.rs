@@ -938,6 +938,9 @@ impl AppConfig {
             let _ = std::fs::remove_file(&tmp);
             return Err(t!("commands.config_write", err = e.to_string()).into_owned());
         }
+        // L-Dir-Fsync fix (2026-09-28 audit): 上面的 tmp sync_all 只保证**内容**
+        // 落盘，rename 本身要父目录 fsync 才持久。详见 fsync_parent_dir 注释。
+        fsync_parent_dir(&path);
         Ok(())
     }
 }
@@ -1073,6 +1076,19 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
         recognized_any = true;
         cfg.show_footer_hint = b;
     }
+    // L-Margin-Missing fix (2026-09-28 audit): 这个 2026-09-10 才加的字段在
+    // best-effort 逐字段挑取列表里漏了（对照上面的 show_footer_hint）。走
+    // best-effort 恢复时用户的底部余量静默回落 default 80，且此后任何 save 都把
+    // 80 写死 —— 用户为绕开 Dock 遮挡特意调过的值被一次 JSON typo 抹掉。
+    // clamp 上限 120 跟 commands::save_config / set_floating_fit_bottom_margin
+    // 同一范围，手改文件塞进来的越界值在这里就夹住。
+    if let Some(x) = obj
+        .get("floating_fit_bottom_margin")
+        .and_then(|x| x.as_u64())
+    {
+        recognized_any = true;
+        cfg.floating_fit_bottom_margin = x.min(120) as u32;
+    }
     if let Some(s) = obj.get("tray_icon_style").and_then(|x| x.as_str()) {
         recognized_any = true;
         cfg.tray_icon_style = match s {
@@ -1094,7 +1110,18 @@ fn best_effort_from_value(v: &serde_json::Value) -> Option<AppConfig> {
     // best-effort 恢复后这些设置被默认值静默覆盖。对照 AppConfig 定义补齐。
     if let Some(x) = obj.get("schema_version").and_then(|x| x.as_u64()) {
         recognized_any = true;
-        cfg.schema_version = x as u32;
+        // M-Future-Schema fix (2026-09-28 audit): clamp 到 CURRENT_SCHEMA_VERSION。
+        // 之前直接把磁盘上的版本号搬进内存, 而 AppConfig::save() 的降级守卫
+        // (`schema_version > CURRENT` → Err) 会让本会话**所有**保存永久失败。
+        // 触发链: 用户降级 Musage → 导入新版 config.json → 至少一个字段形状对
+        // 旧 build 不兼容（AppConfig 没开 deny_unknown_fields, 纯「新字段」不触发,
+        // 必须是类型 / 长度变化）→ serde_json::from_str::<AppConfig> 失败 →
+        // 走 best-effort → cfg.schema_version = 新版号 → migrated() 的
+        // `while < CURRENT` 不动它 → 此后 set_provider_enabled 等全部写不进去,
+        // 且每次都返回「配置版本过高」这种跟用户操作八竿子打不着的错误。
+        // 本分支所在 caller 已经在 load_from_disk 里把损坏文件 **rename 走**了
+        // (D4-001), 磁盘上不存在「未来文件」需要保护, 这里的守卫毫无意义。
+        cfg.schema_version = (x as u32).min(CURRENT_SCHEMA_VERSION);
     }
     if let Some(b) = obj.get("low_power_mode").and_then(|x| x.as_bool()) {
         recognized_any = true;
@@ -1336,20 +1363,68 @@ pub(crate) fn truncate_old_backups(
 /// 短暂落盘,keys.json 含明文 API key / cookie / SK —— 多用户 Unix 机
 /// 可读）。std::os::unix::fs::OpenOptionsExt 提供 mode()。chmod 仅作兜底。
 /// 非 Unix 平台（Windows）无 mode 概念,退回 std::fs::write。
+///
+/// L-Tmp-Perm fix (2026-09-28 audit): `OpenOptions::mode(0o600)` **只在创建文件
+/// 时生效**。三条原子写路径共用本 helper, tmp 路径固定（config.json.tmp /
+/// keys.json.tmp / extra_instances.json.tmp）; 若上次崩溃 / 掉电留下一个 0644
+/// 的孤儿 tmp, 本次 `open` 走的是「已存在」分支 → mode() 被静默忽略 →
+/// keys.json（明文 API key / cookie / JWT）的 tmp 在 rename 之前保持
+/// world-readable。之前 AppConfig::save 里的 `set_permissions` 是 `let _ =`
+/// 静默吞掉, 唯一的安全网形同虚设。
+/// 这里统一在 write_tmp_secure 末尾补一次 chmod, 三条路径一次覆盖。
+/// 注意 WSL2 / SMB / exFAT 挂载 chmod 会失败（EOPNOTSUPP / EPERM）—— 用
+/// `tracing::warn!` 兜住, **不能 panic / 不能返 Err**: 那类挂载下 rename 本身
+/// 照样能完成, 让用户写不进设置比 0644 更糟。
 #[cfg(unix)]
 pub(crate) fn write_tmp_secure(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
-    use std::os::unix::fs::OpenOptionsExt;
-    std::fs::OpenOptions::new()
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let mut f = std::fs::OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .mode(0o600)
-        .open(path)
-        .and_then(|mut f| std::io::Write::write_all(&mut f, data))
+        .open(path)?;
+    std::io::Write::write_all(&mut f, data)?;
+    if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
+        tracing::warn!(
+            error = %e, path = %path.display(),
+            "tmp chmod 0600 失败 (WSL2 / SMB / exFAT 挂载常见), 继续写盘"
+        );
+    }
+    Ok(())
 }
 #[cfg(not(unix))]
 pub(crate) fn write_tmp_secure(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
     std::fs::write(path, data)
+}
+
+/// `rename()` 成功后 fsync **父目录** —— POSIX 上 rename 只有在父目录 fsync 之后
+/// 才真正持久（Linux ext4 的 data=ordered 也只保证到 journal 提交，目录项在
+/// 单独的 inode 里）。
+///
+/// M1 fix (2026-07-06) 只 fsync 了 tmp 文件本身（内容 + tmp 的元数据）就 rename，
+/// 代码注释自称「确保元数据+数据都落盘,再 rename」—— 漏了目录项这一层。掉电 /
+/// kernel panic 后可能出现「keys.json 内容在、目录项不在」：重启读到的还是旧文件，
+/// 用户刚保存的 API key / cookie / 副本配置凭空消失，且没有任何日志。
+///
+/// Unix only：Windows 的 `MoveFileEx` 没有对应概念，且 `File::open` 目录在
+/// Windows 上直接失败（`ERROR_ACCESS_DENIED`），用 `#[cfg(unix)]` 包住整段。
+/// 失败只 warn —— 拿不到目录 fd 的环境（某些沙箱 / 容器 overlayfs）不该阻断保存。
+pub(crate) fn fsync_parent_dir(path: &std::path::Path) {
+    #[cfg(unix)]
+    {
+        if let Some(parent) = path.parent() {
+            match std::fs::File::open(parent).and_then(|d| d.sync_all()) {
+                Ok(()) => {}
+                Err(e) => tracing::warn!(
+                    error = %e, dir = %parent.display(),
+                    "rename 后父目录 fsync 失败, 极端掉电下目录项可能未持久 (best effort)"
+                ),
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = path;
 }
 
 fn write_keys_atomic(map: &KeysMap) -> Result<(), String> {
@@ -1385,6 +1460,9 @@ fn write_keys_atomic(map: &KeysMap) -> Result<(), String> {
         let _ = std::fs::remove_file(&tmp);
         return Err(t!("commands.keys_io", op = "rename", err = e.to_string()).into_owned());
     }
+    // L-Dir-Fsync fix (2026-09-28 audit): tmp 的 sync_all 不覆盖 rename 后的
+    // 目录项。掉电后可能出现「key 内容在、目录项不在」，重启读到旧 keys.json。
+    fsync_parent_dir(&path);
     Ok(())
 }
 
@@ -1425,8 +1503,21 @@ fn read_keys() -> Result<KeysMap, String> {
     if !path.exists() {
         return Ok(BTreeMap::new());
     }
-    let s = std::fs::read_to_string(&path)
-        .map_err(|e| t!("commands.read_keys", err = e.to_string()).into_owned())?;
+    // H-Keys-BOM fix (2026-09-28 audit): 剥 UTF-8 BOM。9-07 的 C1 fix 给
+    // config.json / extra_instances.json 都接了 strip_bom_owned，唯独漏了 keys。
+    // keys.json 带 BOM 时 serde_json 严格拒收 → 本函数走「损坏」分支返 Err →
+    //   (a) load_credential_for_id 失败 → 全部 provider 打成网络错误卡；
+    //   (b) refresh_single_inner 在写 snapshot/backoff **之前**就 return Err →
+    //       per-provider 轮询静默什么都不做；
+    //   (c) save_credential_for_id 也是 read_keys()? → 用户在设置面板重新填 key
+    //       直接失败，只能手改磁盘文件。
+    // strip_bom_owned 的文档（见下方 helper）明确要求「所有产线读路径
+    // (config / keys / extra_instances / custom_sources / logstore) 必须经过
+    // 本 helper」——本行补齐最后一块。
+    let s = strip_bom_owned(
+        std::fs::read_to_string(&path)
+            .map_err(|e| t!("commands.read_keys", err = e.to_string()).into_owned())?,
+    );
     // H-1 fix (2026-08-27 audit): 空文件曾经返回 Ok(空 map)，与 parse 失败分支的
     // 规则自相矛盾 —— 空 map 会成为 save_credential_for_id 的写回基线，insert
     // 一条后全量写盘，磁盘上其余所有凭据被物理清除，且全程只 WARN、UI 还显示
@@ -1734,6 +1825,92 @@ mod tests {
             .get("minimax")
             .map(|p| p.enabled)
             .unwrap_or(true));
+    }
+
+    /// H-Keys-BOM regression (2026-09-28 audit): keys.json 带 UTF-8 BOM 时
+    /// serde_json 严格拒收 → read_keys 走「损坏」分支 → load_credential_for_id
+    /// 失败（所有 provider 打成网络错误卡）+ refresh_single_inner 在写
+    /// snapshot/backoff 之前就 return Err（per-provider 轮询静默停摆）+
+    /// save_credential_for_id 同样 read_keys()? （用户在设置面板重填 key 直接
+    /// 失败）。9-07 的 C1 fix 只给 config.json / extra_instances.json 剥 BOM，
+    /// 唯独漏了 keys —— 而 strip_bom_owned 自己的文档写明「所有产线读路径必须
+    /// 经过本 helper」。
+    ///
+    /// 这里锁的是 read_keys() 里那一行 `strip_bom_owned`（纯函数，不落盘）：
+    /// 剥 BOM 前必然 parse 失败，剥完必须成功 —— 直接断言「不剥就炸、剥了就好」
+    /// 这个因果，避免以后有人删掉那行时测试还绿。
+    #[test]
+    fn strip_bom_unblocks_keys_payload_parse() {
+        let bom_payload = "\u{FEFF}{\"minimax\":\"sk-cp-x\",\"deepseek\":\"sk-y\"}";
+        assert!(
+            parse_keys_payload(bom_payload).is_err(),
+            "serde_json 必须拒收 BOM 前缀（否则这个回归测试失去意义）"
+        );
+        let stripped = strip_bom_owned(bom_payload.to_string());
+        assert!(!stripped.starts_with('\u{FEFF}'));
+        let m = parse_keys_payload(&stripped).expect("剥 BOM 后必须能 parse 成凭据表");
+        assert_eq!(m.get("minimax").map(String::as_str), Some("sk-cp-x"));
+        assert_eq!(m.get("deepseek").map(String::as_str), Some("sk-y"));
+    }
+
+    /// M-Future-Schema regression (2026-09-28 audit): best-effort 恢复时把磁盘上
+    /// 「未来版」schema_version 搬进内存，会让本会话**所有**保存永久失败
+    /// （AppConfig::save 的降级守卫 `> CURRENT` → Err）。
+    /// 触发链：用户降级 Musage → 导入新版 config.json → 至少一个字段形状对旧
+    /// build 不兼容 → 顶层 parse 失败 → best-effort。
+    /// 该分支所在 caller 已把损坏文件 rename 走，磁盘上不存在「未来文件」需要
+    /// 保护，所以 best-effort 必须 clamp。
+    #[test]
+    fn best_effort_clamps_future_schema_version() {
+        let future = CURRENT_SCHEMA_VERSION + 7;
+        let raw = serde_json::json!({
+            "schema_version": future,
+            "providers": {},
+            "refresh_interval_secs": 120,
+        });
+        let cfg = best_effort_from_value(&raw).expect("best-effort 应成功");
+        assert_eq!(
+            cfg.schema_version, CURRENT_SCHEMA_VERSION,
+            "未来 schema_version 必须 clamp 到 CURRENT, 否则 save() 永久返 Err"
+        );
+        // clamp 之后本会话的 save 必须真的能跑通（不再被降级守卫拦）
+        assert!(cfg.schema_version <= CURRENT_SCHEMA_VERSION);
+
+        // 正常版本号不受影响（不能把老配置的版本号往上抬）
+        let raw = serde_json::json!({
+            "schema_version": 1,
+            "providers": {},
+            "refresh_interval_secs": 60,
+        });
+        let cfg = best_effort_from_value(&raw).expect("best-effort 应成功");
+        assert_eq!(cfg.schema_version, 1);
+    }
+
+    /// L-Margin-Missing regression (2026-09-28 audit): `floating_fit_bottom_margin`
+    /// （2026-09-10 才加）在 best-effort 逐字段挑取列表里漏了。走 best-effort 时
+    /// 用户的底部余量静默回落 default 80，且此后任何 save 都写死 80。
+    #[test]
+    fn best_effort_preserves_floating_fit_bottom_margin() {
+        let raw = serde_json::json!({
+            "providers": {},
+            "refresh_interval_secs": 60,
+            "floating_fit_bottom_margin": 8,
+        });
+        let cfg = best_effort_from_value(&raw).expect("best-effort 应成功");
+        assert_eq!(
+            cfg.floating_fit_bottom_margin, 8,
+            "best-effort 必须保留底部余量, 不能回落 default 80"
+        );
+
+        // 手改文件塞进来的越界值要 clamp 到 120（跟 commands::save_config /
+        // set_floating_fit_bottom_margin 同一范围）
+        let raw = serde_json::json!({
+            "providers": {},
+            "refresh_interval_secs": 60,
+            "floating_fit_bottom_margin": 9999,
+        });
+        let cfg = best_effort_from_value(&raw).expect("best-effort 应成功");
+        assert_eq!(cfg.floating_fit_bottom_margin, 120);
     }
 
     /// H-1 regression (2026-08-27 audit): 空/损坏的 keys.json 内容**绝不能**

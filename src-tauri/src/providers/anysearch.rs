@@ -83,6 +83,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use serde_json::{json, Value};
 
+use super::parse::json_i64;
 use super::{
     humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, AuthKind,
     Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
@@ -390,12 +391,6 @@ async fn refresh_token(refresh: &str, unique_id: &str) -> Result<String, FetchEr
     Ok(combined)
 }
 
-fn json_i64(value: &Value) -> Option<i64> {
-    value
-        .as_i64()
-        .or_else(|| value.as_str().and_then(|raw| raw.trim().parse().ok()))
-}
-
 async fn do_fetch(
     combined: &str,
     unique_id: &str,
@@ -476,6 +471,10 @@ async fn do_fetch_once(
         ));
     }
 
+    // L-6 fix (2026-09-05 audit)：session token 内含控制字符时 send() 报
+    // invalid header 被兜底归成误导性 Network 错误；send 前显式拒绝。
+    // 2026-09-28 audit H-9 补齐：当日 L-6 只接了 4/14 个 provider。
+    super::validate_bearer_key(token)?;
     let client = shared_client();
 
     let resp = client

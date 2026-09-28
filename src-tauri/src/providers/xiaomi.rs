@@ -26,6 +26,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
+use super::parse::json_i64;
 use super::{
     humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, AuthKind,
     Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource, RowKind,
@@ -416,6 +417,10 @@ impl Xiaomimimo {
                 t!("error.common.api_key_empty").into_owned(),
             ));
         }
+        // L-6 fix (2026-09-05 audit)：key 内含控制字符时 send() 报 invalid
+        // header 被兜底归成误导性 Network 错误；send 前显式拒绝并归类配置错误。
+        // 2026-09-28 audit H-9 补齐：当日 L-6 只接了 4/14 个 provider。
+        super::validate_bearer_key(api_key)?;
         let client = shared_client();
         let resp = client
             .get(USAGE_URL)
@@ -462,9 +467,20 @@ impl Xiaomimimo {
             ));
         }
         let raw = json_body_limited(resp).await?;
-        if let Some(code) = raw.get("code").and_then(|v| v.as_i64()) {
+        // 2026-09-28 audit H-9: 业务码改走共享 `json_i64`（数字/字符串都吃）——
+        // 原 `.as_i64()` 让小米把 code 序列化成字符串时的错误响应整条绕过本
+        // 拦截分支，直接当成功响应继续解析。
+        if let Some(code) = raw.get("code").and_then(json_i64) {
             if code != 0 {
-                let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                // 2026-09-28 audit H-9: `message` → `message` 兜底 `msg`。本文件
+                // 自己的 fixture 记录真实字段是 `msg`（`{"code":40101,"msg":"未登录"}`，
+                // 见 classify_xiaomi_business_code 文档 + 回归测试），只读 `message`
+                // → 非 401xx 业务失败的错误原因恒为空，只剩一个裸 code。
+                let msg = raw
+                    .get("message")
+                    .or_else(|| raw.get("msg"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 if classify_xiaomi_business_code(code) == XiaomiBusinessCode::Auth {
                     // D2-03: bearer 路径业务 401xx 的 remediation 文案必须对齐
                     // 同路径 HTTP 401 分支的 api_key_unauthorized_hint（引导改填
@@ -630,9 +646,15 @@ impl Xiaomimimo {
         let raw = json_body_limited(resp).await?;
 
         // 业务级 code
-        if let Some(code) = raw.get("code").and_then(|v| v.as_i64()) {
+        // 2026-09-28 audit H-9: 同上方 bearer 路径 —— 共享 `json_i64` 吃字符串码
+        // + `message` 兜底 `msg`（真实字段是 `msg`）。
+        if let Some(code) = raw.get("code").and_then(json_i64) {
             if code != 0 {
-                let msg = raw.get("message").and_then(|v| v.as_str()).unwrap_or("");
+                let msg = raw
+                    .get("message")
+                    .or_else(|| raw.get("msg"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 if classify_xiaomi_business_code(code) == XiaomiBusinessCode::Auth {
                     return Err(FetchError::auth(
                         t!("error.xiaomi.cookie_invalid_hint").into_owned(),

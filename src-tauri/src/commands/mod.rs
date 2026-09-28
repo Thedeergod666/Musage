@@ -83,6 +83,15 @@ pub async fn set_provider_order(
     {
         let cfg_snap = state.config.read().await;
         let mut snap = state.snapshot.write().await;
+        // 2026-09-28 audit M-4：与 set_provider_enabled 的 disable 分支同款。
+        // 本函数只改顺序不改 enabled，所以**自己**不制造幽灵卡；但 snapshot
+        // 里可能已经躺着上一条路径（老版本 / 手搓 IPC）留下的、enabled 已为 false
+        // 的条目 —— 顺序变更是一次「按当前配置重新 render 整个浮窗」的时机，
+        // 顺手过滤掉与 get_snapshot / refresh_inner 口径一致，零额外成本。
+        snap.providers.retain(|p| {
+            let k = snapshot_key(p);
+            cfg_snap.is_enabled_unique(k, base_id_of(k))
+        });
         apply_provider_order(&mut snap, &cfg_snap);
         let s = snap.clone();
         drop(snap);
@@ -168,8 +177,31 @@ pub async fn set_provider_enabled(
         let emit_snap = snap.clone();
         drop(snap);
         // 排序 + emit
+        //
+        // 2026-09-28 audit M-4：上面的 `retain(|p| snapshot_key(p) != id)`
+        // 是**精确匹配**（"关掉 id 本身那张卡"），但它对「base 被关掉、副本靠
+        // base fallback 判定 enabled」这条路径无效 —— 副本通常在 cfg.providers
+        // 里**没有**独立条目（用户没单独勾过它），is_enabled_unique 走 base
+        // fallback 返 true。而 get_snapshot (:~700) / refresh_inner (:~2120) /
+        // refresh_single_inner (:~2450) 三处 emit 前都统一跑了
+        // `is_enabled_unique(snapshot_key, base_id_of(snapshot_key))`，唯独这里
+        // 没有。
+        //
+        // 复现：minimax base + `minimax#2`（副本没单独勾过）→ 用户取消勾选
+        // base → base 卡消失，但 `minimax#2` 的 snapshot 条目被原样 emit →
+        // 浮窗继续显示「MiniMax #2」，用户以为没关掉（而且下次 poller tick
+        // 也会因为同样的 fallback 判定继续刷它）。
+        //
+        // 修法：与 get_snapshot 对齐，emit 前再统一过一遍 is_enabled_unique。
+        // 锁序注意：这里 cfg2 是 `config.read`，在 snapshot 锁已 drop 之后才拿
+        // （与函数上方 M4 fix 描述的 config.read → snapshot.write 顺序一致），
+        // 不构成 config.write + snapshot.write 环。
         let cfg2 = state_arc.config.read().await;
         let mut emit = emit_snap;
+        emit.providers.retain(|p| {
+            let k = snapshot_key(p);
+            cfg2.is_enabled_unique(k, base_id_of(k))
+        });
         apply_provider_order(&mut emit, &cfg2);
         drop(cfg2);
         let _ = app.emit("musage://snapshot", &emit);
@@ -471,6 +503,42 @@ fn spawn_refresh_single(app: &AppHandle, id: &str) {
     });
 }
 
+/// `spawn_refresh_single` 的「刷该 base 的**全部**实例」版本。
+///
+/// 2026-09-28 audit L-9：给**全局配置**类的 setter 用（目前只有火山方舟双套餐
+/// 筛选 Coding Plan / Agent Plan —— 它是全局开关，所有副本同样受影响）。
+///
+/// **为什么不能只刷 base**：[`refresh_single_inner`] 顶部有
+/// `if !cfg.is_enabled_unique(id, base_id_of(id)) { return Ok(()) }` 早退
+/// （2026-08-17 audit H-02 引入的两级 enabled fallback 守卫）。副本在
+/// `cfg.providers` 里通常**没有**独立条目，enabled 判定 fallback 到 base。
+/// 于是当 **base 被显式禁用、副本启用**时，setter 硬编码
+/// `spawn_refresh_single(&app, "<base>")` 刷的是唯一那个会被守卫跳过的 id ——
+/// 这次刷新**完全空转**，浮窗纹丝不动，直到 poller 全量 tick（一个完整
+/// interval，用户可以设到 30min）。用户视角："我明明刚点了勾选"。
+///
+/// 遍历 `all_sources` 按 `base_id_of(unique_id) == base` 挑出全部实例
+/// （base 自身 + 每个副本）逐个 spawn 单刷；被禁用的那个照旧由守卫自己跳过。
+///
+/// 锁序：`all_sources` 内部拿 `extra_instances.read`，所以本函数**必须**在
+/// 调用方写完 cfg（`config.write` 已 drop）之后调，不能嵌在写锁内。
+async fn spawn_refresh_base_instances(app: &AppHandle, state: &crate::AppState, base: &str) {
+    let ids: Vec<String> = all_sources(state)
+        .await
+        .iter()
+        .map(|s| s.unique_id())
+        .filter(|id| base_id_of(id) == base)
+        .collect();
+    if ids.is_empty() {
+        // 理论上不可能（all_sources 永远含 13 内置），但 base 拼错时会静默
+        // 什么都不刷 —— 留个 debug 日志免得日后查半天。
+        tracing::debug!(base = %base, "spawn_refresh_base_instances: 没有匹配实例");
+    }
+    for id in ids {
+        spawn_refresh_single(app, &id);
+    }
+}
+
 #[tauri::command]
 pub async fn set_minimax_region(
     state: State<'_, AppState>,
@@ -641,7 +709,10 @@ pub async fn set_volcengine_ark_plan_coding(
         cfg.volcengine_ark_plan_filter = Some(f);
         cfg.save()?;
     }
-    spawn_refresh_single(&app, "volcengine_ark");
+    // 2026-09-28 audit L-9：筛选是全局配置，但硬编码刷 base 会在
+    // "base 禁用 + 副本启用" 时被 refresh_single_inner 的 enabled 守卫整个
+    // 跳过（详见 spawn_refresh_base_instances 注释）。
+    spawn_refresh_base_instances(&app, &state, "volcengine_ark").await;
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -659,7 +730,8 @@ pub async fn set_volcengine_ark_plan_agent(
         cfg.volcengine_ark_plan_filter = Some(f);
         cfg.save()?;
     }
-    spawn_refresh_single(&app, "volcengine_ark");
+    // 2026-09-28 audit L-9：同 set_volcengine_ark_plan_coding。
+    spawn_refresh_base_instances(&app, &state, "volcengine_ark").await;
     let _ = app.emit("musage://config-changed", ());
     Ok(())
 }
@@ -796,20 +868,25 @@ pub async fn save_config(
             .collect();
         cfg.provider_order = sanitize_provider_order(cfg.provider_order, &known);
         if let Some(src) = cfg.tray_source.as_deref() {
-            // v0.2.9 火山双套餐：":agent" 后缀合法（剥掉后按 base 查 known），
-            // 其余后缀连同未知 base 一起清空
-            let (base, suffix) = match src.split_once(':') {
-                Some((b, p)) => (b, Some(p)),
-                None => (src, None),
-            };
-            let suffix_ok = suffix.map_or(true, |p| p == "agent");
-            if src.contains('#') || !suffix_ok || !known.contains(base) {
+            // 2026-09-28 audit Low-5：判定抽到共享的
+            // [`tray_source_id_is_valid`]，与 set_tray_source 同一张
+            // (base, suffix) 配对表。原来这里只白名单后缀 "agent"、base 单独
+            // 过 known，于是 "minimax:agent" 照样通过清洗并落盘 → 托盘永久
+            // 退化成纯 logo 且零日志（详见该函数注释）。
+            if !tray_source_id_is_valid(src, &known) {
                 cfg.tray_source = None;
             }
         }
-        if cfg.schema_overrides.len() > SCHEMA_OVERRIDES_MAX {
-            cfg.schema_overrides.clear();
-        }
+        // 2026-09-28 audit M-3：这里**曾经**有一段
+        //     if cfg.schema_overrides.len() > SCHEMA_OVERRIDES_MAX {
+        //         cfg.schema_overrides.clear();
+        //     }
+        // 它跟下面 ~60 行的 `return Err(overrides_too_many)` 是同一件事的两份
+        // 口径，而本块无条件先跑 —— 超限时净效果不是「拒绝」，而是
+        // **静默清空用户全部 schema_overrides 并向 UI 报保存成功**（同函数里
+        // providers / provider_order 都是 return Err，两套口径）。用户视角是
+        // "保存后自定义提取规则全没了，没有任何提示"。删掉 clear()，只保留
+        // 下面的 Err 分支，三者口径统一为 reject。
     }
     if cfg.providers.len() > PROVIDERS_MAP_MAX {
         return Err(t!(
@@ -971,8 +1048,43 @@ pub async fn save_config(
     // drop 锁 → cfg.save()" 的窗口里，geom debouncer 可以 flush 更新的坐标落盘，
     // 随后这份**旧快照**（cfg 是 handler 入参 clone）再落盘就把坐标回滚掉。
     // 锁内保存（与各 setter 一致）保证最后拿到写锁者最后落盘。
+    //
+    // 2026-09-28 audit M-2：H-4 只关掉了「锁内替换 → 落盘」的窗口，没关掉
+    // 更早的那一半 —— 入参 `cfg` 本身是前端在 change handler 里
+    // `await getConfig()` 拿到的**快照**，那次读发生在 IPC 队列之外、本 handler
+    // 排队之前。`config.write()` 锁只保证「最后拿锁者最后落盘」，**不保证落盘
+    // 的是最新状态**：任何在这两次读之间落到 `state.config` 的后端写入，都会被
+    // 这份更旧的快照整块回滚。
+    //
+    // 典型受害者是 lib.rs 的 geom persister（`spawn_debounced_geom_persister`
+    // / `flush_once`，lib.rs:620 在 config.write 锁内改 floating_x/y/w/h 并
+    // save）。现场：用户把浮窗拖到新位置（500ms debounce 后 geom 已落新值并
+    // 落盘）→ 此刻前端另一次**完全无关**的 save_config（改个颜色/间隔）带着
+    // 拖动**之前**读到的旧坐标进来 → `*guard = cfg` 把用户刚拖好的位置静默
+    // 回滚并落盘，重启后仍在旧位置，全程零报错。同理能回滚
+    // set_provider_order 的 provider_order / delete_source_credential 的
+    // 级联 disable / set_provider_enabled 的 providers 条目。
+    //
+    // 修法（**刻意不做全量语义重构**：把 save_config 改成字段级 merge 语义
+    // 会牵动 30+ 字段的归属判定，风险远大于收益）：只把「后端自己会在
+    // save_config 之外并发写」的字段用内存当前值覆盖回入参。
+    //
+    // 这份枚举的依据是穷举而非猜测：`grep -rn "config.write().await" src`
+    // 在 commands/ 模块之外**唯一**的命中就是 lib.rs:620 的 geom persister，
+    // 它只碰 floating_x / floating_y / floating_w / floating_h 这 4 个字段。
+    // 其余所有字段的写者都是前端 setter / save_config 自身（串行 IPC），
+    // 不存在并发写者，盲信入参是正确的。
+    //
+    // 已知取舍：用户**故意**用全量保存 / 导入配置来改浮窗位置时，这份改动会
+    // 被内存值覆盖。导入场景另有 reset_floating_window 与 set_floating_* 单
+    // 字段 setter 可用；而"静默丢用户拖好的位置"是不可接受的，取舍方向明确。
     {
         let mut guard = state.config.write().await;
+        let live = &*guard;
+        cfg.floating_x = live.floating_x;
+        cfg.floating_y = live.floating_y;
+        cfg.floating_w = live.floating_w;
+        cfg.floating_h = live.floating_h;
         *guard = cfg.clone();
         cfg.save()?;
     }
@@ -1391,7 +1503,22 @@ pub(crate) fn build_floating_window(app: &AppHandle) -> tauri::Result<tauri::Web
     .transparent(true)
     .skip_taskbar(true)
     .shadow(false)
-    .visible(true)
+    // 2026-09-28 audit L-7：这里原来是 `.visible(true)`，但 lib.rs 里恢复
+    // 位置/尺寸的 `set_position` / `set_size`（以及默认右上角的兜底
+    // set_position）都排在后面才跑 —— `lib.rs:283` 的注释明明写着「恢复浮窗
+    // 位置必须在 show() 之前调用，否则会有 1 帧错位」，可窗口在 builder 里
+    // 就已经可见了。于是每次启动浮窗**先按 tao 的默认位置闪一帧**，再被
+    // set_position 拉回用户保存的位置；在 PinBottom / hover-raise 场景下
+    // 这帧还会带着默认位置做一次真实的置底/置顶操作。
+    //
+    // 改成 `visible(false)`：位置/尺寸恢复由 lib.rs 在 `show()` 之前完成，
+    // 首次可见的那一帧就已经在正确位置。
+    //
+    // ⚠️ 依赖 lib.rs：`lib.rs` 的 setup 必须在恢复完几何之后显式调
+    // `win.show()`（现网 `lib.rs:361-365` 已有），否则浮窗永远不会出现。
+    // 若日后 lib.rs 重排这段顺序（把 show() 提前 / 删掉），本处必须同步
+    // 改回 visible(true)。
+    .visible(false)
     .background_color(transparent)
     .build()?;
 
@@ -2210,19 +2337,59 @@ pub async fn refresh_single(app: AppHandle, id: String) -> Result<(), String> {
 }
 
 /// D7-02 (2026-09-04 audit): 登录完成后「立即拉取」的目标解析。
+///
+/// 返回第一个可刷新目标，优先级：
+/// 1. **`explicit`**（前端登录卡片传自己的 `unique_id`）—— 前端最清楚
+///    「用户刚点的就是这张卡」。它能解析（`all_sources` 里有该 unique_id）
+///    或 `cfg.providers` 里有显式条目时直接返回。
+/// 2. **base 启用** → base。
+/// 3. 否则按 `instance_index` 升序找第一个启用副本（`"<base>#N"`）。
+/// 4. 全禁用 → `None`（跳过，不打扰）。
+///
+/// # 为什么需要 explicit（2026-09-28 契约 2）
+///
 /// base 被禁用而副本启用时，`is_enabled_unique(base, base)` 返 false，
 /// 直接传 base 会被 refresh_single_inner 顶部的 enabled 守卫静默跳过——
 /// 浮窗要等 poller 下一轮才有数据，用户感知「登录成功但没生效」。
-/// 返回第一个可刷新目标：base 启用 → base；否则按 instance_index 升序
-/// 找第一个启用副本（`"<base>#N"`）；全禁用 → None（跳过，不打扰）。
+/// 但「升序取第一个 enabled 副本」本身也不够精确：用户点了 `minimax#3`
+/// 的登录按钮，凭据写进 `minimax#3` 槽位，前端却去刷 `minimax#2`
+/// （因为 #2 排在前面且也 enabled）→ #2 拉到 #3 的旧凭据报「未配置」，
+/// #3 的新凭据要等下一轮 poller。前端手里有卡片的 unique_id，后端没理由
+/// 不用。`explicit` 优先即彻底消掉这个错位。
+///
+/// 落空（解析不到 / 不属于该 base）时**静默回退**到原有启发式，不返 Err：
+/// 登录模块对「拿不到刷新目标」的既有处理就是「跳过本次刷新」，多一个
+/// 错误分支只会让调用方多写一层 match。
 pub async fn resolve_login_refresh_target(
     state: &State<'_, AppState>,
     base: &str,
+    explicit: Option<&str>,
 ) -> Option<String> {
     let cfg = state.config.read().await;
+    // 1) explicit 命中：要么 all_sources 真能解析出这个 unique_id（副本 /
+    //    custom_<uuid>），要么 cfg.providers 里有它的显式条目（base 实例）。
+    //    两条都要求 `explicit` 的 base 前缀 == base，避免调用方串台
+    //    （"deepseek#2" 不能拿来刷新 minimax 的登录态）。
+    if let Some(id) = explicit {
+        let id = id.trim();
+        if !id.is_empty()
+            && base_id_of(id) == base
+            && (cfg.providers.contains_key(id)
+                || crate::providers::find_source(state, id).await.is_some())
+        {
+            return Some(id.to_string());
+        }
+        tracing::debug!(
+            explicit = %id,
+            base = %base,
+            "resolve_login_refresh_target: explicit 解析不到,回退到按 index 升序启发式"
+        );
+    }
+    // 2) base 自身启用
     if cfg.is_enabled_unique(base, base) {
         return Some(base.to_string());
     }
+    // 3) 按 instance_index 升序找第一个启用副本
     let mut indexes: Vec<u32> = state
         .extra_instances
         .read()
@@ -2715,6 +2882,52 @@ pub async fn set_tray_icon_color(
     Ok(())
 }
 
+/// 唯一允许带后缀的托盘数据源 base（2026-09-28 audit Low-5）。
+///
+/// 火山方舟是唯一一个有「双套餐」（Coding Plan / Agent Plan）的 provider，
+/// `pick_tray_rows` 能按 plan 过滤它的行。其它 provider 加后缀没有任何消费侧
+/// 语义，只会把托盘打成空 logo。
+const TRAY_SOURCE_AGENT_PLAN_BASE: &str = "volcengine_ark";
+
+/// 托盘数据源字符串的**唯一**合法性判定，供 [`set_tray_source`]（拒收）与
+/// [`save_config`]（清洗成 None）共用 —— 两处各写一份必然漂移。
+///
+/// 合法形态：
+/// - `"<base>"` —— `base` 必须是 `all_sources()` 里的某个 `unique_id`
+///   （内置 base id / `custom_<uuid>`）
+/// - `"volcengine_ark:agent"` —— 唯一合法的带后缀形态
+///
+/// **为什么必须是 (base, suffix) 配对，而不是两边各自独立白名单**
+/// （2026-09-28 audit Low-5）：
+///
+/// v0.2.9 加火山方舟双套餐时，后缀白名单只写 `suffix == "agent"`，`base` 独立
+/// 过 `find_source` —— 于是 `"minimax:agent"` / `"deepseek:agent"` **全部通过
+/// 校验并落盘**。消费侧后果（`tray.rs::pick_tray_rows`）：
+/// 1. 百分比分支：非火山 provider 的 row 没有 plan 概念，被 plan 过滤成空；
+/// 2. 余额分支：minimax / deepseek 行 `remaining: None` → `pick_tray_rows`
+///    返 `None`；
+/// 3. 净效果 = **托盘永久退化成纯 logo，且一条日志都没有** —— 用户既看不到
+///    数字也看不到错误，只会以为程序卡住了。
+///
+/// 也就是说，"后缀是合法关键字" 并不推出 "这个后缀对任意 provider 都有意义"。
+/// 新增后缀时**必须**在本表登记 (base, suffix) 配对。
+fn tray_source_id_is_valid(source: &str, known: &std::collections::HashSet<String>) -> bool {
+    // M11 fix (2026-09-05)：副本 id（"minimax#2"）一律拒绝 —— pick_tray_rows
+    // 按 source_id 的 base 前缀匹配，副本 id 永远匹配不上（正是 D6-05 要堵的
+    // 托盘退化 logo 症状）。
+    if source.contains('#') {
+        return false;
+    }
+    match source.split_once(':') {
+        None => known.contains(source),
+        // 显式登记的配对白名单：只有火山方舟认识 ":agent"
+        Some((b, "agent")) => b == TRAY_SOURCE_AGENT_PLAN_BASE,
+        // 其余后缀一律拒绝（含 "volcengine_ark:" 这种空后缀 —— 它既不是合法
+        // 关键字，也没进白名单）
+        Some(_) => false,
+    }
+}
+
 #[tauri::command]
 pub async fn set_tray_source(
     state: State<'_, AppState>,
@@ -2726,25 +2939,18 @@ pub async fn set_tray_source(
     // 字符串都能落盘：pick_tray_rows 匹配不上 → 托盘永远 fallback logo，
     // 且菜单 label 把原文当显示名拼出怪字符。None = 默认 minimax，放行。
     //
-    // M11 fix (2026-09-05 audit)：find_source 接受副本 unique_id（"minimax#2"），
-    // 但 pick_tray_rows 按 source_id 的 base 前缀匹配 —— 副本 id 永远匹配
-    // 不上，托盘照样退化 logo（正是 D6-05 要堵的症状）。拒绝带 '#' 的 id。
-    //
-    // v0.2.9 火山双套餐：放行 "<base>:agent" 形式（托盘数据源可选 Agent
-    // Plan，pick_tray_rows 按 plan 过滤行）。后缀白名单仅 "agent"，其余
-    // 拒绝 —— 防任意字符串借后缀绕过 find_source 校验。
+    // 2026-09-28 audit Low-5：判定逻辑抽到共享的
+    // [`tray_source_id_is_valid`]，跟 save_config 的清洗路径同款（两边原来
+    // 各写一份，且都只校验后缀不校验 (base, suffix) 配对 —— 见该函数注释）。
+    // all_sources 在拿 config.write 之前调（内部只拿 extra_instances.read，
+    // 与 set_provider_order / set_provider_enabled 锁序一致）。
     if let Some(s) = &source {
-        if s.contains('#') {
-            return Err(t!("error.common.unknown_source_id", id = s).into_owned());
-        }
-        let (base, suffix) = match s.split_once(':') {
-            Some((b, p)) => (b, Some(p)),
-            None => (s.as_str(), None),
-        };
-        if suffix.is_some_and(|p| p != "agent") {
-            return Err(t!("error.common.unknown_source_id", id = s).into_owned());
-        }
-        if crate::providers::find_source(&state, base).await.is_none() {
+        let known: std::collections::HashSet<String> = all_sources(&state)
+            .await
+            .iter()
+            .map(|s| s.unique_id())
+            .collect();
+        if !tray_source_id_is_valid(s, &known) {
             return Err(t!("error.common.unknown_source_id", id = s).into_owned());
         }
     }
@@ -2864,18 +3070,25 @@ pub async fn set_display_thresholds(
     Ok(())
 }
 
-/// 校验 CSS 颜色串：`#RGB` / `#RRGGBB` / `#RRGGBBAA` 形式的 hex（区分大小写不敏感）。
-/// 与 `<input type="color">` 的 6 位输出对齐,同时接受 8 位(带 alpha)的 hex——
-/// 浏览器 DevTools / 系统取色器复制出来常带 alpha,过去会被静默拒掉。
-/// 4 位 `#RGBA` 太罕见(<input type="color"> 不产,且 hex 与 RGBA 短形式容易混淆),
-/// 不接受。
+/// 校验 CSS 颜色串：`#RGB` / `#RGBA` / `#RRGGBB` / `#RRGGBBAA` 形式的 hex
+/// （区分大小写不敏感）。
+///
+/// **2026-09-28 audit 契约 1：写入侧长度集合必须与读侧
+/// `tray.rs::parse_hex_color` 完全对齐（3|4|6|8）。**
+/// 之前这里只放行 3|6|8，而读侧接受 4 位 `#RGBA`，于是 config.json 里存过
+/// `"#f00a"` 的用户，托盘渲染一切正常，但设置面板**任何一次 `save_config`**
+/// （走 color_overrides / tray_icon_color 校验）都返 Err
+/// `commands.color_value_invalid` —— 用户改个无关设置就存不下去，且错误消息
+/// 指向的颜色值看起来完全合法。4 位 `#RGBA` 在 CSS 里同样是标准短形式
+/// （浏览器 DevTools / 系统取色器 / 手写 tailwind 类名都会产出），没有理由
+/// 只在读侧认它。前端 `app.ts` 的正则同步放宽到 3|4|6|8，三处口径由此统一。
 fn is_valid_hex_color(s: &str) -> bool {
     let s = s.trim();
     if !s.starts_with('#') {
         return false;
     }
     let hex = &s[1..];
-    matches!(hex.len(), 3 | 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit())
+    matches!(hex.len(), 3 | 4 | 6 | 8) && hex.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// 设置面板「📋 日志」拉取最近 N 条（最新在末尾）。
@@ -3205,5 +3418,113 @@ mod snapshot_key_tests {
         // 取决于 enabled 集合里填的是 base 名还是副本名。
         assert_eq!(snap.providers.len(), 1);
         assert_eq!(snapshot_key(&snap.providers[0]), "minimax#1");
+    }
+}
+
+/// 2026-09-28 audit 契约 1 + Low-5 的纯逻辑单测：
+/// hex 颜色长度集合（写侧 vs 读侧对齐）与托盘数据源的 (base, suffix) 配对。
+#[cfg(test)]
+mod validation_tests {
+    use super::*;
+
+    /// 契约 1：`is_valid_hex_color` 必须接受 tray.rs::parse_hex_color 读侧
+    /// 接受的**全部**长度（3|4|6|8）。之前只放行 3|6|8，config.json 里存过
+    /// `#f00a` 的用户，托盘渲染正常但设置面板任何一次 save_config 都返
+    /// `commands.color_value_invalid`。
+    #[test]
+    fn hex_color_length_set_matches_read_side() {
+        for ok in [
+            "#f00",  // #RGB
+            "#f00a", // #RGBA ← 契约 1 修的就是这条
+            "#ff0000",
+            "#ff0000aa",
+            "#ABCDEF",
+            "  #f0a0  ", // trim
+        ] {
+            assert!(is_valid_hex_color(ok), "应放行: {ok}");
+        }
+        for bad in [
+            "",           // 空串
+            "f00",        // 缺 '#'
+            "#",          // 只有 '#'
+            "#ff",        // 2 位
+            "#fffff",     // 5 位
+            "#fffffff",   // 7 位
+            "#fffffffff", // 9 位
+            "#gggggg",    // 非 hex 字符
+            "#ff00zz",
+            "#ff 000",
+        ] {
+            assert!(!is_valid_hex_color(bad), "应拒绝: {bad:?}");
+        }
+    }
+
+    fn known_sources() -> std::collections::HashSet<String> {
+        [
+            "minimax",
+            "deepseek",
+            "volcengine_ark",
+            "minimax#2",
+            "custom_abc",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+    }
+
+    /// Low-5：`"<base>:agent"` 只对火山方舟合法。之前后缀白名单独立于 base
+    /// 校验，`"minimax:agent"` 能过 → 托盘 pick_tray_rows 把行全滤空 →
+    /// 永久退化成纯 logo 且零日志。
+    #[test]
+    fn tray_source_suffix_must_pair_with_volcengine() {
+        let known = known_sources();
+        assert!(tray_source_id_is_valid("volcengine_ark:agent", &known));
+        // 后缀是合法关键字，但 base 不认识 ":agent" → 拒绝
+        assert!(!tray_source_id_is_valid("minimax:agent", &known));
+        assert!(!tray_source_id_is_valid("deepseek:agent", &known));
+        assert!(!tray_source_id_is_valid("custom_abc:agent", &known));
+    }
+
+    /// Low-5：无后缀的合法 base id 照常放行。
+    #[test]
+    fn tray_source_plain_base_ids_accepted() {
+        let known = known_sources();
+        for ok in ["minimax", "deepseek", "volcengine_ark", "custom_abc"] {
+            assert!(tray_source_id_is_valid(ok, &known), "应放行: {ok}");
+        }
+        // 未知 base / 未登记后缀 / 空后缀 / 带 '#' 的副本 id → 全拒
+        for bad in [
+            "nope",
+            "volcengine_ark:coding", // 未登记后缀
+            "volcengine_ark:",       // 空后缀
+            "minimax#2",             // M11: 副本 id 托盘匹配不上
+        ] {
+            assert!(!tray_source_id_is_valid(bad, &known), "应拒绝: {bad}");
+        }
+    }
+
+    /// Low-9：`spawn_refresh_base_instances` 的筛选谓词 —— 必须按
+    /// `base_id_of(unique_id) == base` 挑，不能只匹配 base 自身，否则副本
+    /// 依旧刷不到（那正是原 bug）。这里锁住纯逻辑部分。
+    #[test]
+    fn base_instance_selection_matches_all_dupes() {
+        let ids = [
+            "minimax",
+            "minimax#2",
+            "minimax#3",
+            "volcengine_ark",
+            "volcengine_ark#2",
+            "deepseek",
+        ];
+        let picked: Vec<&str> = ids
+            .iter()
+            .copied()
+            .filter(|id| base_id_of(id) == "volcengine_ark")
+            .collect();
+        assert_eq!(
+            picked,
+            vec!["volcengine_ark", "volcengine_ark#2"],
+            "base 自身 + 每个副本都要被刷到"
+        );
     }
 }

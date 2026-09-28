@@ -28,8 +28,8 @@ use std::pin::Pin;
 use serde_json::Value;
 
 use super::{
-    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, AuthKind,
-    Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
+    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, validate_bearer_key,
+    AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
 };
 use crate::t;
 
@@ -227,6 +227,10 @@ async fn fetch_credits(
     source_id: &str,
     display_name: &str,
 ) -> Result<ProviderSnapshot, FetchError> {
+    // L-6 fix (2026-09-05 audit)：key 内含控制字符时 send() 报 invalid header
+    // 被兜底归成误导性 Network 错误；send 前显式拒绝并归类配置错误。
+    // 2026-09-28 audit H-9 补齐：当日 L-6 只接了 4/14 个 provider。
+    validate_bearer_key(api_key)?;
     let resp = client
         .get(URL_CREDITS)
         .header("Authorization", format!("Bearer {api_key}"))
@@ -285,6 +289,10 @@ async fn fetch_key(
     source_id: &str,
     display_name: &str,
 ) -> Result<ProviderSnapshot, FetchError> {
+    // L-6 fix (2026-09-05 audit)：key 内含控制字符时 send() 报 invalid header
+    // 被兜底归成误导性 Network 错误；send 前显式拒绝并归类配置错误。
+    // 2026-09-28 audit H-9 补齐：当日 L-6 只接了 4/14 个 provider。
+    validate_bearer_key(api_key)?;
     let resp = client
         .get(URL_KEY)
         .header("Authorization", format!("Bearer {api_key}"))
@@ -334,36 +342,58 @@ async fn fetch_key(
 }
 
 /// 解析 `/api/v1/credits` 响应 → 1 行「余额 $X.XX USD」
+/// OpenRouter HTTP 200 + body 内 `error` 节点 → 分类好的 FetchError。
+///
+/// H-Provider fix (2026-09-07 audit): 旧实现只看 `data` 字段,忽略 body 内
+/// `error` —— OpenRouter HTTP 200 + `{"error": {"code": 401, "message": "..."},
+/// "data": null}` 会 fallback 到 "missing field data" Parse 错误, 内部错误
+/// 当成 schema 漂移, 用户看不到 "重新登录" 引导。先 check `error` 字段,
+/// 按 status/code 分类 (401 → auth, 其他 → server) 让前端走正确的错误路径。
+///
+/// 2026-09-28 audit H-9: 抽成 helper 给 `/api/v1/credits` + `/api/v1/key`
+/// 两条路径共用 —— `parse_key` 此前完全没有 error 检查，key 失效
+/// (`{"error": {"code": 401}, "data": null}`) 报 Parse「缺少 data」，
+/// 而 Parse 不退避 + `needs_settings()` 返 false → 前端**不亮**「重新登录」
+/// 按钮，用户只看到一句 schema 漂移文案。
+///
+/// 仅对**对象形态**的 `error` 生效（`.filter(|e| e.is_object())`）：非对象
+/// （如 `{"error": "bad key"}`）没有 code/message 可分类，交给调用方的
+/// missing-data 分支报 Parse，保持既有行为与既有单测断言不变。
+fn body_error(raw: &Value) -> Option<FetchError> {
+    let err = raw.get("error").filter(|e| e.is_object())?;
+    let code = err
+        .get("code")
+        .and_then(|v| v.as_i64())
+        .or_else(|| err.get("status").and_then(|v| v.as_i64()))
+        .unwrap_or(0);
+    let msg = err.get("message").and_then(|v| v.as_str()).unwrap_or("");
+    // 2026-09-28 audit H-9: 原用 `error.common.api_error`，该 key 从未加进
+    // locales/{en,zh-CN}.json → rust-i18n 找不到 key 时返 `zh-CN.error.common.api_error`
+    // 字面量且不做参数替换，本 fix 想让用户看到的真实报错一个字都看不到。
+    // `error.common.business_code` 的占位符与格式完全一致，直接复用。
+    let reason = t!(
+        "error.common.business_code",
+        provider = "OpenRouter",
+        code = code,
+        msg = msg
+    )
+    .into_owned();
+    Some(if code == 401 || code == 403 {
+        FetchError::auth(reason)
+    } else {
+        FetchError::server(reason)
+    })
+}
+
 fn parse_credits(
     raw: &Value,
     source_id: &str,
     display_name: &str,
 ) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
-    // H-Provider fix (2026-09-07 audit): 旧实现只看 `data` 字段,忽略 body 内
-    // `error` —— OpenRouter HTTP 200 + `{"error": {"code": 401, "message": "..."},
-    // "data": null}` 会 fallback 到 "missing field data" Parse 错误, 内部错误
-    // 当成 schema 漂移, 用户看不到 "重新登录" 引导。先 check `error` 字段,
-    // 按 status/code 分类 (401 → auth, 其他 → server) 让前端走正确的错误路径。
-    if let Some(err) = raw.get("error").filter(|e| !e.is_null()) {
-        let code = err
-            .get("code")
-            .and_then(|v| v.as_i64())
-            .or_else(|| err.get("status").and_then(|v| v.as_i64()))
-            .unwrap_or(0);
-        let msg = err.get("message").and_then(|v| v.as_str()).unwrap_or("");
-        let reason = t!(
-            "error.common.api_error",
-            provider = "OpenRouter",
-            code = code,
-            msg = msg
-        )
-        .into_owned();
-        return Err(if code == 401 || code == 403 {
-            FetchError::auth(reason)
-        } else {
-            FetchError::server(reason)
-        });
+    // 见 `body_error` 的 H-Provider fix 注释（2026-09-07 audit 引入 / 2026-09-28 抽 helper）
+    if let Some(e) = body_error(raw) {
+        return Err(e);
     }
     let data = raw.get("data").ok_or_else(|| {
         FetchError::parse(
@@ -427,6 +457,13 @@ fn parse_key(
     display_name: &str,
 ) -> Result<ProviderSnapshot, FetchError> {
     let now_ms = chrono::Utc::now().timestamp_millis();
+    // 2026-09-28 audit H-9: 与 `parse_credits` 共用 `body_error` —— key 失效
+    // (`{"error": {"code": 401}, "data": null}`) 必须归 AuthFailed 才能亮
+    // 「重新登录」，见 helper 注释。放在 missing-data 检查**之前**，否则
+    // `"data": null` 分支先短路，error 分类永远跑不到。
+    if let Some(e) = body_error(raw) {
+        return Err(e);
+    }
     let data = raw.get("data").ok_or_else(|| {
         FetchError::parse(
             t!("error.common.missing_data_field", provider = "OpenRouter").into_owned(),
@@ -619,6 +656,30 @@ mod tests {
         let raw = json!({ "error": "bad key" });
         let err = parse_key(&raw, "openrouter", "OpenRouter").unwrap_err();
         assert_eq!(err.kind, ErrorKind::Parse);
+    }
+
+    /// 2026-09-28 audit H-9 回归：`/api/v1/key` 的对象形态 `error` 节点
+    /// 必须按 code 分类（401 → AuthFailed，前端亮「重新登录」），而不是
+    /// 落进 missing-data 的 Parse 错（不退避 + needs_settings=false）。
+    /// 非对象 `error`（见上一个 test）仍走 Parse。
+    #[test]
+    fn parse_key_object_error_is_auth() {
+        let raw = json!({
+            "error": { "code": 401, "message": "Invalid key" },
+            "data": null
+        });
+        let err = parse_key(&raw, "openrouter", "OpenRouter").unwrap_err();
+        assert_eq!(err.kind, ErrorKind::AuthFailed);
+    }
+
+    #[test]
+    fn parse_key_object_error_non_401_is_server() {
+        let raw = json!({
+            "error": { "code": 500, "message": "boom" },
+            "data": null
+        });
+        let err = parse_key(&raw, "openrouter", "OpenRouter").unwrap_err();
+        assert_eq!(err.kind, ErrorKind::ServerError);
     }
 
     /// D3-02 回归：付费 key 未设 per-key limit（limit/limit_remaining 双 null、

@@ -261,6 +261,11 @@ async fn do_fetch(
     let client = shared_client();
     let url = region.url();
 
+    // L-6 fix (2026-09-05 audit)：key 内含控制字符时 send() 报 invalid header
+    // 被兜底归成误导性 Network 错误；send 前显式拒绝并归类配置错误。
+    // 2026-09-28 audit H-9 补齐：当日 L-6 只接了 4/14 个 provider。智谱虽然
+    // 不加 Bearer 前缀，裸 key 同样是 header value，控制字符一样会让 send 失败。
+    super::validate_bearer_key(api_key)?;
     // ⚠️ 智谱鉴权不加 Bearer —— 直接用裸 key
     let resp = client
         .get(url)
@@ -494,9 +499,13 @@ fn classify_zhipu_limits(data: &Value) -> (Option<(f64, Option<i64>)>, Option<(f
                 Some(p) => p,
                 None => continue,
             };
+            // 2026-09-28 audit H-9: 共享 `json_i64`（数字 / 整数字符串都吃）——
+            // 原 `.as_i64()` 在智谱把 `nextResetTime` 序列化成字符串时返 None
+            // → sort_key 退化成 `i64::MIN` → 该条被当成"无 resetTime"排最前，
+            // 正是本文件 doc 第 2 条警告的"5h/周两行对调"场景。
             let reset_ms = item
                 .get("nextResetTime")
-                .and_then(|v| v.as_i64())
+                .and_then(super::parse::json_i64)
                 // H5 fix (2026-08-03 audit): D-013 一致性 —— 拒绝 ts <= 0
                 // (epoch 0 / 负数 / 服务端 schema 漂移)。和 kimi/claude_official/
                 // stepfun/volcengine_ark 同款保护,这块 2026-07-30 audit 漏了 zhipu。
@@ -505,7 +514,10 @@ fn classify_zhipu_limits(data: &Value) -> (Option<(f64, Option<i64>)>, Option<(f
             let sort_key = reset_ms.unwrap_or(i64::MIN);
             let entry = (sort_key, percentage, reset_ms);
 
-            match item.get("unit").and_then(|v| v.as_i64()) {
+            // 2026-09-28 audit H-9: 同上，`unit` 也走共享 `json_i64`。unit 是
+            // **分槽开关**（3 = 5h / 6 = 周）—— 字符串形态下全部落进
+            // `unclassified` 分支，再被"按 reset 升序兜底"猜回去，比对错更糟。
+            match item.get("unit").and_then(super::parse::json_i64) {
                 // P2 audit fix (2026-08-13): 第二个同 unit 套餐 (CREDIT_LIMIT
                 // 多包 schema) 之前进 unclassified 兜底, 被 fallback 错填进
                 // 另一个槽 (5h 百分比显示成 7 天行)。显式 unit 只填对应槽,
@@ -514,14 +526,23 @@ fn classify_zhipu_limits(data: &Value) -> (Option<(f64, Option<i64>)>, Option<(f
                     if five_h.is_none() {
                         five_h = Some(entry);
                     } else {
-                        tracing::debug!("zhipu: 第二个 unit=3 套餐, 五小时槽已满, 丢弃");
+                        // 2026-09-28 audit H-9: debug! → warn! 并带 number 字段。
+                        // 静默丢弃 = 用户看到一行缺失却查不到任何线索; 带上
+                        // number 才能对照控制台套餐标识定位是哪一包被丢。
+                        tracing::warn!(
+                            number = ?item.get("number"),
+                            "zhipu: 第二个 unit=3 套餐, 五小时槽已满, 丢弃"
+                        );
                     }
                 }
                 Some(6) => {
                     if weekly.is_none() {
                         weekly = Some(entry);
                     } else {
-                        tracing::debug!("zhipu: 第二个 unit=6 套餐, 周槽已满, 丢弃");
+                        tracing::warn!(
+                            number = ?item.get("number"),
+                            "zhipu: 第二个 unit=6 套餐, 周槽已满, 丢弃"
+                        );
                     }
                 }
                 _ => unclassified.push(entry),

@@ -52,8 +52,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
-    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, AuthKind,
-    Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
+    humanize_reqwest_err, json_body_limited, shared_client, text_body_limited, validate_bearer_key,
+    AuthKind, Credentials, ErrorKind, FetchError, ProviderSnapshot, QuotaRow, QuotaSource,
 };
 use crate::t;
 
@@ -224,7 +224,11 @@ async fn do_fetch(
     // 或 settings panel 误输入。拒绝 http://（泄露 API key 走明文）/ file:// / javascript: /
     // 任何非 https:// 协议。即使 mode 默认 URL 也校验（防御 config 损坏）。
     if !url.starts_with("https://") {
-        return Err(FetchError::auth(
+        // L-5 fix (2026-09-05 audit) 同款补齐 (2026-09-28 audit H-9)：URL 配置类
+        // / SSRF 拦截归 Other 而非 AuthFailed —— 归 AuthFailed 会误导前端弹
+        // 「重新登录」引导（用户改 URL 就能解决，重登无用）且 poller 不退避，
+        // 每 tick 白打一次请求。custom.rs 三处早已是 config_error。
+        return Err(FetchError::config_error(
             t!("error.common.url_scheme_invalid", url = url).into_owned(),
         ));
     }
@@ -233,7 +237,8 @@ async fn do_fetch(
     // 会被 reqwest 把 `zenmux.ai` 当 userinfo、`evil.com` 当 host，SSRF 检查看到
     // 公网 host 放行 → Bearer key 泄漏给 evil.com。共享 helper 与 custom.rs 统一。
     if super::url_authority_has_userinfo(url) {
-        return Err(FetchError::auth(
+        // L-5 fix 同款（见上方 scheme 检查注释）：配置错误不是鉴权错误。
+        return Err(FetchError::config_error(
             t!("error.common.url_authority_has_userinfo", url = url).into_owned(),
         ));
     }
@@ -248,10 +253,15 @@ async fn do_fetch(
         });
     if blocked {
         let host = super::extract_host(url).unwrap_or_else(|| url.to_string());
-        return Err(FetchError::auth(
+        // L-5 fix 同款（见上方 scheme 检查注释）：配置错误不是鉴权错误。
+        return Err(FetchError::config_error(
             t!("error.common.ssrf_blocked", host = host.as_str()).into_owned(),
         ));
     }
+    // L-6 fix (2026-09-05 audit)：key 内含控制字符时 send() 报 invalid header
+    // 被兜底归成误导性 Network 错误；send 前显式拒绝并归类配置错误。
+    // 2026-09-28 audit H-9 补齐：当日 L-6 只接了 4/14 个 provider。
+    validate_bearer_key(api_key)?;
     let client = shared_client();
 
     let resp = client
@@ -524,12 +534,22 @@ fn parse_subscription(
     })
 }
 
-/// 解析单个 quota window → QuotaRow。`usage_percentage` 缺失则整行 None。
+/// 解析单个 quota window → QuotaRow。流量字段全缺才丢整行。
+///
+/// 2026-09-28 audit H-9：原首行 `num_f64(q, "usage_percentage")?` 强制要求
+/// `usage_percentage`，缺则整行丢弃 —— 而下面 L-3 fix 自称「used_flows /
+/// max_flows 优先抗 schema 漂移」的那条交叉计算路径，恰恰**只在
+/// `usage_percentage` 不存在时**才成为唯一可用信号。schema 一漂移
+/// （`usage_percentage` 改名 / 分批上线），整组 5h + 周行一起消失。
+/// 改成：三个流量字段全 None 才丢行（真没数据可渲染）。
 fn parse_subscription_window(q: &Value, label: &str) -> Option<QuotaRow> {
-    let usage_pct_raw = num_f64(q, "usage_percentage")?;
+    let usage_pct_raw = num_f64(q, "usage_percentage");
     let used = num_f64(q, "used_flows");
     let max = num_f64(q, "max_flows");
     let remaining = num_f64(q, "remaining_flows");
+    if usage_pct_raw.is_none() && used.is_none() && max.is_none() && remaining.is_none() {
+        return None;
+    }
     let resets_at = parse_iso8601_ms(q.get("resets_at").and_then(|v| v.as_str()));
 
     // H9 fix (2026-07-03 audit): 字段名 "usage_percentage" 暗示已是 0-100 百分比,
@@ -543,20 +563,23 @@ fn parse_subscription_window(q: &Value, label: &str) -> Option<QuotaRow> {
     // 颠倒；交叉计算对两种语义都正确。used/max 不可用时退回启发式。
     let cross_checked = match (used, max) {
         (Some(u), Some(m)) if m > 0.0 => Some((u / m * 100.0).clamp(0.0, 100.0)),
-        _ => None,
+        // `used` 缺失但 `remaining` 在：L-3 交叉计算的对偶形式，语义一致
+        // （used = max - remaining），schema 只返剩余量时仍能算百分比。
+        _ => match (remaining, max) {
+            (Some(r), Some(m)) if m > 0.0 => Some(((1.0 - r / m) * 100.0).clamp(0.0, 100.0)),
+            _ => None,
+        },
     };
-    let utilization = cross_checked.unwrap_or_else(|| {
-        if usage_pct_raw > 1.0 {
-            usage_pct_raw
-        } else {
-            usage_pct_raw * 100.0
-        }
-        .clamp(0.0, 100.0)
+    // 三条路都算不出百分比时留 `None`（渲染成"只有总量"的行）—— 总比整行
+    // 消失、或编一个假 0% 好。`unit` 仍是 "%"，但不被
+    // `health_label` 的钱包阈值当成货币量纲（见 mod.rs `is_monetary_unit`）。
+    let utilization = cross_checked.or_else(|| {
+        usage_pct_raw.map(|raw| if raw > 1.0 { raw } else { raw * 100.0 }.clamp(0.0, 100.0))
     });
 
     Some(QuotaRow {
         label: label.to_string(),
-        utilization: Some(utilization),
+        utilization,
         remaining,
         used,
         total: max,
@@ -766,8 +789,13 @@ mod tests {
         assert_eq!(err.kind, ErrorKind::Parse);
     }
 
+    /// 2026-09-28 audit H-9 行为变更：只有 `max_flows`（缺
+    /// `usage_percentage` / `used_flows` / `remaining_flows`）时**不再丢行** ——
+    /// 渲染一条"只有总量、百分比未知"的行。理由见
+    /// `parse_subscription_window` 的 doc：L-3 的交叉计算路径恰恰只在
+    /// `usage_percentage` 缺失时才是唯一信号。
     #[test]
-    fn parse_subscription_window_skipped_when_no_usage_pct() {
+    fn parse_subscription_window_kept_when_only_max_flows() {
         let raw = json!({
             "success": true,
             "data": {
@@ -775,8 +803,40 @@ mod tests {
                 "quota_5_hour": { "max_flows": 800 } // 缺 usage_percentage
             }
         });
+        let snap = parse_subscription(&raw, "zenmux", "ZenMux").expect("应保留该行");
+        assert_eq!(snap.rows.len(), 1);
+        assert_eq!(snap.rows[0].total, Some(800.0));
+        assert_eq!(snap.rows[0].utilization, None);
+    }
+
+    /// 2026-09-28 audit H-9 回归：四个流量字段全缺才真的丢行。
+    #[test]
+    fn parse_subscription_window_skipped_when_all_usage_fields_missing() {
+        let raw = json!({
+            "success": true,
+            "data": {
+                "plan": { "tier": "ultra" },
+                "quota_5_hour": { "resets_at": "2026-03-24T08:35:09.000Z" }
+            }
+        });
         let err = parse_subscription(&raw, "zenmux", "ZenMux").unwrap_err();
         assert_eq!(err.kind, ErrorKind::Parse);
+    }
+
+    /// 2026-09-28 audit H-9 回归：`used_flows` 缺失但 `remaining_flows` 在时
+    /// 仍能交叉算出百分比（`1 - rem/max`）。
+    #[test]
+    fn parse_subscription_window_remaining_flows_cross_check() {
+        let raw = json!({
+            "success": true,
+            "data": {
+                "plan": { "tier": "ultra" },
+                "quota_5_hour": { "max_flows": 800, "remaining_flows": 200 }
+            }
+        });
+        let snap = parse_subscription(&raw, "zenmux", "ZenMux").expect("应保留该行");
+        assert_eq!(snap.rows.len(), 1);
+        assert_eq!(snap.rows[0].utilization, Some(75.0));
     }
 
     // ── 工具 ──

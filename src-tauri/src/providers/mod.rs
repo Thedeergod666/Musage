@@ -45,6 +45,9 @@ use std::pin::Pin;
 use std::sync::OnceLock;
 
 use serde::{Deserialize, Serialize};
+// `is_monetary_unit` 用 `t!("row.calls")` 跟 anysearch / tavily 写入的
+// unit 做恒等比较（子模块用 rust-i18n 宏需显式 `use crate::t;`）。
+use crate::t;
 
 // ── 凭据（统一存放 api_key + cookie + secret_key）────────────────────
 
@@ -567,6 +570,26 @@ pub struct ProviderSnapshot {
     pub transient: Option<bool>,
 }
 
+/// QuotaRow 的 `unit` 是否是**货币 / 积分**量纲（`health_label` 的钱包阈值
+/// 过滤用）。
+///
+/// 2026-09-28 audit H-9 引入。当前 provider 集合的 `unit` 取值只有 7 种，
+/// 恰好二分：
+/// - 货币 / 积分：`"USD"`（openrouter / custom NewApi / siliconflow 等）、
+///   `"CNY"`（deepseek 默认）、`"credits"`（zhipu 积分套餐）、
+///   以及 zenmux / deepseek 从响应 `currency` 字段透传后大写的值。
+/// - 非货币：`"%"`（Kimi / zhipu 5h·周窗口行）、`row.calls`（anysearch /
+///   tavily 的调用次数行）。`unit: None` 一律视为非货币（volcengine 次数
+///   行、anysearch 无限额行 —— 它们本来也不写 `remaining`）。
+///
+/// 用**否定清单**而非肯定清单：货币代码没法穷举（用户中转站可以返任何
+/// `currency`），但非货币量纲是本项目内部约定的、可枚举的。
+/// `row.calls` 走 `t!()` 在同一进程内解析，locale 一致恒等。
+fn is_monetary_unit(unit: Option<&str>) -> bool {
+    let Some(u) = unit else { return false };
+    u != "%" && u != t!("row.calls")
+}
+
 impl ProviderSnapshot {
     /// 构造一个空的成功/失败快照（错误态用）
     ///
@@ -664,6 +687,14 @@ impl ProviderSnapshot {
     /// 走 "rows.filter_map(utilization).next().unwrap_or(0.0)" → u=0.0 → "ok"，
     /// 托盘显示绿色 dot + 空内容，UX 死锁。改为直接返 "unknown"（中间色）。
     pub fn health_label(&self, wallet_alert_threshold: Option<f64>) -> &'static str {
+        // 2026-09-28 audit H-9: transient = 乐观 emit 的 placeholder（L8 fix
+        // 加的字段，浮窗据它跳过「打开设置」按钮渲染）。本方法此前完全不看
+        // 它 → 用户刚在设置里勾选 provider 的 2-5s 内，托盘 tooltip 会闪一个
+        // `🔴 MiniMax: ` —— success=false 的空壳 placeholder 被判红点 + 文案
+        // 为空。放在 `!success` **之前**，让 placeholder 走 "unknown"（⚪）。
+        if self.transient == Some(true) {
+            return "unknown";
+        }
         if !self.success {
             return "alert";
         }
@@ -675,9 +706,17 @@ impl ProviderSnapshot {
             return "unknown";
         }
         if let Some(threshold) = wallet_alert_threshold {
+            // 2026-09-28 audit H-9: 钱包阈值只对**货币 / 积分**行生效。原实现
+            // 对任意 QuotaRow 的 `remaining` 做比较，而 Kimi 5h/7d 窗口行
+            // （unit "%"）与 AnySearch 调用余量行（unit = `row.calls`）也写
+            // `remaining` —— 非货币量纲。用户给 DeepSeek 余额配了 ¥50 阈值后，
+            // Kimi 窗口余量 40 会被误判红点。判定走 `unit`（量纲语义）而非
+            // `utilization` —— AnySearch 限量行走的是 Some(utilization) +
+            // Some(remaining) 组合，用 utilization 当过滤条件反而漏掉它。
             if self
                 .rows
                 .iter()
+                .filter(|r| is_monetary_unit(r.unit.as_deref()))
                 .any(|r| r.remaining.map(|rem| rem < threshold).unwrap_or(false))
             {
                 return "alert";
@@ -993,7 +1032,13 @@ pub fn instantiate_builtin(provider_id: &str) -> Option<Box<dyn QuotaSource>> {
     match provider_id {
         "minimax" => Some(Box::new(minimax::MinimaxSource::default())),
         "deepseek" => Some(Box::new(deepseek::DeepseekSource::default())),
-        "xiaomi" | "xiaomimimo" => Some(Box::new(xiaomi::XiaomimimoSource::default())),
+        // 2026-09-28 audit H-9: 删掉 `"xiaomi"` 别名（两处 instantiate_* 同款）。
+        // `xiaomi.rs` 的 `unique_id()` 写死 `"xiaomimimo"`，而凭据按
+        // `unique_id` 分槽存 keys.json —— 传 `provider_id = "xiaomi"` 时 key
+        // 写进 `"xiaomi#2"`（index>1）或跟 base 槽对不上（index=1），
+        // 实例化出的却是 `"xiaomimimo#2"` → 副本永久「未配置凭据」。
+        // 别名只在实例化侧生效、不在凭据侧生效 → 纯 bug 面，删除。
+        "xiaomimimo" => Some(Box::new(xiaomi::XiaomimimoSource::default())),
         "tavily" => Some(Box::new(tavily::TavilySource::default())),
         "zenmux" => Some(Box::new(zenmux::ZenmuxSource::default())),
         "openrouter" => Some(Box::new(openrouter::OpenrouterSource::default())),
@@ -1025,7 +1070,9 @@ pub fn instantiate_builtin_with_index(
         "deepseek" => Some(Box::new(
             deepseek::DeepseekSource::default().with_instance_index(index),
         )),
-        "xiaomi" | "xiaomimimo" => Some(Box::new(
+        // 2026-09-28 audit H-9: 同上，`instantiate_builtin` 一并删别名 ——
+        // 凭据分叉（`xiaomi#2` 存 key / `xiaomimimo#2` 读 key）的根因。
+        "xiaomimimo" => Some(Box::new(
             xiaomi::XiaomimimoSource::default().with_instance_index(index),
         )),
         "tavily" => Some(Box::new(
@@ -1477,6 +1524,95 @@ mod tests {
                 || (!msg.contains("error sending request for url") && !msg.is_empty()),
             "humanize 应返回人话标签或剥前缀后的根因, 实际: {msg}"
         );
+    }
+
+    // ── health_label / is_monetary_unit（2026-09-28 audit）──
+
+    fn row_with(unit: Option<&str>, remaining: Option<f64>, util: Option<f64>) -> QuotaRow {
+        QuotaRow {
+            label: "r".to_string(),
+            utilization: util,
+            remaining,
+            used: None,
+            total: None,
+            resets_at: None,
+            unit: unit.map(|u| u.to_string()),
+            extra: None,
+            kind: None,
+        }
+    }
+
+    fn snap_with(rows: Vec<QuotaRow>) -> ProviderSnapshot {
+        ProviderSnapshot {
+            provider: "test".to_string(),
+            success: true,
+            rows,
+            error: None,
+            error_kind: None,
+            fetched_at: None,
+            next_fetch_at: None,
+            raw: None,
+            is_healthy: true,
+            source_id: Some("kimi".to_string()),
+            unique_id: None,
+            source_display_name: None,
+            plan_name: None,
+            transient: None,
+        }
+    }
+
+    /// 回归：钱包阈值只对货币 / 积分行生效。Kimi 5h 窗口行（unit "%"，
+    /// remaining=40）不该被 ¥50 阈值判红。
+    #[test]
+    fn health_label_wallet_threshold_ignores_percent_window_rows() {
+        let snap = snap_with(vec![row_with(Some("%"), Some(40.0), Some(12.0))]);
+        assert_eq!(snap.health_label(Some(50.0)), "ok");
+    }
+
+    /// 回归：AnySearch 限量行走的是 Some(utilization) + Some(remaining) 组合，
+    /// 用 utilization 当过滤条件会漏掉它 —— 必须按 unit 判。
+    #[test]
+    fn health_label_wallet_threshold_ignores_calls_rows() {
+        let calls = t!("row.calls").to_string();
+        let snap = snap_with(vec![row_with(Some(&calls), Some(40.0), Some(20.0))]);
+        assert_eq!(snap.health_label(Some(50.0)), "ok");
+    }
+
+    /// 同卡片上货币行仍应正常触发阈值（不能把过滤做过头）。
+    #[test]
+    fn health_label_wallet_threshold_still_fires_for_currency_rows() {
+        for unit in ["USD", "CNY", "credits"] {
+            let snap = snap_with(vec![row_with(Some(unit), Some(40.0), None)]);
+            assert_eq!(
+                snap.health_label(Some(50.0)),
+                "alert",
+                "{unit} 余额低于阈值应告警"
+            );
+        }
+    }
+
+    /// 回归：transient placeholder（success=false 空壳）应显示 unknown 而非
+    /// 红点 —— 用户刚在设置里勾选 provider 的 2-5s 内托盘会闪 `🔴 X: `。
+    #[test]
+    fn health_label_transient_placeholder_is_unknown_not_alert() {
+        let mut snap = snap_with(vec![row_with(Some("USD"), Some(999.0), None)]);
+        snap.success = false;
+        snap.transient = Some(true);
+        assert_eq!(snap.health_label(None), "unknown");
+        // 非 transient 的真失败仍应红
+        snap.transient = Some(false);
+        assert_eq!(snap.health_label(None), "alert");
+    }
+
+    #[test]
+    fn is_monetary_unit_classification() {
+        assert!(is_monetary_unit(Some("USD")));
+        assert!(is_monetary_unit(Some("CNY")));
+        assert!(is_monetary_unit(Some("credits")));
+        assert!(is_monetary_unit(Some("USDT")));
+        assert!(!is_monetary_unit(Some("%")));
+        assert!(!is_monetary_unit(Some(t!("row.calls").as_ref())));
+        assert!(!is_monetary_unit(None));
     }
 }
 

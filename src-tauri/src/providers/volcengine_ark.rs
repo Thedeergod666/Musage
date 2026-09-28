@@ -505,7 +505,16 @@ fn extract_result(raw: &Value) -> Result<&Value, FetchError> {
     // ResponseMetadata.Error (此时没有 Result 节点)。之前先查 Result →
     // 真实 Code/Message 被"缺 Result 字段"的通用 Parse 错误吞掉, 用户
     // 看不到权限/参数错误原因。先查这里。
-    if let Some(err) = raw.get("ResponseMetadata").and_then(|m| m.get("Error")) {
+    // 2026-09-28 audit H-9: `Value::get` 对「键存在但值为 null」也返 Some,
+    // 而火山 OpenAPI 的**成功**响应固定带 `"ResponseMetadata": {"Error": null,
+    // "RequestId": "...", "Action": ...}` —— 无 null 守卫时每个成功响应都被
+    // 打成业务错误（code "unknown" + 空 msg），Coding 组整组从浮窗消失。
+    // 对齐 openrouter.rs `parse_credits` 的 `.filter(|e| !e.is_null())`。
+    if let Some(err) = raw
+        .get("ResponseMetadata")
+        .and_then(|m| m.get("Error"))
+        .filter(|e| !e.is_null())
+    {
         // D2-02: 真实 Code 透传进模板 code 槽位（此前硬编码 0、code 挪进 msg 拼接，
         // 渲染成 "code 0: InvalidParameter" 自相矛盾）。
         let code = err
@@ -617,26 +626,27 @@ fn parse_coding_rows(raw: &Value) -> Result<(Vec<QuotaRow>, Option<String>), Fet
     // - v0.2.5 我们读: Result.UsageList[] (Level: "Session"|"Weekly"|"Monthly", Remaining, Total)
     // - CodexBar #1724 提到另一种: QuotaUsage[] (Level: "session"|"weekly"|"monthly", Percent, ResetTimestamp)
     // 优先用 UsageList,fallback QuotaUsage;Level 统一转 lowercase 后 match。
-    let usage_list = result
-        .get("UsageList")
-        .and_then(|v| v.as_array())
-        .or_else(|| result.get("QuotaUsage").and_then(|v| v.as_array()))
-        .ok_or_else(|| {
-            FetchError::parse(
-                t!(
-                    "error.common.missing_field",
-                    provider = "Volcengine Ark",
-                    field = "UsageList"
-                )
-                .into_owned(),
+    // 2026-09-28 audit H-9: `.or_else` 只在键**缺失**时回退,`"UsageList": []`
+    // 存在但为空时 `as_array()` 返 `Some(&[])` → or_else 不触发 →
+    // 紧随其后的 `is_empty()` 直接报 `no_rows_found`,同响应里若同时带
+    // `QuotaUsage`（CodexBar #1724 那套 schema）却被白白丢弃。两个候选用
+    // `find(|a| !a.is_empty())` 串联 = 空数组与缺键同等对待。
+    let usage_list = [
+        ("UsageList", result.get("UsageList")),
+        ("QuotaUsage", result.get("QuotaUsage")),
+    ]
+    .into_iter()
+    .find_map(|(_, v)| v.and_then(|v| v.as_array()).filter(|a| !a.is_empty()))
+    .ok_or_else(|| {
+        FetchError::parse(
+            t!(
+                "error.common.missing_field",
+                provider = "Volcengine Ark",
+                field = "UsageList"
             )
-        })?;
-
-    if usage_list.is_empty() {
-        return Err(FetchError::parse(
-            t!("error.parse.no_rows_found").into_owned(),
-        ));
-    }
+            .into_owned(),
+        )
+    })?;
 
     let mut rows = Vec::new();
 
@@ -1320,6 +1330,54 @@ mod tests {
         });
         let err = parse(&raw, "volcengine_ark", "Volcengine Ark").unwrap_err();
         assert_eq!(err.kind, ErrorKind::Parse);
+    }
+
+    /// 2026-09-28 audit H-9 回归：成功响应固定带 `"Error": null`，
+    /// 没有 null 守卫时每个成功响应都被打成 `code unknown` 业务错误。
+    #[test]
+    fn parse_response_metadata_error_null_is_success() {
+        let raw = json!({
+            "ResponseMetadata": {
+                "Error": null,
+                "RequestId": "req-123",
+                "Action": "ListCodingPlanUsage",
+                "Version": "2023-01-01"
+            },
+            "Result": {
+                "Code": "Success",
+                "PlanName": "Lite",
+                "UsageList": [
+                    { "Level": "Session", "Remaining": 42.0, "Total": 100.0 }
+                ]
+            }
+        });
+        let snap = parse(&raw, "volcengine_ark", "Volcengine Ark").expect("Error:null 应解析成功");
+        assert!(snap.success);
+        // rows[0] 是 PlanHeader（套餐名行），rows[1] 才是 5h 用量行
+        assert_eq!(snap.rows.len(), 2);
+        assert_eq!(snap.rows[1].label, t!("row.five_hour").as_ref());
+    }
+
+    /// 2026-09-28 audit H-9 回归：`UsageList: []` 存在但为空时应回退到
+    /// 同响应里的 `QuotaUsage`（CodexBar #1724 schema），而不是报
+    /// `no_rows_found` 把整组 Coding Plan 判失败。
+    #[test]
+    fn parse_empty_usage_list_falls_back_to_quota_usage() {
+        let raw = json!({
+            "Result": {
+                "Code": "Success",
+                "PlanName": "Lite",
+                "UsageList": [],
+                "QuotaUsage": [
+                    { "Level": "weekly", "Percent": 30.0, "ResetTimestamp": 1800000000 }
+                ]
+            }
+        });
+        let snap = parse(&raw, "volcengine_ark", "Volcengine Ark").expect("应回退 QuotaUsage");
+        assert!(snap.success);
+        // rows[0] 是 PlanHeader（套餐名行），rows[1] 才是回退拿到的周额度行
+        assert_eq!(snap.rows.len(), 2);
+        assert_eq!(snap.rows[1].label, t!("row.weekly_7d").as_ref());
     }
 
     #[test]

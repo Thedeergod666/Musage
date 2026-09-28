@@ -90,42 +90,67 @@ export function renderFloatingSection(container: HTMLElement, cfg: AppConfig) {
   });
 
   // ── 省电模式 checkbox ──
+  // H-Frontend-3 fix (2026-09-28 audit)：此前 3 个 checkbox 的 `.catch` 只有
+  // flash，**没有把 cb.checked 还原**（同目录 app.ts 的开机自启是有回滚的）。
+  // 触发：IPC 失败 → 红条「切换失败」但勾还留在新值、后端仍是旧值，用户以为
+  // 改成功，重开面板才发现没生效。改成 app.ts 的 lastGood 闭包可变模式。
+  let lastGoodLowPower = cfg.low_power_mode ?? false;
   const lowPowerCb = el("input", {
     type: "checkbox",
     id: "low-power-mode",
   }) as HTMLInputElement;
-  lowPowerCb.checked = cfg.low_power_mode ?? false;
+  lowPowerCb.checked = lastGoodLowPower;
   lowPowerCb.addEventListener("change", () => {
     const enabled = lowPowerCb.checked;
     void setLowPowerMode(enabled)
-      .then(() => flash(enabled ? t("settings.floating.low_power_on") : t("settings.floating.low_power_off")))
-      .catch((e) => flash(t("settings.floating.toggle_failed", { err: String(e) }), true));
+      .then(() => {
+        lastGoodLowPower = enabled; // 只在成功后更新最近成功值
+        flash(enabled ? t("settings.floating.low_power_on") : t("settings.floating.low_power_off"));
+      })
+      .catch((e) => {
+        lowPowerCb.checked = lastGoodLowPower;
+        flash(t("settings.floating.toggle_failed", { err: String(e) }), true);
+      });
   });
 
   // ── 全屏自动隐藏 checkbox ──
+  let lastGoodAutoHide = cfg.auto_hide_in_fullscreen ?? false;
   const autoHideCb = el("input", {
     type: "checkbox",
     id: "auto-hide-in-fullscreen",
   }) as HTMLInputElement;
-  autoHideCb.checked = cfg.auto_hide_in_fullscreen ?? false;
+  autoHideCb.checked = lastGoodAutoHide;
   autoHideCb.addEventListener("change", () => {
     const enabled = autoHideCb.checked;
     void setAutoHideInFullscreen(enabled)
-      .then(() => flash(enabled ? t("settings.floating.auto_hide_on") : t("settings.floating.auto_hide_off")))
-      .catch((e) => flash(t("settings.floating.toggle_failed", { err: String(e) }), true));
+      .then(() => {
+        lastGoodAutoHide = enabled;
+        flash(enabled ? t("settings.floating.auto_hide_on") : t("settings.floating.auto_hide_off"));
+      })
+      .catch((e) => {
+        autoHideCb.checked = lastGoodAutoHide;
+        flash(t("settings.floating.toggle_failed", { err: String(e) }), true);
+      });
   });
 
   // ── 底部提示行 checkbox ──
+  let lastGoodFooterHint = cfg.show_footer_hint ?? false;
   const footerHintCb = el("input", {
     type: "checkbox",
     id: "show-footer-hint",
   }) as HTMLInputElement;
-  footerHintCb.checked = cfg.show_footer_hint ?? false;
+  footerHintCb.checked = lastGoodFooterHint;
   footerHintCb.addEventListener("change", () => {
     const enabled = footerHintCb.checked;
     void setShowFooterHint(enabled)
-      .then(() => flash(enabled ? t("settings.floating.footer_hint_on") : t("settings.floating.footer_hint_off")))
-      .catch((e) => flash(t("settings.floating.toggle_failed", { err: String(e) }), true));
+      .then(() => {
+        lastGoodFooterHint = enabled;
+        flash(enabled ? t("settings.floating.footer_hint_on") : t("settings.floating.footer_hint_off"));
+      })
+      .catch((e) => {
+        footerHintCb.checked = lastGoodFooterHint;
+        flash(t("settings.floating.toggle_failed", { err: String(e) }), true);
+      });
   });
 
   // ── fit 底部余量 number input（0–120 逻辑 px，默认 80）──
@@ -275,18 +300,103 @@ function renderDisplayThresholdsFields(cfg: AppConfig) {
   // M19 fix: mutable 副本，applyAll 成功后写入，失败回填用最近成功值
   let currentOverrides: Record<string, string> = { ...overrides };
   let currentWallet: number | null = cfg.wallet_alert_threshold ?? null;
-  const colorPickers: Record<typeof colorKeys[number], HTMLInputElement> = {} as any;
+
+  // H-Frontend-2 fix (2026-09-28 audit)：4 档自定义色原来仍是原生
+  // `<input type="color">` 且**只绑 `change`**。WKWebView 的 NSColorPanel 能
+  // 打开能取色，但 input/change **全程不派发**（见 memory
+  // wkwebview-color-input-change-footgun「WKWebView 里不要用 <input type=color>」，
+  // 跟 commit 6931dfb 给托盘颜色做过的判定同款）。托盘那 4 个 2026-09-08 已经
+  // 换成纯 DOM 色板 + hex 文本框（app.ts），浮窗这 4 个漏换 → macOS 上浮窗
+  // 自定义色永远存不下去；Windows WebView2 正常，所以只在 mac 暴露。
+  // 照抄 app.ts 的方案。
+  const COLOR_PALETTE = [
+    "#ffffff",
+    "#000000",
+    "#30d158",
+    "#5ac8fa",
+    "#ff9f0a",
+    "#ff453a",
+  ];
+  // 与 Rust is_valid_hex_color 同口径（3|4|6|8 位 hex）。后端读侧写侧都放宽后
+  // 前端同步放宽，否则用户手输 #abc 会被前端判非法、后端却认。
+  const HEX_COLOR_RE = /^#(?:[0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+  // colorUi = 控件当前**显示**值（点色板/敲 hex 立刻更新，applyAll 从这里读）；
+  // currentOverrides = 最近一次 IPC **成功**的值，失败回填用。二者分离是
+  // app.ts lastGood 模式在颜色控件上的落地。
+  const colorUi: Record<typeof colorKeys[number], string> = {} as any;
+  const colorSwatches: Record<typeof colorKeys[number], HTMLElement[]> = {} as any;
+  const colorHexInputs: Record<typeof colorKeys[number], HTMLInputElement> = {} as any;
+
+  const markColorSwatches = (key: typeof colorKeys[number], color: string): void => {
+    for (const s of colorSwatches[key] ?? []) {
+      s.classList.toggle("selected", color.toLowerCase() === s.dataset.color);
+    }
+  };
+  const fillColorUi = (key: typeof colorKeys[number], color: string): void => {
+    colorUi[key] = color;
+    colorHexInputs[key].value = color;
+    markColorSwatches(key, color);
+  };
+  const setColorValue = (key: typeof colorKeys[number], color: string): void => {
+    fillColorUi(key, color);
+    void applyAll();
+  };
+
   for (const key of colorKeys) {
-    // D8-09 (2026-09-04 audit): 只回填 <input type=color> 能 round-trip 的
-    // #RRGGBB。手编 config 塞进非法值（"blue" / "rgb(...)"）或后端合法但
-    // picker 不认的 3 位 hex 时，浏览器会把 input 静默 fallback 成
-    // #000000 —— 下次 applyAll 就把存量色永久覆盖成黑。非法值回退默认色。
+    // D8-09 (2026-09-04 audit)：非法存量值（"blue" / "rgb(...)"）不喂给控件
+    // —— 原生 color input 会静默 fallback 成 #000000，下次 applyAll 就把存量色
+    // 永久覆盖成黑。非法值回退默认色。
     const stored = overrides[key] ?? "";
-    colorPickers[key] = el("input", {
-      type: "color", id: `color-${key}`,
-      value: /^#[0-9a-fA-F]{6}$/.test(stored) ? stored : DEFAULT_PALETTE[key],
+    const init = HEX_COLOR_RE.test(stored) ? stored.toLowerCase() : DEFAULT_PALETTE[key];
+
+    const swatches = COLOR_PALETTE.map((c) =>
+      el("button", {
+        type: "button",
+        class: "accent-swatch",
+        "data-color": c,
+        style: `background: ${c};`,
+        title: c,
+      }),
+    );
+    colorSwatches[key] = swatches;
+    // hex 文本框沿用原 `color-${key}` id（本项目无任何外部引用，已 grep 确认），
+    // text 类型的 change 事件在 WKWebView 里可靠 —— 只有 color 类型坏。
+    const hexInput = el("input", {
+      type: "text",
+      id: `color-${key}`,
+      "data-id": `color-${key}`,
+      class: "color-hex-input",
+      placeholder: "#RRGGBB",
+      autocomplete: "off",
+      spellcheck: "false",
+      style: "width: 86px;",
+      value: init,
     }) as HTMLInputElement;
-    colorPickers[key].addEventListener("change", () => void applyAll());
+    colorHexInputs[key] = hexInput;
+
+    markColorSwatches(key, init);
+    for (const s of swatches) {
+      // 色板是 <button> —— 只派发 click，**永不派发 change**（H-Frontend-1
+      // 同款坑：extra-instance-form 的 accent 色板就挂在 change 委托上，
+      // 导致自定义中转站 accent 永远存不下来）。照 app.ts 的 click 写法。
+      s.addEventListener("click", () => setColorValue(key, s.dataset.color ?? init));
+    }
+    hexInput.addEventListener("change", () => {
+      const v = hexInput.value.trim().toLowerCase();
+      // 清空 = 回默认色（默认色本身不写进 config，保持 config.json 干净）
+      if (v === "") {
+        setColorValue(key, DEFAULT_PALETTE[key]);
+        return;
+      }
+      if (!HEX_COLOR_RE.test(v)) {
+        // 复用 app.ts 托盘 hex 校验同款 key（没有 floating 专用 invalid key，
+        // 见 2026-09-28 前端审查报告的 i18n 缺口项）。
+        flash(t("settings.app.tray_color_failed", { err: hexInput.value }), true);
+        hexInput.value = colorUi[key];
+        return;
+      }
+      setColorValue(key, v);
+    });
   }
 
   // ── 钱包告警（默认关闭） ──
@@ -355,7 +465,9 @@ function renderDisplayThresholdsFields(cfg: AppConfig) {
     // 只把"非默认色"的项加进 overrides（保持 config.json 干净）
     const newOverrides: Record<string, string> = {};
     for (const key of colorKeys) {
-      const v = colorPickers[key].value.toLowerCase();
+      // 读 colorUi（控件当前显示值）而不是直接读 DOM —— 三个读取点
+      // （applyAll / 失败回填 / 全部重置）共用同一份状态，不会各自漂移。
+      const v = colorUi[key].toLowerCase();
       if (v !== DEFAULT_PALETTE[key].toLowerCase()) {
         newOverrides[key] = v;
       }
@@ -378,7 +490,7 @@ function renderDisplayThresholdsFields(cfg: AppConfig) {
       t2Input.value = String(currentThresholds[2]);
       walletInput.value = currentWallet != null ? String(currentWallet) : "";
       for (const key of colorKeys) {
-        colorPickers[key].value = currentOverrides[key] ?? DEFAULT_PALETTE[key];
+        fillColorUi(key, currentOverrides[key] ?? DEFAULT_PALETTE[key]);
       }
     }
   };
@@ -403,7 +515,7 @@ function renderDisplayThresholdsFields(cfg: AppConfig) {
     t1Input.value = "70";
     t2Input.value = "88";
     for (const key of colorKeys) {
-      colorPickers[key].value = DEFAULT_PALETTE[key];
+      fillColorUi(key, DEFAULT_PALETTE[key]);
     }
     walletCb.checked = false;
     walletInput.value = "";
@@ -411,18 +523,21 @@ function renderDisplayThresholdsFields(cfg: AppConfig) {
     void applyAll();
   });
 
-  // 4 个 color picker 一行排开，每个右边带 label
+  // 4 组自定义色，每组一排：label + 6 个色板 + hex 文本框
+  // （原为 4 个 <input type=color>，macOS WKWebView 全哑，见上方 H-Frontend-2）
   const colorRow = el("div", {
     class: "row",
-    style: "display: flex; gap: 10px; align-items: center; flex-wrap: wrap;",
+    style: "display: flex; gap: 14px; align-items: center; flex-wrap: wrap;",
   });
   for (const key of colorKeys) {
     colorRow.appendChild(
-      el("label", {
-        style: "display: inline-flex; align-items: center; gap: 4px; font-size: 11px;",
+      el("div", {
+        class: "color-override-row",
+        style: "display: inline-flex; align-items: center; gap: 6px;",
       },
-        colorPickers[key],
-        el("span", {}, colorLabels[key]),
+        el("span", { style: "font-size: 11px; min-width: 44px;" }, colorLabels[key]),
+        el("div", { class: "accent-palette" }, ...colorSwatches[key]),
+        colorHexInputs[key],
       ),
     );
   }

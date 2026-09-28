@@ -1,5 +1,18 @@
 # 2026-09-28 全量代码审查报告（8 域并行）
 
+> **修复状态（2026-09-28）**：62 条独立问题中 **61 条已全量修复**（commit `d4ab961`，48 文件 +4673/−611）。
+> 唯一例外：**H-5（无单实例保护）**——修法需引入新依赖 `tauri-plugin-single-instance`，
+> 维护者决定本轮不修，留 v0.3。该问题的两个后果（双进程写出非法 keys.json / 双倍消耗
+> 5h·周配额）需要用户**不要同时跑已安装版和 `pnpm tauri dev`**，或等 v0.3。
+>
+> 随修复一并落地的还有 5 条 CI 守门脚本 + 1 篇准则文档（见第六节），它们比单条 bug
+> 更值得保留——本轮 7 条 Medium 的根因是「约定写了但没有 enforcement」或「修复未平行
+> 移植 / 修复是空操作」，单靠人记必然复发。
+>
+> 验证基线：`cargo check` 0 error / `cargo test --lib` **511 passed 0 failed**（审查前 416）
+> / `cargo fmt --check` 0 违规 / `cargo clippy` 0 error / `tsc --noEmit` 0 errors /
+> `vitest` 29/29 / 5 条守门脚本 exit 0。
+
 > **基线**：`08734ba`（v0.2.9 发布后 3 个 commit）
 > **规模**：~32k 行 Rust + ~10k 行 TypeScript，14 内置 provider + custom，4 个登录模块（xiaomi / anysearch / stepfun / kimi）
 > **方法**：8 个并行审查 agent，每域独占文件集，逐行读完 + Grep 追调用链确认可达性。要求每条 finding 必须有具体触发条件 + `file:line` 代码证据。

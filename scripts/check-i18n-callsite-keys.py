@@ -35,6 +35,18 @@ import re
 import sys
 from pathlib import Path
 
+# ── 强制 UTF-8 输出（CI Windows job 踩过的坑）────────────────────
+# GitHub Actions 的 windows-latest 上，Python 的默认 stdout 编码是 cp1252
+# （系统 ANSI code page），print 一个中文字符就抛：
+#   UnicodeEncodeError: 'charmap' codec can't encode character '个'
+# 结果整个 step 挂掉，而**检查逻辑其实全跑完了**——纯粹是输出编码问题。
+# 本脚本的诊断信息全是中文（"个 key 全部存在" / "缺少…个被 t!() 引用的 key"），
+# 所以必须在脚本自身固定 UTF-8，不能指望调用方（CI step / shell / 终端）配好。
+# reconfigure 是 Python 3.7+ 的 API，用 hasattr 兜住更老的解释器。
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parent.parent
 
 RED = "\033[0;31m"

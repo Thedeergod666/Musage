@@ -24,4 +24,11 @@ if [ -z "$PY" ]; then
   exit 1
 fi
 
+# 第二层保险：Windows 上 Python 的默认 stdout 编码是系统 ANSI code page
+# (cp1252)，print 中文会抛 UnicodeEncodeError 把整个 step 挂掉。
+# .py 脚本自身已经 reconfigure(encoding="utf-8")，这里再从环境侧兜一层，
+# 覆盖将来被改成别的入口调用的情况。
+export PYTHONIOENCODING=utf-8
+export PYTHONUTF8=1
+
 exec "$PY" "$SCRIPT_DIR/check-i18n-callsite-keys.py"

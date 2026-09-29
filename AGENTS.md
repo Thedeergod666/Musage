@@ -216,9 +216,10 @@ cmd /c "dev-env.bat && pnpm tauri:build"  # 打包
 | `scripts/check-provider-helper-parity.sh` | 共享 helper（`validate_bearer_key` / `json_i64` / null 守卫 / `config_error`）尚未平行移植到哪些 provider | 提示型（exit 0） |
 | `scripts/README-failures-are-noops.md` | 「修复是空操作」的判别标准 —— 9-04 的 M30/M32/M33 标为已修但改的是空操作 | 文档 |
 
-⚠️ **写这些脚本时踩的两个坑**（都产生过「静默假绿」）：
+⚠️ **写这些脚本时踩的三个坑**（前两个产生过「静默假绿」，第三个在 CI 上炸了）：
 - **Rust `regex` 不支持 look-around**。想写「匹配 `auth=` 但不匹配 `auth==`」不能用 `(?!=)`，编译期直接报 `look-around, including look-ahead and look-behind, is not supported`。改用字符类：`\bauth=[^=;\s][^\s;,]*`
 - **Python 正则里 `(r#*)` 是错的** —— `r` 必选（`#*` 只是零或多），会把不带原始字符串前缀的 `t!("k")` 全部漏掉，脚本报「0 个 key 全部存在」。正确写法 `(r#+)?`。**守门脚本必须用注入已知 bug 的方式做反向验证**，否则「0 命中」和「全部通过」长得一模一样
+- **Windows runner 的 Python stdout 编码是 cp1252**。CI windows-latest 上 print 一个中文字符就抛 `UnicodeEncodeError: 'charmap' codec can't encode character '个'` —— **检查逻辑其实全跑完了，纯粹是输出编码问题**，但整个 step 挂掉。修法是在脚本自身 `sys.stdout.reconfigure(encoding="utf-8", errors="replace")`（不能指望调用方配好，CI step / shell / 终端都可能不一样），wrapper 里再 `export PYTHONIOENCODING=utf-8` 兜第二层。**bash 脚本不受影响** —— git-bash 是 UTF-8，编不出就只是乱码不会抛异常，所以 3 个 `.sh` 守门在 Windows 上一直是绿的
 
 ⏳ **v0.3 待做**（2026-09-28 后剩余，已修完的项已删）：
 - **单实例保护（2026-09-28 audit H-5，本轮唯一未修项）**：四条原子写路径都用**固定名** tmp + `rename`，`save_lock()` 只是进程内 `std::sync::Mutex` 对第二进程零保护。同时跑已安装版和 `pnpm tauri dev` → 双进程互相截断对方写了一半的 tmp，可能写出非法 JSON（= 全部凭据不可读），config 改动 last-writer-wins 静默吞，且**两个进程各跑 poller → 5h/周配额双倍消耗**。修法是加 `tauri-plugin-single-instance`（官方插件，v2.4.3 已在本地 cargo 缓存，不需联网）——**本轮未做是因为引入新外部依赖需维护者拍板**
